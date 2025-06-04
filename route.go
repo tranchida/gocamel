@@ -191,3 +191,19 @@ func (p *routeProcessor) Process(exchange *Exchange) error {
 
 	return nil
 }
+
+// SetBody définit le corps du message de sortie
+func (r *Route) SetBody(body interface{}) *Route {
+	return r.ProcessFunc(func(exchange *Exchange) error {
+		exchange.GetOut().SetBody(body)
+		return nil
+	})
+}
+
+// SetHeader définit un en-tête du message de sortie
+func (r *Route) SetHeader(key string, value interface{}) *Route {
+	return r.ProcessFunc(func(exchange *Exchange) error {
+		exchange.GetOut().SetHeader(key, value)
+		return nil
+	})
+}

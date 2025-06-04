@@ -15,10 +15,11 @@ go get github.com/tranchida/gocamel
 - Gestion des messages avec corps et en-têtes
 - Contexte Camel pour la gestion du cycle de vie
 - Pattern Builder pour la création de routes
+- Fonctions de logging intégrées
 
 ## Exemples d'utilisation
 
-### Exemple HTTP
+### Exemple HTTP avec logging
 
 ```go
 package main
@@ -38,13 +39,13 @@ func main() {
     // Création d'une route qui écoute sur le port 8080
     route := context.CreateRouteBuilder().
         From("http://localhost:8080/echo").
-        ProcessFunc(func(exchange *gocamel.Exchange) error {
-            exchange.GetOut().SetBody("Hello, World!")
-            exchange.GetOut().SetHeader("Content-Type", "text/plain")
-            exchange.GetOut().SetHeader("Status-Code", "200")
-            exchange.GetOut().SetHeader("X-Processed-At", time.Now().Format(time.RFC3339))
-            return nil
-        }).
+        Log("Message reçu").
+        LogHeaders("En-têtes").
+        LogBody("Corps").
+        SetBody("Hello, World!").
+        SetHeader("Content-Type", "text/plain").
+        SetHeader("Status-Code", "200").
+        SetHeader("X-Processed-At", time.Now().Format(time.RFC3339)).
         Build()
 
     context.AddRoute(route)
@@ -79,6 +80,8 @@ func main() {
     // Création d'une route qui surveille le répertoire
     route := context.CreateRouteBuilder().
         From("file://" + tempDir).
+        Log("Nouveau fichier détecté").
+        LogHeaders("Métadonnées du fichier").
         ProcessFunc(func(exchange *gocamel.Exchange) error {
             if fileName, ok := exchange.GetIn().GetHeader("CamelFileName"); ok {
                 fmt.Printf("Nouveau fichier: %s\n", fileName)
@@ -134,4 +137,4 @@ context.AddComponent("file", gocamel.NewFileComponent())
 
 ## Licence
 
-MIT 
+MIT

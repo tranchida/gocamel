@@ -1,5 +1,9 @@
 package gocamel
 
+import (
+	"log"
+)
+
 // RouteBuilder facilite la création de routes
 type RouteBuilder struct {
 	context *CamelContext
@@ -32,6 +36,18 @@ func (b *RouteBuilder) ProcessFunc(f func(*Exchange) error) *RouteBuilder {
 	return b
 }
 
+// SetBody définit le corps du message de sortie
+func (b *RouteBuilder) SetBody(body interface{}) *RouteBuilder {
+	b.route.SetBody(body)
+	return b
+}
+
+// SetHeader définit un en-tête du message de sortie
+func (b *RouteBuilder) SetHeader(key string, value interface{}) *RouteBuilder {
+	b.route.SetHeader(key, value)
+	return b
+}
+
 // SetID définit l'ID de la route
 func (b *RouteBuilder) SetID(id string) *RouteBuilder {
 	b.route.SetID(id)
@@ -48,6 +64,30 @@ func (b *RouteBuilder) SetDescription(description string) *RouteBuilder {
 func (b *RouteBuilder) SetGroup(group string) *RouteBuilder {
 	b.route.SetGroup(group)
 	return b
+}
+
+// Log ajoute un processeur qui log le message
+func (b *RouteBuilder) Log(message string) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		log.Printf("%s: %+v", message, exchange)
+		return nil
+	})
+}
+
+// LogBody ajoute un processeur qui log le corps du message
+func (b *RouteBuilder) LogBody(message string) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		log.Printf("%s: %v", message, exchange.GetIn().GetBody())
+		return nil
+	})
+}
+
+// LogHeaders ajoute un processeur qui log les en-têtes du message
+func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		log.Printf("%s: %+v", message, exchange.GetIn().GetHeaders())
+		return nil
+	})
 }
 
 // Build finalise la construction de la route

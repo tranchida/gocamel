@@ -16,14 +16,12 @@ func main() {
 	// Création d'une route qui écoute sur le port 8080 et renvoie le message reçu
 	route := context.CreateRouteBuilder().
 		From("http://localhost:8080/echo").
-		ProcessFunc(func(exchange *gocamel.Exchange) error {
-			// Ajout d'un en-tête de réponse
-			exchange.GetOut().SetBody("Hello, World!")
-			exchange.GetOut().SetHeader("Content-Type", "text/plain")
-			exchange.GetOut().SetHeader("Status-Code", "200")
-			exchange.GetOut().SetHeader("X-Processed-At", time.Now().Format(time.RFC3339))
-			return nil
-		}).
+		LogBody("Received message").
+		LogHeaders("Received headers").
+		SetBody("Hello, World!").
+		SetHeader("Content-Type", "text/plain").
+		SetHeader("Status-Code", "200").
+		SetHeader("X-Processed-At", time.Now().Format(time.RFC3339)).
 		Build()
 
 	context.AddRoute(route)
