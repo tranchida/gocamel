@@ -81,9 +81,9 @@ func (p *HTTPProducer) Stop() error {
 func (p *HTTPProducer) Send(exchange *Exchange) error {
 	// Création de la requête
 	var bodyReader io.Reader
-	if body, ok := exchange.In.Body.([]byte); ok {
+	if body, ok := exchange.GetIn().GetBody().([]byte); ok {
 		bodyReader = bytes.NewReader(body)
-	} else if body, ok := exchange.In.Body.(string); ok {
+	} else if body, ok := exchange.GetIn().GetBody().(string); ok {
 		bodyReader = bytes.NewReader([]byte(body))
 	}
 
@@ -93,7 +93,7 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	}
 
 	// Ajout des en-têtes
-	for key, value := range exchange.In.Headers {
+	for key, value := range exchange.GetIn().GetHeaders() {
 		if strValue, ok := value.(string); ok {
 			req.Header.Set(key, strValue)
 		}
@@ -167,16 +167,16 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		}
 
 		// Ajout des en-têtes de réponse
-		for key, value := range exchange.Out.Headers {
+		for key, value := range exchange.GetOut().GetHeaders() {
 			if strValue, ok := value.(string); ok {
 				w.Header().Set(key, strValue)
 			}
 		}
 
 		// Envoi de la réponse
-		if body, ok := exchange.Out.Body.([]byte); ok {
+		if body, ok := exchange.GetOut().GetBody().([]byte); ok {
 			w.Write(body)
-		} else if body, ok := exchange.Out.Body.(string); ok {
+		} else if body, ok := exchange.GetOut().GetBody().(string); ok {
 			w.Write([]byte(body))
 		}
 	})
