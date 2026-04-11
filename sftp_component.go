@@ -12,6 +12,7 @@ import (
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // SFTPComponent représente le composant SFTP
@@ -48,6 +49,20 @@ func (e *SFTPEndpoint) URI() string {
 	return e.uri
 }
 
+func (e *SFTPEndpoint) getHostKeyCallback(u *url.URL) (ssh.HostKeyCallback, error) {
+	strictStr := GetConfigValue(u, "strictHostKeyChecking")
+	if strings.EqualFold(strictStr, "false") {
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+
+	knownHostsFile := GetConfigValue(u, "knownHostsFile")
+	if knownHostsFile == "" {
+		return nil, fmt.Errorf("strictHostKeyChecking is true but knownHostsFile is not specified")
+	}
+
+	return knownhosts.New(knownHostsFile)
+}
+
 // connect établit la connexion SFTP
 func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 	host := e.url.Host
@@ -61,12 +76,17 @@ func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 	}
 	pass := GetConfigValue(e.url, "password")
 
+	hostKeyCallback, err := e.getHostKeyCallback(e.url)
+	if err != nil {
+		return nil, nil, fmt.Errorf("erreur de configuration de la validation de clé d'hôte: %w", err)
+	}
+
 	config := &ssh.ClientConfig{
 		User: user,
 		Auth: []ssh.AuthMethod{
 			ssh.Password(pass),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: allow proper host key checking
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         5 * time.Second,
 	}
 
