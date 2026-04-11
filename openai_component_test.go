@@ -12,7 +12,7 @@ func TestOpenAIProducer_Start(t *testing.T) {
 	os.Setenv("OPENAI_API_KEY", "test-token")
 	defer os.Unsetenv("OPENAI_API_KEY")
 
-	u, _ := url.Parse("openai:chat?model=gpt-4")
+	u, _ := url.Parse("openai:chat?model=gpt-4&apiKey=test-token")
 	endpoint := &OpenAIEndpoint{
 		uri: "openai:chat?model=gpt-4",
 		url: u,
