@@ -155,3 +155,57 @@ La plupart des paramètres sensibles (tokens, mots de passe) peuvent être pass�
 ## Licence
 
 MIT
+
+## Monitoring et Management REST (JMX-like)
+
+GoCamel inclut une interface REST permettant de monitorer et de contrôler le cycle de vie des routes (démarrage/arrêt), inspirée du management JMX d'Apache Camel.
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/tranchida/gocamel"
+)
+
+func main() {
+    context := gocamel.NewCamelContext()
+
+    route := context.CreateRouteBuilder().
+        From("http://localhost:8080/hello").
+        SetID("route-http-1").
+        SetBody("Hello World").
+        Build()
+
+    context.AddRoute(route)
+    context.Start()
+
+    // Démarrer l'interface de management sur le port 8081
+    mgmt := gocamel.NewManagementServer(context)
+    mgmt.Start(":8081")
+
+    select {}
+}
+```
+
+### Endpoints de Management
+
+- **État du contexte** : `GET /api/context`
+  ```json
+  {"started":true,"totalRoutes":1,"startedRoutes":1}
+  ```
+
+- **Lister les routes** : `GET /api/routes`
+  ```json
+  [{"id":"route-http-1","description":"","group":"","started":true}]
+  ```
+
+- **Arrêter une route** : `POST /api/routes/{id}/stop`
+  ```bash
+  curl -X POST http://localhost:8081/api/routes/route-http-1/stop
+  ```
+
+- **Démarrer une route** : `POST /api/routes/{id}/start`
+  ```bash
+  curl -X POST http://localhost:8081/api/routes/route-http-1/start
+  ```
