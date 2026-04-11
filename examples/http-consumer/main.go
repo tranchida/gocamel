@@ -16,6 +16,7 @@ func main() {
 	// Création d'une route qui écoute sur le port 8080 et renvoie le message reçu
 	route := context.CreateRouteBuilder().
 		From("http://localhost:8080/echo").
+		SetID("myroute").
 		LogBody("Received message").
 		LogHeaders("Received headers").
 		SetBody("Hello, World!").
@@ -26,6 +27,9 @@ func main() {
 
 	context.AddRoute(route)
 	context.Start()
+
+	mgmt := gocamel.NewManagementServer(context)
+	mgmt.Start(":8081")
 
 	fmt.Println("Serveur démarré sur http://localhost:8080/echo")
 	fmt.Println("Appuyez sur Ctrl+C pour arrêter")
