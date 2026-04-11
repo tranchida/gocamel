@@ -6,3 +6,7 @@ GET localhost:8081/api/routes
 
 ###
 POST http://localhost:8081/api/routes/myroute/stop
+
+###
+POST http://localhost:8081/api/routes/myroute/start
+

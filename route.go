@@ -32,6 +32,7 @@ type Route struct {
 	Group       string
 	context     *CamelContext
 	from        Endpoint
+	consumer    Consumer
 	processors  []Processor
 	started     bool
 	startLock   sync.Mutex
@@ -92,6 +93,7 @@ func (r *Route) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("erreur lors de la création du consommateur: %v", err)
 	}
+	r.consumer = consumer
 
 	if err := consumer.Start(ctx); err != nil {
 		return fmt.Errorf("erreur lors du démarrage du consommateur: %v", err)
@@ -110,13 +112,8 @@ func (r *Route) Stop() error {
 		return nil
 	}
 
-	if r.from != nil {
-		consumer, err := r.from.CreateConsumer(r)
-		if err != nil {
-			return fmt.Errorf("erreur lors de la création du consommateur: %v", err)
-		}
-
-		if err := consumer.Stop(); err != nil {
+	if r.consumer != nil {
+		if err := r.consumer.Stop(); err != nil {
 			return fmt.Errorf("erreur lors de l'arrêt du consommateur: %v", err)
 		}
 	}
