@@ -29,12 +29,19 @@ func NewCamelContext() *CamelContext {
 
 // AddRoute ajoute une route au contexte
 func (c *CamelContext) AddRoute(route *Route) {
+	for _, r := range c.routes {
+		if r == route {
+			return // La route est déjà dans le contexte
+		}
+	}
 	c.routes = append(c.routes, route)
 }
 
 // AddRoutes ajoute plusieurs routes au contexte
 func (c *CamelContext) AddRoutes(routes ...*Route) {
-	c.routes = append(c.routes, routes...)
+	for _, route := range routes {
+		c.AddRoute(route)
+	}
 }
 
 // GetRoute récupère une route par son ID
