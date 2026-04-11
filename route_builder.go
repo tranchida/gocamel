@@ -66,6 +66,12 @@ func (b *RouteBuilder) SetGroup(group string) *RouteBuilder {
 	return b
 }
 
+// Aggregate ajoute un processeur Aggregator à la route
+func (b *RouteBuilder) Aggregate(aggregator *Aggregator) *RouteBuilder {
+	b.route.AddProcessor(aggregator)
+	return b
+}
+
 // Log ajoute un processeur qui log le message
 func (b *RouteBuilder) Log(message string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {

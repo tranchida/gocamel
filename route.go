@@ -2,9 +2,15 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 )
+
+// ErrStopRouting est une erreur spéciale utilisée pour arrêter
+// le routage d'un message sans que cela soit considéré comme un échec.
+// Utilisé notamment par l'EIP Aggregator.
+var ErrStopRouting = errors.New("stop routing")
 
 // Processor définit l'interface pour le traitement des messages
 type Processor interface {
@@ -168,6 +174,9 @@ func (p *routeProcessor) Process(exchange *Exchange) error {
 	// Exécution des processeurs
 	for _, processor := range p.processors {
 		if err := processor.Process(exchange); err != nil {
+			if errors.Is(err, ErrStopRouting) {
+				return err // Bubble up
+			}
 			return fmt.Errorf("erreur lors du traitement: %v", err)
 		}
 	}
