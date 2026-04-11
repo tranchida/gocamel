@@ -11,95 +11,106 @@ go get github.com/tranchida/gocamel
 ## Fonctionnalités
 
 - Architecture basée sur les routes et les endpoints
-- Support des composants HTTP et File
 - Gestion des messages avec corps et en-têtes
 - Contexte Camel pour la gestion du cycle de vie
 - Pattern Builder pour la création de routes
 - Fonctions de logging intégrées
+- Gestion centralisée des identifiants (fichiers, query params, variables d'environnement)
 
 ## Exemples d'utilisation
 
-### Exemple HTTP avec logging
+### Exemple FTP (Téléchargement & Envoi)
+
+Il est recommandé de passer les identifiants via les variables d'environnement pour plus de sécurité (ex: `FTP_USERNAME`, `FTP_PASSWORD`, ou directement `username` et `password`).
 
 ```go
 package main
 
 import (
-    "fmt"
-    "time"
     "github.com/tranchida/gocamel"
 )
 
 func main() {
     context := gocamel.NewCamelContext()
-    
-    // Enregistrement du composant HTTP
-    context.AddComponent("http", gocamel.NewHTTPComponent())
+    context.AddComponent("ftp", gocamel.NewFTPComponent())
 
-    // Création d'une route qui écoute sur le port 8080
+    // Écoute les nouveaux fichiers sur le serveur FTP (Consumer)
+    // et les renvoie vers un autre répertoire (Producer)
     route := context.CreateRouteBuilder().
-        From("http://localhost:8080/echo").
-        Log("Message reçu").
-        LogHeaders("En-têtes").
-        LogBody("Corps").
-        SetBody("Hello, World!").
-        SetHeader("Content-Type", "text/plain").
-        SetHeader("Status-Code", "200").
-        SetHeader("X-Processed-At", time.Now().Format(time.RFC3339)).
-        Build()
-
-    context.AddRoute(route)
-    context.Start()
-
-    fmt.Println("Serveur démarré sur http://localhost:8080/echo")
-    select {}
-}
-```
-
-### Exemple File
-
-```go
-package main
-
-import (
-    "fmt"
-    "os"
-    "path/filepath"
-    "time"
-    "github.com/tranchida/gocamel"
-)
-
-func main() {
-    // Création d'un répertoire temporaire
-    tempDir, _ := os.MkdirTemp("", "gocamel-test-*")
-    defer os.RemoveAll(tempDir)
-
-    context := gocamel.NewCamelContext()
-    context.AddComponent("file", gocamel.NewFileComponent())
-
-    // Création d'une route qui surveille le répertoire
-    route := context.CreateRouteBuilder().
-        From("file://" + tempDir).
-        Log("Nouveau fichier détecté").
-        LogHeaders("Métadonnées du fichier").
+        From("ftp://localhost:21/incoming?delay=10s&delete=true").
+        Log("Nouveau fichier téléchargé").
+        LogHeaders("Métadonnées du fichier FTP").
+        SetHeader(gocamel.CamelFileName, "processed_file.txt").
         ProcessFunc(func(exchange *gocamel.Exchange) error {
-            if fileName, ok := exchange.GetIn().GetHeader("CamelFileName"); ok {
-                fmt.Printf("Nouveau fichier: %s\n", fileName)
-            }
+            // Traitement custom ici...
             return nil
         }).
         Build()
 
+    // Ajout d'un Producer manuel à l'exécution si besoin:
+    // endpoint, _ := context.CreateEndpoint("ftp://localhost:21/outgoing")
+    // producer, _ := endpoint.CreateProducer()
+    // producer.Send(exchange)
+
     context.AddRoute(route)
     context.Start()
+    select {}
+}
+```
 
-    // Création de fichiers de test
-    for i := 1; i <= 3; i++ {
-        content := fmt.Sprintf("Contenu du fichier test %d", i)
-        filename := filepath.Join(tempDir, fmt.Sprintf("test%d.txt", i))
-        os.WriteFile(filename, []byte(content), 0644)
-        time.Sleep(time.Second)
-    }
+### Exemple Telegram
+
+```go
+package main
+
+import (
+    "github.com/tranchida/gocamel"
+)
+
+func main() {
+    // Définir la variable d'environnement TELEGRAM_AUTHORIZATIONTOKEN="votre_token_bot"
+    context := gocamel.NewCamelContext()
+    context.AddComponent("telegram", gocamel.NewTelegramComponent())
+
+    route := context.CreateRouteBuilder().
+        From("telegram:bots").
+        Log("Message Telegram reçu !").
+        LogBody("Texte du message :").
+        Build()
+
+    context.AddRoute(route)
+    context.Start()
+    select {}
+}
+```
+
+### Exemple OpenAI
+
+L'envoi de requêtes s'effectue via un Producteur.
+
+```go
+package main
+
+import (
+    "fmt"
+    "context"
+    "github.com/tranchida/gocamel"
+)
+
+func main() {
+    // Définir la variable d'environnement OPENAI_AUTHORIZATIONTOKEN ou OPENAI_API_KEY
+    camelCtx := gocamel.NewCamelContext()
+    camelCtx.AddComponent("openai", gocamel.NewOpenAIComponent())
+
+    // Dans une route ou manuellement:
+    endpoint, _ := camelCtx.CreateEndpoint("openai:chat?model=gpt-3.5-turbo")
+    producer, _ := endpoint.CreateProducer()
+
+    exchange := gocamel.NewExchange(context.Background())
+    exchange.GetIn().SetBody("Bonjour, comment ça va ?")
+
+    producer.Send(exchange)
+    fmt.Println("Réponse OpenAI :", exchange.GetOut().GetBody())
 }
 ```
 
@@ -110,30 +121,36 @@ gocamel/
 ├── context.go         # Gestion du contexte Camel
 ├── exchange.go        # Structure d'échange de messages
 ├── message.go         # Structure de message
-├── route.go          # Gestion des routes
-├── route_builder.go  # Pattern Builder pour les routes
-├── registry.go       # Registre des composants
-├── http_component.go # Composant HTTP
-└── file_component.go # Composant File
+├── route.go           # Gestion des routes
+├── route_builder.go   # Pattern Builder pour les routes
+├── registry.go        # Registre des composants
+├── config.go          # Utilitaires de gestion des configurations environnementales
+├── uri_utils.go       # Utilitaires de parsing d'URI
+├── http_component.go  # Composant HTTP
+├── file_component.go  # Composant File
+├── ftp_component.go   # Composant FTP
+├── sftp_component.go  # Composant SFTP
+├── smb_component.go   # Composant SMB (Samba / Windows Share)
+├── telegram_component.go # Composant Telegram Bot
+└── openai_component.go   # Composant OpenAI
 ```
 
 ## Composants disponibles
 
-### HTTP Component
+- **HTTP** (`http://...`) : Serveur (Consumer) et Client (Producer).
+- **File** (`file://...`) : Lecture et écriture de fichiers locaux.
+- **FTP** (`ftp://...`) : Serveur FTP (Consumer & Producer).
+- **SFTP** (`sftp://...`) : Serveur SFTP avec authentification SSH (Consumer & Producer).
+- **SMB** (`smb://...`) : Partages réseau Windows/Samba (Consumer & Producer).
+- **Telegram** (`telegram:...`) : Bot Telegram (Consumer webhook/polling & Producer).
+- **OpenAI** (`openai:...`) : Chat Completion (Producer uniquement).
 
-Le composant HTTP permet de créer des endpoints HTTP pour envoyer et recevoir des requêtes.
+## Configuration
 
-```go
-context.AddComponent("http", gocamel.NewHTTPComponent())
-```
-
-### File Component
-
-Le composant File permet de lire, écrire et surveiller des fichiers.
-
-```go
-context.AddComponent("file", gocamel.NewFileComponent())
-```
+La plupart des paramètres sensibles (tokens, mots de passe) peuvent être passés de trois façons :
+1. Dans l'URI directement (ex: `ftp://user:pass@host/path`).
+2. En paramètre de requête (ex: `telegram:bots?authorizationToken=XXX`).
+3. En variable d'environnement (ex: `FTP_PASSWORD=xxx`, `TELEGRAM_AUTHORIZATIONTOKEN=xxx` ou `OPENAI_API_KEY=xxx`). C'est la méthode recommandée.
 
 ## Licence
 

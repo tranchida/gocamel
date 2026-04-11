@@ -97,13 +97,13 @@ func (p *FileProducer) Send(exchange *Exchange) error {
 
 	// Écriture du contenu
 	var content []byte
-	switch body := exchange.In.Body.(type) {
+	switch body := exchange.GetIn().GetBody().(type) {
 	case []byte:
 		content = body
 	case string:
 		content = []byte(body)
 	default:
-		return fmt.Errorf("type de corps non supporté: %T", exchange.In.Body)
+		return fmt.Errorf("type de corps non supporté: %T", exchange.GetIn().GetBody())
 	}
 
 	if _, err := file.Write(content); err != nil {
