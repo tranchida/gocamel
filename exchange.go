@@ -42,6 +42,7 @@ const (
 	CamelTimerName      = "CamelTimerName"      // Nom du timer
 	CamelTimerFiredTime = "CamelTimerFiredTime" // Heure de déclenchement du timer
 	CamelTimerPeriod    = "CamelTimerPeriod"    // Période du timer
+	CamelTimerCounter   = "CamelTimerCounter"   // Compteur du timer
 
 	// Propriétés de contexte
 	CamelContextName    = "CamelContextName"    // Nom du contexte
