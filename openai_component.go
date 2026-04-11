@@ -57,17 +57,11 @@ func (e *OpenAIEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 // OpenAIProducer représente un producteur OpenAI
 type OpenAIProducer struct {
 	endpoint *OpenAIEndpoint
+	client   *openai.Client
+	model    string
 }
 
 func (p *OpenAIProducer) Start(ctx context.Context) error {
-	return nil
-}
-
-func (p *OpenAIProducer) Stop() error {
-	return nil
-}
-
-func (p *OpenAIProducer) Send(exchange *Exchange) error {
 	token := GetConfigValue(p.endpoint.url, "authorizationToken")
 	if token == "" {
 		token = GetConfigValue(p.endpoint.url, "apiKey") // alias
@@ -81,6 +75,21 @@ func (p *OpenAIProducer) Send(exchange *Exchange) error {
 		model = openai.GPT3Dot5Turbo // default model
 	}
 
+	p.client = openai.NewClient(token)
+	p.model = model
+
+	return nil
+}
+
+func (p *OpenAIProducer) Stop() error {
+	return nil
+}
+
+func (p *OpenAIProducer) Send(exchange *Exchange) error {
+	if p.client == nil {
+		return fmt.Errorf("le producteur OpenAI n'a pas été démarré")
+	}
+
 	var prompt string
 	switch body := exchange.GetIn().GetBody().(type) {
 	case string:
@@ -91,11 +100,10 @@ func (p *OpenAIProducer) Send(exchange *Exchange) error {
 		prompt = fmt.Sprintf("%v", body)
 	}
 
-	client := openai.NewClient(token)
-	resp, err := client.CreateChatCompletion(
+	resp, err := p.client.CreateChatCompletion(
 		context.Background(),
 		openai.ChatCompletionRequest{
-			Model: model,
+			Model: p.model,
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role:    openai.ChatMessageRoleUser,
