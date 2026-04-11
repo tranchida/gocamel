@@ -183,6 +183,10 @@ func (e *Exchange) GetPropertyAsInt(key string) (int, bool) {
 		if i, ok := value.(int); ok {
 			return i, true
 		}
+		// Handle float64 when unmarshaled from JSON
+		if f, ok := value.(float64); ok {
+			return int(f), true
+		}
 	}
 	return 0, false
 }
