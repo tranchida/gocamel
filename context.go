@@ -8,12 +8,13 @@ import (
 
 // CamelContext représente le contexte principal de l'application
 type CamelContext struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	routes    []*Route
-	registry  *ComponentRegistry
-	started   bool
-	startLock sync.Mutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	routes       []*Route
+	registry     *ComponentRegistry
+	started      bool
+	startLock    sync.Mutex
+	routeCounter int
 }
 
 // NewCamelContext crée une nouvelle instance de CamelContext
@@ -34,6 +35,28 @@ func (c *CamelContext) AddRoute(route *Route) {
 			return // La route est déjà dans le contexte
 		}
 	}
+
+	if route.ID == "" {
+		for {
+			c.routeCounter++
+			newID := fmt.Sprintf("route-%d", c.routeCounter)
+
+			// Vérifier si cet ID est déjà utilisé
+			idExists := false
+			for _, r := range c.routes {
+				if r.ID == newID {
+					idExists = true
+					break
+				}
+			}
+
+			if !idExists {
+				route.ID = newID
+				break
+			}
+		}
+	}
+
 	c.routes = append(c.routes, route)
 }
 
