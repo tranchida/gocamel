@@ -129,30 +129,38 @@ func (m *ManagementServer) handleRouteAction(w http.ResponseWriter, r *http.Requ
 
 	switch action {
 	case "start":
-		if route.IsStarted() {
-			http.Error(w, "Route already started", http.StatusBadRequest)
-			return
-		}
-		if err := route.Start(m.context.GetContext()); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to start route: %v", err), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"started"}`))
+		m.handleStartAction(w, route)
 
 	case "stop":
-		if !route.IsStarted() {
-			http.Error(w, "Route not started", http.StatusBadRequest)
-			return
-		}
-		if err := route.Stop(); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to stop route: %v", err), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"stopped"}`))
+		m.handleStopAction(w, route)
 
 	default:
 		http.Error(w, "Unknown action", http.StatusBadRequest)
 	}
+}
+
+func (m *ManagementServer) handleStartAction(w http.ResponseWriter, route *Route) {
+	if route.IsStarted() {
+		http.Error(w, "Route already started", http.StatusBadRequest)
+		return
+	}
+	if err := route.Start(m.context.GetContext()); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to start route: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"started"}`))
+}
+
+func (m *ManagementServer) handleStopAction(w http.ResponseWriter, route *Route) {
+	if !route.IsStarted() {
+		http.Error(w, "Route not started", http.StatusBadRequest)
+		return
+	}
+	if err := route.Stop(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to stop route: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"stopped"}`))
 }
