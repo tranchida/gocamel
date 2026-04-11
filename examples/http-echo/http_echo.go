@@ -1,4 +1,4 @@
-package http_echo
+package main
 
 import (
 	"fmt"
@@ -10,14 +10,18 @@ import (
 func main() {
 
 	context := gocamel.NewCamelContext()
+
+	context.AddComponent("http", gocamel.NewHTTPComponent())
+
 	// Création d'une route qui écoute sur le port 8080 et renvoie le message reçu
-	route := gocamel.NewRoute()
-	route.From("http://localhost:8080/echo").
+	route := context.CreateRouteBuilder().
+		From("http://localhost:8080/echo").
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
 			// Ajout d'un en-tête de réponse
 			exchange.SetHeader("X-Processed-At", time.Now().Format(time.RFC3339))
+			exchange.GetOut().SetBody(exchange.GetIn().GetBody())
 			return nil
-		})
+		}).Build()
 
 	context.AddRoute(route)
 	context.Start()
