@@ -244,8 +244,15 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 		return
 	}
 
+	include := GetConfigValue(c.endpoint.url, "include")
+	exclude := GetConfigValue(c.endpoint.url, "exclude")
+
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			if !matchFileName(entry.Name(), include, exclude) {
+				continue
+			}
+
 			filePath := path + "/" + entry.Name()
 			if path == "." || path == "/" {
 				filePath = path + entry.Name()
