@@ -144,6 +144,8 @@ gocamel/
 - **SMB** (`smb://...`) : Partages réseau Windows/Samba (Consumer & Producer).
 - **Telegram** (`telegram:...`) : Bot Telegram (Consumer webhook/polling & Producer).
 - **OpenAI** (`openai:...`) : Chat Completion (Producer uniquement).
+- **XSLT** (`xslt:...`) : Transformation XML via une feuille de style (Producer uniquement).
+- **XSD** (`xsd:...`) : Validation de schéma XML (Producer uniquement).
 
 ## Configuration
 
