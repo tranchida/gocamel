@@ -208,8 +208,15 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 		return
 	}
 
+	include := GetConfigValue(c.endpoint.url, "include")
+	exclude := GetConfigValue(c.endpoint.url, "exclude")
+
 	for _, entry := range entries {
 		if entry.Type == ftp.EntryTypeFile {
+			if !matchFileName(entry.Name, include, exclude) {
+				continue
+			}
+
 			filePath := path + "/" + entry.Name
 			if path == "." {
 				filePath = entry.Name

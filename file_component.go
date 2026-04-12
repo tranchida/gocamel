@@ -3,6 +3,7 @@ package gocamel
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,14 +25,31 @@ func NewFileComponent() *FileComponent {
 
 // CreateEndpoint crée un nouvel endpoint File
 func (c *FileComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	u, err := ParseURI(uri)
+	if err != nil {
+		return nil, err
+	}
+
 	// Format de l'URI: file:///chemin/vers/fichier?options
-	path := strings.TrimPrefix(uri, "file://")
+	// url.URL Path pour file://... est stocké dans Path ou Host+Path selon le format
+	path := u.Path
+	if u.Host != "" && u.Host != "." {
+		path = u.Host + path
+	}
+	if path == "" {
+		path = strings.TrimPrefix(uri, "file://") // Fallback
+		if qIdx := strings.Index(path, "?"); qIdx != -1 {
+			path = path[:qIdx]
+		}
+	}
+
 	if path == "" {
 		return nil, fmt.Errorf("chemin de fichier manquant dans l'URI: %s", uri)
 	}
 
 	return &FileEndpoint{
 		uri:  uri,
+		url:  u,
 		path: path,
 		comp: c,
 	}, nil
@@ -40,6 +58,7 @@ func (c *FileComponent) CreateEndpoint(uri string) (Endpoint, error) {
 // FileEndpoint représente un endpoint File
 type FileEndpoint struct {
 	uri  string
+	url  *url.URL
 	path string
 	comp *FileComponent
 }
@@ -60,6 +79,7 @@ func (e *FileEndpoint) CreateProducer() (Producer, error) {
 func (e *FileEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &FileConsumer{
 		path:      e.path,
+		url:       e.url,
 		processor: processor,
 		comp:      e.comp,
 	}, nil
@@ -116,6 +136,7 @@ func (p *FileProducer) Send(exchange *Exchange) error {
 // FileConsumer représente un consommateur File
 type FileConsumer struct {
 	path      string
+	url       *url.URL
 	processor Processor
 	comp      *FileComponent
 	watcher   *fsnotify.Watcher
@@ -149,10 +170,18 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 
 	// Surveillance du répertoire
 	go func() {
+		include := GetConfigValue(c.url, "include")
+		exclude := GetConfigValue(c.url, "exclude")
+
 		for {
 			select {
 			case event := <-watcher.Events:
 				if event.Op&fsnotify.Create == fsnotify.Create {
+					filename := filepath.Base(event.Name)
+					if !matchFileName(filename, include, exclude) {
+						continue
+					}
+
 					// Traitement du nouveau fichier
 					exchange := NewExchange(ctx)
 					content, err := os.ReadFile(event.Name)
@@ -182,6 +211,14 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 
 // watchFile surveille un fichier spécifique
 func (c *FileConsumer) watchFile(ctx context.Context) error {
+	filename := filepath.Base(c.path)
+	include := GetConfigValue(c.url, "include")
+	exclude := GetConfigValue(c.url, "exclude")
+
+	if !matchFileName(filename, include, exclude) {
+		return nil
+	}
+
 	// Lecture initiale du fichier
 	content, err := os.ReadFile(c.path)
 	if err != nil {
@@ -190,7 +227,7 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 
 	exchange := NewExchange(ctx)
 	exchange.SetBody(content)
-	exchange.SetHeader("FileName", filepath.Base(c.path))
+	exchange.SetHeader("FileName", filename)
 	exchange.SetHeader("FilePath", c.path)
 
 	return c.processor.Process(exchange)
