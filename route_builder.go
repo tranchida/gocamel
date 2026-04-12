@@ -100,3 +100,9 @@ func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
 func (b *RouteBuilder) Build() *Route {
 	return b.route
 }
+
+// To ajoute un endpoint de destination à la route
+func (b *RouteBuilder) To(uri string) *RouteBuilder {
+	b.route.To(uri)
+	return b
+}
