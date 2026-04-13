@@ -14,8 +14,49 @@ go get github.com/tranchida/gocamel
 - Gestion des messages avec corps et en-têtes
 - Contexte Camel pour la gestion du cycle de vie
 - Pattern Builder pour la création de routes
+- Support des EIP (Split, Aggregate)
 - Fonctions de logging intégrées
 - Gestion centralisée des identifiants (fichiers, query params, variables d'environnement)
+
+## EIP (Enterprise Integration Patterns)
+
+### Split EIP
+
+Le Split EIP permet de diviser un message en plusieurs parties et de les traiter individuellement.
+
+```go
+builder.From("direct:start").
+    Split(func(e *gocamel.Exchange) (any, error) {
+        // Divise une chaîne par virgules
+        body := e.GetIn().GetBody().(string)
+        return strings.Split(body, ","), nil
+    }).
+    Log("Traitement de la partie : ${body}").
+    To("direct:process-part").
+    End(). // Fin du bloc Split
+    Log("Traitement terminé pour tous les morceaux")
+```
+
+**Options du Split :**
+- **`AggregationStrategy`** : Permet de combiner les résultats de chaque partie splitée pour mettre à jour le message original.
+- **Propriétés de l'Exchange** : Chaque partie dispose de propriétés spécifiques :
+    - `CamelSplitIndex` : Index actuel (0-based)
+    - `CamelSplitSize` : Nombre total de parties
+    - `CamelSplitComplete` : Booléen indiquant s'il s'agit de la dernière partie
+
+### Aggregate EIP
+
+L'Aggregator permet de combiner plusieurs messages en un seul selon une clé de corrélation.
+
+```go
+strategy := &MyAggregationStrategy{}
+repo := gocamel.NewMemoryAggregationRepository()
+
+builder.From("direct:start").
+    Aggregate(gocamel.NewAggregator(correlationExpr, strategy, repo).
+        SetCompletionSize(3)).
+    Log("Message agrégé : ${body}")
+```
 
 ## Exemples d'utilisation
 
@@ -181,6 +222,10 @@ gocamel/
 ├── registry.go        # Registre des composants
 ├── config.go          # Utilitaires de gestion des configurations environnementales
 ├── uri_utils.go       # Utilitaires de parsing d'URI
+├── aggregator.go      # Implémentation de l'EIP Aggregate
+├── splitter.go        # Implémentation de l'EIP Split
+├── aggregation_strategy.go # Interface pour les stratégies d'agrégation
+├── aggregation_repository.go # Interface pour le stockage de l'agrégation
 ├── http_component.go  # Composant HTTP
 ├── file_component.go  # Composant File
 ├── ftp_component.go   # Composant FTP
@@ -225,7 +270,6 @@ GoCamel inclut une interface REST permettant de monitorer et de contrôler le cy
 package main
 
 import (
-    "fmt"
     "github.com/tranchida/gocamel"
 )
 
