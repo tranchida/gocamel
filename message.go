@@ -1,6 +1,10 @@
 package gocamel
 
-import "maps"
+import (
+	"maps"
+	"regexp"
+	"strings"
+)
 
 // Message représente un message dans une route
 type Message struct {
@@ -51,6 +55,46 @@ func (m *Message) SetHeaders(headers map[string]any) {
 // RemoveHeader supprime un en-tête
 func (m *Message) RemoveHeader(key string) {
 	delete(m.Headers, key)
+}
+
+// RemoveHeaders supprime les en-têtes correspondants au pattern fourni, 
+// sauf ceux qui correspondent aux patterns d'exclusion fournis.
+// Le pattern supporte les jokers Apache Camel '*' (ex: 'Camel*').
+func (m *Message) RemoveHeaders(pattern string, excludePatterns ...string) {
+	// Compilation du pattern principal
+	mainRegex := patternToRegex(pattern)
+	
+	// Compilation des patterns d'exclusion
+	var excludeRegexes []*regexp.Regexp
+	for _, p := range excludePatterns {
+		excludeRegexes = append(excludeRegexes, patternToRegex(p))
+	}
+	
+	// Filtrage des headers
+	for key := range m.Headers {
+		if mainRegex.MatchString(key) {
+			shouldExclude := false
+			for _, exRegex := range excludeRegexes {
+				if exRegex.MatchString(key) {
+					shouldExclude = true
+					break
+				}
+			}
+			
+			if !shouldExclude {
+				delete(m.Headers, key)
+			}
+		}
+	}
+}
+
+// patternToRegex convertit un pattern avec '*' en Regexp
+func patternToRegex(pattern string) *regexp.Regexp {
+	// Échapper les caractères spéciaux de regex, puis remplacer '*' par '.*'
+	quoted := regexp.QuoteMeta(pattern)
+	regexStr := "^" + strings.ReplaceAll(quoted, "\\*", ".*") + "$"
+	re, _ := regexp.Compile(regexStr)
+	return re
 }
 
 // HasHeader vérifie si un en-tête existe

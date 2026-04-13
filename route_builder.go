@@ -55,6 +55,23 @@ func (b *RouteBuilder) SetHeader(key string, value interface{}) *RouteBuilder {
 	})
 }
 
+// RemoveHeader supprime un en-tête du message entrant
+func (b *RouteBuilder) RemoveHeader(name string) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		exchange.GetIn().RemoveHeader(name)
+		return nil
+	})
+}
+
+// RemoveHeaders supprime les en-têtes correspondants au pattern fourni,
+// sauf ceux qui correspondent aux patterns d'exclusion fournis.
+func (b *RouteBuilder) RemoveHeaders(pattern string, excludePatterns ...string) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		exchange.GetIn().RemoveHeaders(pattern, excludePatterns...)
+		return nil
+	})
+}
+
 // SetID définit l'ID de la route
 func (b *RouteBuilder) SetID(id string) *RouteBuilder {
 	b.route.SetID(id)
@@ -136,6 +153,18 @@ func (d *SplitDefinition) SetBody(body interface{}) *SplitDefinition {
 // SetHeader définit un en-tête du message de sortie et reste dans le contexte du split
 func (d *SplitDefinition) SetHeader(key string, value interface{}) *SplitDefinition {
 	d.RouteBuilder.SetHeader(key, value)
+	return d
+}
+
+// RemoveHeader supprime un en-tête du message entrant et reste dans le contexte du split
+func (d *SplitDefinition) RemoveHeader(name string) *SplitDefinition {
+	d.RouteBuilder.RemoveHeader(name)
+	return d
+}
+
+// RemoveHeaders supprime les en-têtes correspondants au pattern fourni et reste dans le contexte du split
+func (d *SplitDefinition) RemoveHeaders(pattern string, excludePatterns ...string) *SplitDefinition {
+	d.RouteBuilder.RemoveHeaders(pattern, excludePatterns...)
 	return d
 }
 
