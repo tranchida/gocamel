@@ -6,15 +6,18 @@ import (
 
 // RouteBuilder facilite la création de routes
 type RouteBuilder struct {
-	context *CamelContext
-	route   *Route
+	context   *CamelContext
+	route     *Route
+	container ProcessorContainer
 }
 
 // NewRouteBuilder crée une nouvelle instance de RouteBuilder
 func NewRouteBuilder(context *CamelContext) *RouteBuilder {
+	route := context.CreateRoute()
 	return &RouteBuilder{
-		context: context,
-		route:   context.CreateRoute(),
+		context:   context,
+		route:     route,
+		container: route,
 	}
 }
 
@@ -24,28 +27,32 @@ func (b *RouteBuilder) From(uri string) *RouteBuilder {
 	return b
 }
 
-// Process ajoute un processeur à la route
+// Process ajoute un processeur au conteneur actuel
 func (b *RouteBuilder) Process(processor Processor) *RouteBuilder {
-	b.route.AddProcessor(processor)
+	b.container.AddProcessor(processor)
 	return b
 }
 
-// ProcessFunc ajoute une fonction de traitement à la route
+// ProcessFunc ajoute une fonction de traitement au conteneur actuel
 func (b *RouteBuilder) ProcessFunc(f func(*Exchange) error) *RouteBuilder {
-	b.route.ProcessFunc(f)
+	b.container.AddProcessor(ProcessorFunc(f))
 	return b
 }
 
 // SetBody définit le corps du message de sortie
 func (b *RouteBuilder) SetBody(body interface{}) *RouteBuilder {
-	b.route.SetBody(body)
-	return b
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		exchange.GetOut().SetBody(body)
+		return nil
+	})
 }
 
 // SetHeader définit un en-tête du message de sortie
 func (b *RouteBuilder) SetHeader(key string, value interface{}) *RouteBuilder {
-	b.route.SetHeader(key, value)
-	return b
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		exchange.GetOut().SetHeader(key, value)
+		return nil
+	})
 }
 
 // SetID définit l'ID de la route
@@ -66,10 +73,99 @@ func (b *RouteBuilder) SetGroup(group string) *RouteBuilder {
 	return b
 }
 
-// Aggregate ajoute un processeur Aggregator à la route
+// Aggregate ajoute un processeur Aggregator au conteneur actuel
 func (b *RouteBuilder) Aggregate(aggregator *Aggregator) *RouteBuilder {
-	b.route.AddProcessor(aggregator)
+	b.container.AddProcessor(aggregator)
 	return b
+}
+
+// Split commence un bloc Split EIP
+func (b *RouteBuilder) Split(expression func(*Exchange) (any, error)) *SplitDefinition {
+	s := NewSplitter(expression)
+	b.container.AddProcessor(s)
+	
+	// On crée un nouveau RouteBuilder dont le conteneur est le splitter
+	return &SplitDefinition{
+		RouteBuilder: &RouteBuilder{
+			context:   b.context,
+			route:     b.route,
+			container: s,
+		},
+		parent:   b,
+		splitter: s,
+	}
+}
+
+// SplitDefinition permet de configurer le traitement de chaque partie du message splité
+type SplitDefinition struct {
+	*RouteBuilder
+	parent   *RouteBuilder
+	splitter *Splitter
+}
+
+// AggregationStrategy définit la stratégie d'agrégation pour le splitter
+func (d *SplitDefinition) AggregationStrategy(strategy AggregationStrategy) *SplitDefinition {
+	d.splitter.SetAggregationStrategy(strategy)
+	return d
+}
+
+// Process ajoute un processeur au conteneur actuel et reste dans le contexte du split
+func (d *SplitDefinition) Process(processor Processor) *SplitDefinition {
+	d.RouteBuilder.Process(processor)
+	return d
+}
+
+// ProcessFunc ajoute une fonction de traitement au conteneur actuel et reste dans le contexte du split
+func (d *SplitDefinition) ProcessFunc(f func(*Exchange) error) *SplitDefinition {
+	d.RouteBuilder.ProcessFunc(f)
+	return d
+}
+
+// To ajoute un endpoint de destination au conteneur actuel et reste dans le contexte du split
+func (d *SplitDefinition) To(uri string) *SplitDefinition {
+	d.RouteBuilder.To(uri)
+	return d
+}
+
+// SetBody définit le corps du message de sortie et reste dans le contexte du split
+func (d *SplitDefinition) SetBody(body interface{}) *SplitDefinition {
+	d.RouteBuilder.SetBody(body)
+	return d
+}
+
+// SetHeader définit un en-tête du message de sortie et reste dans le contexte du split
+func (d *SplitDefinition) SetHeader(key string, value interface{}) *SplitDefinition {
+	d.RouteBuilder.SetHeader(key, value)
+	return d
+}
+
+// Aggregate ajoute un agrégateur et reste dans le contexte du split
+func (d *SplitDefinition) Aggregate(aggregator *Aggregator) *SplitDefinition {
+	d.RouteBuilder.Aggregate(aggregator)
+	return d
+}
+
+// Log ajoute un log et reste dans le contexte du split
+func (d *SplitDefinition) Log(message string) *SplitDefinition {
+	d.RouteBuilder.Log(message)
+	return d
+}
+
+// LogBody ajoute un log du corps et reste dans le contexte du split
+func (d *SplitDefinition) LogBody(message string) *SplitDefinition {
+	d.RouteBuilder.LogBody(message)
+	return d
+}
+
+// LogHeaders ajoute un log des en-têtes et reste dans le contexte du split
+func (d *SplitDefinition) LogHeaders(message string) *SplitDefinition {
+	d.RouteBuilder.LogHeaders(message)
+	return d
+}
+
+// End termine le bloc Split et revient au builder parent
+func (d *SplitDefinition) End() *RouteBuilder {
+	return d.parent
 }
 
 // Log ajoute un processeur qui log le message
@@ -101,8 +197,8 @@ func (b *RouteBuilder) Build() *Route {
 	return b.route
 }
 
-// To ajoute un endpoint de destination à la route
+// To ajoute un endpoint de destination au conteneur actuel
 func (b *RouteBuilder) To(uri string) *RouteBuilder {
-	b.route.To(uri)
+	b.container.AddProcessor(createToProcessor(b.context, uri))
 	return b
 }

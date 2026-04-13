@@ -17,6 +17,12 @@ type Processor interface {
 	Process(exchange *Exchange) error
 }
 
+// ProcessorContainer définit l'interface pour les objets pouvant contenir des processeurs.
+// Cela permet de supporter l'imbrication des EIP comme le Splitter.
+type ProcessorContainer interface {
+	AddProcessor(processor Processor)
+}
+
 // ProcessorFunc est un type de fonction qui implémente l'interface Processor
 type ProcessorFunc func(*Exchange) error
 
@@ -56,14 +62,14 @@ func (r *Route) From(uri string) *Route {
 }
 
 // AddProcessor ajoute un processeur à la route
-func (r *Route) AddProcessor(processor Processor) *Route {
+func (r *Route) AddProcessor(processor Processor) {
 	r.processors = append(r.processors, processor)
-	return r
 }
 
 // ProcessFunc ajoute une fonction de traitement à la route
 func (r *Route) ProcessFunc(f func(*Exchange) error) *Route {
-	return r.AddProcessor(ProcessorFunc(f))
+	r.AddProcessor(ProcessorFunc(f))
+	return r
 }
 
 // Process implémente l'interface Processor
@@ -216,14 +222,19 @@ func (r *Route) SetHeader(key string, value interface{}) *Route {
 
 // To ajoute un endpoint de destination à la route
 func (r *Route) To(uri string) *Route {
+	r.AddProcessor(createToProcessor(r.context, uri))
+	return r
+}
+
+func createToProcessor(context *CamelContext, uri string) Processor {
 	var (
 		once     sync.Once
 		producer Producer
 		initErr  error
 	)
-	return r.ProcessFunc(func(exchange *Exchange) error {
+	return ProcessorFunc(func(exchange *Exchange) error {
 		once.Do(func() {
-			endpoint, err := r.context.CreateEndpoint(uri)
+			endpoint, err := context.CreateEndpoint(uri)
 			if err != nil {
 				initErr = err
 				return
