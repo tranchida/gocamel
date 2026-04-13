@@ -3,11 +3,13 @@ package gocamel
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jlaffaye/ftp"
@@ -27,19 +29,28 @@ func (c *FTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return &FTPEndpoint{
-		uri:  uri,
-		url:  u,
-		comp: c,
+		uri:            uri,
+		url:            u,
+		comp:           c,
+		connectTimeout: parseConnectTimeout(u),
+		// passiveMode=true (défaut) : le library jlaffaye/ftp utilise EPSV/PASV.
+		// passiveMode=false : désactive EPSV et tombe sur PASV basique.
+		passiveMode: !strings.EqualFold(GetConfigValue(u, "passiveMode"), "false"),
+		// disconnect=true : se déconnecter après chaque opération.
+		// disconnect=false (défaut) : maintenir la connexion entre les polls.
+		disconnect: strings.EqualFold(GetConfigValue(u, "disconnect"), "true"),
 	}, nil
 }
 
 // FTPEndpoint représente un endpoint FTP
 type FTPEndpoint struct {
-	uri  string
-	url  *url.URL
-	comp *FTPComponent
+	uri            string
+	url            *url.URL
+	comp           *FTPComponent
+	connectTimeout time.Duration
+	passiveMode    bool
+	disconnect     bool
 }
 
 // URI retourne l'URI de l'endpoint
@@ -47,14 +58,19 @@ func (e *FTPEndpoint) URI() string {
 	return e.uri
 }
 
-// connect établit la connexion FTP
+// connect établit une connexion FTP
 func (e *FTPEndpoint) connect() (*ftp.ServerConn, error) {
 	host := e.url.Host
 	if !strings.Contains(host, ":") {
-		host = host + ":21"
+		host += ":21"
 	}
 
-	conn, err := ftp.Dial(host, ftp.DialWithTimeout(5*time.Second))
+	opts := []ftp.DialOption{ftp.DialWithTimeout(e.connectTimeout)}
+	if !e.passiveMode {
+		opts = append(opts, ftp.DialWithDisabledEPSV(true))
+	}
+
+	conn, err := ftp.Dial(host, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("erreur de connexion FTP: %w", err)
 	}
@@ -63,21 +79,16 @@ func (e *FTPEndpoint) connect() (*ftp.ServerConn, error) {
 	if user == "" {
 		user = "anonymous"
 	}
-	pass := GetConfigValue(e.url, "password")
-
-	if err := conn.Login(user, pass); err != nil {
+	if err := conn.Login(user, GetConfigValue(e.url, "password")); err != nil {
 		conn.Quit()
 		return nil, fmt.Errorf("erreur d'authentification FTP: %w", err)
 	}
-
 	return conn, nil
 }
 
 // CreateProducer crée un producteur FTP
 func (e *FTPEndpoint) CreateProducer() (Producer, error) {
-	return &FTPProducer{
-		endpoint: e,
-	}, nil
+	return &FTPProducer{endpoint: e, fileExist: ParseFileExist(e.url)}, nil
 }
 
 // CreateConsumer crée un consommateur FTP
@@ -85,32 +96,71 @@ func (e *FTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &FTPConsumer{
 		endpoint:  e,
 		processor: processor,
+		opts:      ParsePollingOptions(e.url),
 	}, nil
 }
 
+// ---------------------------------------------------------------------------
+// Producer
+// ---------------------------------------------------------------------------
+
 // FTPProducer représente un producteur FTP
 type FTPProducer struct {
-	endpoint *FTPEndpoint
+	endpoint   *FTPEndpoint
+	fileExist  FileExistBehavior
+	mu         sync.Mutex
+	conn       *ftp.ServerConn // connexion persistante (disconnect=false)
 }
 
-func (p *FTPProducer) Start(ctx context.Context) error {
-	return nil
-}
+func (p *FTPProducer) Start(ctx context.Context) error { return nil }
 
 func (p *FTPProducer) Stop() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conn != nil {
+		p.conn.Quit()
+		p.conn = nil
+	}
 	return nil
 }
 
-func (p *FTPProducer) Send(exchange *Exchange) error {
+func (p *FTPProducer) getConn() (*ftp.ServerConn, error) {
+	if p.endpoint.disconnect {
+		return p.endpoint.connect()
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conn != nil {
+		if err := p.conn.NoOp(); err == nil {
+			return p.conn, nil
+		}
+		p.conn.Quit()
+		p.conn = nil
+	}
 	conn, err := p.endpoint.connect()
+	if err != nil {
+		return nil, err
+	}
+	p.conn = conn
+	return conn, nil
+}
+
+func (p *FTPProducer) releaseConn(conn *ftp.ServerConn) {
+	if p.endpoint.disconnect {
+		conn.Quit()
+	}
+}
+
+// Send envoie le contenu de l'échange vers le serveur FTP.
+func (p *FTPProducer) Send(exchange *Exchange) error {
+	conn, err := p.getConn()
 	if err != nil {
 		return err
 	}
-	defer conn.Quit()
+	defer p.releaseConn(conn)
 
 	path := p.endpoint.url.Path
 	if path == "" || path == "/" {
-		// Use a header for filename if no path is given
 		if name, ok := exchange.GetIn().GetHeader(CamelFileName); ok {
 			path = fmt.Sprintf("%v", name)
 		} else {
@@ -125,60 +175,79 @@ func (p *FTPProducer) Send(exchange *Exchange) error {
 	}
 	path = strings.TrimPrefix(path, "/")
 
-	var reader io.Reader
-	switch body := exchange.GetIn().GetBody().(type) {
+	var body []byte
+	switch b := exchange.GetIn().GetBody().(type) {
 	case []byte:
-		reader = bytes.NewReader(body)
+		body = b
 	case string:
-		reader = strings.NewReader(body)
+		body = []byte(b)
 	case io.Reader:
-		reader = body
+		body, err = io.ReadAll(b)
+		if err != nil {
+			return fmt.Errorf("erreur lecture du corps: %w", err)
+		}
 	default:
 		return fmt.Errorf("type de corps non supporté par FTP: %T", exchange.GetIn().GetBody())
 	}
 
-	// Change directory if needed
-	dir := filepath.Dir(path)
-	if dir != "." && dir != "" {
-		// Simple change dir, ignores errors if dir doesn't exist (assumes we might need to create it, but ftp package doesn't have MkdirAll)
-		conn.ChangeDir(dir)
+	switch p.fileExist {
+	case FileExistFail:
+		if size, err := conn.FileSize(path); err == nil && size >= 0 {
+			return fmt.Errorf("le fichier existe déjà sur FTP: %s", path)
+		}
+	case FileExistIgnore:
+		if size, err := conn.FileSize(path); err == nil && size >= 0 {
+			return nil
+		}
+	case FileExistAppend:
+		// Télécharger l'existant et concaténer
+		if resp, err := conn.Retr(path); err == nil {
+			existing, _ := io.ReadAll(resp)
+			resp.Close()
+			body = append(existing, body...)
+		}
 	}
 
-	err = conn.Stor(filepath.Base(path), reader)
-	if err != nil {
+	if dir := filepath.Dir(path); dir != "." && dir != "" {
+		conn.ChangeDir(dir) // ignore l'erreur si le répertoire existe déjà
+	}
+	if err := conn.Stor(filepath.Base(path), bytes.NewReader(body)); err != nil {
 		return fmt.Errorf("erreur lors de l'envoi FTP: %w", err)
 	}
-
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// Consumer
+// ---------------------------------------------------------------------------
 
 // FTPConsumer représente un consommateur FTP
 type FTPConsumer struct {
 	endpoint  *FTPEndpoint
 	processor Processor
+	opts      PollingOptions
 	cancel    context.CancelFunc
+	conn      *ftp.ServerConn // connexion persistante (disconnect=false)
 }
 
 func (c *FTPConsumer) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
-
-	delayStr := GetConfigValue(c.endpoint.url, "delay")
-	delay := 5 * time.Second
-	if delayStr != "" {
-		if d, err := time.ParseDuration(delayStr); err == nil {
-			delay = d
+	go func() {
+		select {
+		case <-time.After(c.opts.InitialDelay):
+		case <-ctx.Done():
+			return
 		}
-	}
-
-	go c.poll(ctx, delay)
+		c.poll(ctx)
+	}()
 	return nil
 }
 
-func (c *FTPConsumer) poll(ctx context.Context, delay time.Duration) {
-	ticker := time.NewTicker(delay)
+func (c *FTPConsumer) poll(ctx context.Context, ) {
+	ticker := time.NewTicker(c.opts.Delay)
 	defer ticker.Stop()
-
+	c.doPoll(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -189,66 +258,116 @@ func (c *FTPConsumer) poll(ctx context.Context, delay time.Duration) {
 	}
 }
 
-func (c *FTPConsumer) doPoll(ctx context.Context) {
+func (c *FTPConsumer) getConn() (*ftp.ServerConn, error) {
+	if c.endpoint.disconnect {
+		return c.endpoint.connect()
+	}
+	if c.conn != nil {
+		if err := c.conn.NoOp(); err == nil {
+			return c.conn, nil
+		}
+		c.conn.Quit()
+		c.conn = nil
+	}
 	conn, err := c.endpoint.connect()
+	if err != nil {
+		return nil, err
+	}
+	c.conn = conn
+	return conn, nil
+}
+
+func (c *FTPConsumer) releaseConn(conn *ftp.ServerConn) {
+	if c.endpoint.disconnect {
+		conn.Quit()
+	}
+}
+
+func (c *FTPConsumer) doPoll(ctx context.Context) {
+	conn, err := c.getConn()
 	if err != nil {
 		fmt.Printf("Erreur de connexion FTP pendant le polling: %v\n", err)
 		return
 	}
-	defer conn.Quit()
+	defer c.releaseConn(conn)
 
-	path := strings.TrimPrefix(c.endpoint.url.Path, "/")
-	if path == "" {
-		path = "."
+	rootPath := strings.TrimPrefix(c.endpoint.url.Path, "/")
+	if rootPath == "" {
+		rootPath = "."
 	}
 
-	entries, err := conn.List(path)
-	if err != nil {
-		fmt.Printf("Erreur lors du listage FTP: %v\n", err)
-		return
+	type ftpFile struct {
+		name string
+		path string
 	}
+	var files []ftpFile
 
-	include := GetConfigValue(c.endpoint.url, "include")
-	exclude := GetConfigValue(c.endpoint.url, "exclude")
-
-	for _, entry := range entries {
-		if entry.Type == ftp.EntryTypeFile {
-			if !matchFileName(entry.Name, include, exclude) {
-				continue
+	var listDir func(dir string)
+	listDir = func(dir string) {
+		entries, err := conn.List(dir)
+		if err != nil {
+			fmt.Printf("Erreur lors du listage FTP %s: %v\n", dir, err)
+			return
+		}
+		for _, entry := range entries {
+			fullPath := dir + "/" + entry.Name
+			if dir == "." {
+				fullPath = entry.Name
 			}
-
-			filePath := path + "/" + entry.Name
-			if path == "." {
-				filePath = entry.Name
+			switch entry.Type {
+			case ftp.EntryTypeFolder:
+				if c.opts.Recursive && entry.Name != "." && entry.Name != ".." {
+					listDir(fullPath)
+				}
+			case ftp.EntryTypeFile:
+				if matchFileName(entry.Name, c.opts.Include, c.opts.Exclude) {
+					files = append(files, ftpFile{name: entry.Name, path: fullPath})
+				}
 			}
-			resp, err := conn.Retr(filePath)
-			if err != nil {
-				fmt.Printf("Erreur lors de la récupération du fichier FTP %s: %v\n", filePath, err)
-				continue
+		}
+	}
+	listDir(rootPath)
+
+	count := 0
+	for _, f := range files {
+		if c.opts.MaxMessagesPerPoll > 0 && count >= c.opts.MaxMessagesPerPoll {
+			break
+		}
+
+		resp, err := conn.Retr(f.path)
+		if err != nil {
+			fmt.Printf("Erreur lors de la récupération du fichier FTP %s: %v\n", f.path, err)
+			continue
+		}
+		content, err := io.ReadAll(resp)
+		resp.Close()
+		if err != nil {
+			fmt.Printf("Erreur lors de la lecture du fichier FTP %s: %v\n", f.path, err)
+			continue
+		}
+
+		exchange := NewExchange(ctx)
+		exchange.SetBody(content)
+		exchange.SetHeader(CamelFileName, f.name)
+		exchange.SetHeader(CamelFilePath, f.path)
+
+		if err := c.processor.Process(exchange); err != nil {
+			if !errors.Is(err, ErrStopRouting) {
+				fmt.Printf("Erreur lors du traitement du fichier FTP %s: %v\n", f.path, err)
+				if !c.opts.Noop && c.opts.MoveFailed != "" {
+					moveFTPFile(conn, f.path, c.opts.MoveFailed)
+				}
 			}
+			continue
+		}
 
-			content, err := io.ReadAll(resp)
-			resp.Close()
-
-			if err != nil {
-				fmt.Printf("Erreur lors de la lecture du fichier FTP %s: %v\n", filePath, err)
-				continue
-			}
-
-			exchange := NewExchange(ctx)
-			exchange.SetBody(content)
-			exchange.SetHeader(CamelFileName, entry.Name)
-			exchange.SetHeader(CamelFilePath, filePath)
-
-			if err := c.processor.Process(exchange); err != nil {
-				fmt.Printf("Erreur lors du traitement du fichier FTP %s: %v\n", filePath, err)
-			}
-
-			// Delete after processing if configured
-			deleteStr := GetConfigValue(c.endpoint.url, "delete")
-			if strings.EqualFold(deleteStr, "true") {
-				if err := conn.Delete(filePath); err != nil {
-					fmt.Printf("Erreur lors de la suppression du fichier FTP %s: %v\n", filePath, err)
+		count++
+		if !c.opts.Noop {
+			if c.opts.Move != "" {
+				moveFTPFile(conn, f.path, c.opts.Move)
+			} else if c.opts.Delete {
+				if err := conn.Delete(f.path); err != nil {
+					fmt.Printf("Erreur lors de la suppression du fichier FTP %s: %v\n", f.path, err)
 				}
 			}
 		}
@@ -259,5 +378,17 @@ func (c *FTPConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	if c.conn != nil {
+		c.conn.Quit()
+		c.conn = nil
+	}
 	return nil
+}
+
+// moveFTPFile renomme/déplace un fichier sur le serveur FTP.
+func moveFTPFile(conn *ftp.ServerConn, srcPath, destDir string) {
+	destPath := destDir + "/" + filepath.Base(srcPath)
+	if err := conn.Rename(srcPath, destPath); err != nil {
+		fmt.Printf("Erreur déplacement FTP %s -> %s: %v\n", srcPath, destPath, err)
+	}
 }

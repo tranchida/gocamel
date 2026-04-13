@@ -3,6 +3,7 @@ package gocamel
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -28,19 +29,22 @@ func (c *SMBComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return &SMBEndpoint{
-		uri:  uri,
-		url:  u,
-		comp: c,
+		uri:            uri,
+		url:            u,
+		comp:           c,
+		connectTimeout: parseConnectTimeout(u),
+		disconnect:     strings.EqualFold(GetConfigValue(u, "disconnect"), "true"),
 	}, nil
 }
 
 // SMBEndpoint représente un endpoint SMB
 type SMBEndpoint struct {
-	uri  string
-	url  *url.URL
-	comp *SMBComponent
+	uri            string
+	url            *url.URL
+	comp           *SMBComponent
+	connectTimeout time.Duration
+	disconnect     bool
 }
 
 // URI retourne l'URI de l'endpoint
@@ -48,73 +52,88 @@ func (e *SMBEndpoint) URI() string {
 	return e.uri
 }
 
-// connect établit la connexion SMB
-func (e *SMBEndpoint) connect() (net.Conn, *smb2.Session, *smb2.Share, error) {
+type smbConn struct {
+	tcp     net.Conn
+	session *smb2.Session
+	share   *smb2.Share
+}
+
+func (sc *smbConn) close() {
+	if sc.share != nil {
+		sc.share.Umount()
+	}
+	if sc.session != nil {
+		sc.session.Logoff()
+	}
+	if sc.tcp != nil {
+		sc.tcp.Close()
+	}
+}
+
+// connect établit une connexion SMB
+func (e *SMBEndpoint) connect() (*smbConn, error) {
 	host := e.url.Host
 	if !strings.Contains(host, ":") {
-		host = host + ":445"
+		host += ":445"
 	}
 
-	conn, err := net.Dial("tcp", host)
+	tcp, err := net.DialTimeout("tcp", host, e.connectTimeout)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("erreur de connexion TCP (SMB): %w", err)
+		return nil, fmt.Errorf("erreur de connexion TCP (SMB): %w", err)
 	}
-
-	user := GetConfigValue(e.url, "username")
-	pass := GetConfigValue(e.url, "password")
-	domain := GetConfigValue(e.url, "domain")
 
 	d := &smb2.Dialer{
 		Initiator: &smb2.NTLMInitiator{
-			User:     user,
-			Password: pass,
-			Domain:   domain,
+			User:     GetConfigValue(e.url, "username"),
+			Password: GetConfigValue(e.url, "password"),
+			Domain:   GetConfigValue(e.url, "domain"),
 		},
 	}
 
-	session, err := d.Dial(conn)
+	session, err := d.Dial(tcp)
 	if err != nil {
-		conn.Close()
-		return nil, nil, nil, fmt.Errorf("erreur de session SMB: %w", err)
+		tcp.Close()
+		return nil, fmt.Errorf("erreur de session SMB: %w", err)
 	}
 
-	// Le share est le premier élément du path
-	pathParts := strings.SplitN(strings.TrimPrefix(e.url.Path, "/"), "/", 2)
-	shareName := ""
-	if len(pathParts) > 0 {
-		shareName = pathParts[0]
-	}
-
+	shareName, _ := e.shareName()
 	if shareName == "" {
 		session.Logoff()
-		conn.Close()
-		return nil, nil, nil, fmt.Errorf("aucun nom de partage spécifié dans l'URI SMB")
+		tcp.Close()
+		return nil, fmt.Errorf("aucun nom de partage spécifié dans l'URI SMB")
 	}
 
 	share, err := session.Mount(shareName)
 	if err != nil {
 		session.Logoff()
-		conn.Close()
-		return nil, nil, nil, fmt.Errorf("erreur de montage du partage SMB %s: %w", shareName, err)
+		tcp.Close()
+		return nil, fmt.Errorf("erreur de montage du partage SMB %s: %w", shareName, err)
 	}
 
-	return conn, session, share, nil
+	return &smbConn{tcp: tcp, session: session, share: share}, nil
 }
 
-// getFilePath extrait le chemin relatif au partage
-func (e *SMBEndpoint) getFilePath() string {
-	pathParts := strings.SplitN(strings.TrimPrefix(e.url.Path, "/"), "/", 2)
-	if len(pathParts) > 1 {
-		return pathParts[1]
+// shareName retourne le nom du partage et le chemin relatif à ce partage.
+func (e *SMBEndpoint) shareName() (string, string) {
+	parts := strings.SplitN(strings.TrimPrefix(e.url.Path, "/"), "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		return "", ""
 	}
-	return ""
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+	return parts[0], parts[1]
+}
+
+// getFilePath retourne le chemin du fichier/répertoire relatif au partage.
+func (e *SMBEndpoint) getFilePath() string {
+	_, p := e.shareName()
+	return strings.ReplaceAll(p, "/", "\\")
 }
 
 // CreateProducer crée un producteur SMB
 func (e *SMBEndpoint) CreateProducer() (Producer, error) {
-	return &SMBProducer{
-		endpoint: e,
-	}, nil
+	return &SMBProducer{endpoint: e, fileExist: ParseFileExist(e.url)}, nil
 }
 
 // CreateConsumer crée un consommateur SMB
@@ -122,33 +141,66 @@ func (e *SMBEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &SMBConsumer{
 		endpoint:  e,
 		processor: processor,
+		opts:      ParsePollingOptions(e.url),
 	}, nil
 }
 
+// ---------------------------------------------------------------------------
+// Producer
+// ---------------------------------------------------------------------------
+
 // SMBProducer représente un producteur SMB
 type SMBProducer struct {
-	endpoint *SMBEndpoint
+	endpoint  *SMBEndpoint
+	fileExist FileExistBehavior
+	sc        *smbConn // connexion persistante (disconnect=false)
 }
 
-func (p *SMBProducer) Start(ctx context.Context) error {
-	return nil
-}
+func (p *SMBProducer) Start(ctx context.Context) error { return nil }
 
 func (p *SMBProducer) Stop() error {
+	if p.sc != nil {
+		p.sc.close()
+		p.sc = nil
+	}
 	return nil
 }
 
+func (p *SMBProducer) getConn() (*smbConn, error) {
+	if p.endpoint.disconnect {
+		return p.endpoint.connect()
+	}
+	if p.sc != nil {
+		if _, err := p.sc.share.Stat("."); err == nil {
+			return p.sc, nil
+		}
+		p.sc.close()
+		p.sc = nil
+	}
+	sc, err := p.endpoint.connect()
+	if err != nil {
+		return nil, err
+	}
+	p.sc = sc
+	return sc, nil
+}
+
+func (p *SMBProducer) releaseConn(sc *smbConn) {
+	if p.endpoint.disconnect {
+		sc.close()
+	}
+}
+
+// Send envoie le contenu de l'échange vers le partage SMB.
 func (p *SMBProducer) Send(exchange *Exchange) error {
-	conn, session, share, err := p.endpoint.connect()
+	sc, err := p.getConn()
 	if err != nil {
 		return err
 	}
-	defer share.Umount()
-	defer session.Logoff()
-	defer conn.Close()
+	defer p.releaseConn(sc)
 
 	path := p.endpoint.getFilePath()
-	if path == "" || strings.HasSuffix(path, "/") || strings.HasSuffix(path, "\\") {
+	if path == "" || strings.HasSuffix(path, "\\") {
 		if name, ok := exchange.GetIn().GetHeader(CamelFileName); ok {
 			path = filepath.Join(path, fmt.Sprintf("%v", name))
 		} else {
@@ -157,77 +209,85 @@ func (p *SMBProducer) Send(exchange *Exchange) error {
 	}
 	path = strings.ReplaceAll(path, "/", "\\")
 
-	var reader io.Reader
-	switch body := exchange.GetIn().GetBody().(type) {
+	switch p.fileExist {
+	case FileExistFail:
+		if _, err := sc.share.Stat(path); err == nil {
+			return fmt.Errorf("le fichier existe déjà sur SMB: %s", path)
+		}
+	case FileExistIgnore:
+		if _, err := sc.share.Stat(path); err == nil {
+			return nil
+		}
+	}
+
+	var body []byte
+	switch b := exchange.GetIn().GetBody().(type) {
 	case []byte:
-		reader = bytes.NewReader(body)
+		body = b
 	case string:
-		reader = strings.NewReader(body)
+		body = []byte(b)
 	case io.Reader:
-		reader = body
+		if body, err = io.ReadAll(b); err != nil {
+			return fmt.Errorf("erreur lecture du corps: %w", err)
+		}
 	default:
 		return fmt.Errorf("type de corps non supporté par SMB: %T", exchange.GetIn().GetBody())
 	}
 
-	// Create directories if needed
-	dir := filepath.Dir(path)
-	if dir != "." && dir != "\\" && dir != "" {
-		parts := strings.Split(dir, "\\")
-		current := ""
-		for _, part := range parts {
-			if part == "" {
-				continue
-			}
-			if current == "" {
-				current = part
-			} else {
-				current = current + "\\" + part
-			}
-			share.Mkdir(current, 0755) // ignore error, dir might exist
+	if p.fileExist == FileExistAppend {
+		if f, err := sc.share.Open(path); err == nil {
+			existing, _ := io.ReadAll(f)
+			f.Close()
+			body = append(existing, body...)
 		}
 	}
 
-	file, err := share.Create(path)
+	// Créer les répertoires parents si nécessaire
+	smbMkdirAll(sc.share, filepath.Dir(path))
+
+	file, err := sc.share.Create(path)
 	if err != nil {
 		return fmt.Errorf("erreur lors de la création du fichier SMB: %w", err)
 	}
 	defer file.Close()
 
-	_, err = io.Copy(file, reader)
-	if err != nil {
+	if _, err = io.Copy(file, bytes.NewReader(body)); err != nil {
 		return fmt.Errorf("erreur lors de l'écriture SMB: %w", err)
 	}
-
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// Consumer
+// ---------------------------------------------------------------------------
 
 // SMBConsumer représente un consommateur SMB
 type SMBConsumer struct {
 	endpoint  *SMBEndpoint
 	processor Processor
+	opts      PollingOptions
 	cancel    context.CancelFunc
+	sc        *smbConn // connexion persistante (disconnect=false)
 }
 
 func (c *SMBConsumer) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
-
-	delayStr := GetConfigValue(c.endpoint.url, "delay")
-	delay := 5 * time.Second
-	if delayStr != "" {
-		if d, err := time.ParseDuration(delayStr); err == nil {
-			delay = d
+	go func() {
+		select {
+		case <-time.After(c.opts.InitialDelay):
+		case <-ctx.Done():
+			return
 		}
-	}
-
-	go c.poll(ctx, delay)
+		c.poll(ctx)
+	}()
 	return nil
 }
 
-func (c *SMBConsumer) poll(ctx context.Context, delay time.Duration) {
-	ticker := time.NewTicker(delay)
+func (c *SMBConsumer) poll(ctx context.Context) {
+	ticker := time.NewTicker(c.opts.Delay)
 	defer ticker.Stop()
-
+	c.doPoll(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -238,61 +298,117 @@ func (c *SMBConsumer) poll(ctx context.Context, delay time.Duration) {
 	}
 }
 
+func (c *SMBConsumer) getConn() (*smbConn, error) {
+	if c.endpoint.disconnect {
+		return c.endpoint.connect()
+	}
+	if c.sc != nil {
+		if _, err := c.sc.share.Stat("."); err == nil {
+			return c.sc, nil
+		}
+		c.sc.close()
+		c.sc = nil
+	}
+	sc, err := c.endpoint.connect()
+	if err != nil {
+		return nil, err
+	}
+	c.sc = sc
+	return sc, nil
+}
+
+func (c *SMBConsumer) releaseConn(sc *smbConn) {
+	if c.endpoint.disconnect {
+		sc.close()
+	}
+}
+
+type smbFile struct {
+	name string
+	path string
+}
+
+// listSMBFiles liste les fichiers (récursivement si opts.Recursive) en appliquant include/exclude.
+func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile {
+	entries, err := share.ReadDir(dirPath)
+	if err != nil {
+		fmt.Printf("Erreur lors du listage SMB %s: %v\n", dirPath, err)
+		return nil
+	}
+
+	var result []smbFile
+	for _, entry := range entries {
+		entryPath := filepath.Join(dirPath, entry.Name())
+		entryPath = strings.ReplaceAll(entryPath, "/", "\\")
+
+		if entry.IsDir() {
+			if c.opts.Recursive && entry.Name() != "." && entry.Name() != ".." {
+				result = append(result, c.listSMBFiles(share, entryPath)...)
+			}
+			continue
+		}
+		if matchFileName(entry.Name(), c.opts.Include, c.opts.Exclude) {
+			result = append(result, smbFile{name: entry.Name(), path: entryPath})
+		}
+	}
+	return result
+}
+
 func (c *SMBConsumer) doPoll(ctx context.Context) {
-	conn, session, share, err := c.endpoint.connect()
+	sc, err := c.getConn()
 	if err != nil {
 		fmt.Printf("Erreur de connexion SMB pendant le polling: %v\n", err)
 		return
 	}
-	defer share.Umount()
-	defer session.Logoff()
-	defer conn.Close()
+	defer c.releaseConn(sc)
 
-	path := c.endpoint.getFilePath()
-	path = strings.ReplaceAll(path, "/", "\\")
-	if path == "" {
-		path = "."
+	rootPath := c.endpoint.getFilePath()
+	if rootPath == "" {
+		rootPath = "."
 	}
 
-	entries, err := share.ReadDir(path)
-	if err != nil {
-		fmt.Printf("Erreur lors du listage SMB: %v\n", err)
-		return
-	}
+	files := c.listSMBFiles(sc.share, rootPath)
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			filePath := filepath.Join(path, entry.Name())
-			filePath = strings.ReplaceAll(filePath, "/", "\\")
+	count := 0
+	for _, f := range files {
+		if c.opts.MaxMessagesPerPoll > 0 && count >= c.opts.MaxMessagesPerPoll {
+			break
+		}
 
-			file, err := share.Open(filePath)
-			if err != nil {
-				fmt.Printf("Erreur lors de l'ouverture du fichier SMB %s: %v\n", filePath, err)
-				continue
+		file, err := sc.share.Open(f.path)
+		if err != nil {
+			fmt.Printf("Erreur lors de l'ouverture du fichier SMB %s: %v\n", f.path, err)
+			continue
+		}
+		content, err := io.ReadAll(file)
+		file.Close()
+		if err != nil {
+			fmt.Printf("Erreur lors de la lecture du fichier SMB %s: %v\n", f.path, err)
+			continue
+		}
+
+		exchange := NewExchange(ctx)
+		exchange.SetBody(content)
+		exchange.SetHeader(CamelFileName, f.name)
+		exchange.SetHeader(CamelFilePath, f.path)
+
+		if err := c.processor.Process(exchange); err != nil {
+			if !errors.Is(err, ErrStopRouting) {
+				fmt.Printf("Erreur lors du traitement du fichier SMB %s: %v\n", f.path, err)
+				if !c.opts.Noop && c.opts.MoveFailed != "" {
+					moveSMBFile(sc.share, f.path, c.opts.MoveFailed)
+				}
 			}
+			continue
+		}
 
-			content, err := io.ReadAll(file)
-			file.Close()
-
-			if err != nil {
-				fmt.Printf("Erreur lors de la lecture du fichier SMB %s: %v\n", filePath, err)
-				continue
-			}
-
-			exchange := NewExchange(ctx)
-			exchange.SetBody(content)
-			exchange.SetHeader(CamelFileName, entry.Name())
-			exchange.SetHeader(CamelFilePath, filePath)
-
-			if err := c.processor.Process(exchange); err != nil {
-				fmt.Printf("Erreur lors du traitement du fichier SMB %s: %v\n", filePath, err)
-			}
-
-			// Delete after processing if configured
-			deleteStr := GetConfigValue(c.endpoint.url, "delete")
-			if strings.EqualFold(deleteStr, "true") {
-				if err := share.Remove(filePath); err != nil {
-					fmt.Printf("Erreur lors de la suppression du fichier SMB %s: %v\n", filePath, err)
+		count++
+		if !c.opts.Noop {
+			if c.opts.Move != "" {
+				moveSMBFile(sc.share, f.path, c.opts.Move)
+			} else if c.opts.Delete {
+				if err := sc.share.Remove(f.path); err != nil {
+					fmt.Printf("Erreur lors de la suppression du fichier SMB %s: %v\n", f.path, err)
 				}
 			}
 		}
@@ -303,5 +419,37 @@ func (c *SMBConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	if c.sc != nil {
+		c.sc.close()
+		c.sc = nil
+	}
 	return nil
+}
+
+// moveSMBFile renomme/déplace un fichier sur le partage SMB.
+func moveSMBFile(share *smb2.Share, srcPath, destDir string) {
+	destDir = strings.ReplaceAll(destDir, "/", "\\")
+	smbMkdirAll(share, destDir)
+	destPath := strings.ReplaceAll(filepath.Join(destDir, filepath.Base(srcPath)), "/", "\\")
+	if err := share.Rename(srcPath, destPath); err != nil {
+		fmt.Printf("Erreur déplacement SMB %s -> %s: %v\n", srcPath, destPath, err)
+	}
+}
+
+// smbMkdirAll crée récursivement les répertoires sur un partage SMB.
+func smbMkdirAll(share *smb2.Share, path string) {
+	path = strings.ReplaceAll(path, "/", "\\")
+	parts := strings.Split(path, "\\")
+	current := ""
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		if current == "" {
+			current = part
+		} else {
+			current = current + "\\" + part
+		}
+		share.Mkdir(current, 0755) // ignore l'erreur si le répertoire existe déjà
+	}
 }
