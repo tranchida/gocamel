@@ -68,6 +68,16 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 | `openai` | `openai_component.go` | Chat completion (Producer only) |
 | `xslt` | `xslt_component.go` | XSLT transformation (Producer only) |
 | `xsd` | `xsd_component.go` | XSD schema validation (Producer only) |
+| `quartz` | `quartz_component.go` | Cron/interval-based scheduler (Consumer only) |
+
+### Quartz component notes
+- CronTrigger (`cron=` param): uses robfig/cron with 6-field seconds-inclusive expressions
+- SimpleTrigger (`trigger.repeatInterval=` param): uses `time.Ticker` — supports sub-second intervals (robfig/cron `@every` rounds up to 1s, so it is intentionally bypassed)
+- All consumers on the same `QuartzComponent` share one `*cron.Cron` scheduler
+- Headers set on each exchange: `fireTime`, `scheduledFireTime`, `nextFireTime`, `previousFireTime`, `triggerName`, `triggerGroup`, `refireCount`
+
+### InOut exchange pattern
+`Exchange.GetResponse()` returns `Out` if its body is set, otherwise falls back to `In`. Used by `HTTPConsumer` so processors can reply without explicitly writing to `Out`.
 
 ### Adding a New Component
 1. Implement `Component`, `Endpoint`, `Consumer` (if applicable), and `Producer` (if applicable) in a `<name>_component.go` file

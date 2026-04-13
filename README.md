@@ -114,6 +114,61 @@ func main() {
 }
 ```
 
+### Exemple Quartz
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/tranchida/gocamel"
+)
+
+func main() {
+    context := gocamel.NewCamelContext()
+    context.AddComponent("quartz", gocamel.NewQuartzComponent())
+
+    // CronTrigger : toutes les minutes (expression 6 champs, secondes incluses)
+    route1 := context.CreateRouteBuilder().
+        From("quartz://monGroupe/minutely?cron=0+*+*+*+*+*").
+        ProcessFunc(func(exchange *gocamel.Exchange) error {
+            fmt.Println("Déclenchement cron :", exchange.GetIn().Headers[gocamel.QuartzFireTime])
+            return nil
+        }).
+        Build()
+
+    // SimpleTrigger : toutes les 5 secondes (intervalles sub-secondes supportés)
+    route2 := context.CreateRouteBuilder().
+        From("quartz://poller?trigger.repeatInterval=5000&triggerStartDelay=0").
+        ProcessFunc(func(exchange *gocamel.Exchange) error {
+            fmt.Println("Tick toutes les 5s")
+            return nil
+        }).
+        Build()
+
+    context.AddRoute(route1)
+    context.AddRoute(route2)
+    context.Start()
+    select {}
+}
+```
+
+**Paramètres URI Quartz :**
+
+| Paramètre | Description | Défaut |
+|-----------|-------------|--------|
+| `cron` | Expression cron 6 champs (espaces encodés en `+`) | — |
+| `trigger.repeatInterval` | Intervalle en ms (SimpleTrigger) | — |
+| `trigger.repeatCount` | Nombre max de déclenchements (`-1` = infini) | `-1` |
+| `trigger.timeZone` | Timezone IANA (ex: `Europe/Paris`) — CronTrigger uniquement | — |
+| `triggerStartDelay` | Délai en ms avant le premier déclenchement | `500` |
+| `deleteJob` | Supprimer le job à l'arrêt | `true` |
+| `pauseJob` | Mettre en pause au lieu de supprimer à l'arrêt | `false` |
+| `stateful` | Empêcher les exécutions concurrentes (CronTrigger) | `false` |
+
+**En-têtes posés sur chaque Exchange :**
+`fireTime`, `scheduledFireTime`, `nextFireTime`, `previousFireTime`, `triggerName`, `triggerGroup`, `refireCount`
+
 ## Structure du projet
 
 ```
@@ -132,7 +187,10 @@ gocamel/
 ├── sftp_component.go  # Composant SFTP
 ├── smb_component.go   # Composant SMB (Samba / Windows Share)
 ├── telegram_component.go # Composant Telegram Bot
-└── openai_component.go   # Composant OpenAI
+├── openai_component.go   # Composant OpenAI
+├── xslt_component.go     # Composant XSLT
+├── xsd_component.go      # Composant XSD
+└── quartz_component.go   # Composant Quartz (scheduler)
 ```
 
 ## Composants disponibles
@@ -146,6 +204,7 @@ gocamel/
 - **OpenAI** (`openai:...`) : Chat Completion (Producer uniquement).
 - **XSLT** (`xslt:...`) : Transformation XML via une feuille de style (Producer uniquement).
 - **XSD** (`xsd:...`) : Validation de schéma XML (Producer uniquement).
+- **Quartz** (`quartz://...`) : Déclenchement planifié par expression cron ou intervalle fixe (Consumer uniquement).
 
 ## Configuration
 
