@@ -94,6 +94,22 @@ func (e *Exchange) GetOut() *Message {
 	return e.Out
 }
 
+// HasOut retourne true si le message Out a été explicitement défini (corps non nil).
+func (e *Exchange) HasOut() bool {
+	return e.Out.GetBody() != nil
+}
+
+// GetResponse retourne le message Out si son corps a été défini,
+// sinon retourne le message In. Correspond au comportement InOut d'Apache Camel :
+// si le processeur ne définit pas de réponse explicite, le message d'entrée
+// est utilisé tel quel comme réponse.
+func (e *Exchange) GetResponse() *Message {
+	if e.HasOut() {
+		return e.Out
+	}
+	return e.In
+}
+
 
 // SetBody définit le corps du message d'entrée
 func (e *Exchange) SetBody(body any) {

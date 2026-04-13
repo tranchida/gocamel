@@ -19,7 +19,7 @@ func main() {
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
 			// Ajout d'un en-tête de réponse
 			exchange.SetHeader("X-Processed-At", time.Now().Format(time.RFC3339))
-			exchange.GetOut().SetBody(exchange.GetIn().GetBody())
+			//exchange.GetOut().SetBody(exchange.GetIn().GetBody())
 			return nil
 		}).Build()
 

@@ -166,17 +166,19 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			return
 		}
 
-		// Ajout des en-têtes de réponse
-		for key, value := range exchange.GetOut().GetHeaders() {
+		// Réponse : Out si défini, sinon In (comportement InOut Apache Camel)
+		response := exchange.GetResponse()
+
+		for key, value := range response.GetHeaders() {
 			if strValue, ok := value.(string); ok {
 				w.Header().Set(key, strValue)
 			}
 		}
 
-		// Envoi de la réponse
-		if body, ok := exchange.GetOut().GetBody().([]byte); ok {
+		switch body := response.GetBody().(type) {
+		case []byte:
 			w.Write(body)
-		} else if body, ok := exchange.GetOut().GetBody().(string); ok {
+		case string:
 			w.Write([]byte(body))
 		}
 	})
