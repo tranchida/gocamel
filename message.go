@@ -3,7 +3,6 @@ package gocamel
 import (
 	"maps"
 	"regexp"
-	"strings"
 )
 
 // Message représente un message dans une route
@@ -86,15 +85,6 @@ func (m *Message) RemoveHeaders(pattern string, excludePatterns ...string) {
 			}
 		}
 	}
-}
-
-// patternToRegex convertit un pattern avec '*' en Regexp
-func patternToRegex(pattern string) *regexp.Regexp {
-	// Échapper les caractères spéciaux de regex, puis remplacer '*' par '.*'
-	quoted := regexp.QuoteMeta(pattern)
-	regexStr := "^" + strings.ReplaceAll(quoted, "\\*", ".*") + "$"
-	re, _ := regexp.Compile(regexStr)
-	return re
 }
 
 // HasHeader vérifie si un en-tête existe

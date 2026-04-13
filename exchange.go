@@ -3,6 +3,7 @@ package gocamel
 import (
 	"context"
 	"maps"
+	"regexp"
 	"time"
 )
 
@@ -157,6 +158,38 @@ func (e *Exchange) GetPropertyOrDefault(key string, defaultValue any) any {
 func (e *Exchange) RemoveProperty(key string) {
 	delete(e.Properties, key)
 	e.Modified = time.Now()
+}
+
+// RemoveProperties supprime les propriétés correspondant au pattern fourni,
+// sauf celles qui correspondent aux patterns d'exclusion fournis.
+// Le pattern supporte les jokers Apache Camel '*' (ex: 'Camel*').
+func (e *Exchange) RemoveProperties(pattern string, excludePatterns ...string) {
+	// Compilation du pattern principal
+	mainRegex := patternToRegex(pattern)
+
+	// Compilation des patterns d'exclusion
+	var excludeRegexes []*regexp.Regexp
+	for _, p := range excludePatterns {
+		excludeRegexes = append(excludeRegexes, patternToRegex(p))
+	}
+
+	// Filtrage des propriétés
+	for key := range e.Properties {
+		if mainRegex.MatchString(key) {
+			shouldExclude := false
+			for _, exRegex := range excludeRegexes {
+				if exRegex.MatchString(key) {
+					shouldExclude = true
+					break
+				}
+			}
+
+			if !shouldExclude {
+				delete(e.Properties, key)
+				e.Modified = time.Now()
+			}
+		}
+	}
 }
 
 // HasProperty vérifie si une propriété existe

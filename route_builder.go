@@ -75,6 +75,43 @@ func (b *RouteBuilder) SetHeadersFunc(f func(*Exchange) (map[string]any, error))
 	})
 }
 
+// SetProperty définit une propriété de l'échange
+func (b *RouteBuilder) SetProperty(key string, value any) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		exchange.SetProperty(key, value)
+		return nil
+	})
+}
+
+// SetPropertyFunc définit une propriété via une fonction
+func (b *RouteBuilder) SetPropertyFunc(key string, f func(*Exchange) (any, error)) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		val, err := f(exchange)
+		if err != nil {
+			return err
+		}
+		exchange.SetProperty(key, val)
+		return nil
+	})
+}
+
+// RemoveProperty supprime une propriété de l'échange
+func (b *RouteBuilder) RemoveProperty(key string) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		exchange.RemoveProperty(key)
+		return nil
+	})
+}
+
+// RemoveProperties supprime les propriétés correspondant au pattern fourni,
+// sauf celles qui correspondent aux patterns d'exclusion fournis.
+func (b *RouteBuilder) RemoveProperties(pattern string, excludePatterns ...string) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		exchange.RemoveProperties(pattern, excludePatterns...)
+		return nil
+	})
+}
+
 // RemoveHeader supprime un en-tête du message entrant
 func (b *RouteBuilder) RemoveHeader(name string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
@@ -185,6 +222,30 @@ func (d *SplitDefinition) SetHeaders(headers map[string]any) *SplitDefinition {
 // SetHeadersFunc définit plusieurs en-têtes via une fonction et reste dans le contexte du split
 func (d *SplitDefinition) SetHeadersFunc(f func(*Exchange) (map[string]any, error)) *SplitDefinition {
 	d.RouteBuilder.SetHeadersFunc(f)
+	return d
+}
+
+// SetProperty définit une propriété de l'échange et reste dans le contexte du split
+func (d *SplitDefinition) SetProperty(key string, value any) *SplitDefinition {
+	d.RouteBuilder.SetProperty(key, value)
+	return d
+}
+
+// SetPropertyFunc définit une propriété via une fonction et reste dans le contexte du split
+func (d *SplitDefinition) SetPropertyFunc(key string, f func(*Exchange) (any, error)) *SplitDefinition {
+	d.RouteBuilder.SetPropertyFunc(key, f)
+	return d
+}
+
+// RemoveProperty supprime une propriété de l'échange et reste dans le contexte du split
+func (d *SplitDefinition) RemoveProperty(key string) *SplitDefinition {
+	d.RouteBuilder.RemoveProperty(key)
+	return d
+}
+
+// RemoveProperties supprime les propriétés correspondant au pattern fourni et reste dans le contexte du split
+func (d *SplitDefinition) RemoveProperties(pattern string, excludePatterns ...string) *SplitDefinition {
+	d.RouteBuilder.RemoveProperties(pattern, excludePatterns...)
 	return d
 }
 
