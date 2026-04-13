@@ -220,15 +220,39 @@ func (r *Route) SetHeader(key string, value interface{}) *Route {
 	})
 }
 
-// To ajoute un endpoint de destination à la route
-func (r *Route) To(uri string) *Route {
-	r.AddProcessor(createToProcessor(r.context, uri))
+// To ajoute un ou plusieurs endpoints de destination à la route.
+// Si plusieurs URIs sont fournies, un Multicast est créé automatiquement.
+func (r *Route) To(uris ...string) *Route {
+	if len(uris) == 0 {
+		return r
+	}
+	if len(uris) == 1 {
+		r.AddProcessor(createToProcessor(r.context, uris[0]))
+	} else {
+		m := NewMulticast()
+		for _, uri := range uris {
+			m.AddProcessor(createToProcessor(r.context, uri))
+		}
+		r.AddProcessor(m)
+	}
 	return r
 }
 
-// ToD ajoute un processeur dynamique d'envoi à une URI calculée à chaque échange.
-func (r *Route) ToD(uriTemplate string) *Route {
-	r.AddProcessor(createToDProcessor(r.context, uriTemplate))
+// ToD ajoute un ou plusieurs processeurs dynamiques d'envoi à une URI calculée à chaque échange.
+// Si plusieurs templates sont fournis, un Multicast est créé automatiquement.
+func (r *Route) ToD(uriTemplates ...string) *Route {
+	if len(uriTemplates) == 0 {
+		return r
+	}
+	if len(uriTemplates) == 1 {
+		r.AddProcessor(createToDProcessor(r.context, uriTemplates[0]))
+	} else {
+		m := NewMulticast()
+		for _, uriTemplate := range uriTemplates {
+			m.AddProcessor(createToDProcessor(r.context, uriTemplate))
+		}
+		r.AddProcessor(m)
+	}
 	return r
 }
 

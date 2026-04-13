@@ -195,15 +195,15 @@ func (d *SplitDefinition) ProcessFunc(f func(*Exchange) error) *SplitDefinition 
 	return d
 }
 
-// To ajoute un endpoint de destination au conteneur actuel et reste dans le contexte du split
-func (d *SplitDefinition) To(uri string) *SplitDefinition {
-	d.RouteBuilder.To(uri)
+// To ajoute un ou plusieurs endpoints de destination au conteneur actuel et reste dans le contexte du split
+func (d *SplitDefinition) To(uris ...string) *SplitDefinition {
+	d.RouteBuilder.To(uris...)
 	return d
 }
 
-// ToD ajoute un endpoint dynamique de destination et reste dans le contexte du split
-func (d *SplitDefinition) ToD(uriTemplate string) *SplitDefinition {
-	d.RouteBuilder.ToD(uriTemplate)
+// ToD ajoute un ou plusieurs endpoints dynamiques de destination et reste dans le contexte du split
+func (d *SplitDefinition) ToD(uriTemplates ...string) *SplitDefinition {
+	d.RouteBuilder.ToD(uriTemplates...)
 	return d
 }
 
@@ -338,14 +338,171 @@ func (b *RouteBuilder) Stop() *RouteBuilder {
 	})
 }
 
-// To ajoute un endpoint de destination au conteneur actuel
-func (b *RouteBuilder) To(uri string) *RouteBuilder {
-	b.container.AddProcessor(createToProcessor(b.context, uri))
+// To ajoute un ou plusieurs endpoints de destination au conteneur actuel.
+// Si plusieurs URIs sont fournies, un Multicast est créé automatiquement.
+func (b *RouteBuilder) To(uris ...string) *RouteBuilder {
+	if len(uris) == 0 {
+		return b
+	}
+	if len(uris) == 1 {
+		b.container.AddProcessor(createToProcessor(b.context, uris[0]))
+	} else {
+		m := NewMulticast()
+		for _, uri := range uris {
+			m.AddProcessor(createToProcessor(b.context, uri))
+		}
+		b.container.AddProcessor(m)
+	}
 	return b
 }
 
-// ToD ajoute un endpoint dynamique de destination au conteneur actuel
-func (b *RouteBuilder) ToD(uriTemplate string) *RouteBuilder {
-	b.container.AddProcessor(createToDProcessor(b.context, uriTemplate))
+// ToD ajoute un ou plusieurs endpoints dynamiques de destination au conteneur actuel.
+// Si plusieurs templates sont fournis, un Multicast est créé automatiquement.
+func (b *RouteBuilder) ToD(uriTemplates ...string) *RouteBuilder {
+	if len(uriTemplates) == 0 {
+		return b
+	}
+	if len(uriTemplates) == 1 {
+		b.container.AddProcessor(createToDProcessor(b.context, uriTemplates[0]))
+	} else {
+		m := NewMulticast()
+		for _, uriTemplate := range uriTemplates {
+			m.AddProcessor(createToDProcessor(b.context, uriTemplate))
+		}
+		b.container.AddProcessor(m)
+	}
 	return b
 }
+
+// Multicast commence un bloc Multicast EIP
+func (b *RouteBuilder) Multicast() *MulticastDefinition {
+	m := NewMulticast()
+	b.container.AddProcessor(m)
+
+	return &MulticastDefinition{
+		RouteBuilder: &RouteBuilder{
+			context:   b.context,
+			route:     b.route,
+			container: m,
+		},
+		parent:    b,
+		multicast: m,
+	}
+}
+
+// MulticastDefinition permet de configurer le Multicast EIP
+type MulticastDefinition struct {
+	*RouteBuilder
+	parent    *RouteBuilder
+	multicast *Multicast
+}
+
+// AggregationStrategy définit la stratégie d'agrégation pour le multicast
+func (d *MulticastDefinition) AggregationStrategy(strategy AggregationStrategy) *MulticastDefinition {
+	d.multicast.SetAggregationStrategy(strategy)
+	return d
+}
+
+// ParallelProcessing active ou désactive le traitement parallèle
+func (d *MulticastDefinition) ParallelProcessing() *MulticastDefinition {
+	d.multicast.SetParallelProcessing(true)
+	return d
+}
+
+// Pipeline commence un bloc Pipeline pour grouper des processeurs dans une branche de multicast
+func (d *MulticastDefinition) Pipeline() *PipelineDefinition {
+	p := NewPipeline()
+	d.multicast.AddProcessor(p)
+
+	return &PipelineDefinition{
+		RouteBuilder: &RouteBuilder{
+			context:   d.context,
+			route:     d.route,
+			container: p,
+		},
+		parent: d,
+	}
+}
+
+// Process ajoute un processeur au conteneur actuel et reste dans le contexte du multicast
+func (d *MulticastDefinition) Process(processor Processor) *MulticastDefinition {
+	d.RouteBuilder.Process(processor)
+	return d
+}
+
+// ProcessFunc ajoute une fonction de traitement au conteneur actuel et reste dans le contexte du multicast
+func (d *MulticastDefinition) ProcessFunc(f func(*Exchange) error) *MulticastDefinition {
+	d.RouteBuilder.ProcessFunc(f)
+	return d
+}
+
+// To ajoute un ou plusieurs endpoints de destination au conteneur actuel et reste dans le contexte du multicast
+func (d *MulticastDefinition) To(uris ...string) *MulticastDefinition {
+	d.RouteBuilder.To(uris...)
+	return d
+}
+
+// ToD ajoute un ou plusieurs endpoints dynamiques de destination et reste dans le contexte du multicast
+func (d *MulticastDefinition) ToD(uriTemplates ...string) *MulticastDefinition {
+	d.RouteBuilder.ToD(uriTemplates...)
+	return d
+}
+
+// SetBody définit le corps du message de sortie et reste dans le contexte du multicast
+func (d *MulticastDefinition) SetBody(body interface{}) *MulticastDefinition {
+	d.RouteBuilder.SetBody(body)
+	return d
+}
+
+// SetHeader définit un en-tête du message de sortie et reste dans le contexte du multicast
+func (d *MulticastDefinition) SetHeader(key string, value interface{}) *MulticastDefinition {
+	d.RouteBuilder.SetHeader(key, value)
+	return d
+}
+
+// End termine le bloc Multicast et revient au builder parent
+func (d *MulticastDefinition) End() *RouteBuilder {
+	return d.parent
+}
+
+// PipelineDefinition permet de configurer un groupe de processeurs
+type PipelineDefinition struct {
+	*RouteBuilder
+	parent *MulticastDefinition
+}
+
+// Process ajoute un processeur au conteneur actuel et reste dans le contexte du pipeline
+func (d *PipelineDefinition) Process(processor Processor) *PipelineDefinition {
+	d.RouteBuilder.Process(processor)
+	return d
+}
+
+// ProcessFunc ajoute une fonction de traitement au conteneur actuel et reste dans le contexte du pipeline
+func (d *PipelineDefinition) ProcessFunc(f func(*Exchange) error) *PipelineDefinition {
+	d.RouteBuilder.ProcessFunc(f)
+	return d
+}
+
+// To ajoute un ou plusieurs endpoints de destination au conteneur actuel et reste dans le contexte du pipeline
+func (d *PipelineDefinition) To(uris ...string) *PipelineDefinition {
+	d.RouteBuilder.To(uris...)
+	return d
+}
+
+// ToD ajoute un ou plusieurs endpoints dynamiques de destination et reste dans le contexte du pipeline
+func (d *PipelineDefinition) ToD(uriTemplates ...string) *PipelineDefinition {
+	d.RouteBuilder.ToD(uriTemplates...)
+	return d
+}
+
+// SetBody définit le corps du message de sortie et reste dans le contexte du pipeline
+func (d *PipelineDefinition) SetBody(body interface{}) *PipelineDefinition {
+	d.RouteBuilder.SetBody(body)
+	return d
+}
+
+// End termine le bloc Pipeline et revient au builder multicast
+func (d *PipelineDefinition) End() *MulticastDefinition {
+	return d.parent
+}
+
