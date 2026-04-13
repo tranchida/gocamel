@@ -48,10 +48,33 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 ### Configuration (`config.go`)
 - `GetConfigValue(u *url.URL, key string)` — unified config lookup used by all components: checks env vars first (`KEY`, then `SCHEME_KEY`), then URI query params, then URL userinfo. Sensitive credentials should use env vars.
 
-### EIP: Aggregator (`aggregator.go`, `aggregation_strategy.go`, `aggregation_repository.go`)
+### EIP: Split (`splitter.go`)
+- **`Splitter`** implements `Processor`. Splits a message into parts using an expression function; each part is processed sequentially through nested processors
+- `SplitDefinition` — fluent sub-DSL returned by `.Split(expr)`. Supports `.AggregationStrategy()`, all standard DSL methods, and `.End()` to close the block
+- Exchange properties set on each part: `CamelSplitIndex` (0-based), `CamelSplitSize`, `CamelSplitComplete` (bool)
+
+### EIP: Aggregate (`aggregator.go`, `aggregation_strategy.go`, `aggregation_repository.go`)
 - **`Aggregator`** implements `Processor`. Collects exchanges under a correlation key until `CompletionSize` is reached, then lets the aggregated exchange continue; incomplete groups return `ErrStopRouting`
 - **`AggregationStrategy`** — interface (`Aggregate(old, new *Exchange) *Exchange`) for merge logic
 - **`AggregationRepository`** — interface for persistence; implementations: `MemoryAggregationRepository` (in-process) and `SqlAggregationRepository` (SQLite via `go-sqlite3`)
+
+### EIP: Multicast (`multicast.go`, `pipeline.go`)
+- **`Multicast`** implements `Processor`. Sends a copy of the exchange to multiple branches (sequential or parallel)
+- `MulticastDefinition` — fluent sub-DSL returned by `.Multicast()`. Supports `.AggregationStrategy()`, `.ParallelProcessing()`, `.Pipeline()` (sub-branch), and `.End()`
+- `PipelineDefinition` — groups processors within a multicast branch; `.End()` returns to `MulticastDefinition`
+- Exchange properties set on each branch: `CamelMulticastIndex` (0-based), `CamelMulticastSize`, `CamelMulticastComplete` (bool)
+
+### EIP: Stop
+- `.Stop()` — halts routing for the current exchange by returning `ErrStopRouting` (not treated as a failure)
+
+### EIP: ToD (To Dynamic)
+- `.ToD(uriTemplate)` — sends to an endpoint whose URI is resolved at runtime using `${header.x}`, `${property.x}`, or `${body}` interpolation (`Interpolate()` in `utils.go`)
+
+### Header/Property EIPs
+- `.SetHeader(key, value)` / `.SetHeaders(map)` / `.SetHeadersFunc(fn)` — set Out message headers
+- `.RemoveHeader(name)` / `.RemoveHeaders(pattern, excludePatterns...)` — remove In message headers; `*` wildcard supported with optional exclusions
+- `.SetProperty(key, value)` / `.SetPropertyFunc(key, fn)` — set exchange properties
+- `.RemoveProperty(key)` / `.RemoveProperties(pattern, excludePatterns...)` — remove exchange properties; `*` wildcard with optional exclusions
 
 ### Management API (`management.go`)
 - `ManagementServer` exposes a REST API: `GET /api/context`, `GET /api/routes`, `POST /api/routes/{id}/start|stop`
@@ -70,6 +93,24 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 | `xsd` | `xsd_component.go` | XSD schema validation (Producer only) |
 | `quartz` | `quartz_component.go` | Cron/interval-based scheduler (Consumer only) |
 | `exec` | `exec_component.go` | Execute system commands (Producer only) |
+| `direct` | `direct_component.go` | Synchronous in-memory routing between routes (Consumer & Producer) |
+| `timer` | `timer_component.go` | Simple periodic timer (Consumer only) |
+
+### Exchange Properties API (`exchange.go`)
+- `SetProperty(key, value)`, `GetProperty(key)`, `GetPropertyOrDefault(key, default)`, `HasProperty(key)`
+- Typed accessors: `GetPropertyAsString`, `GetPropertyAsInt`, `GetPropertyAsBool`, `GetPropertyAsFloat`, `GetPropertyAsTime`, `GetPropertyAsDuration`, `GetPropertyAsMap`, `GetPropertyAsSlice`
+- `RemoveProperty(key)`, `RemoveProperties(pattern, excludePatterns...)` — `*` wildcard with exclusions
+- `GetProperties()`, `SetProperties(map)`, `ClearProperties()`
+
+### Timer component notes
+- URI params: `period` (ms, default 1000), `delay` (ms, default 1000), `repeatCount` (0=unlimited), `fixedRate` (bool)
+- Exchange properties set on each fire: `CamelTimerName`, `CamelTimerFiredTime`, `CamelTimerPeriod`, `CamelTimerCounter`
+- Simpler predecessor to Quartz; use Quartz for cron expressions or sub-second intervals
+
+### Exec component notes
+- URI params: `args` (space-separated), `workingDir`, `timeout` (ms), `outFile` (redirect stdout to file), `useStderrOnEmpty` (bool)
+- Headers on output: `CamelExecExitValue`, `CamelExecStdout`, `CamelExecStderr`
+- Headers for runtime override: `CamelExecCommandExecutable`, `CamelExecCommandArgs`, `CamelExecCommandWorkingDir`, `CamelExecCommandTimeout`
 
 ### Quartz component notes
 - CronTrigger (`cron=` param): uses robfig/cron with 6-field seconds-inclusive expressions

@@ -14,7 +14,7 @@ go get github.com/tranchida/gocamel
 - Gestion des messages avec corps et en-têtes
 - Contexte Camel pour la gestion du cycle de vie
 - Pattern Builder pour la création de routes
-- Support des EIP (Split, Aggregate)
+- Support des EIP (Split, Aggregate, Multicast, Stop, ToD, SetHeader, SetHeaders, SetHeadersFunc, RemoveHeader, RemoveHeaders, SetProperty, SetPropertyFunc, RemoveProperty, RemoveProperties)
 - Fonctions de logging intégrées
 - Gestion centralisée des identifiants (fichiers, query params, variables d'environnement)
 
@@ -56,6 +56,88 @@ builder.From("direct:start").
     Aggregate(gocamel.NewAggregator(correlationExpr, strategy, repo).
         SetCompletionSize(3)).
     Log("Message agrégé : ${body}")
+```
+
+### Multicast EIP
+
+Le Multicast EIP envoie une copie du message à plusieurs destinations ou branches de processeurs.
+
+```go
+builder.From("direct:start").
+    Multicast().
+        Pipeline().
+            Log("Branche 1 : ${body}").
+            To("direct:out1").
+        End().
+        Pipeline().
+            Log("Branche 2 : ${body}").
+            To("direct:out2").
+        End().
+    End(). // Fin du bloc Multicast
+    Log("Traitement terminé pour toutes les branches")
+```
+
+**Options du Multicast :**
+- **`AggregationStrategy`** : Permet de combiner les résultats de chaque branche.
+- **`ParallelProcessing`** : Active le traitement parallèle des branches (goroutines).
+- **Propriétés de l'Exchange** : Chaque branche dispose de propriétés spécifiques :
+    - `CamelMulticastIndex` : Index actuel (0-based)
+    - `CamelMulticastSize` : Nombre total de branches
+    - `CamelMulticastComplete` : Booléen indiquant s'il s'agit de la dernière branche
+
+### Stop EIP
+
+Le Stop EIP arrête le routage du message courant sans que cela soit considéré comme un échec.
+
+```go
+builder.From("direct:start").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        if e.GetIn().GetBody() == "stop" {
+            return nil // condition à vérifier
+        }
+        return nil
+    }).
+    Stop().
+    Log("Ce log ne sera jamais atteint")
+```
+
+### ToD (To Dynamic) EIP
+
+Le ToD EIP permet d'envoyer un message vers un endpoint dont l'URI est résolue dynamiquement à l'exécution. Les expressions `${header.x}`, `${property.x}` et `${body}` sont interpolées dans le template d'URI.
+
+```go
+builder.From("direct:start").
+    SetHeader(gocamel.CamelFileName, "output.txt").
+    ToD("file://output/${header.CamelFileName}")
+```
+
+### Header/Property EIPs
+
+GoCamel propose un ensemble d'EIP pour manipuler les en-têtes et les propriétés de l'Exchange :
+
+**En-têtes :**
+- `SetHeader(key, value)` / `SetHeaders(map)` / `SetHeadersFunc(fn)` : Définit les en-têtes du message de sortie.
+- `RemoveHeader(name)` / `RemoveHeaders(pattern, excludePatterns...)` : Supprime des en-têtes du message d'entrée. Le pattern `*` est supporté comme joker, avec des patterns d'exclusion optionnels.
+
+```go
+builder.From("direct:start").
+    SetHeaders(map[string]any{"X-Custom": "value", "X-Trace": "123"}).
+    RemoveHeaders("X-Debug*", "X-DebugKeep").
+    To("direct:out")
+```
+
+**Propriétés :**
+- `SetProperty(key, value)` / `SetPropertyFunc(key, fn)` : Définit une propriété sur l'Exchange.
+- `RemoveProperty(key)` / `RemoveProperties(pattern, excludePatterns...)` : Supprime des propriétés. Le pattern `*` est supporté comme joker, avec des patterns d'exclusion optionnels.
+
+```go
+builder.From("direct:start").
+    SetProperty("correlationId", "abc-123").
+    SetPropertyFunc("timestamp", func(e *gocamel.Exchange) (any, error) {
+        return time.Now().UnixMilli(), nil
+    }).
+    RemoveProperties("temp*").
+    To("direct:out")
 ```
 
 ## Exemples d'utilisation
@@ -214,28 +296,38 @@ func main() {
 
 ```
 gocamel/
-├── context.go         # Gestion du contexte Camel
-├── exchange.go        # Structure d'échange de messages
-├── message.go         # Structure de message
-├── route.go           # Gestion des routes
-├── route_builder.go   # Pattern Builder pour les routes
-├── registry.go        # Registre des composants
-├── config.go          # Utilitaires de gestion des configurations environnementales
-├── uri_utils.go       # Utilitaires de parsing d'URI
-├── aggregator.go      # Implémentation de l'EIP Aggregate
-├── splitter.go        # Implémentation de l'EIP Split
+├── context.go              # Gestion du contexte Camel
+├── exchange.go             # Structure d'échange de messages
+├── message.go              # Structure de message
+├── route.go                # Gestion des routes
+├── route_builder.go        # Pattern Builder pour les routes (DSL)
+├── registry.go             # Registre des composants
+├── config.go               # Utilitaires de gestion des configurations environnementales
+├── utils.go                # Utilitaires (interpolation, pattern-to-regex)
+├── aggregator.go           # Implémentation de l'EIP Aggregate
+├── splitter.go             # Implémentation de l'EIP Split
+├── multicast.go            # Implémentation de l'EIP Multicast
+├── pipeline.go             # Pipeline séquentiel (utilisé par Multicast)
 ├── aggregation_strategy.go # Interface pour les stratégies d'agrégation
 ├── aggregation_repository.go # Interface pour le stockage de l'agrégation
-├── http_component.go  # Composant HTTP
-├── file_component.go  # Composant File
-├── ftp_component.go   # Composant FTP
-├── sftp_component.go  # Composant SFTP
-├── smb_component.go   # Composant SMB (Samba / Windows Share)
-├── telegram_component.go # Composant Telegram Bot
-├── openai_component.go   # Composant OpenAI
-├── xslt_component.go     # Composant XSLT
-├── xsd_component.go      # Composant XSD
-└── quartz_component.go   # Composant Quartz (scheduler)
+├── memory_aggregation_repository.go # Stockage d'agrégation en mémoire
+├── sql_aggregation_repository.go   # Stockage d'agrégation SQLite
+├── polling_options.go      # Options de polling partagées (FTP, SFTP, SMB)
+├── file_filter.go          # Filtrage de noms de fichiers (include/exclude)
+├── management.go           # API REST de management (JMX-like)
+├── http_component.go       # Composant HTTP
+├── file_component.go       # Composant File
+├── ftp_component.go        # Composant FTP
+├── sftp_component.go       # Composant SFTP
+├── smb_component.go        # Composant SMB (Samba / Windows Share)
+├── direct_component.go     # Composant Direct (routage en mémoire)
+├── timer_component.go      # Composant Timer (minuterie simple)
+├── telegram_component.go   # Composant Telegram Bot
+├── openai_component.go    # Composant OpenAI
+├── exec_component.go      # Composant Exec (exécution de commandes)
+├── xslt_component.go      # Composant XSLT
+├── xsd_component.go       # Composant XSD
+└── quartz_component.go    # Composant Quartz (scheduler)
 ```
 
 ## Composants disponibles
@@ -245,8 +337,11 @@ gocamel/
 - **FTP** (`ftp://...`) : Serveur FTP (Consumer & Producer).
 - **SFTP** (`sftp://...`) : Serveur SFTP avec authentification SSH (Consumer & Producer).
 - **SMB** (`smb://...`) : Partages réseau Windows/Samba (Consumer & Producer).
+- **Direct** (`direct:...`) : Routage synchrone en mémoire entre routes (Consumer & Producer).
+- **Timer** (`timer:...`) : Minuterie périodique simple (Consumer uniquement).
 - **Telegram** (`telegram:...`) : Bot Telegram (Consumer webhook/polling & Producer).
 - **OpenAI** (`openai:...`) : Chat Completion (Producer uniquement).
+- **Exec** (`exec:...`) : Exécution de commandes système (Producer uniquement).
 - **XSLT** (`xslt:...`) : Transformation XML via une feuille de style (Producer uniquement).
 - **XSD** (`xsd:...`) : Validation de schéma XML (Producer uniquement).
 - **Quartz** (`quartz://...`) : Déclenchement planifié par expression cron ou intervalle fixe (Consumer uniquement).
