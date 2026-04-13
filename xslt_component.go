@@ -1,5 +1,11 @@
 package gocamel
 
+/*
+#cgo pkg-config: libxml-2.0
+#include <libxml/xmlerror.h>
+*/
+import "C"
+
 import (
 	"context"
 	"fmt"
@@ -75,6 +81,11 @@ func (p *XsltProducer) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("erreur lors de la lecture du fichier XSLT: %v", err)
 	}
+
+	// Réinitialise l'état d'erreur global de libxml2 pour éviter que des erreurs
+	// résiduelles (ex. validation XSD) ne causent de faux échecs dans make_style
+	// qui appelle xmlGetLastError() après un xmlParseMemory réussi.
+	C.xmlResetLastError()
 
 	stylesheet, err := xslt.NewStylesheet(xslContent)
 	if err != nil {

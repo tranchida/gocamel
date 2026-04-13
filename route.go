@@ -216,14 +216,31 @@ func (r *Route) SetHeader(key string, value interface{}) *Route {
 
 // To ajoute un endpoint de destination à la route
 func (r *Route) To(uri string) *Route {
+	var (
+		once     sync.Once
+		producer Producer
+		initErr  error
+	)
 	return r.ProcessFunc(func(exchange *Exchange) error {
-		endpoint, err := r.context.CreateEndpoint(uri)
-		if err != nil {
-			return err
-		}
-		producer, err := endpoint.CreateProducer()
-		if err != nil {
-			return err
+		once.Do(func() {
+			endpoint, err := r.context.CreateEndpoint(uri)
+			if err != nil {
+				initErr = err
+				return
+			}
+			p, err := endpoint.CreateProducer()
+			if err != nil {
+				initErr = err
+				return
+			}
+			if err := p.Start(exchange.Context); err != nil {
+				initErr = err
+				return
+			}
+			producer = p
+		})
+		if initErr != nil {
+			return initErr
 		}
 
 		// Propagation de la sortie vers l'entrée si une modification a eu lieu
