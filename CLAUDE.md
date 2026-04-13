@@ -69,6 +69,7 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 | `xslt` | `xslt_component.go` | XSLT transformation (Producer only) |
 | `xsd` | `xsd_component.go` | XSD schema validation (Producer only) |
 | `quartz` | `quartz_component.go` | Cron/interval-based scheduler (Consumer only) |
+| `exec` | `exec_component.go` | Execute system commands (Producer only) |
 
 ### Quartz component notes
 - CronTrigger (`cron=` param): uses robfig/cron with 6-field seconds-inclusive expressions
