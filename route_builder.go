@@ -201,6 +201,12 @@ func (d *SplitDefinition) To(uri string) *SplitDefinition {
 	return d
 }
 
+// ToD ajoute un endpoint dynamique de destination et reste dans le contexte du split
+func (d *SplitDefinition) ToD(uriTemplate string) *SplitDefinition {
+	d.RouteBuilder.ToD(uriTemplate)
+	return d
+}
+
 // SetBody définit le corps du message de sortie et reste dans le contexte du split
 func (d *SplitDefinition) SetBody(body interface{}) *SplitDefinition {
 	d.RouteBuilder.SetBody(body)
@@ -335,5 +341,11 @@ func (b *RouteBuilder) Stop() *RouteBuilder {
 // To ajoute un endpoint de destination au conteneur actuel
 func (b *RouteBuilder) To(uri string) *RouteBuilder {
 	b.container.AddProcessor(createToProcessor(b.context, uri))
+	return b
+}
+
+// ToD ajoute un endpoint dynamique de destination au conteneur actuel
+func (b *RouteBuilder) ToD(uriTemplate string) *RouteBuilder {
+	b.container.AddProcessor(createToDProcessor(b.context, uriTemplate))
 	return b
 }

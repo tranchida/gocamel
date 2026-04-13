@@ -16,6 +16,41 @@ func ParseURI(uri string) (*url.URL, error) {
 	return u, nil
 }
 
+// Interpolate remplace les variables de type ${header.name}, ${property.name} ou ${body} 
+// dans une chaîne par les valeurs correspondantes de l'échange.
+func Interpolate(text string, exchange *Exchange) string {
+	re := regexp.MustCompile(`\${(header|property|body)(?:\.([^}]+))?}`)
+	return re.ReplaceAllStringFunc(text, func(match string) string {
+		submatches := re.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+
+		kind := submatches[1]
+		key := ""
+		if len(submatches) > 2 {
+			key = submatches[2]
+		}
+
+		switch kind {
+		case "header":
+			if val, ok := exchange.In.GetHeader(key); ok {
+				return fmt.Sprintf("%v", val)
+			}
+		case "property":
+			if val, ok := exchange.GetProperty(key); ok {
+				return fmt.Sprintf("%v", val)
+			}
+		case "body":
+			if body := exchange.In.GetBody(); body != nil {
+				return fmt.Sprintf("%v", body)
+			}
+		}
+
+		return "" // Ou retourner le match original si on veut garder ${...} quand non trouvé ? Camel laisse vide ou erreur ?
+	})
+}
+
 // patternToRegex convertit un pattern avec '*' en Regexp
 func patternToRegex(pattern string) *regexp.Regexp {
 	// Échapper les caractères spéciaux de regex, puis remplacer '*' par '.*'

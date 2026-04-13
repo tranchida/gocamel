@@ -226,6 +226,12 @@ func (r *Route) To(uri string) *Route {
 	return r
 }
 
+// ToD ajoute un processeur dynamique d'envoi à une URI calculée à chaque échange.
+func (r *Route) ToD(uriTemplate string) *Route {
+	r.AddProcessor(createToDProcessor(r.context, uriTemplate))
+	return r
+}
+
 func createToProcessor(context *CamelContext, uri string) Processor {
 	var (
 		once     sync.Once
@@ -253,6 +259,43 @@ func createToProcessor(context *CamelContext, uri string) Processor {
 		if initErr != nil {
 			return initErr
 		}
+
+		// Propagation de la sortie vers l'entrée si une modification a eu lieu
+		if outBody := exchange.GetOut().GetBody(); outBody != nil {
+			exchange.GetIn().SetBody(outBody)
+		}
+		for k, v := range exchange.GetOut().GetHeaders() {
+			exchange.GetIn().SetHeader(k, v)
+		}
+
+		return producer.Send(exchange)
+	})
+}
+
+func createToDProcessor(context *CamelContext, uriTemplate string) Processor {
+	return ProcessorFunc(func(exchange *Exchange) error {
+		// Résolution de l'URI dynamique
+		uri := Interpolate(uriTemplate, exchange)
+
+		// Création de l'endpoint et du producer à chaque fois (pour ToD)
+		// TODO: Optimiser avec un cache de producers si nécessaire
+		endpoint, err := context.CreateEndpoint(uri)
+		if err != nil {
+			return fmt.Errorf("toD dynamic endpoint creation error: %w", err)
+		}
+
+		producer, err := endpoint.CreateProducer()
+		if err != nil {
+			return fmt.Errorf("toD producer creation error: %w", err)
+		}
+
+		if err := producer.Start(exchange.Context); err != nil {
+			return fmt.Errorf("toD producer start error: %w", err)
+		}
+		// On s'assure que le producer est arrêté à la fin (ou on laisse le GC s'en charger si l'endpoint est éphémère ?)
+		// Normalement dans Camel, les producteurs dynamiques sont mis en cache.
+		// Si on ne met pas en cache, on devrait probablement arrêter le producteur après l'envoi.
+		defer producer.Stop()
 
 		// Propagation de la sortie vers l'entrée si une modification a eu lieu
 		if outBody := exchange.GetOut().GetBody(); outBody != nil {
