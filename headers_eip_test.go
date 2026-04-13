@@ -70,3 +70,45 @@ func TestRemoveHeadersExclusion(t *testing.T) {
 	assert.True(t, exchange.GetIn().HasHeader("CamelHttpUrl"))
 	assert.True(t, exchange.GetIn().HasHeader("CamelHttpMethod"))
 }
+
+func TestSetHeaders(t *testing.T) {
+	ctx := NewCamelContext()
+	ctx.AddComponent("direct", NewDirectComponent())
+
+	headers := map[string]any{
+		"Header1": "Value1",
+		"Header2": 123,
+	}
+
+	route := NewRouteBuilder(ctx).
+		From("direct:setheaders").
+		SetHeaders(headers).
+		Build()
+
+	exchange := NewExchange(context.Background())
+	err := route.Process(exchange)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "Value1", exchange.GetOut().GetHeaders()["Header1"])
+	assert.Equal(t, 123, exchange.GetOut().GetHeaders()["Header2"])
+}
+
+func TestSetHeadersFunc(t *testing.T) {
+	ctx := NewCamelContext()
+	ctx.AddComponent("direct", NewDirectComponent())
+
+	route := NewRouteBuilder(ctx).
+		From("direct:setheadersfunc").
+		SetHeadersFunc(func(e *Exchange) (map[string]any, error) {
+			return map[string]any{
+				"Dynamic": "Value",
+			}, nil
+		}).
+		Build()
+
+	exchange := NewExchange(context.Background())
+	err := route.Process(exchange)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "Value", exchange.GetOut().GetHeaders()["Dynamic"])
+}

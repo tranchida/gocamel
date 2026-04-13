@@ -55,6 +55,26 @@ func (b *RouteBuilder) SetHeader(key string, value interface{}) *RouteBuilder {
 	})
 }
 
+// SetHeaders définit plusieurs en-têtes du message de sortie
+func (b *RouteBuilder) SetHeaders(headers map[string]any) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		exchange.GetOut().SetHeaders(headers)
+		return nil
+	})
+}
+
+// SetHeadersFunc définit plusieurs en-têtes via une fonction
+func (b *RouteBuilder) SetHeadersFunc(f func(*Exchange) (map[string]any, error)) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		headers, err := f(exchange)
+		if err != nil {
+			return err
+		}
+		exchange.GetOut().SetHeaders(headers)
+		return nil
+	})
+}
+
 // RemoveHeader supprime un en-tête du message entrant
 func (b *RouteBuilder) RemoveHeader(name string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
@@ -153,6 +173,18 @@ func (d *SplitDefinition) SetBody(body interface{}) *SplitDefinition {
 // SetHeader définit un en-tête du message de sortie et reste dans le contexte du split
 func (d *SplitDefinition) SetHeader(key string, value interface{}) *SplitDefinition {
 	d.RouteBuilder.SetHeader(key, value)
+	return d
+}
+
+// SetHeaders définit plusieurs en-têtes et reste dans le contexte du split
+func (d *SplitDefinition) SetHeaders(headers map[string]any) *SplitDefinition {
+	d.RouteBuilder.SetHeaders(headers)
+	return d
+}
+
+// SetHeadersFunc définit plusieurs en-têtes via une fonction et reste dans le contexte du split
+func (d *SplitDefinition) SetHeadersFunc(f func(*Exchange) (map[string]any, error)) *SplitDefinition {
+	d.RouteBuilder.SetHeadersFunc(f)
 	return d
 }
 
