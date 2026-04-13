@@ -139,6 +139,12 @@ func (d *SplitDefinition) SetHeader(key string, value interface{}) *SplitDefinit
 	return d
 }
 
+// Stop arrête le traitement de la partie actuelle et reste dans le contexte du split
+func (d *SplitDefinition) Stop() *SplitDefinition {
+	d.RouteBuilder.Stop()
+	return d
+}
+
 // Aggregate ajoute un agrégateur et reste dans le contexte du split
 func (d *SplitDefinition) Aggregate(aggregator *Aggregator) *SplitDefinition {
 	d.RouteBuilder.Aggregate(aggregator)
@@ -195,6 +201,13 @@ func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
 // Build finalise la construction de la route
 func (b *RouteBuilder) Build() *Route {
 	return b.route
+}
+
+// Stop arrête le traitement de l'échange actuel
+func (b *RouteBuilder) Stop() *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		return ErrStopRouting
+	})
 }
 
 // To ajoute un endpoint de destination au conteneur actuel

@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 )
@@ -55,7 +56,10 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		partExchange.SetProperty("CamelSplitComplete", true)
 
 		if err := s.processPart(partExchange, parts, 0, 1); err != nil {
-			return err
+			if !errors.Is(err, ErrStopRouting) {
+				return err
+			}
+			// En cas de Stop EIP, on continue vers l'agrégation
 		}
 
 		if s.AggregationStrategy != nil {
@@ -88,7 +92,10 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		partExchange.SetProperty("CamelSplitComplete", i == length-1)
 
 		if err := s.processPart(partExchange, part, i, length); err != nil {
-			return err
+			if !errors.Is(err, ErrStopRouting) {
+				return err
+			}
+			// En cas de Stop EIP, on ignore l'erreur et on continue vers la partie suivante
 		}
 
 		if s.AggregationStrategy != nil {
