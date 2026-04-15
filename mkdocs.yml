@@ -61,10 +61,7 @@ extra:
 
 plugins:
   - search
-  - minify:
-      minify_html: true
-      minify_js: true
-      minify_css: true
+  - minify-plugin
   - git-revision-date-localized:
       enable_creation_date: true
       fallback_to_build_date: true
