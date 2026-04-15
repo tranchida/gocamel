@@ -1,0 +1,123 @@
+site_name: "GoCamel"
+site_url: https://gocamel.dev/
+repo_url: https://github.com/tranchida/gocamel
+repo_name: tranchida/gocamel
+edit_uri: edit/main/docs/
+
+site_description: "Framework d'intégration d'entreprise inspiré d'Apache Camel, écrit en Go"
+site_author: "tranchida"
+
+copyright: Copyright &copy; 2026 GoCamel
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Passer au mode sombre
+    - scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Passer au mode clair
+  
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.prune
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - search.share
+    - header.autohide
+    - announce.dismiss
+    - content.code.copy
+    - content.code.select
+    - content.code.annotate
+    - content.tooltips
+    - content.tabs.link
+    
+  icon:
+    repo: fontawesome/brands/github
+    
+  logo: icon:camel
+  
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/tranchida/gocamel
+      
+  generator: false
+  
+  annotations: false
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+  - git-revision-date-localized:
+      enable_creation_date: true
+      fallback_to_build_date: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 4
+  - attr_list
+  - md_in_html
+  - abbr
+
+nav:
+  - Accueil: 
+    - index.md
+    - Fonctionnalités: features.md
+    - Quick Start: quickstart.md
+  - Documentation:
+    - Concepts: concepts.md
+    - Architecture: architecture.md
+    - Composants: components.md
+    - EIP (Patterns): eip.md
+  - Guide:
+    - Installation: installation.md
+    - Configuration: configuration.md
+    - Exemples: examples.md
+  - Référence API: reference.md
+  - Changelog: changelog.md
+
+extra_css:
+  - stylesheets/extra.css
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
