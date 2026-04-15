@@ -8,15 +8,19 @@ copyright: Copyright &copy; 2026 GoCamel
 theme:
   name: material
   palette:
-    - scheme: default
-      primary: blue
-      accent: blue
+    # Mode clair
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
       toggle:
         icon: material/brightness-7
         name: Passer au mode sombre
-    - scheme: slate
-      primary: blue
-      accent: blue
+    # Mode sombre
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
       toggle:
         icon: material/brightness-4
         name: Passer au mode clair
