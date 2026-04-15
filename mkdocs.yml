@@ -1,11 +1,7 @@
 site_name: "GoCamel"
-site_url: https://gocamel.dev/
+site_url: https://tranchida.github.io/gocamel/
 repo_url: https://github.com/tranchida/gocamel
 repo_name: tranchida/gocamel
-edit_uri: edit/main/docs/
-
-site_description: "Framework d'intégration d'entreprise inspiré d'Apache Camel, écrit en Go"
-site_author: "tranchida"
 
 copyright: Copyright &copy; 2026 GoCamel
 
@@ -30,54 +26,33 @@ theme:
     - navigation.tracking
     - navigation.tabs
     - navigation.sections
-    - navigation.expand
-    - navigation.path
-    - navigation.prune
     - navigation.top
     - search.suggest
     - search.highlight
     - search.share
-    - header.autohide
-    - announce.dismiss
     - content.code.copy
-    - content.code.select
-    - content.code.annotate
-    - content.tooltips
-    - content.tabs.link
     
   icon:
     repo: fontawesome/brands/github
     
-  logo: icon:camel
-  
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/tranchida/gocamel
       
   generator: false
-  
-  annotations: false
 
 plugins:
   - search
-  - minify-plugin
   - git-revision-date-localized:
       enable_creation_date: true
-      fallback_to_build_date: true
 
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.superfences
   - pymdownx.highlight:
       anchor_linenums: true
-      line_spans: __span
-      pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.tabbed:
@@ -112,9 +87,3 @@ nav:
 
 extra_css:
   - stylesheets/extra.css
-
-validation:
-  omitted_files: warn
-  absolute_links: warn
-  unrecognized_links: warn
-  anchors: warn
