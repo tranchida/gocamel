@@ -17,7 +17,7 @@ hide:
 </style>
 
 <h1 style="text-align: center; margin-top: 2em; margin-bottom: 0.5em;">
-🐪 GoCamel 2
+🐪 GoCamel
 </h1>
 
 <p style="text-align: center; font-size: 1.3em; color: var(--md-default-fg-color--light); margin-bottom: 2em;">
