@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"fmt"
 	"log"
 )
 
@@ -329,6 +330,31 @@ func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
 // Build finalise la construction de la route
 func (b *RouteBuilder) Build() *Route {
 	return b.route
+}
+
+// SimpleSetBody sets the body using a Simple Language expression
+func (b *RouteBuilder) SimpleSetBody(expression string) *RouteBuilder {
+	template, err := ParseSimpleTemplate(expression)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse simple expression: %v", err))
+	}
+	
+	b.route.AddProcessor(&SimpleLanguageProcessor{Template: template})
+	return b
+}
+
+// SimpleSetHeader sets a header using a Simple Language expression
+func (b *RouteBuilder) SimpleSetHeader(headerName string, expression string) *RouteBuilder {
+	template, err := ParseSimpleTemplate(expression)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse simple expression: %v", err))
+	}
+	
+	b.route.AddProcessor(&SimpleSetHeaderProcessor{
+		HeaderName: headerName,
+		Expression: template,
+	})
+	return b
 }
 
 // Stop arrête le traitement de l'échange actuel

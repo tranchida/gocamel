@@ -30,8 +30,19 @@ GoCamel est un framework d'intégration d'entreprise qui simplifie la connexion 
 - **Aggregator** — Combine plusieurs messages en un seul
 - **Multicast** — Envoie à plusieurs destinations
 - **Pipeline** — Chaîne séquentielle de processors
+- **Choice** — Routage basé sur le contenu (Content-Based Router)
 - **Stop** — Arrête le routage conditionnellement
 - **Headers/Properties** — Manipulation des métadonnées
+
+### 💬 Simple Language
+
+Moteur d'expressions inspiré d'Apache Camel pour manipuler les données d'échange :
+
+- **Variables** : `${body}`, `${header.name}`, `${exchangeProperty.prop}`
+- **Notations** : Point (`body.field`), Crochets (`body['key']`), Null-safe (`body?.field`)
+- **Fonctions** : `${date:now}`, `${random(MAX)}`, `${uuid}`
+- **Comparaisons** : `==`, `!=`, `>`, `<`, `>=`, `<=`
+- **Intégration** : `SimpleSetBody()`, `SimpleSetHeader()`, `Choice().When()`
 
 ### 📊 Management & Monitoring
 
@@ -51,11 +62,12 @@ GoCamel est un framework d'intégration d'entreprise qui simplifie la connexion 
 ### ✅ Disponible
 
 - [x] Core: Exchange, Message, Context
-- [x] EIP: Split, Aggregate, Multicast, Pipeline
+- [x] EIP: Split, Aggregate, Multicast, Choice, Pipeline
 - [x] Composants HTTP, File, FTP, SFTP, SMB
 - [x] Composants Telegram, OpenAI
 - [x] Scheduling: Timer, Quartz
 - [x] REST Management API
+- [x] Simple Language (expressions dynamiques)
 
 ### 🚧 En cours
 
@@ -80,6 +92,7 @@ GoCamel est un framework d'intégration d'entreprise qui simplifie la connexion 
 |---------|---------|--------------|----------------|
 | DSL Fluent | ✅ | ✅ | ❌ |
 | EIP Patterns | ✅ | ✅ | ❌/Partiel |
+| Simple Language | ✅ | ✅ | ❌ |
 | Performance | ⚡ Go | ☕ JVM | ⚡ Go |
 | Embarqué | ✅ Oui | ❌ Lourd | ✅ |
 | Mémoire | Basse | Haute | Basse |

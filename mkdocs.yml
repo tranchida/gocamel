@@ -82,6 +82,7 @@ nav:
     - Architecture: architecture.md
     - Composants: components.md
     - EIP (Patterns): eip.md
+    - Simple Language: simple-language.md
   - Guide:
     - Installation: installation.md
     - Configuration: configuration.md

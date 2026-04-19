@@ -14,9 +14,60 @@ go get github.com/tranchida/gocamel
 - Gestion des messages avec corps et en-têtes
 - Contexte Camel pour la gestion du cycle de vie
 - Pattern Builder pour la création de routes
-- Support des EIP (Split, Aggregate, Multicast, Stop, ToD, SetHeader, SetHeaders, SetHeadersFunc, RemoveHeader, RemoveHeaders, SetProperty, SetPropertyFunc, RemoveProperty, RemoveProperties)
+- Support des EIP (Split, Aggregate, Multicast, Stop, ToD, SetHeader, SetHeaders, SetHeadersFunc, RemoveHeader, RemoveHeaders, SetProperty, SetPropertyFunc, RemoveProperty, RemoveProperties, **Choice**)
+- **Simple Language** pour les expressions dynamiques (${body}, ${header.name}, fonctions, comparaisons)
 - Fonctions de logging intégrées
 - Gestion centralisée des identifiants (fichiers, query params, variables d'environnement)
+
+## Simple Language
+
+Le Simple Language permet d'utiliser des expressions dynamiques dans les routes GoCamel, inspiré d'Apache Camel.
+
+### Capacités principales
+
+- **Accès aux données** : `${body}`, `${header.name}`, `${exchangeProperty.prop}`
+- **Functions intégrées** : `${date:now}`, `${random(100)}`, `${uuid}`
+- **Comparaisons** : `${header.count > 10}`, `${body == 'active'}`
+- **Accès null-safe** : `${body?.field?.subfield}`
+- **Notation par crochets** : `${body['key']}`, `${body[0]}`
+
+### Exemples d'utilisation
+
+**Définir le corps et les en-têtes avec des expressions :**
+
+```go
+builder.From("direct:start").
+    SimpleSetBody("Hello ${body} at ${date:now}").
+    SimpleSetHeader("X-Request-ID", "${uuid}").
+    To("direct:output")
+```
+
+**Routage basé sur le contenu (Choice) :**
+
+```go
+builder.From("direct:start").
+    Choice().
+        When("${header.priority == 'high'}").
+            SimpleSetBody("🚨 HIGH: ${body}").
+            To("direct:urgent").
+        When("${body['count'] > 100}").
+            To("direct:large-batch").
+        Otherwise().
+            To("direct:normal").
+    EndChoice()
+```
+
+**Accès aux données complexes :**
+
+```go
+// Map : {"user": {"name": "John", "email": "john@example.com"}}
+builder.From("direct:json").
+    SimpleSetHeader("X-Name", "${body['user']['name']}").
+    Log("Processing user: ${body?.user?.name}").
+    To("direct:process")
+```
+
+Voir la [documentation complète](docs/simple-language.md) pour plus de détails.
 
 ## EIP (Enterprise Integration Patterns)
 

@@ -98,6 +98,69 @@ builder.From("direct:start").
 
 ---
 
+## Choice
+
+Content-Based Router - route les messages vers différentes destinations selon des conditions sur le contenu.
+
+```go go
+builder.From("direct:start").
+    Choice().
+        When("${header.priority == 'high'}").
+            SimpleSetBody("🔴 Priority: ${body}").
+            To("direct:urgent").
+        When("${header.priority == 'medium'}").
+            SimpleSetBody("🟡 Priority: ${body}").
+            To("direct:normal").
+        When("${body['count'] > 100}").
+            To("direct:large-batch").
+        Otherwise().
+            To("direct:default").
+    EndChoice()
+```
+
+**Expressions supportées :**
+
+| Expression | Description | Exemple |
+|------------|-------------|---------|
+| `${header.name}` | Valeur d'en-tête | `${header.Content-Type == 'json'}` |
+| `${body}` | Corps du message | `${body == 'active'}` |
+| `${body['key']}` | Accès par clé map | `${body['status'] == 'pending'}` |
+| `${body[0]}` | Accès par index | `${body[0] > 50}` |
+| `${exchangeProperty.prop}` | Propriété Exchange | `${exchangeProperty.userId != ''}` |
+| `${date:now}` | Date/heure actuelle | — |
+| `${random(100)}` | Nombre aléatoire | — |
+| `${uuid}` | UUID unique | — |
+
+**Opérateurs de comparaison :**
+
+- `==` — Égal à
+- `!=` — Différent de
+- `>` — Supérieur à
+- `<` — Inférieur à
+- `>=` — Supérieur ou égal
+- `<=` — Inférieur ou égal
+
+**Méthodes disponibles dans When/Otherwise :**
+
+```go go
+// Définir le corps/header
+When(expression).SetBody(value)
+When(expression).SetHeader(key, value)
+When(expression).SimpleSetBody("template ${body}")
+When(expression).SimpleSetHeader(key, "template ${header.name}")
+
+// Chainer des processors
+When(expression).
+    Log("Message").
+    SetHeader("X-Processed", "true").
+    To("direct:output")
+```
+
+!!! tip "Ordre d'évaluation"
+    Les clauses `When` sont évaluées dans l'ordre. La première condition vraie déclenche son processor, les autres sont ignorées. Si aucune condition ne correspond et qu'`Otherwise` est présent, il est exécuté.
+
+---
+
 ## Stop
 
 Arrête le routage actuel sans erreur.
