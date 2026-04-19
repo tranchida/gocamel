@@ -1,100 +1,137 @@
-# Fonctionnalités
+# Features Overview | Vue d'Ensemble des Fonctionnalités
 
-## Vue d'ensemble
+---
 
-GoCamel est un framework d'intégration d'entreprise qui simplifie la connexion entre différents systèmes et services. Inspiré d'Apache Camel, il apporte la puissance des patterns d'intégration enterprise (EIP) à l'écosystème Go.
+# 🇺🇸 English
 
-## Fonctionnalités clés
+## Core Features
 
-### 🛤️ Routage puissant
+### Enterprise Integration Patterns (EIP)
 
-- **DSL Fluent** — API Go idiomatique pour définir des routes complexes
-- **Pattern Builder** — Construction chaînée d'endpoints et de processors
-- **Routing dynamique** — ToD (To Dynamic) pour URIs résolues à l'exécution
-- **Content-based routing** — Routage basé sur le contenu des messages
+GoCamel implements proven integration patterns from the *Enterprise Integration Patterns* book by Gregor Hohpe and Bobby Woolf:
 
-### 🔌 Composants intégrés
+| Pattern | Description |
+|---------|-------------|
+| **Choice** | Content-based routing with conditions |
+| **Split** | Divide message into parts |
+| **Aggregate** | Combine multiple messages |
+| **Multicast** | Send to multiple destinations |
+| **Stop** | Stop routing without error |
+| **ToD** | Dynamic endpoint URI resolution |
 
-| Catégorie | Composants |
-|-----------|------------|
-| **Protocoles** | HTTP, FTP, SFTP, SMB, File |
-| **Messaging** | Direct (in-memory), Telegram |
-| **Scheduling** | Timer, Cron |
-| **IA/LLM** | OpenAI Chat Completion |
-| **Transformation** | XSLT, XSD validation, Template |
-| **Exécution** | Exec (commandes système) |
+### Type-Safe Message Exchange
 
-### 🧩 EIP (Enterprise Integration Patterns)
+```go
+exchange := gocamel.NewExchange(context.Background())
+exchange.GetIn().SetBody("Hello")
+exchange.GetIn().SetHeader("X-ID", "123")
+```
 
-- **Splitter** — Divise un message en parties
-- **Aggregator** — Combine plusieurs messages en un seul
-- **Multicast** — Envoie à plusieurs destinations
-- **Pipeline** — Chaîne séquentielle de processors
-- **Choice** — Routage basé sur le contenu (Content-Based Router)
-- **Stop** — Arrête le routage conditionnellement
-- **Headers/Properties** — Manipulation des métadonnées
+### DSL (Domain Specific Language)
 
-### 💬 Simple Language
+Fluent builder pattern for route construction:
 
-Moteur d'expressions inspiré d'Apache Camel pour manipuler les données d'échange :
+```go
+builder.From("direct:start").
+    SetHeader("X-Trace", "abc").
+    Log("Processing: ${body}").
+    To("direct:end")
+```
 
-- **Variables** : `${body}`, `${header.name}`, `${exchangeProperty.prop}`
-- **Notations** : Point (`body.field`), Crochets (`body['key']`), Null-safe (`body?.field`)
-- **Fonctions** : `${date:now}`, `${random(MAX)}`, `${uuid}`
-- **Comparaisons** : `==`, `!=`, `>`, `<`, `>=`, `<=`
-- **Intégration** : `SimpleSetBody()`, `SimpleSetHeader()`, `Choice().When()`
+### Simple Language
 
-### 📊 Management & Monitoring
+Expression language for dynamic routing:
 
-- **API REST** — Interface JMX-like pour controler les routes
-- **Logging intégré** — Tracing des messages
-- **Metrics** — État du contexte et des routes
-- **Graceful shutdown** — Arrêt propre des routes actives
+```go
+builder.From("direct:input").
+    Choice().
+        When("${header.priority == 'high'}").
+            To("direct:urgent").
+        Otherwise().
+            To("direct:normal").
+    EndChoice()
+```
 
-### 🔐 Sécurité
+### Component Architecture
 
-- **Variables d'environnement** — Configuration sensible externalisée
-- **No hardcoded credentials** — Tokens et mots de passe via env vars
-- **URI-safe** — Paramètres sensibles encodés
+- **Producer**: Sends messages to endpoints
+- **Consumer**: Receives messages from endpoints
+- **Endpoint**: URI-based resource location
+- **Component**: Factory for endpoints
 
-## Roadmap
+### Management API
 
-### ✅ Disponible
+REST API for monitoring and control:
 
-- [x] Core: Exchange, Message, Context
-- [x] EIP: Split, Aggregate, Multicast, Choice, Pipeline
-- [x] Composants HTTP, File, FTP, SFTP, SMB
-- [x] Composants Telegram, OpenAI
-- [x] Scheduling: Timer, Cron
-- [x] REST Management API
-- [x] Simple Language (expressions dynamiques)
-- [x] Composant Template (Velocity-like)
+```go
+mgmt := gocamel.NewManagementServer(context)
+mgmt.Start(":8081")
+```
 
-### 🚧 En cours
+---
 
-- [ ] Composant JMS (ActiveMQ/Artemis)
-- [ ] Composant Kafka
-- [ ] Composant AWS S3
-- [ ] Composant Google Cloud Storage
-- [ ] Retry policies avancées
-- [ ] Circuit Breaker pattern
+# 🇫🇷 Français
 
-### 📋 Envisagé
+## Fonctionnalités Principales
 
-- [ ] Dead Letter Channel
-- [ ] Message Queue (in-memory)
-- [ ] Streaming (WebSocket)
-- [ ] Metrics Prometheus
-- [ ] Distributed tracing (OpenTelemetry)
+### Enterprise Integration Patterns (EIP)
 
-## Comparison
+GoCamel implémente les patterns d'intégration éprouvés du livre *Enterprise Integration Patterns* de Gregor Hohpe et Bobby Woolf:
 
-| Feature | GoCamel | Apache Camel | Go-Native libs |
-|---------|---------|--------------|----------------|
-| DSL Fluent | ✅ | ✅ | ❌ |
-| EIP Patterns | ✅ | ✅ | ❌/Partiel |
-| Simple Language | ✅ | ✅ | ❌ |
-| Performance | ⚡ Go | ☕ JVM | ⚡ Go |
-| Embarqué | ✅ Oui | ❌ Lourd | ✅ |
-| Mémoire | Basse | Haute | Basse |
+| Pattern | Description |
+|---------|-------------|
+| **Choice** | Routage basé sur le contenu avec conditions |
+| **Split** | Division du message en parties |
+| **Aggregate** | Combinaison de plusieurs messages |
+| **Multicast** | Envoi vers plusieurs destinations |
+| **Stop** | Arrêt du routage sans erreur |
+| **ToD** | Résolution dynamique d'URI d'endpoint |
 
+### Échange de Messages Type-Safe
+
+```go
+exchange := gocamel.NewExchange(context.Background())
+exchange.GetIn().SetBody("Bonjour")
+exchange.GetIn().SetHeader("X-ID", "123")
+```
+
+### DSL (Domain Specific Language)
+
+Pattern Builder fluide pour la construction de routes:
+
+```go
+builder.From("direct:start").
+    SetHeader("X-Trace", "abc").
+    Log("Traitement: ${body}").
+    To("direct:end")
+```
+
+### Simple Language
+
+Langage d'expressions pour le routage dynamique:
+
+```go
+builder.From("direct:input").
+    Choice().
+        When("${header.priority == 'high'}").
+            To("direct:urgent").
+        Otherwise().
+            To("direct:normal").
+    EndChoice()
+```
+
+### Architecture des Composants
+
+- **Producer**: Envoie des messages vers les endpoints
+- **Consumer**: Reçoit des messages depuis les endpoints
+- **Endpoint**: Localisation de ressource basée sur URI
+- **Component**: Usine pour créer des endpoints
+
+### API de Management
+
+API REST pour monitoring et contrôle:
+
+```go
+mgmt := gocamel.NewManagementServer(context)
+mgmt.Start(":8081")
+```

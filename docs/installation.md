@@ -1,51 +1,42 @@
-# Installation
+# Installation Guide | Guide d'Installation
 
-## Via Go Modules (recommandé)
+---
+
+# 🇺🇸 English
+
+## Requirements
+
+- Go 1.21 or later
+- Module-aware Go project (go.mod)
+
+## Installation
+
+### Using go get
 
 ```bash
 go get github.com/tranchida/gocamel
 ```
 
-Ajoutez à votre `go.mod`:
+### Using go.mod
 
-```gomod
-require github.com/tranchida/gocamel v0.0.0
-```
-
-## Via go.work (développement local)
-
-```bash
-# Clonez le repo
-git clone https://github.com/tranchida/gocamel.git
-cd gocamel
-
-# Dans votre projet
-go work init
-go work use ../gocamel
-go work edit -replace github.com/tranchida/gocamel=../gocamel
-```
-
-## Configuration de l'environnement
-
-### Variables d'environnement communes
-
-| Variable | Usage | Composant |
-|----------|-------|-----------|
-| `OPENAI_API_KEY` | Clé API OpenAI | OpenAI |
-| `TELEGRAM_AUTHORIZATIONTOKEN` | Token bot Telegram | Telegram |
-| `FTP_USERNAME` / `FTP_PASSWORD` | Auth FTP | FTP |
-| `SFTP_USERNAME` / `SFTP_PASSWORD` | Auth SFTP | SFTP |
-
-### Configuration dans le code
+Add to your `go.mod` file:
 
 ```go
-cfg := gocamel.NewConfig()
-val := cfg.Get("ma.variable", "valeur par défaut")
+require github.com/tranchida/gocamel v0.1.0
 ```
 
-## Vérifier l'installation
+Then run:
 
-```go title="verify.go"
+```bash
+go mod tidy
+```
+
+## Verification
+
+Create a simple test file:
+
+```go
+// test.go
 package main
 
 import (
@@ -55,48 +46,96 @@ import (
 
 func main() {
     ctx := gocamel.NewCamelContext()
-    fmt.Println("✅ GoCamel installé avec succès!")
-    
-    // Vérifier les composants disponibles
-    components := []string{"http", "file", "timer", "direct"}
-    for _, name := range components {
-        if _, err := ctx.CreateEndpoint(name + ":test"); err == nil {
-            fmt.Printf("  ✓ Composant '%s' disponible\n", name)
-        }
-    }
+    fmt.Println("GoCamel context created successfully!")
+    _ = ctx
 }
 ```
 
-## Dépannage
+Run it:
 
-### Compilation échoue
+```bash
+go run test.go
+```
 
-??? bug "Erreur de dépendance"
+## Dependencies
 
-    ```
-    go: github.com/tranchida/gocamel: module not found
-    ```
+GoCamel uses minimal external dependencies:
+- Standard library for core functionality
+- github.com/go-co-op/gocron/v2 for cron scheduling
+- github.com/mattn/go-sqlite3 for SQLite support (optional)
 
-    **Solution:**
-    ```bash
-    go mod tidy
-    go get github.com/tranchida/gocamel@latest
-    ```
+## Next Steps
 
-### Composant non trouvé
+- Read the [Quick Start Guide](quickstart.md)
+- Explore [Concepts](concepts.md)
+- Check [Examples](examples.md)
 
-??? bug `"unknown component"`
+---
 
-    Assurez-vous d'avoir ajouté le composant:
-    ```go
-    ctx.AddComponent("telegram", gocamel.NewTelegramComponent())
-    ```
+# 🇫🇷 Français
 
-### Timeout sur HTTPS
+## Prérequis
 
-??? tip "Proxy d'entreprise"
+- Go 1.21 ou ultérieur
+- Projet Go avec modules (go.mod)
 
-    ```go
-    os.Setenv("HTTP_PROXY", "http://proxy.entreprise:8080")
-    os.Setenv("HTTPS_PROXY", "http://proxy.entreprise:8080")
-    ```
+## Installation
+
+### Utilisation de go get
+
+```bash
+go get github.com/tranchida/gocamel
+```
+
+### Utilisation de go.mod
+
+Ajoutez à votre fichier `go.mod`:
+
+```go
+require github.com/tranchida/gocamel v0.1.0
+```
+
+Puis exécutez:
+
+```bash
+go mod tidy
+```
+
+## Vérification
+
+Créez un fichier de test simple:
+
+```go
+// test.go
+package main
+
+import (
+    "fmt"
+    "github.com/tranchida/gocamel"
+)
+
+func main() {
+    ctx := gocamel.NewCamelContext()
+    fmt.Println("Contexte GoCamel créé avec succès!")
+    _ = ctx
+}
+```
+
+Exécutez-le:
+
+```bash
+go run test.go
+```
+
+## Dépendances
+
+GoCamel utilise un minimum de dépendances externes:
+- Bibliothèque standard pour la fonctionnalité de base
+- github.com/go-co-op/gocron/v2 pour la planification cron
+- github.com/mattn/go-sqlite3 pour le support SQLite (optionnel)
+
+## Prochaines Étapes
+
+- Lisez le [Guide de Démarrage Rapide](quickstart.md)
+- Explorez les [Concepts](concepts.md)
+- Consultez les [Exemples](examples.md)

@@ -1,149 +1,161 @@
-# Concepts
+# Core Concepts | Concepts Fondamentaux
 
-## Architecture de base
+---
 
-```mermaid
-graph TB
-    subgraph "CamelContext"
-        Routes["Routes"]
-        Registry["Component Registry"]
-        TypeConverter["Type Converter"]
-    end
-    
-    Routes -->|utilise| Endpoint["Endpoint"]
-    Endpoint -->|crée| Consumer["Consumer"]
-    Endpoint -->|crée| Producer["Producer"]
-    
-    Consumer -->|lit| Message["Message"]
-    Producer -->|écrit| Exchange["Exchange"]
-    
-    Exchange -->|contient| In["In Message"]
-    Exchange -->|contient| Out["Out Message"]
-```
+# 🇺🇸 English
 
-## Core Concepts
+## Message
 
-### CamelContext
-
-Le **CamelContext** est le cœur de GoCamel. Il gère:
-
-- Le registre des composants
-- La collection des routes
-- Le cycle de vie (start/stop)
-- Les convertisseurs de type
+The fundamental unit of exchange containing:
+- **Body**: The message payload (any type)
+- **Headers**: Key-value metadata (map[string]any)
+- **Attachments**: Optional file attachments
 
 ```go
-ctx := gocamel.NewCamelContext()
-defer ctx.Stop()
+msg := gocamel.NewMessage()
+msg.SetBody("Hello World")
+msg.SetHeader("Content-Type", "text/plain")
 ```
 
-### Exchange
+## Exchange
 
-Un **Exchange** encapsule un message en transit:
-
-- **In**: Message entrant
-- **Out**: Message sortant (résultat)
-- **Properties**: Métadonnées de l'échange
-- **Exception**: Erreur éventuelle
+Container for messages passing through a route:
+- **In**: Input message (from consumer)
+- **Out**: Output message (to producer)
+- **Properties**: Exchange-scoped metadata
+- **Context**: Go context for cancellation
 
 ```go
 exchange := gocamel.NewExchange(context.Background())
-exchange.GetIn().SetBody("Hello")
-exchange.GetIn().SetHeader("Content-Type", "text/plain")
+exchange.GetIn().SetBody(input)
 ```
 
-### Route
+## Route
 
-Une **Route** définit le chemin d'un message:
-
-```
-from(endpoint) → [processors] → to(endpoint)
-```
+A chain of processors that handles a message:
 
 ```go
-route := builder.
-    From("timer:tick").
-    SetBody("Hello").
-    To("log:output").
+route := context.CreateRouteBuilder().
+    From("direct:start").       // Source endpoint
+    Process(processor).         // Custom processing
+    To("direct:end").          // Destination endpoint
     Build()
 ```
 
-### Component
+## Endpoint
 
-Un **Component** est une fabrique d'endpoints:
+URI-addressable resource:
 
-| Composant | Rôle |
-|-----------|------|
-| Direct | Routage synchrone in-memory |
-| Timer | Déclenchement périodique |
-| File | Lecture/écriture fichiers |
-| HTTP | Client/serveur HTTP |
-| FTP/SFTP | Transfert de fichiers |
+```
+component://path?param=value
+```
 
-### Processor
+Examples:
+- `file:///tmp/data`
+- `ftp://host:21/incoming`
+- `http://localhost:8080/api`
+- `direct:myRoute`
 
-Un **Processor** transforme un échange:
+## Context (CamelContext)
+
+The runtime container managing:
+- Routes lifecycle (start/stop)
+- Component registry
+- Endpoint resolution
+- Thread pool management
 
 ```go
-type MyProcessor struct{}
-
-func (p *MyProcessor) Process(exchange *gocamel.Exchange) error {
-    body := exchange.GetIn().GetBody()
-    // Transform...
-    exchange.GetOut().SetBody(result)
-    return nil
-}
+context := gocamel.NewCamelContext()
+context.AddRoute(route)
+context.Start()  // Start all routes
+context.Stop()   // Stop all routes
 ```
 
-### Endpoint
+## Component
 
-Un **Endpoint** représente une extrémité de communication:
-
-- **URI**: `scheme:context?options`
-- Exemples: `file://data`, `http://localhost:8080`, `timer:tick`
-
-## Flux de message
-
-```
-┌─────────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-│  Consumer   │────>│   Route  │────>│ Processor│────>│ Producer │
-│  (Entrée)   │     │  (DSL)   │     │(Transform│     │ (Sortie) │
-└─────────────┘     └──────────┘     └──────────┘     └──────────┘
-       │                    │                 │                │
-       └────────────────────┴─────────────────┴────────────────┘
-                         Exchange (Message + Headers + Properties)
-```
-
-## Gestion du cycle de vie
-
-### États d'une route
-
-```mermaid
-stateDiagram-v2
-    [*] --> Stopped: Création
-    Stopped --> Started: ctx.Start()
-    Started --> Stopped: ctx.Stop()
-    Started --> Suspended: suspend()
-    Suspended --> Resumed: resume()
-```
-
-### Gestion controlée
+Factory for endpoints of a specific type:
 
 ```go
-// Démarrer
-ctx.Start()
-
-// Arrêter avec timeout
-ctx.Stop()
-
-// Status
-totalRoutes := ctx.GetRoutesCount()
-startedRoutes := ctx.GetStartedRoutesCount()
+context.AddComponent("ftp", gocamel.NewFTPComponent())
+context.AddComponent("http", gocamel.NewHTTPComponent())
 ```
 
-## Bonnes pratiques
+---
 
-1. **Une route = une responsabilité** — Gardez les routes focalisées
-2. **Externalisez la configuration** — Utilisez les variables d'environnement
-3. **Loggez intelligemment** — Utilisez `Log()` aux points clés
-4. **Gérez les erreurs** — Implémentez des stratégies d'erreur
+# 🇫🇷 Français
+
+## Message
+
+L'unité fondamentale d'échange contenant:
+- **Body**: Le contenu du message (n'importe quel type)
+- **Headers**: Métadonnées clé-valeur (map[string]any)
+- **Attachments**: Pièces jointes optionnelles
+
+```go
+msg := gocamel.NewMessage()
+msg.SetBody("Hello World")
+msg.SetHeader("Content-Type", "text/plain")
+```
+
+## Exchange
+
+Conteneur pour les messages traversant une route:
+- **In**: Message d'entrée (du consumer)
+- **Out**: Message de sortie (vers le producer)
+- **Properties**: Métadonnées liées à l'exchange
+- **Context**: Contexte Go pour l'annulation
+
+```go
+exchange := gocamel.NewExchange(context.Background())
+exchange.GetIn().SetBody(input)
+```
+
+## Route
+
+Une chaîne de processeurs qui traite un message:
+
+```go
+route := context.CreateRouteBuilder().
+    From("direct:start").       // Endpoint source
+    Process(processor).         // Traitement personnalisé
+    To("direct:end").          // Endpoint destination
+    Build()
+```
+
+## Endpoint
+
+Ressource adressable par URI:
+
+```
+component://path?param=value
+```
+
+Exemples:
+- `file:///tmp/data`
+- `ftp://host:21/incoming`
+- `http://localhost:8080/api`
+- `direct:myRoute`
+
+## Context (CamelContext)
+
+Conteneur d'exécution gérant:
+- Cycle de vie des routes (démarrage/arrêt)
+- Registre des composants
+- Résolution des endpoints
+- Gestion du pool de threads
+
+```go
+context := gocamel.NewCamelContext()
+context.AddRoute(route)
+context.Start()  // Démarrer toutes les routes
+context.Stop()   // Arrêter toutes les routes
+```
+
+## Component
+
+Usine pour créer des endpoints d'un type spécifique:
+
+```go
+context.AddComponent("ftp", gocamel.NewFTPComponent())
+context.AddComponent("http", gocamel.NewHTTPComponent())
+```

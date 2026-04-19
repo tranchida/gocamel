@@ -1,6 +1,28 @@
 # GoCamel
 
-GoCamel est une bibliothèque d'intégration d'entreprise inspirée d'Apache Camel, écrite en Go. Elle permet de créer des routes d'intégration pour connecter différents systèmes et services.
+<p align="center">
+  <strong>Enterprise Integration Framework for Go</strong> | <strong>Framework d'Intégration d'Entreprise pour Go</strong>
+</p>
+
+<p align="center">
+  🇺🇸 English | 🇫🇷 Français
+</p>
+
+---
+
+## 🌐 Table of Contents | Table des Matières
+
+- [English Documentation](#english-documentation)
+  
+- [Documentation Française](#documentation-française)
+
+---
+
+# 🇺🇸 ENGLISH DOCUMENTATION
+
+## Introduction
+
+GoCamel is an enterprise integration library inspired by Apache Camel, written in Go. It provides a powerful Domain Specific Language (DSL) for creating integration routes that connect different systems and services.
 
 ## Installation
 
@@ -8,43 +30,67 @@ GoCamel est une bibliothèque d'intégration d'entreprise inspirée d'Apache Cam
 go get github.com/tranchida/gocamel
 ```
 
-## Fonctionnalités
+## Features
 
-- Architecture basée sur les routes et les endpoints
-- Gestion des messages avec corps et en-têtes
-- Contexte Camel pour la gestion du cycle de vie
-- Pattern Builder pour la création de routes
-- Support des EIP (Split, Aggregate, Multicast, Stop, ToD, SetHeader, SetHeaders, SetHeadersFunc, RemoveHeader, RemoveHeaders, SetProperty, SetPropertyFunc, RemoveProperty, RemoveProperties, **Choice**)
-- **Simple Language** pour les expressions dynamiques (${body}, ${header.name}, fonctions, comparaisons)
-- Fonctions de logging intégrées
-- Gestion centralisée des identifiants (fichiers, query params, variables d'environnement)
+- **Route & Endpoint Architecture**: Build integration flows using a fluent DSL
+- **Message Management**: Body and headers handling with type safety
+- **Camel Context**: Lifecycle management for routes and components
+- **Builder Pattern**: Intuitive route construction
+- **Enterprise Integration Patterns (EIP)**: Split, Aggregate, Multicast, Choice, Stop, ToD, and more
+- **Simple Language**: Dynamic expression evaluation (${body}, ${header.name}, functions, comparisons)
+- **Built-in Logging**: Integrated logging functions
+- **Centralized Configuration**: Environment-based credentials management
+- **REST Management**: JMX-like monitoring and control API
+
+## Quick Start
+
+```go
+package main
+
+import (
+    "github.com/tranchida/gocamel"
+)
+
+func main() {
+    // Create Camel context
+    context := gocamel.NewCamelContext()
+    
+    // Define a route
+    route := context.CreateRouteBuilder().
+        From("timer:tick?period=5000").
+        SetBody("Hello World").
+        Log("${body}").
+        To("direct:output").
+        Build()
+    
+    context.AddRoute(route)
+    context.Start()
+    select {}
+}
+```
 
 ## Simple Language
 
-Le Simple Language permet d'utiliser des expressions dynamiques dans les routes GoCamel, inspiré d'Apache Camel.
+GoCamel includes a dynamic expression language inspired by Apache Camel Simple Language.
 
-### Capacités principales
+### Core Capabilities
 
-- **Accès aux données** : `${body}`, `${header.name}`, `${exchangeProperty.prop}`
-- **Functions intégrées** : `${date:now}`, `${random(100)}`, `${uuid}`
-- **Comparaisons** : `${header.count > 10}`, `${body == 'active'}`
-- **Accès null-safe** : `${body?.field?.subfield}`
-- **Notation par crochets** : `${body['key']}`, `${body[0]}`
+- **Data Access**: `${body}`, `${header.name}`, `${exchangeProperty.prop}`
+- **Built-in Functions**: `${date:now}`, `${random(100)}`, `${uuid}`
+- **Comparisons**: `${header.count > 10}`, `${body == 'active'}`
+- **Null-safe Access**: `${body?.field?.subfield}`
+- **Bracket Notation**: `${body['key']}`, `${body[0]}`
 
-### Exemples d'utilisation
-
-**Définir le corps et les en-têtes avec des expressions :**
+### Examples
 
 ```go
+// Dynamic body and headers
 builder.From("direct:start").
     SimpleSetBody("Hello ${body} at ${date:now}").
     SimpleSetHeader("X-Request-ID", "${uuid}").
     To("direct:output")
-```
 
-**Routage basé sur le contenu (Choice) :**
-
-```go
+// Content-based routing with Choice
 builder.From("direct:start").
     Choice().
         When("${header.priority == 'high'}").
@@ -57,47 +103,26 @@ builder.From("direct:start").
     EndChoice()
 ```
 
-**Accès aux données complexes :**
-
-```go
-// Map : {"user": {"name": "John", "email": "john@example.com"}}
-builder.From("direct:json").
-    SimpleSetHeader("X-Name", "${body['user']['name']}").
-    Log("Processing user: ${body?.user?.name}").
-    To("direct:process")
-```
-
-Voir la [documentation complète](docs/simple-language.md) pour plus de détails.
-
-## EIP (Enterprise Integration Patterns)
+## Enterprise Integration Patterns (EIP)
 
 ### Split EIP
 
-Le Split EIP permet de diviser un message en plusieurs parties et de les traiter individuellement.
+Divide a message into multiple parts and process them individually.
 
 ```go
 builder.From("direct:start").
     Split(func(e *gocamel.Exchange) (any, error) {
-        // Divise une chaîne par virgules
         body := e.GetIn().GetBody().(string)
         return strings.Split(body, ","), nil
     }).
-    Log("Traitement de la partie : ${body}").
+    Log("Processing part: ${body}").
     To("direct:process-part").
-    End(). // Fin du bloc Split
-    Log("Traitement terminé pour tous les morceaux")
+    End()
 ```
-
-**Options du Split :**
-- **`AggregationStrategy`** : Permet de combiner les résultats de chaque partie splitée pour mettre à jour le message original.
-- **Propriétés de l'Exchange** : Chaque partie dispose de propriétés spécifiques :
-    - `CamelSplitIndex` : Index actuel (0-based)
-    - `CamelSplitSize` : Nombre total de parties
-    - `CamelSplitComplete` : Booléen indiquant s'il s'agit de la dernière partie
 
 ### Aggregate EIP
 
-L'Aggregator permet de combiner plusieurs messages en un seul selon une clé de corrélation.
+Combine multiple messages into one based on a correlation key.
 
 ```go
 strategy := &MyAggregationStrategy{}
@@ -106,150 +131,311 @@ repo := gocamel.NewMemoryAggregationRepository()
 builder.From("direct:start").
     Aggregate(gocamel.NewAggregator(correlationExpr, strategy, repo).
         SetCompletionSize(3)).
-    Log("Message agrégé : ${body}")
+    Log("Aggregated message: ${body}")
 ```
 
 ### Multicast EIP
 
-Le Multicast EIP envoie une copie du message à plusieurs destinations ou branches de processeurs.
+Send a copy of the message to multiple destinations concurrently.
 
 ```go
 builder.From("direct:start").
     Multicast().
         Pipeline().
-            Log("Branche 1 : ${body}").
+            Log("Branch 1: ${body}").
             To("direct:out1").
         End().
         Pipeline().
-            Log("Branche 2 : ${body}").
+            Log("Branch 2: ${body}").
             To("direct:out2").
         End().
-    End(). // Fin du bloc Multicast
-    Log("Traitement terminé pour toutes les branches")
+    End()
 ```
 
-**Options du Multicast :**
-- **`AggregationStrategy`** : Permet de combiner les résultats de chaque branche.
-- **`ParallelProcessing`** : Active le traitement parallèle des branches (goroutines).
-- **Propriétés de l'Exchange** : Chaque branche dispose de propriétés spécifiques :
-    - `CamelMulticastIndex` : Index actuel (0-based)
-    - `CamelMulticastSize` : Nombre total de branches
-    - `CamelMulticastComplete` : Booléen indiquant s'il s'agit de la dernière branche
+### Choice EIP
 
-### Stop EIP
-
-Le Stop EIP arrête le routage du message courant sans que cela soit considéré comme un échec.
+Content-based routing with conditional branches.
 
 ```go
-builder.From("direct:start").
-    ProcessFunc(func(e *gocamel.Exchange) error {
-        if e.GetIn().GetBody() == "stop" {
-            return nil // condition à vérifier
-        }
-        return nil
-    }).
-    Stop().
-    Log("Ce log ne sera jamais atteint")
+builder.From("direct:decision").
+    Choice().
+        When("${header.type == 'A'}").
+            To("direct:typeA").
+        When("${header.type == 'B'}").
+            To("direct:typeB").
+        Otherwise().
+            To("direct:default").
+    EndChoice()
 ```
 
-### ToD (To Dynamic) EIP
+## Available Components
 
-Le ToD EIP permet d'envoyer un message vers un endpoint dont l'URI est résolue dynamiquement à l'exécution. Les expressions `${header.x}`, `${property.x}` et `${body}` sont interpolées dans le template d'URI.
+| Component | URI Pattern | Description |
+|-----------|-------------|-------------|
+| **HTTP** | `http://host:port/path` | HTTP server (Consumer) and client (Producer) |
+| **File** | `file://path` | File system operations |
+| **FTP** | `ftp://host/path` | FTP client support |
+| **SFTP** | `sftp://host/path` | Secure FTP with SSH authentication |
+| **SMB** | `smb://host/share` | Windows/Samba share support |
+| **Direct** | `direct:name` | In-memory synchronous routing |
+| **Timer** | `timer:name` | Periodic timer-based triggers |
+| **Cron** | `cron:name` | Cron-based scheduled triggers |
+| **Telegram** | `telegram:bots` | Telegram Bot API integration |
+| **OpenAI** | `openai:chat` | OpenAI Chat Completion API |
+| **Exec** | `exec:command` | System command execution |
+| **Mail** | `smtp://...`, `imap://...` | Email sending and receiving |
+| **SQL** | `sql://datasource` | SQL query execution |
+| **SQL-Stored** | `sql-stored://ds` | Stored procedure calls |
+| **XSLT** | `xslt:template` | XML transformation |
+| **XSD** | `xsd:schema` | XML schema validation |
+| **Template** | `template:name` | Go template processing |
 
-```go
-builder.From("direct:start").
-    SetHeader(gocamel.CamelFileName, "output.txt").
-    ToD("file://output/${header.CamelFileName}")
-```
+## Configuration
 
-### Header/Property EIPs
+Sensitive parameters (tokens, passwords) can be provided in three ways:
 
-GoCamel propose un ensemble d'EIP pour manipuler les en-têtes et les propriétés de l'Exchange :
+1. **Directly in URI**: `ftp://user:pass@host/path`
+2. **Query parameters**: `telegram:bots?authorizationToken=XXX`
+3. **Environment variables** (Recommended): `FTP_PASSWORD=***`, `TELEGRAM_AUTHORIZATIONTOKEN=***`
 
-**En-têtes :**
-- `SetHeader(key, value)` / `SetHeaders(map)` / `SetHeadersFunc(fn)` : Définit les en-têtes du message de sortie.
-- `RemoveHeader(name)` / `RemoveHeaders(pattern, excludePatterns...)` : Supprime des en-têtes du message d'entrée. Le pattern `*` est supporté comme joker, avec des patterns d'exclusion optionnels.
-
-```go
-builder.From("direct:start").
-    SetHeaders(map[string]any{"X-Custom": "value", "X-Trace": "123"}).
-    RemoveHeaders("X-Debug*", "X-DebugKeep").
-    To("direct:out")
-```
-
-**Propriétés :**
-- `SetProperty(key, value)` / `SetPropertyFunc(key, fn)` : Définit une propriété sur l'Exchange.
-- `RemoveProperty(key)` / `RemoveProperties(pattern, excludePatterns...)` : Supprime des propriétés. Le pattern `*` est supporté comme joker, avec des patterns d'exclusion optionnels.
-
-```go
-builder.From("direct:start").
-    SetProperty("correlationId", "abc-123").
-    SetPropertyFunc("timestamp", func(e *gocamel.Exchange) (any, error) {
-        return time.Now().UnixMilli(), nil
-    }).
-    RemoveProperties("temp*").
-    To("direct:out")
-```
-
-## Exemples d'utilisation
-
-### Exemple FTP (Téléchargement & Envoi)
-
-Il est recommandé de passer les identifiants via les variables d'environnement pour plus de sécurité (ex: `FTP_USERNAME`, `FTP_PASSWORD`, ou directement `username` et `password`).
+## Example: FTP Integration
 
 ```go
 package main
 
-import (
-    "github.com/tranchida/gocamel"
-)
+import "github.com/tranchida/gocamel"
 
 func main() {
     context := gocamel.NewCamelContext()
     context.AddComponent("ftp", gocamel.NewFTPComponent())
 
-    // Écoute les nouveaux fichiers sur le serveur FTP (Consumer)
-    // et les renvoie vers un autre répertoire (Producer)
+    route := context.CreateRouteBuilder().
+        From("ftp://localhost:21/incoming?delay=10s&delete=true").
+        Log("New file downloaded").
+        SetHeader(gocamel.CamelFileName, "processed.txt").
+        To("ftp://localhost:21/processed").
+        Build()
+
+    context.AddRoute(route)
+    context.Start()
+    select {}
+}
+```
+
+## REST Management API
+
+Enable JMX-like monitoring and control:
+
+```go
+mgmt := gocamel.NewManagementServer(context)
+mgmt.Start(":8081")  // Access http://localhost:8081/routes
+```
+
+**Available endpoints:**
+- `GET /routes` - List all routes
+- `GET /routes/{id}` - Route details
+- `POST /routes/{id}/start` - Start a route
+- `POST /routes/{id}/stop` - Stop a route
+- `GET /health` - Health check
+
+---
+
+# 🇫🇷 DOCUMENTATION FRANÇAISE
+
+## Introduction
+
+GoCamel est une bibliothèque d'intégration d'entreprise inspirée d'Apache Camel, écrite en Go. Elle fournit un puissant Langage Spécifique au Domaine (DSL) pour créer des routes d'intégration connectant différents systèmes et services.
+
+## Installation
+
+```bash
+go get github.com/tranchida/gocamel
+```
+
+## Fonctionnalités
+
+- **Architecture Route & Endpoint**: Construction de flux d'intégration avec un DSL fluide
+- **Gestion des Messages**: Manipulation du corps et des en-têtes avec sécurité de type
+- **Contexte Camel**: Gestion du cycle de vie des routes et composants
+- **Pattern Builder**: Construction intuitive des routes
+- **Enterprise Integration Patterns (EIP)**: Split, Aggregate, Multicast, Choice, Stop, ToD, et plus
+- **Simple Language**: Évaluation d'expressions dynamiques (${body}, ${header.name}, fonctions, comparaisons)
+- **Logging Intégré**: Fonctions de logging intégrées
+- **Configuration Centralisée**: Gestion des identifiants via variables d'environnement
+- **API REST de Management**: Monitoring et contrôle inspiré de JMX
+
+## Démarrage Rapide
+
+```go
+package main
+
+import (
+    "github.com/tranchida/gocamel"
+)
+
+func main() {
+    // Créer le contexte Camel
+    context := gocamel.NewCamelContext()
+    
+    // Définir une route
+    route := context.CreateRouteBuilder().
+        From("timer:tick?period=5000").
+        SetBody("Hello World").
+        Log("${body}").
+        To("direct:output").
+        Build()
+    
+    context.AddRoute(route)
+    context.Start()
+    select {}
+}
+```
+
+## Simple Language
+
+GoCamel inclut un langage d'expressions dynamiques inspiré d'Apache Camel Simple Language.
+
+### Capacités Principales
+
+- **Accès aux Données**: `${body}`, `${header.name}`, `${exchangeProperty.prop}`
+- **Fonctions Intégrées**: `${date:now}`, `${random(100)}`, `${uuid}`
+- **Comparaisons**: `${header.count > 10}`, `${body == 'active'}`
+- **Accès Null-safe**: `${body?.field?.subfield}`
+- **Notation par Crochets**: `${body['key']}`, `${body[0]}`
+
+### Exemples
+
+```go
+// Corps et en-têtes dynamiques
+builder.From("direct:start").
+    SimpleSetBody("Bonjour ${body} à ${date:now}").
+    SimpleSetHeader("X-Request-ID", "${uuid}").
+    To("direct:output")
+
+// Routage basé sur le contenu avec Choice
+builder.From("direct:start").
+    Choice().
+        When("${header.priority == 'high'}").
+            SimpleSetBody("🚨 URGENT: ${body}").
+            To("direct:urgent").
+        When("${body['count'] > 100}").
+            To("direct:large-batch").
+        Otherwise().
+            To("direct:normal").
+    EndChoice()
+```
+
+## Enterprise Integration Patterns (EIP)
+
+### Split EIP
+
+Diviser un message en plusieurs parties et les traiter individuellement.
+
+```go
+builder.From("direct:start").
+    Split(func(e *gocamel.Exchange) (any, error) {
+        body := e.GetIn().GetBody().(string)
+        return strings.Split(body, ","), nil
+    }).
+    Log("Traitement partie: ${body}").
+    To("direct:process-part").
+    End()
+```
+
+### Aggregate EIP
+
+Combiner plusieurs messages en un seul selon une clé de corrélation.
+
+```go
+strategy := &MyAggregationStrategy{}
+repo := gocamel.NewMemoryAggregationRepository()
+
+builder.From("direct:start").
+    Aggregate(gocamel.NewAggregator(correlationExpr, strategy, repo).
+        SetCompletionSize(3)).
+    Log("Message agrégé: ${body}")
+```
+
+### Multicast EIP
+
+Envoyer une copie du message vers plusieurs destinations en parallèle.
+
+```go
+builder.From("direct:start").
+    Multicast().
+        Pipeline().
+            Log("Branche 1: ${body}").
+            To("direct:out1").
+        End().
+        Pipeline().
+            Log("Branche 2: ${body}").
+            To("direct:out2").
+        End().
+    End()
+```
+
+### Choice EIP
+
+Routage basé sur le contenu avec branches conditionnelles.
+
+```go
+builder.From("direct:decision").
+    Choice().
+        When("${header.type == 'A'}").
+            To("direct:typeA").
+        When("${header.type == 'B'}").
+            To("direct:typeB").
+        Otherwise().
+            To("direct:default").
+    EndChoice()
+```
+
+## Composants Disponibles
+
+| Composant | Pattern URI | Description |
+|-----------|-------------|-------------|
+| **HTTP** | `http://host:port/path` | Serveur HTTP (Consumer) et client (Producer) |
+| **File** | `file://path` | Opérations sur le système de fichiers |
+| **FTP** | `ftp://host/path` | Support client FTP |
+| **SFTP** | `sftp://host/path` | FTP sécurisé avec authentification SSH |
+| **SMB** | `smb://host/share` | Support des partages Windows/Samba |
+| **Direct** | `direct:name` | Routage synchrone en mémoire |
+| **Timer** | `timer:name` | Déclencheurs basés sur une minuterie |
+| **Cron** | `cron:name` | Déclencheurs planifiés par expression cron |
+| **Telegram** | `telegram:bots` | Intégration API Bot Telegram |
+| **OpenAI** | `openai:chat` | API Chat Completion OpenAI |
+| **Exec** | `exec:command` | Exécution de commandes système |
+| **Mail** | `smtp://...`, `imap://...` | Envoi et réception d'emails |
+| **SQL** | `sql://datasource` | Exécution de requêtes SQL |
+| **SQL-Stored** | `sql-stored://ds` | Appels de procédures stockées |
+| **XSLT** | `xslt:template` | Transformation XML |
+| **XSD** | `xsd:schema` | Validation de schéma XML |
+| **Template** | `template:name` | Traitement de templates Go |
+
+## Configuration
+
+Les paramètres sensibles (tokens, mots de passe) peuvent être fournis de trois façons:
+
+1. **Directement dans l'URI**: `ftp://user:pass@host/path`
+2. **Paramètres de requête**: `telegram:bots?authorizationToken=XXX`
+3. **Variables d'environnement** (Recommandé): `FTP_PASSWORD=***`, `TELEGRAM_AUTHORIZATIONTOKEN=***`
+
+## Exemple: Intégration FTP
+
+```go
+package main
+
+import "github.com/tranchida/gocamel"
+
+func main() {
+    context := gocamel.NewCamelContext()
+    context.AddComponent("ftp", gocamel.NewFTPComponent())
+
     route := context.CreateRouteBuilder().
         From("ftp://localhost:21/incoming?delay=10s&delete=true").
         Log("Nouveau fichier téléchargé").
-        LogHeaders("Métadonnées du fichier FTP").
-        SetHeader(gocamel.CamelFileName, "processed_file.txt").
-        ProcessFunc(func(exchange *gocamel.Exchange) error {
-            // Traitement custom ici...
-            return nil
-        }).
-        Build()
-
-    // Ajout d'un Producer manuel à l'exécution si besoin:
-    // endpoint, _ := context.CreateEndpoint("ftp://localhost:21/outgoing")
-    // producer, _ := endpoint.CreateProducer()
-    // producer.Send(exchange)
-
-    context.AddRoute(route)
-    context.Start()
-    select {}
-}
-```
-
-### Exemple Telegram
-
-```go
-package main
-
-import (
-    "github.com/tranchida/gocamel"
-)
-
-func main() {
-    // Définir la variable d'environnement TELEGRAM_AUTHORIZATIONTOKEN="votre_token_bot"
-    context := gocamel.NewCamelContext()
-    context.AddComponent("telegram", gocamel.NewTelegramComponent())
-
-    route := context.CreateRouteBuilder().
-        From("telegram:bots").
-        Log("Message Telegram reçu !").
-        LogBody("Texte du message :").
+        SetHeader(gocamel.CamelFileName, "processed.txt").
+        To("ftp://localhost:21/processed").
         Build()
 
     context.AddRoute(route)
@@ -258,266 +444,68 @@ func main() {
 }
 ```
 
-### Exemple OpenAI
+## API REST de Management
 
-L'envoi de requêtes s'effectue via un Producteur.
+Activer le monitoring et le contrôle inspiré de JMX:
 
 ```go
-package main
-
-import (
-    "fmt"
-    "context"
-    "github.com/tranchida/gocamel"
-)
-
-func main() {
-    // Définir la variable d'environnement OPENAI_AUTHORIZATIONTOKEN ou OPENAI_API_KEY
-    camelCtx := gocamel.NewCamelContext()
-    camelCtx.AddComponent("openai", gocamel.NewOpenAIComponent())
-
-    // Dans une route ou manuellement:
-    endpoint, _ := camelCtx.CreateEndpoint("openai:chat?model=gpt-3.5-turbo")
-    producer, _ := endpoint.CreateProducer()
-
-    exchange := gocamel.NewExchange(context.Background())
-    exchange.GetIn().SetBody("Bonjour, comment ça va ?")
-
-    producer.Send(exchange)
-    fmt.Println("Réponse OpenAI :", exchange.GetOut().GetBody())
-}
+mgmt := gocamel.NewManagementServer(context)
+mgmt.Start(":8081")  // Accès http://localhost:8081/routes
 ```
 
-### Exemple Quartz
+**Endpoints disponibles:**
+- `GET /routes` - Liste toutes les routes
+- `GET /routes/{id}` - Détails d'une route
+- `POST /routes/{id}/start` - Démarrer une route
+- `POST /routes/{id}/stop` - Arrêter une route
+- `GET /health` - Vérification de santé
 
-```go
-package main
+---
 
-import (
-    "fmt"
-    "github.com/tranchida/gocamel"
-)
+## 🏗️ Project Structure | Structure du Projet
 
-func main() {
-    context := gocamel.NewCamelContext()
-    context.AddComponent("quartz", gocamel.NewQuartzComponent())
-
-    // CronTrigger : toutes les minutes (expression 6 champs, secondes incluses)
-    route1 := context.CreateRouteBuilder().
-        From("quartz://monGroupe/minutely?cron=0+*+*+*+*+*").
-        ProcessFunc(func(exchange *gocamel.Exchange) error {
-            fmt.Println("Déclenchement cron :", exchange.GetIn().Headers[gocamel.QuartzFireTime])
-            return nil
-        }).
-        Build()
-
-    // SimpleTrigger : toutes les 5 secondes (intervalles sub-secondes supportés)
-    route2 := context.CreateRouteBuilder().
-        From("quartz://poller?trigger.repeatInterval=5000&triggerStartDelay=0").
-        ProcessFunc(func(exchange *gocamel.Exchange) error {
-            fmt.Println("Tick toutes les 5s")
-            return nil
-        }).
-        Build()
-
-    context.AddRoute(route1)
-    context.AddRoute(route2)
-    context.Start()
-    select {}
-}
 ```
-
-**Paramètres URI Quartz :**
-
-| Paramètre | Description | Défaut |
-|-----------|-------------|--------|
-| `cron` | Expression cron 6 champs (espaces encodés en `+`) | — |
-| `trigger.repeatInterval` | Intervalle en ms (SimpleTrigger) | — |
-| `trigger.repeatCount` | Nombre max de déclenchements (`-1` = infini) | `-1` |
-| `trigger.timeZone` | Timezone IANA (ex: `Europe/Paris`) — CronTrigger uniquement | — |
-| `triggerStartDelay` | Délai en ms avant le premier déclenchement | `500` |
-| `deleteJob` | Supprimer le job à l'arrêt | `true` |
-| `pauseJob` | Mettre en pause au lieu de supprimer à l'arrêt | `false` |
-| `stateful` | Empêcher les exécutions concurrentes (CronTrigger) | `false` |
-
-**En-têtes posés sur chaque Exchange :**
-`fireTime`, `scheduledFireTime`, `nextFireTime`, `previousFireTime`, `triggerName`, `triggerGroup`, `refireCount`
-
-### Exemple SQL-Stored
-
-```go
-package main
-
-import (
-    "context"
-    "database/sql"
-    "fmt"
-    "github.com/tranchida/gocamel"
-    _ "github.com/mattn/go-sqlite3"
-)
-
-func main() {
-    db, _ := sql.Open("sqlite3", ":memory:")
-    defer db.Close()
-
-    // Créer une procédure de test
-    db.Exec(`
-        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-        INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
-    `)
-
-    ctx := gocamel.NewCamelContext()
-    
-    sqlStored := gocamel.NewSQLStoredComponent()
-    sqlStored.RegisterDataSource("mydb", db)
-    ctx.AddComponent("sql-stored", sqlStored)
-
-    builder := ctx.CreateRouteBuilder().
-        From("direct:call").
-        SetBody([]gocamel.StoredProcedureParam{
-            {Name: "userId", Direction: gocamel.ParamDirectionIn, Value: 1},
-        }).
-        To("sql-stored://mydb?procedure=GET_USER").
-        Log("Résultat: ${body}")
-
-    ctx.AddRoute(builder.Build())
-    ctx.Start()
-}
-```
-
-**Utilisation des paramètres IN/OUT/INOUT:**
-
-```go
-// IN only
-{Direction: gocamel.ParamDirectionIn, Value: "input"}
-
-// OUT only (récupère une valeur de retour)
-{Direction: gocamel.ParamDirectionOut}
-
-// INOUT (passe une valeur et reçoit le résultat)
-{Direction: gocamel.ParamDirectionInOut, Value: 123}
+gocamel/
+├── context.go              # Camel context management | Gestion du contexte
+├── exchange.go             # Message exchange | Structure d'échange
+├── message.go              # Message structure | Structure de message
+├── route.go                # Route management | Gestion des routes
+├── route_builder.go        # DSL Builder pattern | Pattern Builder DSL
+├── registry.go             # Component registry | Registre des composants
+├── aggregator.go           # Aggregate EIP | EIP Aggregate
+├── splitter.go             # Split EIP | EIP Split
+├── multicast.go            # Multicast EIP | EIP Multicast
+├── choice.go               # Choice EIP | EIP Choice
+├── http_component.go       # HTTP component | Composant HTTP
+├── file_component.go       # File component | Composant File
+├── ftp_component.go        # FTP component | Composant FTP
+├── sftp_component.go       # SFTP component | Composant SFTP
+├── smb_component.go        # SMB component | Composant SMB
+├── mail_component.go       # Mail component | Composant Mail
+├── sql_component.go        # SQL component | Composant SQL
+├── sql_stored_component.go # SQL-Stored component | Composant SQL-Stored
+├── telegram_component.go    # Telegram component | Composant Telegram
+├── openai_component.go     # OpenAI component | Composant OpenAI
+├── template_component.go   # Template component | Composant Template
+├── cron_component.go       # Cron component | Composant Cron
+└── management.go          # REST API | API REST
 ```
 
 ---
 
-## Structure du projet
+## 📄 License | Licence
 
-```
-gocamel/
-├── context.go              # Gestion du contexte Camel
-├── exchange.go             # Structure d'échange de messages
-├── message.go              # Structure de message
-├── route.go                # Gestion des routes
-├── route_builder.go        # Pattern Builder pour les routes (DSL)
-├── registry.go             # Registre des composants
-├── config.go               # Utilitaires de gestion des configurations environnementales
-├── utils.go                # Utilitaires (interpolation, pattern-to-regex)
-├── aggregator.go           # Implémentation de l'EIP Aggregate
-├── splitter.go             # Implémentation de l'EIP Split
-├── multicast.go            # Implémentation de l'EIP Multicast
-├── pipeline.go             # Pipeline séquentiel (utilisé par Multicast)
-├── aggregation_strategy.go # Interface pour les stratégies d'agrégation
-├── aggregation_repository.go # Interface pour le stockage de l'agrégation
-├── memory_aggregation_repository.go # Stockage d'agrégation en mémoire
-├── sql_aggregation_repository.go   # Stockage d'agrégation SQLite
-├── polling_options.go      # Options de polling partagées (FTP, SFTP, SMB)
-├── file_filter.go          # Filtrage de noms de fichiers (include/exclude)
-├── management.go           # API REST de management (JMX-like)
-├── http_component.go       # Composant HTTP
-├── file_component.go       # Composant File
-├── ftp_component.go        # Composant FTP
-├── sftp_component.go       # Composant SFTP
-├── smb_component.go        # Composant SMB (Samba / Windows Share)
-├── direct_component.go     # Composant Direct (routage en mémoire)
-├── timer_component.go      # Composant Timer (minuterie simple)
-├── telegram_component.go   # Composant Telegram Bot
-├── openai_component.go    # Composant OpenAI
-├── exec_component.go      # Composant Exec (exécution de commandes)
-├── xslt_component.go      # Composant XSLT
-├── xsd_component.go       # Composant XSD
-└── quartz_component.go    # Composant Quartz (scheduler)
-```
+MIT License - See [LICENSE](LICENSE) file for details.
 
-## Composants disponibles
+Licence MIT - Voir le fichier [LICENSE](LICENSE) pour les détails.
 
-- **HTTP** (`http://...`) : Serveur (Consumer) et Client (Producer).
-- **File** (`file://...`) : Lecture et écriture de fichiers locaux.
-- **FTP** (`ftp://...`) : Serveur FTP (Consumer & Producer).
-- **SFTP** (`sftp://...`) : Serveur SFTP avec authentification SSH (Consumer & Producer).
-- **SMB** (`smb://...`) : Partages réseau Windows/Samba (Consumer & Producer).
-- **Direct** (`direct:...`) : Routage synchrone en mémoire entre routes (Consumer & Producer).
-- **Timer** (`timer:...`) : Minuterie périodique simple (Consumer uniquement).
-- **Telegram** (`telegram:...`) : Bot Telegram (Consumer webhook/polling & Producer).
-- **OpenAI** (`openai:...`) : Chat Completion (Producer uniquement).
-- **Exec** (`exec:...`) : Exécution de commandes système (Producer uniquement).
-- **XSLT** (`xslt:...`) : Transformation XML via une feuille de style (Producer uniquement).
-- **XSD** (`xsd:...`) : Validation de schéma XML (Producer uniquement).
-- **Template** (`template:...`) : Transformation texte via templates Go natifs (Producer uniquement, inspiré de Velocity).
-- **Quartz** (`quartz://...`) : Déclenchement planifié par expression cron ou intervalle fixe (Consumer uniquement).
-- **Mail** (`smtp://...`, `smtps://...`, `imap://...`, `imaps://...`, `pop3://...`, `pop3s://...`) : Envoi et réception d'emails (Consumer & Producer).
-- **SQL** (`sql://...`) : Exécution de requêtes SQL via `database/sql` (Producer uniquement).
-- **SQL-Stored** (`sql-stored://...`) : Exécution de procédures stockées (Producer uniquement).
+---
 
-## Configuration
+<p align="center">
+  <strong>GoCamel</strong> - Making Enterprise Integration Simple in Go<br>
+  <strong>GoCamel</strong> - Rendre l'Intégration d'Entreprise Simple en Go
+</p>
 
-La plupart des paramètres sensibles (tokens, mots de passe) peuvent être passés de trois façons :
-1. Dans l'URI directement (ex: `ftp://user:pass@host/path`).
-2. En paramètre de requête (ex: `telegram:bots?authorizationToken=XXX`).
-3. En variable d'environnement (ex: `FTP_PASSWORD=xxx`, `TELEGRAM_AUTHORIZATIONTOKEN=xxx` ou `OPENAI_API_KEY=xxx`). C'est la méthode recommandée.
-
-## Licence
-
-MIT
-
-## Monitoring et Management REST (JMX-like)
-
-GoCamel inclut une interface REST permettant de monitorer et de contrôler le cycle de vie des routes (démarrage/arrêt), inspirée du management JMX d'Apache Camel.
-
-```go
-package main
-
-import (
-    "github.com/tranchida/gocamel"
-)
-
-func main() {
-    context := gocamel.NewCamelContext()
-
-    route := context.CreateRouteBuilder().
-        From("http://localhost:8080/hello").
-        SetID("route-http-1").
-        SetBody("Hello World").
-        Build()
-
-    context.AddRoute(route)
-    context.Start()
-
-    // Démarrer l'interface de management sur le port 8081
-    mgmt := gocamel.NewManagementServer(context)
-    mgmt.Start(":8081")
-
-    select {}
-}
-```
-
-### Endpoints de Management
-
-- **État du contexte** : `GET /api/context`
-  ```json
-  {"started":true,"totalRoutes":1,"startedRoutes":1}
-  ```
-
-- **Lister les routes** : `GET /api/routes`
-  ```json
-  [{"id":"route-http-1","description":"","group":"","started":true}]
-  ```
-
-- **Arrêter une route** : `POST /api/routes/{id}/stop`
-  ```bash
-  curl -X POST http://localhost:8081/api/routes/route-http-1/stop
-  ```
-
-- **Démarrer une route** : `POST /api/routes/{id}/start`
-  ```bash
-  curl -X POST http://localhost:8081/api/routes/route-http-1/start
-  ```
+<p align="center">
+  Made with ❤️ | Fait avec ❤️
+</p>
