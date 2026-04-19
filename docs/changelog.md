@@ -8,6 +8,7 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2
 ## [Unreleased]
 
 ### Ajout
+- Composant SQL (producer) pour exécuter des requêtes `SELECT`/`INSERT`/`UPDATE`/`DELETE` via `database/sql`, avec support des paramètres positionnels, `outputType` (`SelectList`/`SelectOne`), mode batch et transactions
 - Composant Cron pour le scheduling avancé
 - Nouveaux EIP : Stop, ToD (To Dynamic)
 - Headers/Properties manipulation

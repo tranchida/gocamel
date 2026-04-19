@@ -265,6 +265,84 @@ builder.To("exec:ls -la")
 
 ---
 
+## Base de données
+
+### SQL
+
+Exécution de requêtes SQL (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) via `database/sql`.
+Le composant est **Producer uniquement** : l'utilisateur enregistre ses `*sql.DB`
+sur le composant, puis les référence par nom dans l'URI.
+
+```go
+import (
+    "database/sql"
+    _ "github.com/mattn/go-sqlite3"
+)
+
+db, _ := sql.Open("sqlite3", "./app.db")
+
+sqlComp := gocamel.NewSQLComponent()
+sqlComp.RegisterDataSource("appdb", db)
+// ou : sqlComp.SetDefaultDataSource(db)
+ctx.AddComponent("sql", sqlComp)
+
+// SELECT -> Out.Body = []map[string]any
+builder.From("direct:list").
+    To("sql://appdb?query=SELECT+id,name+FROM+users").
+    Log("${body}")
+
+// SELECT avec une seule ligne -> Out.Body = map[string]any
+builder.From("direct:one").
+    SetHeader(gocamel.SqlParameters, []any{42}).
+    To("sql://appdb?query=SELECT+*+FROM+users+WHERE+id=?&outputType=SelectOne")
+
+// INSERT/UPDATE/DELETE -> Out.Body = lignes affectées (int64)
+builder.From("direct:insert").
+    SetHeader(gocamel.SqlParameters, []any{"alice", "alice@example.com"}).
+    To("sql://appdb?query=INSERT+INTO+users(name,email)+VALUES(?,?)&transacted=true")
+```
+
+**Format URI**
+
+```
+sql://<datasourceName>?query=<SQL>
+sql://logical?dataSourceRef=<datasourceName>&query=<SQL>
+```
+
+| Option | Type | Défaut | Description |
+|--------|------|--------|-------------|
+| `query` | string | — | Requête SQL (obligatoire) — peut contenir `${header.x}`, `${body}`, `${property.x}` |
+| `dataSourceRef` | string | host URI | Nom d'une datasource enregistrée via `RegisterDataSource` |
+| `outputType` | string | `SelectList` | `SelectList` (`[]map[string]any`) ou `SelectOne` (`map[string]any`) |
+| `batch` | bool | `false` | Mode batch : body = `[][]any`, une exécution par jeu de paramètres dans une transaction |
+| `transacted` | bool | `false` | Englobe la requête dans une transaction (`BEGIN`/`COMMIT`/`ROLLBACK`) |
+
+**Paramètres de la requête**
+
+Les paramètres positionnels (`?`) sont fournis via, par ordre de priorité :
+1. le header `CamelSqlParameters` (`[]any`)
+2. le body s'il s'agit d'un `[]any`
+
+**Headers**
+
+| Header | Sens | Description |
+|--------|------|-------------|
+| `CamelSqlQuery` | In | Surcharge la requête configurée dans l'URI |
+| `CamelSqlParameters` | In | Paramètres positionnels (`[]any`) |
+| `CamelSqlRowCount` | Out | Nombre de lignes retournées (SELECT) ou affectées (INSERT/UPDATE/DELETE) |
+| `CamelSqlColumnNames` | Out | Noms des colonnes retournées pour un SELECT (`[]string`) |
+
+**Body résultat**
+
+| Cas | Type du `Out.Body` |
+|-----|---------------------|
+| `SELECT` + `outputType=SelectList` (défaut) | `[]map[string]any` |
+| `SELECT` + `outputType=SelectOne` | `map[string]any` (ou `nil` si aucun résultat) |
+| `INSERT` / `UPDATE` / `DELETE` | `int64` (lignes affectées) |
+| `batch=true` | `int64` (total des lignes affectées) |
+
+---
+
 ## Configuration des composants
 
 ### Authentification

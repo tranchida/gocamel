@@ -398,6 +398,7 @@ gocamel/
 - **Template** (`template:...`) : Transformation texte via templates Go natifs (Producer uniquement, inspiré de Velocity).
 - **Quartz** (`quartz://...`) : Déclenchement planifié par expression cron ou intervalle fixe (Consumer uniquement).
 - **Mail** (`smtp://...`, `smtps://...`, `imap://...`, `imaps://...`, `pop3://...`, `pop3s://...`) : Envoi et réception d'emails (Consumer & Producer).
+- **SQL** (`sql://...`) : Exécution de requêtes SQL via `database/sql` (Producer uniquement).
 
 ## Configuration
 
