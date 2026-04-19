@@ -1,391 +1,370 @@
-# Simple Language
+# Simple Language Documentation
 
-Le **Simple Language** est le moteur d'expressions de GoCamel, inspiré du Simple Language d'Apache Camel. Il permet d'évaluer des expressions dynamiques à l'exécution pour accéder aux données des échanges, manipuler les en-têtes, et effectuer des routages basés sur le contenu.
+GoCamel's Simple Language provides a powerful expression language for evaluating and manipulating data in your routes.
 
-## Vue d'ensemble
+## Table of Contents
 
-Le Simple Language utilise la syntaxe `${expression}` pour encapsuler les expressions qui seront évaluées.
+1. [Basic Variable Access](#basic-variable-access)
+2. [String Operations](#string-operations)
+3. [Logical Operators](#logical-operators)
+4. [Ternary Operator](#ternary-operator)
+5. [String Functions](#string-functions)
+6. [Math Operations](#math-operations)
+7. [Type/Range Operations](#typerange-operations)
+8. [Function Chaining](#function-chaining)
+9. [Null-Safe Operations](#null-safe-operations)
 
+## Basic Variable Access
+
+### Body Access
 ```go
-// Exemple simple
-template := gocamel.ParseSimpleTemplate("Bonjour ${body}")
-result, _ := template.Evaluate(exchange) // "Bonjour John"
+${body}                           // Access the message body
+${body.field}                     // Access a map/struct field
+${body['key']}                    // Access via bracket notation
+${body?.field}                    // Null-safe property access
+${body[0]}                        // Access array/slice element
+${body[last]}                     // Access last element
+${body[last-1]}                   // Access second-to-last element
 ```
 
-## Variables de référence
-
-| Variable | Syntaxe | Description | Exemple |
-|----------|---------|-------------|---------|
-| **body** | `${body}` | Corps du message | `${body}` |
-| **header** | `${header.nom}` | En-tête HTTP/propriété | `${header.Content-Type}` |
-| **exchangeProperty** | `${exchangeProperty.nom}` | Propriété de l'Exchange | `${exchangeProperty.userId}` |
-| **variable** | `${variable.nom}` | Variable personnalisée | `${variable.counter}` |
-
-## Accès aux données
-
-### Notation par point
-
-Pour accéder aux champs des maps et des structs via la notation par point :
-
+### Header Access
 ```go
-// Accès direct
-${body}
-${header.X-Request-ID}
-${exchangeProperty.sessionId}
-
-// Accès à une propriété du body (si le body est une map ou struct)
-${body.user.name}
-${body.address.city}
+${header.name}                    // Access header by name
+${header['name']}                 // Access header via bracket notation
+${header?.name}                   // Null-safe header access
+${header['X-Custom-Header']}      // Headers with special characters
 ```
 
-### Notation par crochets
-
-Pour accéder aux éléments via des clés dynamiques ou des index numériques :
-
+### Exchange Property Access
 ```go
-// Accès à une clé de map avec espaces ou caractères spéciaux
-${body['key with spaces']}
-${body["email"]}
-
-// Accès à un élément de slice/array par index
-${body[0]}
-${body[users][0][name]}
-
-// Index spécial 'last' pour le dernier élément
-${body[last]}
-${body[last-1]}
-
-// Accès chaîné mixte
-${body['users'][0]['roles'][last]}
+${exchangeProperty.name}          // Access exchange property
+${exchangeProperty['name']}       // Access via bracket notation
+${exchangeProperty?.name}         // Null-safe property access
 ```
 
-### Opérateur null-safe (?.)
+## String Operations
 
-L'opérateur `?.` permet d'accéder en toute sécurité aux propriétés sans risquer de panic sur une valeur nil :
-
+### Contains
+Checks if the string contains a substring:
 ```go
-// Si body ou user est nil, retourne nil sans panic
-${body?.user?.profile?.name}
-
-// Null-safe sur les headers
-${header?.X-Optional-Header}
-
-// Null-safe sur les propriétés
-${exchangeProperty?.optional?.value}
+${body contains 'text'}           // Returns: true/false
+${header.message contains 'urgent'}
 ```
 
-!!! tip "Bonnes pratiques"
-    Utilisez l'opérateur `?.` lorsque vous n'êtes pas certain que les données parentes existent. Cela évite les erreurs de runtime.
-
-## Fonctions intégrées
-
-| Fonction | Description | Exemple |
-|----------|-------------|---------|
-| `${date:now}` | Date/heure actuelle (RFC3339) | `${date:now}` |
-| `${date:now:FORMAT}` | Date/heure avec format personnalisé | `${date:now:2006-01-02}` |
-| `${random(MAX)}` | Nombre aléatoire entre 0 et MAX-1 | `${random(100)}` |
-| `${uuid}` | Génère un UUID v4 | `${uuid}` |
-
-### Exemples de dates
-
+### StartsWith
+Checks if the string starts with a prefix:
 ```go
-// Format Go standard
-${date:now:2006-01-02}                    // 2026-01-15
-${date:now:January 2, 2006}                // January 15, 2026
-${date:now:2006-01-02 15:04:05}           // 2026-01-15 14:30:45
-${date:now:Mon, 02 Jan 2006 15:04:05 MST} // Format RFC1123
+${body startsWith 'prefix'}       // Returns: true/false
+${header.path startsWith '/api'}
 ```
 
-## Comparaisons
-
-Le Simple Language supporte les opérateurs de comparaison pour les conditions :
-
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
-| `==` | Égal à | `${body == 'active'}` |
-| `!=` | Différent de | `${header.count != 0}` |
-| `>` | Supérieur à | `${header.priority > 5}` |
-| `<` | Inférieur à | `${header.count < 100}` |
-| `>=` | Supérieur ou égal | `${header.count >= 10}` |
-| `<=` | Inférieur ou égal | `${header.count <= 50}` |
-
+### EndsWith
+Checks if the string ends with a suffix:
 ```go
-// Comparaisons numériques
-${header.count > 100}
-${exchangeProperty.total >= 1000}
-
-// Comparaisons de chaînes
-${body == 'hello'}
-${header.Content-Type != 'application/json'}
-
-// Combinaison avec accès par crochets
-${body['status'] == 'active'}
-${body[0] > 50}
+${body endsWith '.json'}          // Returns: true/false
+${header.filename endsWith '.xml'}
 ```
 
-!!! note "Comparaison mixte"
-    Les comparaisons entre nombres et chaînes sont supportées. GoCamel tente d'abord une comparaison numérique, puis une comparaison lexicographique si les valeurs ne sont pas numériques.
-
-## Utilisation dans les routes
-
-### SimpleSetBody
-
-Définit le corps du message à partir d'une expression Simple :
-
+### Regex
+Checks if the string matches a regular expression pattern:
 ```go
-builder.From("direct:start").
-    SimpleSetBody("Received: ${body} at ${date:now}").
-    To("direct:output")
+${body regex '\\d+'}              // Match digits
+${header.email regex '^[\\w.]+@[\\w.]+\\.[a-z]+$'}
 ```
 
-### SimpleSetHeader
+## Logical Operators
 
-Définit un en-tête à partir d'une expression Simple :
-
+### AND (&&)
+All conditions must be true:
 ```go
-builder.From("direct:start").
-    SimpleSetHeader("X-Request-ID", "${uuid}").
-    SimpleSetHeader("X-Timestamp", "${date:now:RFC3339}").
-    SimpleSetHeader("X-User", "${exchangeProperty.userId}").
-    To("direct:output")
+${header.count > 5 && header.type == 'gold'}
+${body contains 'URGENT' && header.priority == 'high'}
 ```
 
-### Log
-
-Les expressions Simple peuvent être utilisées dans les logs :
-
+### OR (||)
+At least one condition must be true:
 ```go
-builder.From("direct:start").
-    Log("Processing message from ${header.X-Client-ID}: ${body}").
-    To("direct:output")
+${header.count > 10 || body contains 'urgent'}
+${header.status == 'active' || header.status == 'pending'}
 ```
 
-### ToD (To Dynamic)
-
-L'URI est résolue dynamiquement avec interpolation :
-
+### NOT (!)
+Negates a condition:
 ```go
-builder.From("direct:start").
-    SetHeader("CamelFileName", "${exchangeProperty.fileName}").
-    ToD("file://output/${header.CamelFileName}")
+${!header.processed}
+${!exchangeProperty.skip}
+${!(header.priority == 'low')}
 ```
 
-## Pattern Choice (Content-Based Router)
-
-Le Simple Language est utilisé dans le pattern Choice pour le routage basé sur le contenu :
+### Operator Precedence
+1. `()` (parentheses) - highest precedence
+2. `!` (NOT)
+3. `&&` (AND)
+4. `||` (OR) - lowest precedence
 
 ```go
-builder.From("direct:start").
-    Choice().
-        When("${header.priority == 'high'}").
-            SimpleSetBody("HIGH: ${body}").
-            To("direct:high-priority").
-        When("${header.priority == 'medium'}").
-            SimpleSetBody("MEDIUM: ${body}").
-            To("direct:medium-priority").
-        When("${body['count'] > 100}").
-            To("direct:large-batch").
-        Otherwise().
-            To("direct:default").
+// Example: NOT has higher precedence than AND/OR
+${!header.processed && header.active}
+// Evaluated as: (!header.processed) && header.active
+
+// Example: AND has higher precedence than OR
+${header.a || header.b && header.c}
+// Evaluated as: header.a || (header.b && header.c)
+```
+
+## Ternary Operator
+
+The ternary operator provides a compact way to write conditional expressions:
+
+```go
+${condition ? true-value : false-value}
+```
+
+### Examples
+```go
+${header.type == 'gold' ? 'Premium' : 'Standard'}
+${header.amount > 100 ? 'High' : 'Low'}
+${body contains 'URGENT' ? 'Fast' : 'Normal'}
+```
+
+## String Functions
+
+### trim()
+Removes leading and trailing whitespace:
+```go
+${body.trim()}
+// Input: "  Hello World  " → Output: "Hello World"
+```
+
+### uppercase() / upper()
+Converts to uppercase:
+```go
+${body.uppercase()}
+${header.name.upper()}
+// Input: "hello" → Output: "HELLO"
+```
+
+### lowercase() / lower()
+Converts to lowercase:
+```go
+${body.lowercase()}
+${header.name.lower()}
+// Input: "HELLO" → Output: "hello"
+```
+
+### size() / length()
+Returns the length of a string, slice, or map:
+```go
+${body.size()}                    // Length of string
+${header.items.length()}          // Length of slice/array
+${body.mapField.size()}          // Size of map
+```
+
+### substring(start, [end])
+Extracts a substring:
+```go
+${body.substring(6)}              // From index 6 to end
+${body.substring(0, 5)}           // From index 0 to 4
+// Input: "Hello World"
+// substring(6) → "World"
+// substring(0, 5) → "Hello"
+```
+
+### replace(old, new)
+Replaces all occurrences:
+```go
+${body.replace('old', 'new')}
+// Input: "Hello World World"
+// Output: "Hello Universe Universe"
+```
+
+### split(delimiter, [limit])
+Splits a string into a slice using an optional delimiter (default: `,`) and an optional limit on the number of parts:
+```go
+${body.split(',')}                // Split by comma
+${body.split(';', 2)}             // Split by ';' into at most 2 parts
+${body.split()}                   // Split by default comma delimiter
+// Input: "a,b,c,d" → split(',') → ["a", "b", "c", "d"]
+// Input: "a;b;c;d" → split(';', 2) → ["a", "b;c;d"]
+```
+
+### normalizeWhitespace()
+Replaces tabs, newlines and carriage returns with spaces, collapses multiple whitespace characters into a single space, and trims leading/trailing whitespace:
+```go
+${body.normalizeWhitespace()}
+// Input: "  Hello\t\tWorld\n\n  Foo  " → Output: "Hello World Foo"
+```
+
+## Math Operations
+
+### Addition (+)
+```go
+${header.count + 10}
+${10 + 5}  // → 15
+```
+
+### Subtraction (-)
+```go
+${header.count - 5}
+${20 - 8}  // → 12
+```
+
+### Multiplication (*)
+```go
+${header.count * 2}
+${5 * 4}   // → 20
+```
+
+### Division (/)
+```go
+${header.count / 2}
+${10 / 2}  // → 5
+```
+
+### Modulo (%)
+```go
+${header.count % 2}
+${10 % 3}  // → 1
+```
+
+### Operator Precedence
+Math operations follow standard precedence:
+1. `*`, `/`, `%` (left to right)
+2. `+`, `-` (left to right)
+
+```go
+${2 + 3 * 4}     // → 14 (not 20)
+${(2 + 3) * 4}   // → 20 (parentheses override)
+```
+
+## Type/Range Operations
+
+### "in" Operator - List Membership
+Checks if a value is in a comma-separated list:
+```go
+${header.type in 'gold,silver,bronze'}
+${header.status in 'pending,processing,completed'}
+```
+
+### "range" Operator - Range Check
+Checks if a number is within a range:
+```go
+${header.count range 100..199}    // 100 ≤ count ≤ 199
+${header.code range 200..299}     // 200 ≤ code ≤ 299
+```
+
+### "is" Operator - Type Checking
+Checks the type of a value:
+```go
+${body is 'String'}               // Is string?
+${body is 'Int'}                  // Is integer?
+${header.data is 'Map'}           // Is map?
+${header.items is 'Slice'}        // Is slice/array?
+${header.flag is 'Bool'}          // Is boolean?
+```
+
+Supported type names:
+- `String`, `string`
+- `Int`, `Integer`, `int`
+- `Float`, `Double`, `Number`, `float64`
+- `Bool`, `Boolean`, `bool`
+- `Map`, `map`
+- `Slice`, `Array`, `List`
+
+## Function Chaining
+
+String functions can be chained together:
+
+```go
+${body.trim().uppercase()}              // "  hello  " → "HELLO"
+${body.trim().uppercase().size()}       // "  hello  " → "5"
+${header.name.trim().lowercase().substring(0,5)}
+```
+
+### Chain Evaluation
+1. Evaluate base expression (e.g., `body`)
+2. Apply first function (e.g., `trim()`)
+3. Apply second function to result (e.g., `uppercase()`)
+4. Continue for each function in the chain
+
+## Null-Safe Operations
+
+The null-safe operator (`?.`) allows accessing properties without throwing errors on nil values:
+
+```go
+${body?.field}                    // Returns nil if body is nil
+${body?.field?.subfield}          // Chain multiple null-safe accesses
+${header?.name}                   // Returns nil if header doesn't exist
+${exchangeProperty?.name}         // Returns nil if property doesn't exist
+```
+
+### Null-Safe Function Chaining
+```go
+${body?.trim()}                   // Returns nil if body is nil
+${body?.trim().uppercase()}       // Returns nil if body is nil
+```
+
+## Built-in Functions
+
+### Date Functions
+```go
+${date:now}                       // Current date/time in RFC3339 format
+${date:now:2006-01-02}           // Current date with custom format
+```
+
+### Random Function
+```go
+${random(100)}                    // Random number 0-99
+```
+
+### UUID Function
+```go
+${uuid}                           // Generate UUID v4
+```
+
+## Complex Expressions
+
+Combine multiple operations for powerful expressions:
+
+```go
+// Ternary with contains
+${body contains 'URGENT' ? 'Fast' : 'Normal'}
+
+// Logical operators with string operations
+${body contains 'URGENT' && header.amount > 100 || body startsWith 'CRITICAL'}
+
+// Function in ternary
+${header.code == 'VIP' ? body.substring(0,10).uppercase() : 'Standard'}
+
+// Multiple conditions in Choice
+.Choice().
+    When("${header.priority == 'high' && header.amount > 100}").
+    SetBody("High priority transaction").
+    When("${body contains 'URGENT' || body startsWith 'CRITICAL'}").
+    SetBody("Urgent request").
+    When("${header.category in 'A,B,C'}").
+    SetBody("Category A, B, or C").
+    Otherwise().
+    SetBody("Standard").
     EndChoice()
 ```
 
-### Chaining dans Choice
+## Error Handling
 
-```go
-builder.Choice().
-    When("${header.Content-Type == 'application/json'}").
-        SimpleSetHeader("X-Processor", "JSON").
-        SimpleSetBody("Processing JSON: ${body[0]['name']}").
-        To("direct:process-json").
-    When("${header.Content-Type == 'text/xml'}").
-        SetHeader("X-Processor", "XML").
-        To("direct:process-xml").
-    Otherwise().
-        SetHeader("X-Processor", "UNKNOWN").
-        To("direct:process-generic").
-EndChoice()
-```
+The Simple Language handles errors gracefully:
 
-## API Programmatique
+- **Nil values**: Return `<nil>` or evaluate to `false`
+- **Missing properties**: Return `<nil>`
+- **Invalid regex**: Returns `false` with the error
+- **Division by zero**: Returns an error
+- **Type mismatches**: Attempts coercion or returns appropriate default
 
-### ParseSimpleTemplate
+## Performance Considerations
 
-Pour utiliser le Simple Language en dehors des routes :
+Expressions are parsed once and cached. For optimal performance:
 
-```go
-// Créer un template
-template, err := gocamel.ParseSimpleTemplate("Hello ${body}")
-if err != nil {
-    log.Fatal(err)
-}
-
-// Évaluer le template
-result, err := template.Evaluate(exchange)
-fmt.Println(result) // "Hello John"
-
-// Évaluer comme chaîne
-str, _ := template.EvaluateAsString(exchange)
-
-// Évaluer comme booléen (pour les conditions)
-boolean, _ := template.EvaluateAsBool(exchange)
-```
-
-### Création d'expressions personnalisées
-
-```go
-// ExpressionFunc
-expr := gocamel.ExpressionFunc(func(e *gocamel.Exchange) (interface{}, error) {
-    return e.GetIn().GetBody(), nil
-})
-
-// Utilisation
-template, _ := gocamel.ParseSimpleTemplate("${uuid}")
-result, _ := template.Evaluate(exchange)
-```
-
-## Exemples complets
-
-### Exemple 1: Transformation de message
-
-```go
-package main
-
-import (
-    "github.com/tranchida/gocamel"
-)
-
-func main() {
-    ctx := gocamel.NewCamelContext()
-    
-    route := ctx.CreateRouteBuilder().
-        From(" direct:start").
-        SetProperty("startTime", time.Now()).
-        SimpleSetBody("Request: ${body}").
-        SimpleSetHeader("X-Trace-ID", "${uuid}").
-        SimpleSetHeader("X-Started-At", "${exchangeProperty.startTime}").
-        Log("Processing ${header.X-Trace-ID}").
-        To("direct:output").
-        Build()
-    
-    ctx.AddRoute(route)
-}
-```
-
-### Exemple 2: Routage basé sur le contenu
-
-```go
-route := ctx.CreateRouteBuilder().
-    From("direct:start").
-    Choice().
-        When("${header.status == 'error'}").
-            SimpleSetBody("❌ Error: ${body}").
-            To("direct:error-handler").
-        When("${body['priority'] >= 5}").
-            SimpleSetHeader("X-Urgent", "true").
-            To("direct:urgent").
-        When("${body['users'][0]['role'] == 'admin'}").
-            To("direct:admin-queue").
-        Otherwise().
-            To("direct:normal-queue").
-    EndChoice().
-    Build()
-```
-
-### Exemple 3: Accès aux données JSON
-
-```go
-// Body: {"user": {"name": "John", "email": "john@example.com"}}
-builder.From("direct:json").
-    SimpleSetHeader("X-User-Name", "${body['user']['name']}").
-    SimpleSetHeader("X-User-Email", "${body['user']['email']}").
-    Log("User ${body['user']['name']} registered").
-    To("direct:register")
-```
-
-### Exemple 4: Traitement de collections
-
-```go
-// Body: [{"name": "A"}, {"name": "B"}, {"name": "C"}]
-builder.From("direct:collection").
-    Log("First item: ${body[0]['name']}").
-    Log("Last item: ${body[last]['name']}").
-    Log("Second to last: ${body[last-1]['name']}").
-    To("direct:process")
-```
-
-## Comparaison avec Apache Camel
-
-| Fonctionnalité | GoCamel | Apache Camel |
-|----------------|---------|--------------|
-| `${body}` | ✅ | ✅ |
-| `${header.name}` | ✅ | ✅ |
-| `${exchangeProperty.name}` | ✅ | ✅ |
-| Notation par crochets | ✅ | ✅ |
-| Opérateur null-safe | ✅ (`?.`) | ✅ (`?.`) |
-| `${date:now}` | ✅ | ✅ |
-| `${random()}` | ✅ | ✅ |
-| `${uuid}` | ✅ | ✅ |
-| Comparaisons | ✅ | ✅ |
-| `${variable}` | ✅ | ✅ |
-
-## Erreurs communes
-
-```go
-// ❌ Erreur: clé non trouvée retourne nil, pas une erreur
-${body.nonexistent} // retourne nil
-
-// ✅ Solution: utiliser l'opérateur null-safe
-${body?.nonexistent} // retourne nil sans panic
-
-// ❌ Erreur: index hors limites
-${body[100]} // retourne nil
-
-// ✅ Solution: vérifier la taille avant
-${exchangeProperty.size > 100}
-
-// ❌ Erreur: nom d'en-tête avec tiret
-${header.X-Client-ID} // ❌
-
-// ✅ Solution: utiliser les crochets
-${header['X-Client-ID']} // ✅
-${header.X-Client-ID}    // ✅ aussi supporté
-```
-
-## Référence rapide
-
-### Syntaxe de base
-
-```
-${body}                          Corps du message
-${body.field}                    Propriété du body (map/struct)
-${body['key']}                   Accès par clé
-${body[index]}                   Accès par index
-${body?.field}                   Accès null-safe
-${header.name}                   En-tête
-${header['X-Custom']}            En-tête avec caractères spéciaux
-${exchangeProperty.prop}         Propriété de l'Exchange
-${date:now}                      Date/heure actuelle
-${date:now:FORMAT}               Date/heure formatée
-${random(MAX)}                   Nombre aléatoire 0..MAX-1
-${uuid}                          UUID v4
-```
-
-### Opérateurs de comparaison
-
-```
-==  Égal à
-!=  Différent de
->   Supérieur à
-<   Inférieur à
->=  Supérieur ou égal
-<=  Inférieur ou égal
-```
-
-### Fonctions RouteBuilder
-
-```go
-SimpleSetBody(expression string)
-SimpleSetHeader(headerName, expression string)
-Choice().When(expression).(...).EndChoice()
-```
+1. Parse expressions once and reuse the template
+2. Use simple accessors when possible
+3. Avoid deeply nested expressions
+4. Use bracket notation for dynamic field access
+5. Chain functions instead of multiple separate calls

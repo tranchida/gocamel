@@ -71,6 +71,13 @@ var (
 	// Comparison operators with proper order (multi-char operators first)
 	comparisonRegex = regexp.MustCompile(`^(.+?)(==|!=|>=|<=|>|<)(.+)$`)
 
+	// String operation operators
+	stringOpRegex = regexp.MustCompile(`^(.+?)\s+(contains|startsWith|endsWith|regex)\s+(.+)$`)
+
+	// Logical AND - split by && first (lower precedence than comparisons)
+	// We handle || at higher level
+	ternaryRegex = regexp.MustCompile(`^(.+?)\?\s*(.+?)\s*:\s*(.+)$`)
+
 	// Bracket notation pattern: supports body['key'], body["key"], body[0], body[last], body[last-1]
 	// Captures: base (body/header/etc), accessor (quotes or index expression), rest (for chaining)
 	bracketNotationRegex = regexp.MustCompile(`^(body|header|exchangeProperty)(\?[\?\[]?|[\[]?)\[([^\]]+)\](.*)$`)
@@ -86,6 +93,28 @@ var (
 
 	// Index access for last keyword
 	lastIndexRegex = regexp.MustCompile(`^last(-(\d+))?$`)
+
+	// Function call pattern: name(arg1,arg2)
+	functionCallRegex = regexp.MustCompile(`^(\w+)\s*\(([^)]*)\)$`)
+
+	// Chain function call pattern: .function(args)
+	chainFunctionRegex = regexp.MustCompile(`^\.(\w+)\s*\(([^)]*)\)(.*)$`)
+
+	// "in" operator for list membership
+	inOperatorRegex = regexp.MustCompile(`^(.+?)\s+in\s+(.+)$`)
+
+	// "range" operator for range check
+	rangeOperatorRegex = regexp.MustCompile(`^(.+?)\s+range\s+(\d+)\.\.(\d+)$`)
+
+	// "is" operator for type checking
+	isOperatorRegex = regexp.MustCompile(`^(.+?)\s+is\s+'?(\w+)'?$`)
+
+	// Math operations (+, -, *, /, %)
+	mathAddRegex    = regexp.MustCompile(`^(.+?)\s*\+\s*(.+)$`)
+	mathSubtractRegex = regexp.MustCompile(`^(.+?)\s*-\s*(.+)$`)
+	mathMultiplyRegex = regexp.MustCompile(`^(.+?)\s*\*\s*(.+)$`)
+	mathDivideRegex   = regexp.MustCompile(`^(.+?)\s*/\s*(.+)$`)
+	mathModuloRegex   = regexp.MustCompile(`^(.+?)\s*%\s*(.+)$`)
 )
 
 // ParseSimpleExpression parses a simple expression string into an Expression
@@ -205,7 +234,7 @@ func (t *SimpleTemplate) EvaluateAsBool(exchange *Exchange) (bool, error) {
 			return n != 0, nil
 		}
 		// Non-numeric, non-boolean strings are considered truthy
-		return true, nil
+		return len(s) > 0 && s != "<nil>", nil
 	}
 
 	// Handle numeric result
@@ -223,7 +252,211 @@ func (t *SimpleTemplate) EvaluateAsBool(exchange *Exchange) (bool, error) {
 func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 	expr = strings.TrimSpace(expr)
 
-	// Check for comparison operators first
+	if expr == "" {
+		return nil, nil
+	}
+
+	// Check for simple variable access patterns FIRST (before any operators)
+	// This prevents header names with hyphens from being parsed as math operations
+
+	// Check for null-safe bracket notation first (e.g., body?.['key'])
+	if strings.Contains(expr, "?.") && strings.Contains(expr, "[") {
+		result, err := evaluateNullSafeBracketNotation(expr, exchange)
+		if err == nil {
+			return result, nil
+		}
+		// If it fails, continue to other patterns
+	}
+
+	// Check for bracket notation (e.g., body['key'], body[0])
+	if strings.Contains(expr, "[") {
+		result, err := evaluateBracketNotation(expr, exchange)
+		if err == nil {
+			return result, nil
+		}
+		// If it fails, continue to other patterns
+	}
+
+	// Check for null-safe dot notation (e.g., body?.field)
+	if strings.Contains(expr, "?.") {
+		result, err := evaluateNullSafeDotNotation(expr, exchange)
+		if err == nil {
+			return result, nil
+		}
+		// If it fails, continue to other patterns
+	}
+
+	// Check for body.property (map/struct access)
+	if strings.HasPrefix(expr, "body.") && !strings.HasPrefix(expr, "body?") {
+		result, err := evaluateBodyProperty(expr, exchange)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	// Check for function chaining: e.g., body.trim(), header.name.uppercase()
+	// This must be checked before the simple variable patterns
+	if idx := findFirstMethodCall(expr); idx > 0 {
+		result, err := evaluateFunctionChain(expr, exchange)
+		if err == nil {
+			return result, nil
+		}
+		// If it fails, continue to other patterns
+	}
+
+	// Check for header. and exchangeProperty. patterns (avoid matching as math operation)
+	if strings.HasPrefix(expr, "header.") || strings.HasPrefix(expr, "exchangeProperty.") {
+		if match := dotNotationRegex.FindStringSubmatch(expr); match != nil {
+			return evaluateDotNotationRegex(match, exchange)
+		}
+	}
+
+	// Now handle operators and complex expressions
+
+	// Check for date function - check very early since date format looks like subtraction
+	if dateMatch := dateFunctionRegex.FindStringSubmatch(expr); dateMatch != nil {
+		format := dateMatch[1]
+		if format == "" {
+			format = time.RFC3339
+		}
+		return time.Now().Format(format), nil
+	}
+
+	// Check for random function
+	if randomMatch := randomFunctionRegex.FindStringSubmatch(expr); randomMatch != nil {
+		max, err := strconv.Atoi(randomMatch[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid random argument: %s", randomMatch[1])
+		}
+		return rand.Intn(max), nil
+	}
+
+	// Check for uuid function
+	if uuidFunctionRegex.MatchString(expr) {
+		return generateUUID(), nil
+	}
+
+	// Handle NOT operator (!expr) - highest precedence
+	if strings.HasPrefix(expr, "!") {
+		innerExpr := strings.TrimSpace(expr[1:])
+		innerVal, err := evaluateVariable(innerExpr, exchange)
+		if err != nil {
+			return nil, err
+		}
+		return !toBool(innerVal), nil
+	}
+
+	// Handle parenthesized expressions first
+	if strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
+		inner := expr[1 : len(expr)-1]
+		return evaluateVariable(inner, exchange)
+	}
+
+	// Handle ternary operator first (lowest precedence)
+	if ternaryMatch := ternaryRegex.FindStringSubmatch(expr); ternaryMatch != nil {
+		condition := strings.TrimSpace(ternaryMatch[1])
+		trueVal := strings.TrimSpace(ternaryMatch[2])
+		falseVal := strings.TrimSpace(ternaryMatch[3])
+
+		condResult, err := evaluateVariable(condition, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		if toBool(condResult) {
+			return evaluateVariable(trueVal, exchange)
+		}
+		return evaluateVariable(falseVal, exchange)
+	}
+
+	// Handle logical OR (||) - lower precedence than AND
+	if orParts := splitLogicalOr(expr); len(orParts) > 1 {
+		// Evaluate first part
+		leftResult, err := evaluateVariable(orParts[0], exchange)
+		if err != nil {
+			return nil, err
+		}
+		if toBool(leftResult) {
+			return true, nil // Short-circuit
+		}
+		// Evaluate remaining parts
+		for i := 1; i < len(orParts); i++ {
+			result, err := evaluateVariable(orParts[i], exchange)
+			if err != nil {
+				return nil, err
+			}
+			if toBool(result) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	// Handle logical AND (&&) - higher precedence than OR
+	if andParts := splitLogicalAnd(expr); len(andParts) > 1 {
+		// Evaluate all parts - short circuit on first false
+		for _, part := range andParts {
+			result, err := evaluateVariable(part, exchange)
+			if err != nil {
+				return nil, err
+			}
+			if !toBool(result) {
+				return false, nil // Short-circuit
+			}
+		}
+		return true, nil
+	}
+
+	// Handle "is" operator for type checking
+	if isMatch := isOperatorRegex.FindStringSubmatch(expr); isMatch != nil {
+		left := strings.TrimSpace(isMatch[1])
+		typeName := isMatch[2]
+
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		return checkType(leftVal, typeName), nil
+	}
+
+	// Handle "in" operator for list membership
+	if inMatch := inOperatorRegex.FindStringSubmatch(expr); inMatch != nil {
+		left := strings.TrimSpace(inMatch[1])
+		listStr := strings.TrimSpace(inMatch[2])
+
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		// Parse the list from the comma-separated string
+		// Remove quotes if present
+		listStr = strings.Trim(listStr, "'\"")
+		items := strings.Split(listStr, ",")
+		for i, item := range items {
+			items[i] = strings.TrimSpace(item)
+		}
+
+		return containsValue(items, leftVal), nil
+	}
+
+	// Handle "range" operator for range check
+	if rangeMatch := rangeOperatorRegex.FindStringSubmatch(expr); rangeMatch != nil {
+		left := strings.TrimSpace(rangeMatch[1])
+		minVal, _ := strconv.Atoi(rangeMatch[2])
+		maxVal, _ := strconv.Atoi(rangeMatch[3])
+
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		numVal := toFloat64(leftVal)
+		return numVal >= float64(minVal) && numVal <= float64(maxVal), nil
+	}
+
+	// Handle comparison operators
 	if compMatch := comparisonRegex.FindStringSubmatch(expr); compMatch != nil {
 		left := strings.TrimSpace(compMatch[1])
 		op := compMatch[2]
@@ -247,6 +480,153 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		}
 
 		return compareValues(leftVal, op, rightVal)
+	}
+
+	// Handle string operations: contains, startsWith, endsWith, regex
+	if strOpMatch := stringOpRegex.FindStringSubmatch(expr); strOpMatch != nil {
+		left := strings.TrimSpace(strOpMatch[1])
+		op := strOpMatch[2]
+		right := strings.TrimSpace(strOpMatch[3])
+
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		// Parse right operand as string literal or variable
+		var rightVal string
+		if (strings.HasPrefix(right, "'") && strings.HasSuffix(right, "'")) ||
+			(strings.HasPrefix(right, "\"") && strings.HasSuffix(right, "\"")) {
+			rightVal = strings.Trim(right, "'\"")
+		} else {
+			rv, err := evaluateVariable(right, exchange)
+			if err != nil {
+				return nil, err
+			}
+			rightVal = fmt.Sprintf("%v", rv)
+		}
+
+		leftStr := fmt.Sprintf("%v", leftVal)
+		switch op {
+		case "contains":
+			return strings.Contains(leftStr, rightVal), nil
+		case "startsWith":
+			return strings.HasPrefix(leftStr, rightVal), nil
+		case "endsWith":
+			return strings.HasSuffix(leftStr, rightVal), nil
+		case "regex":
+			re, err := regexp.Compile(rightVal)
+			if err != nil {
+				return false, fmt.Errorf("invalid regex pattern: %v", err)
+			}
+			return re.MatchString(leftStr), nil
+		}
+	}
+
+	// Handle math operations (precedence: * / % then + -)
+	// First check + and - (lower precedence)
+	if mathMatch := mathAddRegex.FindStringSubmatch(expr); mathMatch != nil {
+		left := strings.TrimSpace(mathMatch[1])
+		right := strings.TrimSpace(mathMatch[2])
+
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		rightVal, err := evaluateVariable(right, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		return toFloat64(leftVal) + toFloat64(rightVal), nil
+	}
+
+	if mathMatch := mathSubtractRegex.FindStringSubmatch(expr); mathMatch != nil {
+		left := strings.TrimSpace(mathMatch[1])
+		right := strings.TrimSpace(mathMatch[2])
+
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		rightVal, err := evaluateVariable(right, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		return toFloat64(leftVal) - toFloat64(rightVal), nil
+	}
+
+	// Then check * / % (higher precedence)
+	if mathMatch := mathMultiplyRegex.FindStringSubmatch(expr); mathMatch != nil {
+		left := strings.TrimSpace(mathMatch[1])
+		right := strings.TrimSpace(mathMatch[2])
+
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		rightVal, err := evaluateVariable(right, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		return toFloat64(leftVal) * toFloat64(rightVal), nil
+	}
+
+	if mathMatch := mathDivideRegex.FindStringSubmatch(expr); mathMatch != nil {
+		left := strings.TrimSpace(mathMatch[1])
+		right := strings.TrimSpace(mathMatch[2])
+
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		rightVal, err := evaluateVariable(right, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		rightNum := toFloat64(rightVal)
+		if rightNum == 0 {
+			return nil, fmt.Errorf("division by zero")
+		}
+
+		return toFloat64(leftVal) / rightNum, nil
+	}
+
+	if mathMatch := mathModuloRegex.FindStringSubmatch(expr); mathMatch != nil {
+		left := strings.TrimSpace(mathMatch[1])
+		right := strings.TrimSpace(mathMatch[2])
+
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		rightVal, err := evaluateVariable(right, exchange)
+		if err != nil {
+			return nil, err
+		}
+
+		rightNum := toFloat64(rightVal)
+		if rightNum == 0 {
+			return nil, fmt.Errorf("modulo by zero")
+		}
+
+		// Modulo for floats
+		return float64(int(toFloat64(leftVal)) % int(rightNum)), nil
+	}
+
+	// Handle function chaining: body.trim().uppercase()
+	if strings.Contains(expr, ".") && !strings.HasPrefix(expr, "header.") &&
+		!strings.HasPrefix(expr, "exchangeProperty.") &&
+		!strings.HasPrefix(expr, "body?.") {
+		return evaluateFunctionChain(expr, exchange)
 	}
 
 	// Check for null-safe bracket notation first (e.g., body?.['key'])
@@ -289,28 +669,6 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		return evaluateDotNotationRegex(match, exchange)
 	}
 
-	// Check for date function
-	if dateMatch := dateFunctionRegex.FindStringSubmatch(expr); dateMatch != nil {
-		format := dateMatch[1]
-		if format == "" {
-			format = time.RFC3339
-		}
-		return time.Now().Format(format), nil
-	}
-
-	// Check for random function
-	if randomMatch := randomFunctionRegex.FindStringSubmatch(expr); randomMatch != nil {
-		max, err := strconv.Atoi(randomMatch[1])
-		if err != nil {
-			return nil, fmt.Errorf("invalid random argument: %s", randomMatch[1])
-		}
-		return rand.Intn(max), nil
-	}
-
-	// Check for uuid function
-	if uuidFunctionRegex.MatchString(expr) {
-		return generateUUID(), nil
-	}
 
 	// Check if it's a literal string (quoted)
 	if (strings.HasPrefix(expr, "'") && strings.HasSuffix(expr, "'")) ||
@@ -322,7 +680,6 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 	if num, err := strconv.ParseFloat(expr, 64); err == nil {
 		return num, nil
 	}
-
 	// Check if it's a boolean literal
 	if expr == "true" || expr == "TRUE" {
 		return true, nil
@@ -352,6 +709,419 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 	return nil, fmt.Errorf("unknown expression: %s", expr)
 }
 
+// findFirstMethodCall finds the index of the first dot that starts a method call
+func findFirstMethodCall(expr string) int {
+	// Look for .functionName( pattern
+	for i := 0; i < len(expr); i++ {
+		if expr[i] == '.' {
+			// Check if what follows is a method call (function name followed by ()
+			for j := i + 1; j < len(expr); j++ {
+				if expr[j] == '(' {
+					// Found a method call
+					return i
+				}
+				if expr[j] == '.' || expr[j] == '[' || expr[j] == ' ' {
+					// Not a method call
+					break
+				}
+			}
+		}
+	}
+	return -1
+}
+
+// evaluateFunctionChain evaluates chained function calls like body.trim().uppercase()
+func evaluateFunctionChain(expr string, exchange *Exchange) (interface{}, error) {
+	// Find the first dot that starts a method call
+	dotIdx := findFirstMethodCall(expr)
+	if dotIdx == -1 {
+		return nil, fmt.Errorf("no function call found in chain: %s", expr)
+	}
+
+	// Get the base value
+	baseExpr := strings.TrimSpace(expr[:dotIdx])
+	rest := expr[dotIdx:]
+
+	baseVal, err := evaluateVariable(baseExpr, exchange)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply chained functions
+	return applyChainedFunctions(baseVal, rest, exchange)
+}
+
+// applyChainedFunctions applies chained function calls like .trim().uppercase()
+func applyChainedFunctions(currentVal interface{}, chain string, exchange *Exchange) (interface{}, error) {
+	if currentVal == nil {
+		return nil, nil
+	}
+
+	for chain != "" {
+		// Must start with .
+		if !strings.HasPrefix(chain, ".") {
+			break
+		}
+		chain = chain[1:] // Remove leading .
+
+		// Find function name and arguments
+		parenIdx := strings.Index(chain, "(")
+		if parenIdx == -1 {
+			// No arguments - could be property access, but we're in function chain mode
+			return nil, fmt.Errorf("expected function call in chain, got: %s", chain)
+		}
+
+		funcName := strings.TrimSpace(chain[:parenIdx])
+		if closeIdx := strings.Index(chain, ")"); closeIdx == -1 {
+			return nil, fmt.Errorf("unmatched parenthesis in function call: %s", chain)
+		} else {
+			argsStr := chain[parenIdx+1 : closeIdx]
+			chain = chain[closeIdx+1:]
+
+			// Parse arguments
+			args := parseFunctionArgs(argsStr, exchange)
+
+			// Apply the function
+			result, err := applyStringFunction(funcName, currentVal, args)
+			if err != nil {
+				return nil, err
+			}
+			currentVal = result
+		}
+	}
+
+	return currentVal, nil
+}
+
+// parseFunctionArgs parses function arguments, handling both literals and expressions
+func parseFunctionArgs(argsStr string, exchange *Exchange) []interface{} {
+	if argsStr == "" {
+		return []interface{}{}
+	}
+
+	// Split by comma, but handle nested expressions
+	var args []interface{}
+	for _, part := range splitArgs(argsStr) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// Try to evaluate as expression first
+		if val, err := evaluateVariable(part, exchange); err == nil {
+			args = append(args, val)
+		} else {
+			// Treat as literal
+			args = append(args, part)
+		}
+	}
+
+	return args
+}
+
+// splitArgs splits comma-separated arguments, respecting nested structures
+func splitArgs(argsStr string) []string {
+	var result []string
+	var current strings.Builder
+	depth := 0
+
+	for _, ch := range argsStr {
+		switch ch {
+		case '(':
+			depth++
+			current.WriteRune(ch)
+		case ')':
+			depth--
+			current.WriteRune(ch)
+		case ',':
+			if depth == 0 {
+				result = append(result, current.String())
+				current.Reset()
+			} else {
+				current.WriteRune(ch)
+			}
+		default:
+			current.WriteRune(ch)
+		}
+	}
+
+	if current.Len() > 0 {
+		result = append(result, current.String())
+	}
+
+	return result
+}
+
+// applyStringFunction applies a string function to a value
+func applyStringFunction(funcName string, val interface{}, args []interface{}) (interface{}, error) {
+	if val == nil {
+		return nil, nil
+	}
+
+	strVal := fmt.Sprintf("%v", val)
+
+	switch strings.ToLower(funcName) {
+	case "trim":
+		return strings.TrimSpace(strVal), nil
+	case "uppercase", "upper":
+		return strings.ToUpper(strVal), nil
+	case "lowercase", "lower":
+		return strings.ToLower(strVal), nil
+	case "size", "length":
+		// Handle different types
+		if s, ok := val.(string); ok {
+			return len(s), nil
+		}
+		// Try to get length of slice/array/map
+		v := reflect.ValueOf(val)
+		switch v.Kind() {
+		case reflect.Slice, reflect.Array, reflect.Map, reflect.String:
+			return v.Len(), nil
+		case reflect.Ptr:
+			if !v.IsNil() {
+				return applyStringFunction(funcName, v.Elem().Interface(), args)
+			}
+		}
+		return 0, nil
+	case "substring":
+		if len(args) < 1 {
+			return strVal, nil
+		}
+		start := int(toFloat64(args[0]))
+		if start < 0 {
+			start = 0
+		}
+		if start >= len(strVal) {
+			return "", nil
+		}
+
+		if len(args) >= 2 {
+			end := int(toFloat64(args[1]))
+			if end > len(strVal) {
+				end = len(strVal)
+			}
+			if end <= start {
+				return "", nil
+			}
+			return strVal[start:end], nil
+		}
+		return strVal[start:], nil
+	case "replace":
+		if len(args) < 2 {
+			return strVal, nil
+		}
+		oldStr := fmt.Sprintf("%v", args[0])
+		newStr := fmt.Sprintf("%v", args[1])
+		return strings.ReplaceAll(strVal, oldStr, newStr), nil
+	case "normalizewhitespace":
+		// Replace tabs, newlines, and carriage returns with spaces
+		normalized := strings.ReplaceAll(strVal, "\t", " ")
+		normalized = strings.ReplaceAll(normalized, "\n", " ")
+		normalized = strings.ReplaceAll(normalized, "\r", " ")
+		// Collapse multiple spaces into a single space
+		re := regexp.MustCompile(` +`)
+		normalized = re.ReplaceAllString(normalized, " ")
+		return strings.TrimSpace(normalized), nil
+	case "split":
+		sep := ","
+		if len(args) >= 1 {
+			sep = fmt.Sprintf("%v", args[0])
+		}
+		limit := -1
+		if len(args) >= 2 {
+			limit = int(toFloat64(args[1]))
+		}
+		if limit < 0 {
+			result := strings.Split(strVal, sep)
+			return result, nil
+		}
+		// SplitN returns at most n substrings
+		result := strings.SplitN(strVal, sep, limit+1)
+		// Trim to the requested limit (SplitN may return limit+1 elements)
+		if len(result) > limit {
+			result = result[:limit]
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("unknown function: %s", funcName)
+	}
+}
+
+// splitLogicalAnd splits expression by && respecting parentheses
+func splitLogicalAnd(expr string) []string {
+	return splitByOperator(expr, "&&")
+}
+
+// splitLogicalOr splits expression by || respecting parentheses
+func splitLogicalOr(expr string) []string {
+	return splitByOperator(expr, "||")
+}
+
+// splitByOperator splits expression by an operator while respecting parentheses
+func splitByOperator(expr string, op string) []string {
+	var result []string
+	var current strings.Builder
+	depth := 0
+	opLen := len(op)
+
+	for i := 0; i < len(expr); i++ {
+		ch := expr[i]
+
+		switch ch {
+		case '(':
+			depth++
+			current.WriteByte(ch)
+		case ')':
+			depth--
+			current.WriteByte(ch)
+		default:
+			if depth == 0 && i+opLen <= len(expr) && expr[i:i+opLen] == op {
+				result = append(result, strings.TrimSpace(current.String()))
+				current.Reset()
+				i += opLen - 1 // Skip the rest of operator
+			} else {
+				current.WriteByte(ch)
+			}
+		}
+	}
+
+	if current.Len() > 0 {
+		result = append(result, strings.TrimSpace(current.String()))
+	}
+
+	return result
+}
+
+// toBool converts a value to boolean
+func toBool(val interface{}) bool {
+	if val == nil {
+		return false
+	}
+
+	if b, ok := val.(bool); ok {
+		return b
+	}
+
+	if s, ok := val.(string); ok {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "" || s == "false" || s == "0" || s == "no" || s == "<nil>" {
+			return false
+		}
+		// Try to parse as number
+		if n, err := strconv.ParseFloat(s, 64); err == nil {
+			return n != 0
+		}
+		return true
+	}
+
+	if n, ok := val.(float64); ok {
+		return n != 0
+	}
+
+	if n, ok := val.(int); ok {
+		return n != 0
+	}
+
+	return true
+}
+
+// toFloat64 converts a value to float64
+func toFloat64(val interface{}) float64 {
+	if val == nil {
+		return 0
+	}
+
+	switch v := val.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int8:
+		return float64(v)
+	case int16:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case uint:
+		return float64(v)
+	case uint8:
+		return float64(v)
+	case uint16:
+		return float64(v)
+	case uint32:
+		return float64(v)
+	case uint64:
+		return float64(v)
+	case string:
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
+			return n
+		}
+		return 0
+	case bool:
+		if v {
+			return 1
+		}
+		return 0
+	}
+
+	return 0
+}
+
+// checkType checks if value is of a specific type
+func checkType(val interface{}, typeName string) bool {
+	if val == nil {
+		return typeName == "nil" || typeName == "Null"
+	}
+
+	switch strings.ToLower(typeName) {
+	case "string":
+		_, ok := val.(string)
+		return ok
+	case "int", "integer":
+		switch val.(type) {
+		case int, int8, int16, int32, int64:
+			return true
+		}
+		return false
+	case "float", "double", "number":
+		switch val.(type) {
+		case float32, float64:
+			return true
+		}
+		return false
+	case "bool", "boolean":
+		_, ok := val.(bool)
+		return ok
+	case "map":
+		v := reflect.ValueOf(val)
+		return v.Kind() == reflect.Map
+	case "slice", "array", "list":
+		v := reflect.ValueOf(val)
+		return v.Kind() == reflect.Slice || v.Kind() == reflect.Array
+	case "struct":
+		v := reflect.ValueOf(val)
+		return v.Kind() == reflect.Struct
+	default:
+		// Check if type name matches the concrete type
+		return fmt.Sprintf("%T", val) == typeName
+	}
+}
+
+// containsValue checks if value is in the list
+func containsValue(list []string, val interface{}) bool {
+	valStr := fmt.Sprintf("%v", val)
+	for _, item := range list {
+		if item == valStr {
+			return true
+		}
+	}
+	return false
+}
+
 // evaluateBracketNotation evaluates bracket notation like body['key'], body[0], body['key']['subkey']
 func evaluateBracketNotation(expr string, exchange *Exchange) (interface{}, error) {
 	// Parse the expression step by step
@@ -359,7 +1129,6 @@ func evaluateBracketNotation(expr string, exchange *Exchange) (interface{}, erro
 
 	// Remove any leading/trailing whitespace
 	expr = strings.TrimSpace(expr)
-
 	// Find the base (body, header, or exchangeProperty)
 	var base, indexExpr, rest string
 	var bracketStart int

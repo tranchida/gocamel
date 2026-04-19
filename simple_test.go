@@ -252,11 +252,14 @@ func TestSimpleTemplateFunctions(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		// Handle date now function with custom format
 		{
 			name:       "date now function with custom format",
 			expression: "${date:now:2006-01-02}",
 			wantCheck: func(s string) bool {
-				return len(s) == 10 && strings.Count(s, "-") == 2
+				// 2006-01-02 format returns a date like "2006-01-02"
+				// Just check it has the right format pattern
+				return len(s) == 10 && s[4] == '-' && s[7] == '-'
 			},
 			wantErr: false,
 		},
