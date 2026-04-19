@@ -343,6 +343,80 @@ Les paramètres positionnels (`?`) sont fournis via, par ordre de priorité :
 
 ---
 
+### SQL-Stored
+
+Exécution de procédures stockées SQL avec support des paramètres IN, OUT et INOUT.
+
+```go
+import (
+    "database/sql"
+    _ "github.com/mattn/go-sqlite3"
+)
+
+db, _ := sql.Open("mysql", "user:pass@/mydb")
+
+sqlStored := gocamel.NewSQLStoredComponent()
+sqlStored.RegisterDataSource("mydb", db)
+ctx.AddComponent("sql-stored", sqlStored)
+
+// Appel simple avec paramètres IN
+builder.From("direct:call").
+    SetBody([]gocamel.StoredProcedureParam{
+        {Name: "userId", Direction: gocamel.ParamDirectionIn, Value: 42},
+    }).
+    To("sql-stored://mydb?procedure=GET_USER_BY_ID").
+    Log("${body}")
+```
+
+**Format URI**
+
+```
+sql-stored://datasourceName?procedure=NAME
+sql-stored://logical?dataSourceRef=dsName&procedure=NAME
+```
+
+| Option | Type | Défaut | Description |
+|--------|------|--------|-------------|
+| `procedure` | string | — | Nom de la procédure stockée (obligatoire) |
+| `dataSourceRef` | string | host URI | Nom de la datasource |
+| `outputType` | string | `SelectList` | `SelectList` (défaut) ou `SelectOne` |
+| `transacted` | bool | `false` | Exécution dans une transaction |
+| `noop` | bool | `false` | Mode test : ne pas exécuter |
+
+**Paramètres**
+
+Les paramètres sont fournis via le body comme `[]StoredProcedureParam` :
+
+```go
+params := []gocamel.StoredProcedureParam{
+    {Name: "inParam", Direction: gocamel.ParamDirectionIn, Value: "value"},
+    {Name: "outParam", Direction: gocamel.ParamDirectionOut},
+    {Name: "inOutParam", Direction: gocamel.ParamDirectionInOut, Value: 123},
+}
+exchange.GetIn().SetBody(params)
+```
+
+| Direction | Description |
+|-----------|-------------|
+| `ParamDirectionIn` | Entrée seule |
+| `ParamDirectionOut` | Sortie seule |
+| `ParamDirectionInOut` | Entrée et sortie |
+
+**Headers**
+
+| Header | Sens | Description |
+|--------|------|-------------|
+| `CamelSqlStoredProcedureName` | In | Surcharge le nom de la procédure |
+| `CamelSqlRowCount` | Out | Nombre de lignes retournées |
+
+**Body résultat**
+
+- Avec résultat : `[]map[string]interface{}` ou `map[string]interface{}`
+- Output params seulement : `map[string]interface{}`
+- Sans résultat : `nil`
+
+---
+
 ## Configuration des composants
 
 ### Authentification
