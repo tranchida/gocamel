@@ -1,0 +1,2367 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://tranchida.github.io/gocamel/fr/components/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Components Reference | Référence des Composants - GoCamel</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#components-reference-reference-des-composants" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="GoCamel" class="md-header__button md-logo" aria-label="GoCamel" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            GoCamel
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Components Reference | Référence des Composants
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/tranchida/gocamel" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    tranchida/gocamel
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../en/features/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Features
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../en/quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../en/concepts/" class="md-tabs__link">
+          
+  
+  
+  Documentation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../en/installation/" class="md-tabs__link">
+          
+  
+  
+  Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../en/reference/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../en/changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="GoCamel" class="md-nav__button md-logo" aria-label="GoCamel" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    GoCamel
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/tranchida/gocamel" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    tranchida/gocamel
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Documentation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/components/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/eip/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EIP Patterns
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/simple-language/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Simple Language
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../en/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="components-reference-reference-des-composants">Components Reference | Référence des Composants<a class="headerlink" href="#components-reference-reference-des-composants" title="Permanent link">&para;</a></h1>
+<hr />
+<h1 id="english">🇺🇸 English<a class="headerlink" href="#english" title="Permanent link">&para;</a></h1>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>Complete reference of all available components in GoCamel. Components provide connectivity to external systems and services.</p>
+<h2 id="core-components">Core Components<a class="headerlink" href="#core-components" title="Permanent link">&para;</a></h2>
+<h3 id="direct">Direct<a class="headerlink" href="#direct" title="Permanent link">&para;</a></h3>
+<p>Synchronous in-memory routing between routes in the same context.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1">// Consumer: receives messages from direct endpoint</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1">// Producer: sends messages to direct endpoint</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:start&quot;</span><span class="p">).</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;direct:process&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>reuseChannel</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Reuse the same channel</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="timer">Timer<a class="headerlink" href="#timer" title="Permanent link">&para;</a></h3>
+<p>Simple periodic triggering.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;timer:tick?period=5s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>period</code></td>
+<td>Duration</td>
+<td><code>1s</code></td>
+<td>Period between triggers</td>
+</tr>
+<tr>
+<td><code>repeatCount</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td>Number of repetitions (0=infinite)</td>
+</tr>
+<tr>
+<td><code>fixedRate</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Fixed-rate vs fixed-delay mode</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="file-transfer-components">File Transfer Components<a class="headerlink" href="#file-transfer-components" title="Permanent link">&para;</a></h2>
+<h3 id="file">File<a class="headerlink" href="#file" title="Permanent link">&para;</a></h3>
+<p>Local file system operations.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1">// Consumer (read)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;file://input?delete=true&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1">// Producer (write)</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;file://output&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>delete</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Delete after processing</td>
+</tr>
+<tr>
+<td><code>noop</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Do not move/delete file</td>
+</tr>
+<tr>
+<td><code>include</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Include file pattern</td>
+</tr>
+<tr>
+<td><code>exclude</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Exclude file pattern</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="ftp-ftps">FTP / FTPS<a class="headerlink" href="#ftp-ftps" title="Permanent link">&para;</a></h3>
+<p>File transfer via FTP/FTPS.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;ftp://host:21/incoming?username=${env:FTP_USER}&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h3 id="sftp">SFTP<a class="headerlink" href="#sftp" title="Permanent link">&para;</a></h3>
+<p>Secure file transfer via SSH.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;sftp://host:22/data?username=scott&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h3 id="smb">SMB<a class="headerlink" href="#smb" title="Permanent link">&para;</a></h3>
+<p>Windows/Samba share access.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;smb://server/share/folder&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="network-components">Network Components<a class="headerlink" href="#network-components" title="Permanent link">&para;</a></h2>
+<h3 id="http">HTTP<a class="headerlink" href="#http" title="Permanent link">&para;</a></h3>
+<p>HTTP server and client.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1">// Consumer (server)</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;http://localhost:8080/api&quot;</span><span class="p">)</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1">// Producer (client)</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;http://example.com/webhook&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="messaging-components">Messaging Components<a class="headerlink" href="#messaging-components" title="Permanent link">&para;</a></h2>
+<h3 id="telegram">Telegram<a class="headerlink" href="#telegram" title="Permanent link">&para;</a></h3>
+<p>Telegram Bot integration for receiving/sending messages.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;telegram&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewTelegramComponent</span><span class="p">())</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;telegram:bots&quot;</span><span class="p">).</span><span class="nx">Log</span><span class="p">(</span><span class="s">&quot;${body}&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="aillm-components">AI/LLM Components<a class="headerlink" href="#aillm-components" title="Permanent link">&para;</a></h2>
+<h3 id="openai">OpenAI<a class="headerlink" href="#openai" title="Permanent link">&para;</a></h3>
+<p>ChatGPT / GPT-4 integration.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;openai&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewOpenAIComponent</span><span class="p">())</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nx">endpoint</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">CreateEndpoint</span><span class="p">(</span><span class="s">&quot;openai:chat?model=gpt-4&quot;</span><span class="p">)</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="nx">producer</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">endpoint</span><span class="p">.</span><span class="nx">CreateProducer</span><span class="p">()</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td><code>gpt-3.5-turbo</code></td>
+<td>OpenAI model to use</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="scheduling-components">Scheduling Components<a class="headerlink" href="#scheduling-components" title="Permanent link">&para;</a></h2>
+<h3 id="cron">Cron<a class="headerlink" href="#cron" title="Permanent link">&para;</a></h3>
+<p>Advanced scheduling with cron expressions.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;cron&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewCronComponent</span><span class="p">())</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="c1">// Cron expression:</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;cron://group/job?cron=0+*+*+*+*+*&quot;</span><span class="p">)</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1">// Simple interval:</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;cron://poller?trigger.repeatInterval=5000&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cron</code></td>
+<td>string</td>
+<td>—</td>
+<td>6-field cron expression</td>
+</tr>
+<tr>
+<td><code>trigger.repeatInterval</code></td>
+<td>int</td>
+<td>—</td>
+<td>Interval in milliseconds</td>
+</tr>
+<tr>
+<td><code>trigger.repeatCount</code></td>
+<td>int</td>
+<td><code>-1</code></td>
+<td>Max executions (-1=infinite)</td>
+</tr>
+<tr>
+<td><code>triggerStartDelay</code></td>
+<td>int</td>
+<td><code>500</code></td>
+<td>Delay before first trigger (ms)</td>
+</tr>
+<tr>
+<td><code>stateful</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Prevent concurrent executions</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="email-components">Email Components<a class="headerlink" href="#email-components" title="Permanent link">&para;</a></h2>
+<h3 id="mail-smtpsmtpsimapimapspop3pop3s">Mail (SMTP/SMTPS/IMAP/IMAPS/POP3/POP3S)<a class="headerlink" href="#mail-smtpsmtpsimapimapspop3pop3s" title="Permanent link">&para;</a></h3>
+<p>Send and receive emails.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1">// Send via SMTP</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;smtps://smtp.gmail.com:465?to=dest@example.com&quot;</span><span class="p">)</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1">// Receive via IMAP with IDLE</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;imaps://imap.gmail.com:993?folderName=INBOX&amp;idle=true&quot;</span><span class="p">)</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="c1">// Receive via POP3</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;pop3s://pop.gmail.com:995?username=user&amp;password=pass&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>username</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Authentication credentials</td>
+</tr>
+<tr>
+<td><code>password</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Authentication credentials</td>
+</tr>
+<tr>
+<td><code>to</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Recipient(s) (Producer)</td>
+</tr>
+<tr>
+<td><code>subject</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Email subject (Producer)</td>
+</tr>
+<tr>
+<td><code>contentType</code></td>
+<td>string</td>
+<td><code>"text/plain"</code></td>
+<td>MIME type (Producer)</td>
+</tr>
+<tr>
+<td><code>folderName</code></td>
+<td>string</td>
+<td><code>"INBOX"</code></td>
+<td>IMAP folder (Consumer)</td>
+</tr>
+<tr>
+<td><code>unseen</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Unread messages only</td>
+</tr>
+<tr>
+<td><code>idle</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>IMAP IDLE for push notifications</td>
+</tr>
+<tr>
+<td><code>delete</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Delete after processing</td>
+</tr>
+<tr>
+<td><code>fetchSize</code></td>
+<td>int</td>
+<td><code>-1</code></td>
+<td>Max messages per poll</td>
+</tr>
+<tr>
+<td><code>pollDelay</code></td>
+<td>int</td>
+<td><code>60000</code></td>
+<td>Delay between polls (ms)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="transformation-components">Transformation Components<a class="headerlink" href="#transformation-components" title="Permanent link">&para;</a></h2>
+<h3 id="xslt">XSLT<a class="headerlink" href="#xslt" title="Permanent link">&para;</a></h3>
+<p>XML transformation via XSL stylesheet.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;xslt:file://transform.xsl&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h3 id="template">Template<a class="headerlink" href="#template" title="Permanent link">&para;</a></h3>
+<p>Go template processing (inspired by Apache Camel Velocity).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1">// Basic template</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;template:templates/email.tmpl&quot;</span><span class="p">)</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1">// With caching</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;template:templates/item.tmpl?contentCache=true&quot;</span><span class="p">)</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="c1">// Dynamic template</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;template:default.tmpl?allowTemplateFromHeader=true&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>contentCache</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Cache template in memory</td>
+</tr>
+<tr>
+<td><code>allowTemplateFromHeader</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Allow override via <code>CamelTemplatePath</code> header</td>
+</tr>
+<tr>
+<td><code>startDelimiter</code></td>
+<td>string</td>
+<td><code>{{</code></td>
+<td>Start delimiter</td>
+</tr>
+<tr>
+<td><code>endDelimiter</code></td>
+<td>string</td>
+<td><code>}}</code></td>
+<td>End delimiter</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Template Variables:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>{{.Body}}              # Message body
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>{{.Headers.name}}      # Header value
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>{{.Exchange.ID}}       # Exchange ID
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>{{.Exchange.Created}}  # Creation timestamp
+</code></pre></div>
+<p><strong>Template Functions:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>{{.Body | upper}}
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>{{.Body | lower}}
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>{{.Body | trim}}
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>{{now | formatDate &quot;2006-01-02 15:04:05&quot;}}
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>{{&quot;hello&quot; | contains &quot;ell&quot;}}
+</code></pre></div>
+<hr />
+<h3 id="xsd">XSD<a class="headerlink" href="#xsd" title="Permanent link">&para;</a></h3>
+<p>XML Schema validation.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;xsd:file://schema.xsd&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="execution-components">Execution Components<a class="headerlink" href="#execution-components" title="Permanent link">&para;</a></h2>
+<h3 id="exec">Exec<a class="headerlink" href="#exec" title="Permanent link">&para;</a></h3>
+<p>Execute system commands.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;exec:ls -la&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="database-components">Database Components<a class="headerlink" href="#database-components" title="Permanent link">&para;</a></h2>
+<h3 id="sql">SQL<a class="headerlink" href="#sql" title="Permanent link">&para;</a></h3>
+<p>SQL query execution (<code>SELECT</code>, <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>) via <code>database/sql</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="s">&quot;github.com/mattn/go-sqlite3&quot;</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="p">)</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;sqlite3&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;./app.db&quot;</span><span class="p">)</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="nx">sqlComp</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewSQLComponent</span><span class="p">()</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="nx">sqlComp</span><span class="p">.</span><span class="nx">RegisterDataSource</span><span class="p">(</span><span class="s">&quot;appdb&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="p">)</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;sql&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sqlComp</span><span class="p">)</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="c1">// SELECT -&gt; Out.Body = []map[string]any</span>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:list&quot;</span><span class="p">).</span>
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;sql://appdb?query=SELECT+id,name+FROM+users&quot;</span><span class="p">).</span>
+<a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a><span class="w">    </span><span class="nx">Log</span><span class="p">(</span><span class="s">&quot;${body}&quot;</span><span class="p">)</span>
+<a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a>
+<a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a><span class="c1">// SELECT with single row -&gt; Out.Body = map[string]any</span>
+<a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:one&quot;</span><span class="p">).</span>
+<a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a><span class="w">    </span><span class="nx">SetHeader</span><span class="p">(</span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">SqlParameters</span><span class="p">,</span><span class="w"> </span><span class="p">[]</span><span class="kt">any</span><span class="p">{</span><span class="mi">42</span><span class="p">}).</span>
+<a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;sql://appdb?query=SELECT+*+FROM+users+WHERE+id=?&amp;outputType=SelectOne&quot;</span><span class="p">)</span>
+<a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a>
+<a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a><span class="c1">// INSERT/UPDATE/DELETE -&gt; Out.Body = affected rows (int64)</span>
+<a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:insert&quot;</span><span class="p">).</span>
+<a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a><span class="w">    </span><span class="nx">SetHeader</span><span class="p">(</span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">SqlParameters</span><span class="p">,</span><span class="w"> </span><span class="p">[]</span><span class="kt">any</span><span class="p">{</span><span class="s">&quot;alice&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;alice@example.com&quot;</span><span class="p">}).</span>
+<a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;sql://appdb?query=INSERT+INTO+users(name,email)+VALUES(?,?)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>URI Format:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>sql://&lt;datasourceName&gt;?query=&lt;SQL&gt;
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>sql://logical?dataSourceRef=&lt;datasourceName&gt;&amp;query=&lt;SQL&gt;
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>query</code></td>
+<td>string</td>
+<td>required</td>
+<td>SQL query with optional <code>${header.x}</code>, <code>${body}</code>, <code>${property.x}</code></td>
+</tr>
+<tr>
+<td><code>dataSourceRef</code></td>
+<td>string</td>
+<td>host URI</td>
+<td>Registered datasource name</td>
+</tr>
+<tr>
+<td><code>outputType</code></td>
+<td>string</td>
+<td><code>SelectList</code></td>
+<td><code>SelectList</code> or <code>SelectOne</code></td>
+</tr>
+<tr>
+<td><code>batch</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Batch mode: body = <code>[][]any</code></td>
+</tr>
+<tr>
+<td><code>transacted</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Wrap in transaction</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Query Parameters:</strong></p>
+<p>Provided via <code>CamelSqlParameters</code> header or body as <code>[]any</code>.</p>
+<p><strong>Output Headers:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CamelSqlRowCount</code></td>
+<td>Rows returned/affected</td>
+</tr>
+<tr>
+<td><code>CamelSqlColumnNames</code></td>
+<td>Column names for SELECT</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Result Body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Case</th>
+<th>Out.Body Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SELECT</code> + <code>SelectList</code></td>
+<td><code>[]map[string]any</code></td>
+</tr>
+<tr>
+<td><code>SELECT</code> + <code>SelectOne</code></td>
+<td><code>map[string]any</code> (or <code>nil</code>)</td>
+</tr>
+<tr>
+<td><code>INSERT/UPDATE/DELETE</code></td>
+<td><code>int64</code> (affected rows)</td>
+</tr>
+<tr>
+<td><code>batch=true</code></td>
+<td><code>int64</code> (total affected)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="sql-stored">SQL-Stored<a class="headerlink" href="#sql-stored" title="Permanent link">&para;</a></h3>
+<p>Stored procedure execution with IN, OUT, and INOUT parameter support.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="s">&quot;github.com/mattn/go-sqlite3&quot;</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="p">)</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;mysql&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;user:pass@/mydb&quot;</span><span class="p">)</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="nx">sqlStored</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewSQLStoredComponent</span><span class="p">()</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="nx">sqlStored</span><span class="p">.</span><span class="nx">RegisterDataSource</span><span class="p">(</span><span class="s">&quot;mydb&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="p">)</span>
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;sql-stored&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sqlStored</span><span class="p">)</span>
+<a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>
+<a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="c1">// Simple call with IN parameters</span>
+<a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:call&quot;</span><span class="p">).</span>
+<a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a><span class="w">    </span><span class="nx">SetBody</span><span class="p">([]</span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">StoredProcedureParam</span><span class="p">{</span>
+<a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a><span class="w">        </span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;userId&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">Direction</span><span class="p">:</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">ParamDirectionIn</span><span class="p">,</span><span class="w"> </span><span class="nx">Value</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">},</span>
+<a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a><span class="w">    </span><span class="p">}).</span>
+<a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;sql-stored://mydb?procedure=GET_USER_BY_ID&quot;</span><span class="p">).</span>
+<a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a><span class="w">    </span><span class="nx">Log</span><span class="p">(</span><span class="s">&quot;${body}&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>URI Format:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>sql-stored://datasourceName?procedure=NAME
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>sql-stored://logical?dataSourceRef=dsName&amp;procedure=NAME
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>procedure</code></td>
+<td>string</td>
+<td>required</td>
+<td>Stored procedure name</td>
+</tr>
+<tr>
+<td><code>dataSourceRef</code></td>
+<td>string</td>
+<td>host URI</td>
+<td>Datasource name</td>
+</tr>
+<tr>
+<td><code>outputType</code></td>
+<td>string</td>
+<td><code>SelectList</code></td>
+<td><code>SelectList</code> or <code>SelectOne</code></td>
+</tr>
+<tr>
+<td><code>transacted</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Execute in transaction</td>
+</tr>
+<tr>
+<td><code>noop</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Test mode: do not execute</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Parameter Directions:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Direction</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ParamDirectionIn</code></td>
+<td>Input only</td>
+</tr>
+<tr>
+<td><code>ParamDirectionOut</code></td>
+<td>Output only</td>
+</tr>
+<tr>
+<td><code>ParamDirectionInOut</code></td>
+<td>Input and output</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="mongodb">MongoDB<a class="headerlink" href="#mongodb" title="Permanent link">&para;</a></h3>
+<p>Intégration avec MongoDB pour exécuter des opérations CRUD. Producer-only.</p>
+<h4 id="format-uri">Format URI<a class="headerlink" href="#format-uri" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>mongodb://connectionName?database=mydb&amp;collection=mycoll&amp;operation=find
+</code></pre></div>
+<h4 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Requis</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>database</code></td>
+<td>string</td>
+<td>Oui</td>
+<td>Nom de la base de données</td>
+</tr>
+<tr>
+<td><code>collection</code></td>
+<td>string</td>
+<td>Oui</td>
+<td>Nom de la collection</td>
+</tr>
+<tr>
+<td><code>operation</code></td>
+<td>string</td>
+<td>Oui</td>
+<td>Opération: find, findOne, insert, insertOne, save, update, remove, count</td>
+</tr>
+<tr>
+<td><code>connectionRef</code></td>
+<td>string</td>
+<td>Non</td>
+<td>Référence connexion preregistered</td>
+</tr>
+</tbody>
+</table>
+<h4 id="headers">Headers<a class="headerlink" href="#headers" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Mode</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CamelMongoDbDatabase</code></td>
+<td>R/W</td>
+<td>Nom base de données</td>
+</tr>
+<tr>
+<td><code>CamelMongoDbCollection</code></td>
+<td>R/W</td>
+<td>Nom collection</td>
+</tr>
+<tr>
+<td><code>CamelMongoDbOperation</code></td>
+<td>R/W</td>
+<td>Opération à exécuter</td>
+</tr>
+<tr>
+<td><code>CamelMongoDbCriteria</code></td>
+<td>Write</td>
+<td>Filtre/critères (map ou JSON string)</td>
+</tr>
+<tr>
+<td><code>CamelMongoDbLimit</code></td>
+<td>Write</td>
+<td>Limite résultats</td>
+</tr>
+<tr>
+<td><code>CamelMongoDbSkip</code></td>
+<td>Write</td>
+<td>Sauter N documents</td>
+</tr>
+<tr>
+<td><code>CamelMongoDbSort</code></td>
+<td>Write</td>
+<td>Tri (json: {"field": 1})</td>
+</tr>
+</tbody>
+</table>
+<h4 id="headers-sortie">Headers Sortie<a class="headerlink" href="#headers-sortie" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CamelMongoDbResultTotal</code></td>
+<td>Nombre documents trouvés/affectés</td>
+</tr>
+<tr>
+<td><code>CamelMongoDbOid</code></td>
+<td>ObjectID document inséré</td>
+</tr>
+</tbody>
+</table>
+<h4 id="exemple">Exemple<a class="headerlink" href="#exemple" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">    </span><span class="s">&quot;context&quot;</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">    </span><span class="s">&quot;go.mongodb.org/mongo-driver/mongo&quot;</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">    </span><span class="s">&quot;go.mongodb.org/mongo-driver/mongo/options&quot;</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="p">)</span>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="c1">// Créer composant</span>
+<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="nx">mongoComp</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewMongoDBComponent</span><span class="p">()</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a>
+<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="c1">// Connexion</span>
+<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="nx">client</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">mongo</span><span class="p">.</span><span class="nx">Connect</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">(),</span><span class="w"> </span><span class="nx">options</span><span class="p">.</span><span class="nx">Client</span><span class="p">().</span><span class="nx">ApplyURI</span><span class="p">(</span><span class="s">&quot;mongodb://localhost:27017&quot;</span><span class="p">))</span>
+<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="nx">conn</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">CreateMongoDBConnection</span><span class="p">(</span><span class="nx">client</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;mongodb://localhost:27017&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;mydb&quot;</span><span class="p">)</span>
+<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a><span class="nx">mongoComp</span><span class="p">.</span><span class="nx">RegisterConnection</span><span class="p">(</span><span class="s">&quot;myconn&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">conn</span><span class="p">)</span>
+<a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a>
+<a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">WithComponent</span><span class="p">(</span><span class="s">&quot;mongodb&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">mongoComp</span><span class="p">)</span>
+<a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a>
+<a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a><span class="c1">// Insert</span>
+<a id="__codelineno-22-18" name="__codelineno-22-18" href="#__codelineno-22-18"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;timer:tick?period=5s&quot;</span><span class="p">).</span>
+<a id="__codelineno-22-19" name="__codelineno-22-19" href="#__codelineno-22-19"></a><span class="w">    </span><span class="nx">SetBody</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">any</span><span class="p">{</span><span class="s">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;test&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;value&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">123</span><span class="p">}).</span>
+<a id="__codelineno-22-20" name="__codelineno-22-20" href="#__codelineno-22-20"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;mongodb://myconn?database=mydb&amp;collection=items&amp;operation=insert&quot;</span><span class="p">)</span>
+<a id="__codelineno-22-21" name="__codelineno-22-21" href="#__codelineno-22-21"></a>
+<a id="__codelineno-22-22" name="__codelineno-22-22" href="#__codelineno-22-22"></a><span class="c1">// Query avec filtre</span>
+<a id="__codelineno-22-23" name="__codelineno-22-23" href="#__codelineno-22-23"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:search&quot;</span><span class="p">).</span>
+<a id="__codelineno-22-24" name="__codelineno-22-24" href="#__codelineno-22-24"></a><span class="w">    </span><span class="nx">SetHeader</span><span class="p">(</span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">CamelMongoDbCriteria</span><span class="p">,</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">any</span><span class="p">{</span><span class="s">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;active&quot;</span><span class="p">}).</span>
+<a id="__codelineno-22-25" name="__codelineno-22-25" href="#__codelineno-22-25"></a><span class="w">    </span><span class="nx">SetHeader</span><span class="p">(</span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">CamelMongoDbLimit</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">).</span>
+<a id="__codelineno-22-26" name="__codelineno-22-26" href="#__codelineno-22-26"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;mongodb://myconn?database=mydb&amp;collection=items&amp;operation=find&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="component-configuration">Component Configuration<a class="headerlink" href="#component-configuration" title="Permanent link">&para;</a></h2>
+<h3 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h3>
+<p>Credentials can be provided via environment variables:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;ftp://host?username=${env:FTP_USER}&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="common-options">Common Options<a class="headerlink" href="#common-options" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="c1">// File: polling options</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;file://data?delay=10s&amp;delete=true&quot;</span><span class="p">)</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="c1">// HTTP: method</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;http://api?httpMethod=POST&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<hr />
+<h1 id="francais">🇫🇷 Français<a class="headerlink" href="#francais" title="Permanent link">&para;</a></h1>
+<h2 id="vue-densemble">Vue d'Ensemble<a class="headerlink" href="#vue-densemble" title="Permanent link">&para;</a></h2>
+<p>Référence complète de tous les composants disponibles dans GoCamel. Les composants fournissent la connectivité aux systèmes et services externes.</p>
+<h2 id="composants-core">Composants Core<a class="headerlink" href="#composants-core" title="Permanent link">&para;</a></h2>
+<h3 id="direct_1">Direct<a class="headerlink" href="#direct_1" title="Permanent link">&para;</a></h3>
+<p>Routage synchrone en mémoire entre routes du même contexte.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1">// Consumer: reçoit des messages du endpoint direct</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="c1">// Producer: envoie des messages vers le endpoint direct</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:start&quot;</span><span class="p">).</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;direct:process&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Défaut</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>reuseChannel</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Réutiliser le même channel</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="timer_1">Timer<a class="headerlink" href="#timer_1" title="Permanent link">&para;</a></h3>
+<p>Déclenchement périodique simple.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;timer:tick?period=5s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Défaut</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>period</code></td>
+<td>Duration</td>
+<td><code>1s</code></td>
+<td>Période entre déclenchements</td>
+</tr>
+<tr>
+<td><code>repeatCount</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td>Nombre de répétitions (0=infini)</td>
+</tr>
+<tr>
+<td><code>fixedRate</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Mode fixed-rate vs fixed-delay</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="composants-de-transfert-de-fichiers">Composants de Transfert de Fichiers<a class="headerlink" href="#composants-de-transfert-de-fichiers" title="Permanent link">&para;</a></h2>
+<h3 id="file_1">File<a class="headerlink" href="#file_1" title="Permanent link">&para;</a></h3>
+<p>Opérations sur le système de fichiers local.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="c1">// Consumer (lecture)</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;file://input?delete=true&quot;</span><span class="p">)</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="c1">// Producer (écriture)</span>
+<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;file://output&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Défaut</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>delete</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Supprimer après traitement</td>
+</tr>
+<tr>
+<td><code>noop</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Ne pas déplacer/supprimer le fichier</td>
+</tr>
+<tr>
+<td><code>include</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Pattern fichiers inclus</td>
+</tr>
+<tr>
+<td><code>exclude</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Pattern fichiers exclus</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="ftp-ftps_1">FTP / FTPS<a class="headerlink" href="#ftp-ftps_1" title="Permanent link">&para;</a></h3>
+<p>Transfert de fichiers via FTP/FTPS.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;ftp://host:21/incoming?username=${env:FTP_USER}&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h3 id="sftp_1">SFTP<a class="headerlink" href="#sftp_1" title="Permanent link">&para;</a></h3>
+<p>Transfert sécurisé via SSH.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;sftp://host:22/data?username=scott&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h3 id="smb_1">SMB<a class="headerlink" href="#smb_1" title="Permanent link">&para;</a></h3>
+<p>Accès aux partages Windows/Samba.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;smb://server/share/folder&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="composants-reseau">Composants Réseau<a class="headerlink" href="#composants-reseau" title="Permanent link">&para;</a></h2>
+<h3 id="http_1">HTTP<a class="headerlink" href="#http_1" title="Permanent link">&para;</a></h3>
+<p>Serveur et client HTTP.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="c1">// Consumer (serveur)</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;http://localhost:8080/api&quot;</span><span class="p">)</span>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="c1">// Producer (client)</span>
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;http://example.com/webhook&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="composants-de-messagerie">Composants de Messagerie<a class="headerlink" href="#composants-de-messagerie" title="Permanent link">&para;</a></h2>
+<h3 id="telegram_1">Telegram<a class="headerlink" href="#telegram_1" title="Permanent link">&para;</a></h3>
+<p>Intégration Bot Telegram pour recevoir/envoyer des messages.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;telegram&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewTelegramComponent</span><span class="p">())</span>
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;telegram:bots&quot;</span><span class="p">).</span><span class="nx">Log</span><span class="p">(</span><span class="s">&quot;${body}&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="composants-iallm">Composants IA/LLM<a class="headerlink" href="#composants-iallm" title="Permanent link">&para;</a></h2>
+<h3 id="openai_1">OpenAI<a class="headerlink" href="#openai_1" title="Permanent link">&para;</a></h3>
+<p>Intégration ChatGPT / GPT-4.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;openai&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewOpenAIComponent</span><span class="p">())</span>
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>
+<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a><span class="nx">endpoint</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">CreateEndpoint</span><span class="p">(</span><span class="s">&quot;openai:chat?model=gpt-4&quot;</span><span class="p">)</span>
+<a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a><span class="nx">producer</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">endpoint</span><span class="p">.</span><span class="nx">CreateProducer</span><span class="p">()</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Défaut</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td><code>gpt-3.5-turbo</code></td>
+<td>Modèle OpenAI à utiliser</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="composants-de-planification">Composants de Planification<a class="headerlink" href="#composants-de-planification" title="Permanent link">&para;</a></h2>
+<h3 id="cron_1">Cron<a class="headerlink" href="#cron_1" title="Permanent link">&para;</a></h3>
+<p>Planification avancée avec expressions cron.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;cron&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewCronComponent</span><span class="p">())</span>
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a><span class="c1">// Expression cron:</span>
+<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;cron://group/job?cron=0+*+*+*+*+*&quot;</span><span class="p">)</span>
+<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a>
+<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a><span class="c1">// Intervalle simple:</span>
+<a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;cron://poller?trigger.repeatInterval=5000&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Défaut</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cron</code></td>
+<td>string</td>
+<td>—</td>
+<td>Expression cron 6 champs</td>
+</tr>
+<tr>
+<td><code>trigger.repeatInterval</code></td>
+<td>int</td>
+<td>—</td>
+<td>Intervalle en millisecondes</td>
+</tr>
+<tr>
+<td><code>trigger.repeatCount</code></td>
+<td>int</td>
+<td><code>-1</code></td>
+<td>Max exécutions (-1=infini)</td>
+</tr>
+<tr>
+<td><code>triggerStartDelay</code></td>
+<td>int</td>
+<td><code>500</code></td>
+<td>Délai avant premier déclenchement (ms)</td>
+</tr>
+<tr>
+<td><code>stateful</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Empêcher exécutions concurrentes</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="composants-email">Composants Email<a class="headerlink" href="#composants-email" title="Permanent link">&para;</a></h2>
+<h3 id="mail-smtpsmtpsimapimapspop3pop3s_1">Mail (SMTP/SMTPS/IMAP/IMAPS/POP3/POP3S)<a class="headerlink" href="#mail-smtpsmtpsimapimapspop3pop3s_1" title="Permanent link">&para;</a></h3>
+<p>Envoi et réception d'emails.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="c1">// Envoi via SMTP</span>
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;smtps://smtp.gmail.com:465?to=dest@example.com&quot;</span><span class="p">)</span>
+<a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>
+<a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a><span class="c1">// Réception via IMAP avec IDLE</span>
+<a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;imaps://imap.gmail.com:993?folderName=INBOX&amp;idle=true&quot;</span><span class="p">)</span>
+<a id="__codelineno-35-6" name="__codelineno-35-6" href="#__codelineno-35-6"></a>
+<a id="__codelineno-35-7" name="__codelineno-35-7" href="#__codelineno-35-7"></a><span class="c1">// Réception via POP3</span>
+<a id="__codelineno-35-8" name="__codelineno-35-8" href="#__codelineno-35-8"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;pop3s://pop.gmail.com:995?username=user&amp;password=pass&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Défaut</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>username</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Credentials d'authentification</td>
+</tr>
+<tr>
+<td><code>password</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Credentials d'authentification</td>
+</tr>
+<tr>
+<td><code>to</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Destinataire(s) (Producer)</td>
+</tr>
+<tr>
+<td><code>subject</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Sujet du message (Producer)</td>
+</tr>
+<tr>
+<td><code>contentType</code></td>
+<td>string</td>
+<td><code>"text/plain"</code></td>
+<td>Type MIME (Producer)</td>
+</tr>
+<tr>
+<td><code>folderName</code></td>
+<td>string</td>
+<td><code>"INBOX"</code></td>
+<td>Dossier IMAP (Consumer)</td>
+</tr>
+<tr>
+<td><code>unseen</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Messages non lus seulement</td>
+</tr>
+<tr>
+<td><code>idle</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>IMAP IDLE pour notifications push</td>
+</tr>
+<tr>
+<td><code>delete</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Supprimer après traitement</td>
+</tr>
+<tr>
+<td><code>fetchSize</code></td>
+<td>int</td>
+<td><code>-1</code></td>
+<td>Messages max par poll</td>
+</tr>
+<tr>
+<td><code>pollDelay</code></td>
+<td>int</td>
+<td><code>60000</code></td>
+<td>Délai entre polls (ms)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="composants-de-transformation">Composants de Transformation<a class="headerlink" href="#composants-de-transformation" title="Permanent link">&para;</a></h2>
+<h3 id="xslt_1">XSLT<a class="headerlink" href="#xslt_1" title="Permanent link">&para;</a></h3>
+<p>Transformation XML via feuille de style XSL.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;xslt:file://transform.xsl&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h3 id="template_1">Template<a class="headerlink" href="#template_1" title="Permanent link">&para;</a></h3>
+<p>Traitement de templates Go (inspiré par Apache Camel Velocity).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="c1">// Template basique</span>
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;template:templates/email.tmpl&quot;</span><span class="p">)</span>
+<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>
+<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a><span class="c1">// Avec cache</span>
+<a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;template:templates/item.tmpl?contentCache=true&quot;</span><span class="p">)</span>
+<a id="__codelineno-37-6" name="__codelineno-37-6" href="#__codelineno-37-6"></a>
+<a id="__codelineno-37-7" name="__codelineno-37-7" href="#__codelineno-37-7"></a><span class="c1">// Template dynamique</span>
+<a id="__codelineno-37-8" name="__codelineno-37-8" href="#__codelineno-37-8"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;template:default.tmpl?allowTemplateFromHeader=true&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Défaut</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>contentCache</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Cache le template en mémoire</td>
+</tr>
+<tr>
+<td><code>allowTemplateFromHeader</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Permet override via header <code>CamelTemplatePath</code></td>
+</tr>
+<tr>
+<td><code>startDelimiter</code></td>
+<td>string</td>
+<td><code>{{</code></td>
+<td>Délimiteur de début</td>
+</tr>
+<tr>
+<td><code>endDelimiter</code></td>
+<td>string</td>
+<td><code>}}</code></td>
+<td>Délimiteur de fin</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Variables de Template:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a>{{.Body}}              # Corps du message
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>{{.Headers.name}}      # Valeur d&#39;un header
+<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>{{.Exchange.ID}}       # ID de l&#39;échange
+<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a>{{.Exchange.Created}}  # Timestamp de création
+</code></pre></div>
+<p><strong>Fonctions de Template:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a>{{.Body | upper}}
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a>{{.Body | lower}}
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a>{{.Body | trim}}
+<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a>{{now | formatDate &quot;2006-01-02 15:04:05&quot;}}
+<a id="__codelineno-39-5" name="__codelineno-39-5" href="#__codelineno-39-5"></a>{{&quot;hello&quot; | contains &quot;ell&quot;}}
+</code></pre></div>
+<hr />
+<h3 id="xsd_1">XSD<a class="headerlink" href="#xsd_1" title="Permanent link">&para;</a></h3>
+<p>Validation XML via schéma.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;xsd:file://schema.xsd&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="composants-dexecution">Composants d'Exécution<a class="headerlink" href="#composants-dexecution" title="Permanent link">&para;</a></h2>
+<h3 id="exec_1">Exec<a class="headerlink" href="#exec_1" title="Permanent link">&para;</a></h3>
+<p>Exécution de commandes système.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;exec:ls -la&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="composants-base-de-donnees">Composants Base de Données<a class="headerlink" href="#composants-base-de-donnees" title="Permanent link">&para;</a></h2>
+<h3 id="sql_1">SQL<a class="headerlink" href="#sql_1" title="Permanent link">&para;</a></h3>
+<p>Exécution de requêtes SQL (<code>SELECT</code>, <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>) via <code>database/sql</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a><span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a><span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="s">&quot;github.com/mattn/go-sqlite3&quot;</span>
+<a id="__codelineno-42-4" name="__codelineno-42-4" href="#__codelineno-42-4"></a><span class="p">)</span>
+<a id="__codelineno-42-5" name="__codelineno-42-5" href="#__codelineno-42-5"></a>
+<a id="__codelineno-42-6" name="__codelineno-42-6" href="#__codelineno-42-6"></a><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;sqlite3&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;./app.db&quot;</span><span class="p">)</span>
+<a id="__codelineno-42-7" name="__codelineno-42-7" href="#__codelineno-42-7"></a>
+<a id="__codelineno-42-8" name="__codelineno-42-8" href="#__codelineno-42-8"></a><span class="nx">sqlComp</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewSQLComponent</span><span class="p">()</span>
+<a id="__codelineno-42-9" name="__codelineno-42-9" href="#__codelineno-42-9"></a><span class="nx">sqlComp</span><span class="p">.</span><span class="nx">RegisterDataSource</span><span class="p">(</span><span class="s">&quot;appdb&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="p">)</span>
+<a id="__codelineno-42-10" name="__codelineno-42-10" href="#__codelineno-42-10"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;sql&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sqlComp</span><span class="p">)</span>
+<a id="__codelineno-42-11" name="__codelineno-42-11" href="#__codelineno-42-11"></a>
+<a id="__codelineno-42-12" name="__codelineno-42-12" href="#__codelineno-42-12"></a><span class="c1">// SELECT -&gt; Out.Body = []map[string]any</span>
+<a id="__codelineno-42-13" name="__codelineno-42-13" href="#__codelineno-42-13"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:list&quot;</span><span class="p">).</span>
+<a id="__codelineno-42-14" name="__codelineno-42-14" href="#__codelineno-42-14"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;sql://appdb?query=SELECT+id,name+FROM+users&quot;</span><span class="p">).</span>
+<a id="__codelineno-42-15" name="__codelineno-42-15" href="#__codelineno-42-15"></a><span class="w">    </span><span class="nx">Log</span><span class="p">(</span><span class="s">&quot;${body}&quot;</span><span class="p">)</span>
+<a id="__codelineno-42-16" name="__codelineno-42-16" href="#__codelineno-42-16"></a>
+<a id="__codelineno-42-17" name="__codelineno-42-17" href="#__codelineno-42-17"></a><span class="c1">// SELECT une seule ligne -&gt; Out.Body = map[string]any</span>
+<a id="__codelineno-42-18" name="__codelineno-42-18" href="#__codelineno-42-18"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:one&quot;</span><span class="p">).</span>
+<a id="__codelineno-42-19" name="__codelineno-42-19" href="#__codelineno-42-19"></a><span class="w">    </span><span class="nx">SetHeader</span><span class="p">(</span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">SqlParameters</span><span class="p">,</span><span class="w"> </span><span class="p">[]</span><span class="kt">any</span><span class="p">{</span><span class="mi">42</span><span class="p">}).</span>
+<a id="__codelineno-42-20" name="__codelineno-42-20" href="#__codelineno-42-20"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;sql://appdb?query=SELECT+*+FROM+users+WHERE+id=?&amp;outputType=SelectOne&quot;</span><span class="p">)</span>
+<a id="__codelineno-42-21" name="__codelineno-42-21" href="#__codelineno-42-21"></a>
+<a id="__codelineno-42-22" name="__codelineno-42-22" href="#__codelineno-42-22"></a><span class="c1">// INSERT/UPDATE/DELETE -&gt; Out.Body = lignes affectées (int64)</span>
+<a id="__codelineno-42-23" name="__codelineno-42-23" href="#__codelineno-42-23"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:insert&quot;</span><span class="p">).</span>
+<a id="__codelineno-42-24" name="__codelineno-42-24" href="#__codelineno-42-24"></a><span class="w">    </span><span class="nx">SetHeader</span><span class="p">(</span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">SqlParameters</span><span class="p">,</span><span class="w"> </span><span class="p">[]</span><span class="kt">any</span><span class="p">{</span><span class="s">&quot;alice&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;alice@example.com&quot;</span><span class="p">}).</span>
+<a id="__codelineno-42-25" name="__codelineno-42-25" href="#__codelineno-42-25"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;sql://appdb?query=INSERT+INTO+users(name,email)+VALUES(?,?)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Format URI:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a>sql://&lt;datasourceName&gt;?query=&lt;SQL&gt;
+<a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a>sql://logical?dataSourceRef=&lt;datasourceName&gt;&amp;query=&lt;SQL&gt;
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Défaut</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>query</code></td>
+<td>string</td>
+<td>obligatoire</td>
+<td>Requête SQL avec <code>${header.x}</code>, <code>${body}</code>, <code>${property.x}</code> optionnels</td>
+</tr>
+<tr>
+<td><code>dataSourceRef</code></td>
+<td>string</td>
+<td>host URI</td>
+<td>Nom datasource enregistrée</td>
+</tr>
+<tr>
+<td><code>outputType</code></td>
+<td>string</td>
+<td><code>SelectList</code></td>
+<td><code>SelectList</code> ou <code>SelectOne</code></td>
+</tr>
+<tr>
+<td><code>batch</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Mode batch: body = <code>[][]any</code></td>
+</tr>
+<tr>
+<td><code>transacted</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Englober dans une transaction</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Paramètres de Requête:</strong></p>
+<p>Fournis via header <code>CamelSqlParameters</code> ou body comme <code>[]any</code>.</p>
+<p><strong>Headers de Sortie:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CamelSqlRowCount</code></td>
+<td>Lignes retournées/affectées</td>
+</tr>
+<tr>
+<td><code>CamelSqlColumnNames</code></td>
+<td>Noms des colonnes pour SELECT</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Corps Résultat:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Cas</th>
+<th>Type Out.Body</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SELECT</code> + <code>SelectList</code></td>
+<td><code>[]map[string]any</code></td>
+</tr>
+<tr>
+<td><code>SELECT</code> + <code>SelectOne</code></td>
+<td><code>map[string]any</code> (ou <code>nil</code>)</td>
+</tr>
+<tr>
+<td><code>INSERT/UPDATE/DELETE</code></td>
+<td><code>int64</code> (lignes affectées)</td>
+</tr>
+<tr>
+<td><code>batch=true</code></td>
+<td><code>int64</code> (total affectées)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="sql-stored_1">SQL-Stored<a class="headerlink" href="#sql-stored_1" title="Permanent link">&para;</a></h3>
+<p>Exécution de procédures stockées avec support paramètres IN, OUT et INOUT.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-44-2" name="__codelineno-44-2" href="#__codelineno-44-2"></a><span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<a id="__codelineno-44-3" name="__codelineno-44-3" href="#__codelineno-44-3"></a><span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="s">&quot;github.com/mattn/go-sqlite3&quot;</span>
+<a id="__codelineno-44-4" name="__codelineno-44-4" href="#__codelineno-44-4"></a><span class="p">)</span>
+<a id="__codelineno-44-5" name="__codelineno-44-5" href="#__codelineno-44-5"></a>
+<a id="__codelineno-44-6" name="__codelineno-44-6" href="#__codelineno-44-6"></a><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;mysql&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;user:pass@/mydb&quot;</span><span class="p">)</span>
+<a id="__codelineno-44-7" name="__codelineno-44-7" href="#__codelineno-44-7"></a>
+<a id="__codelineno-44-8" name="__codelineno-44-8" href="#__codelineno-44-8"></a><span class="nx">sqlStored</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">NewSQLStoredComponent</span><span class="p">()</span>
+<a id="__codelineno-44-9" name="__codelineno-44-9" href="#__codelineno-44-9"></a><span class="nx">sqlStored</span><span class="p">.</span><span class="nx">RegisterDataSource</span><span class="p">(</span><span class="s">&quot;mydb&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="p">)</span>
+<a id="__codelineno-44-10" name="__codelineno-44-10" href="#__codelineno-44-10"></a><span class="nx">ctx</span><span class="p">.</span><span class="nx">AddComponent</span><span class="p">(</span><span class="s">&quot;sql-stored&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sqlStored</span><span class="p">)</span>
+<a id="__codelineno-44-11" name="__codelineno-44-11" href="#__codelineno-44-11"></a>
+<a id="__codelineno-44-12" name="__codelineno-44-12" href="#__codelineno-44-12"></a><span class="c1">// Appel simple avec paramètres IN</span>
+<a id="__codelineno-44-13" name="__codelineno-44-13" href="#__codelineno-44-13"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;direct:call&quot;</span><span class="p">).</span>
+<a id="__codelineno-44-14" name="__codelineno-44-14" href="#__codelineno-44-14"></a><span class="w">    </span><span class="nx">SetBody</span><span class="p">([]</span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">StoredProcedureParam</span><span class="p">{</span>
+<a id="__codelineno-44-15" name="__codelineno-44-15" href="#__codelineno-44-15"></a><span class="w">        </span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;userId&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">Direction</span><span class="p">:</span><span class="w"> </span><span class="nx">gocamel</span><span class="p">.</span><span class="nx">ParamDirectionIn</span><span class="p">,</span><span class="w"> </span><span class="nx">Value</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">},</span>
+<a id="__codelineno-44-16" name="__codelineno-44-16" href="#__codelineno-44-16"></a><span class="w">    </span><span class="p">}).</span>
+<a id="__codelineno-44-17" name="__codelineno-44-17" href="#__codelineno-44-17"></a><span class="w">    </span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;sql-stored://mydb?procedure=GET_USER_BY_ID&quot;</span><span class="p">).</span>
+<a id="__codelineno-44-18" name="__codelineno-44-18" href="#__codelineno-44-18"></a><span class="w">    </span><span class="nx">Log</span><span class="p">(</span><span class="s">&quot;${body}&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Format URI:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-45-1" name="__codelineno-45-1" href="#__codelineno-45-1"></a>sql-stored://datasourceName?procedure=NAME
+<a id="__codelineno-45-2" name="__codelineno-45-2" href="#__codelineno-45-2"></a>sql-stored://logical?dataSourceRef=dsName&amp;procedure=NAME
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Défaut</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>procedure</code></td>
+<td>string</td>
+<td>obligatoire</td>
+<td>Nom procédure stockée</td>
+</tr>
+<tr>
+<td><code>dataSourceRef</code></td>
+<td>string</td>
+<td>host URI</td>
+<td>Nom datasource</td>
+</tr>
+<tr>
+<td><code>outputType</code></td>
+<td>string</td>
+<td><code>SelectList</code></td>
+<td><code>SelectList</code> ou <code>SelectOne</code></td>
+</tr>
+<tr>
+<td><code>transacted</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Exécuter dans une transaction</td>
+</tr>
+<tr>
+<td><code>noop</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Mode test: ne pas exécuter</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Direction des Paramètres:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Direction</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ParamDirectionIn</code></td>
+<td>Entrée seule</td>
+</tr>
+<tr>
+<td><code>ParamDirectionOut</code></td>
+<td>Sortie seule</td>
+</tr>
+<tr>
+<td><code>ParamDirectionInOut</code></td>
+<td>Entrée et sortie</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="configuration-des-composants">Configuration des Composants<a class="headerlink" href="#configuration-des-composants" title="Permanent link">&para;</a></h2>
+<h3 id="authentification">Authentification<a class="headerlink" href="#authentification" title="Permanent link">&para;</a></h3>
+<p>Les identifiants peuvent être fournis via variables d'environnement:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-46-1" name="__codelineno-46-1" href="#__codelineno-46-1"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;ftp://host?username=${env:FTP_USER}&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="options-communes">Options Communes<a class="headerlink" href="#options-communes" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-47-1" name="__codelineno-47-1" href="#__codelineno-47-1"></a><span class="c1">// File: options de polling</span>
+<a id="__codelineno-47-2" name="__codelineno-47-2" href="#__codelineno-47-2"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">From</span><span class="p">(</span><span class="s">&quot;file://data?delay=10s&amp;delete=true&quot;</span><span class="p">)</span>
+<a id="__codelineno-47-3" name="__codelineno-47-3" href="#__codelineno-47-3"></a>
+<a id="__codelineno-47-4" name="__codelineno-47-4" href="#__codelineno-47-4"></a><span class="c1">// HTTP: méthode</span>
+<a id="__codelineno-47-5" name="__codelineno-47-5" href="#__codelineno-47-5"></a><span class="nx">builder</span><span class="p">.</span><span class="nx">To</span><span class="p">(</span><span class="s">&quot;http://api?httpMethod=POST&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 GoCamel
+    </div>
+  
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/tranchida/gocamel" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

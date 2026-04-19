@@ -1,0 +1,44 @@
+/* Extra styles for GoCamel */
+
+.hero {
+    text-align: center;
+    padding: 4em 2em;
+}
+
+.hero h1 {
+    font-size: 3.5em;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.grid.cards>ul {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 1rem;
+}
+
+.grid.cards>ul>li {
+    border-radius: 0.5rem;
+    transition: transform 0.2s;
+}
+
+.grid.cards>ul>li:hover {
+    transform: translateY(-2px);
+}
+
+.md-typeset .admonition, .md-typeset details {
+    border-radius: 0.5rem;
+}
+
+.md-typeset code {
+    border-radius: 0.2rem;
+}
+
+/* Custom callouts */
+.gh-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+}
