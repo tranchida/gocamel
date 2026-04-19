@@ -400,6 +400,77 @@ sql-stored://logical?dataSourceRef=dsName&procedure=NAME
 
 ---
 
+### MongoDB
+
+Intégration avec MongoDB pour exécuter des opérations CRUD. Producer-only.
+
+#### Format URI
+
+```
+mongodb://connectionName?database=mydb&collection=mycoll&operation=find
+```
+
+#### Options
+
+| Option | Type | Requis | Description |
+|--------|------|--------|-------------|
+| `database` | string | Oui | Nom de la base de données |
+| `collection` | string | Oui | Nom de la collection |
+| `operation` | string | Oui | Opération: find, findOne, insert, insertOne, save, update, remove, count |
+| `connectionRef` | string | Non | Référence connexion preregistered |
+
+#### Headers
+
+| Header | Mode | Description |
+|--------|------|-------------|
+| `CamelMongoDbDatabase` | R/W | Nom base de données |
+| `CamelMongoDbCollection` | R/W | Nom collection |
+| `CamelMongoDbOperation` | R/W | Opération à exécuter |
+| `CamelMongoDbCriteria` | Write | Filtre/critères (map ou JSON string) |
+| `CamelMongoDbLimit` | Write | Limite résultats |
+| `CamelMongoDbSkip` | Write | Sauter N documents |
+| `CamelMongoDbSort` | Write | Tri (json: {"field": 1}) |
+
+#### Headers Sortie
+
+| Header | Description |
+|--------|-------------|
+| `CamelMongoDbResultTotal` | Nombre documents trouvés/affectés |
+| `CamelMongoDbOid` | ObjectID document inséré |
+
+#### Exemple
+
+```go
+import (
+    "context"
+    "go.mongodb.org/mongo-driver/mongo"
+    "go.mongodb.org/mongo-driver/mongo/options"
+)
+
+// Créer composant
+mongoComp := gocamel.NewMongoDBComponent()
+
+// Connexion
+client, _ := mongo.Connect(context.Background(), options.Client().ApplyURI("mongodb://localhost:27017"))
+conn := gocamel.CreateMongoDBConnection(client, "mongodb://localhost:27017", "mydb")
+mongoComp.RegisterConnection("myconn", conn)
+
+builder.WithComponent("mongodb", mongoComp)
+
+// Insert
+builder.From("timer:tick?period=5s").
+    SetBody(map[string]any{"name": "test", "value": 123}).
+    To("mongodb://myconn?database=mydb&collection=items&operation=insert")
+
+// Query avec filtre
+builder.From("direct:search").
+    SetHeader(gocamel.CamelMongoDbCriteria, map[string]any{"status": "active"}).
+    SetHeader(gocamel.CamelMongoDbLimit, 10).
+    To("mongodb://myconn?database=mydb&collection=items&operation=find")
+```
+
+---
+
 ## Component Configuration
 
 ### Authentication

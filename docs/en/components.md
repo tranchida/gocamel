@@ -420,6 +420,77 @@ params := []gocamel.StoredProcedureParam{
 
 ---
 
+### MongoDB
+
+MongoDB integration for CRUD operations. Producer-only.
+
+#### URI Format
+
+```
+mongodb://connectionName?database=mydb&collection=mycoll&operation=find
+```
+
+#### Options
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| `database` | string | Yes | Database name |
+| `collection` | string | Yes | Collection name |
+| `operation` | string | Yes | Operation: find, findOne, insert, insertOne, save, update, remove, count |
+| `connectionRef` | string | No | Registered connection reference |
+
+#### Input Headers
+
+| Header | Mode | Description |
+|--------|------|-------------|
+| `CamelMongoDbDatabase` | R/W | Database name |
+| `CamelMongoDbCollection` | R/W | Collection name |
+| `CamelMongoDbOperation` | R/W | Operation to execute |
+| `CamelMongoDbCriteria` | Write | Filter/criteria (map[string]any or JSON) |
+| `CamelMongoDbLimit` | Write | Result limit |
+| `CamelMongoDbSkip` | Write | Skip N documents |
+| `CamelMongoDbSort` | Write | Sort order (json: {"field": 1}) |
+
+#### Output Headers
+
+| Header | Description |
+|--------|-------------|
+| `CamelMongoDbResultTotal` | Total documents found/affected |
+| `CamelMongoDbOid` | ObjectID of inserted document |
+
+#### Example
+
+```go
+import (
+    "context"
+    "go.mongodb.org/mongo-driver/mongo"
+    "go.mongodb.org/mongo-driver/mongo/options"
+)
+
+// Create component
+mongoComp := gocamel.NewMongoDBComponent()
+
+// Connect
+client, _ := mongo.Connect(context.Background(), options.Client().ApplyURI("mongodb://localhost:27017"))
+conn := gocamel.CreateMongoDBConnection(client, "mongodb://localhost:27017", "mydb")
+mongoComp.RegisterConnection("myconn", conn)
+
+builder.WithComponent("mongodb", mongoComp)
+
+// Insert
+builder.From("timer:tick?period=5s").
+    SetBody(map[string]any{"name": "test", "value": 123}).
+    To("mongodb://myconn?database=mydb&collection=items&operation=insert")
+
+// Query with filter
+builder.From("direct:search").
+    SetHeader(gocamel.CamelMongoDbCriteria, map[string]any{"status": "active"}).
+    SetHeader(gocamel.CamelMongoDbLimit, 10).
+    To("mongodb://myconn?database=mydb&collection=items&operation=find")
+```
+
+---
+
 ## Transformation Components
 
 ### XSLT
