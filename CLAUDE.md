@@ -86,11 +86,8 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 - `.RemoveHeader(name)` / `.RemoveHeaders(pattern, excludePatterns...)` — remove In message headers; `*` wildcard supported with optional exclusions
 - `.SetProperty(key, value)` / `.SetPropertyFunc(key, fn)` — set exchange properties
 - `.RemoveProperty(key)` / `.RemoveProperties(pattern, excludePatterns...)` — remove exchange properties; `*` wildcard with optional exclusions
-
-### Management API (`management.go`)
-- `ManagementServer` exposes a REST API: `GET /api/context`, `GET /api/routes`, `POST /api/routes/{id}/start|stop`
-
 ### Available Components
+
 | Scheme | File | Role |
 |--------|------|------|
 | `http` | `http_component.go` | HTTP server (Consumer) + HTTP client (Producer) |
@@ -107,6 +104,8 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 | `direct` | `direct_component.go` | Synchronous in-memory routing between routes (Consumer & Producer) |
 | `timer` | `timer_component.go` | Simple periodic timer (Consumer only) |
 | `mail` | `mail_component.go` | Email send/receive via SMTP/IMAP/POP3 (Consumer & Producer) |
+| `sql` | `sql_component.go` | SQL queries execution (Producer only) |
+| `sql-stored` | `sql_stored_component.go` | SQL stored procedures with IN/OUT/INOUT params (Producer only) |
 
 ### Composant Mail
 
@@ -149,6 +148,9 @@ pop3://pop.gmail.com:995?username=user@gmail.com&password=pass&delete=false
 - Typed accessors: `GetPropertyAsString`, `GetPropertyAsInt`, `GetPropertyAsBool`, `GetPropertyAsFloat`, `GetPropertyAsTime`, `GetPropertyAsDuration`, `GetPropertyAsMap`, `GetPropertyAsSlice`
 - `RemoveProperty(key)`, `RemoveProperties(pattern, excludePatterns...)` — `*` wildcard with exclusions
 - `GetProperties()`, `SetProperties(map)`, `ClearProperties()`
+
+### Management API (`management.go`)
+- `ManagementServer` exposes a REST API: `GET /api/context`, `GET /api/routes`, `POST /api/routes/{id}/start|stop`
 
 ### Timer component notes
 - URI params: `period` (ms, default 1000), `delay` (ms, default 1000), `repeatCount` (0=unlimited), `fixedRate` (bool)
