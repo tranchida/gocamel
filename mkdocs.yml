@@ -68,10 +68,9 @@ markdown_extensions:
 
 # Navigation - English (default)
 nav:
-  - Home: 
-    - en/index.md
-    - Features: en/features.md
-    - Quick Start: en/quickstart.md
+  - Home: index.md
+  - Features: en/features.md
+  - Quick Start: en/quickstart.md
   - Documentation:
     - Concepts: en/concepts.md
     - Architecture: en/architecture.md
