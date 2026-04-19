@@ -135,6 +135,8 @@ producer, _ := endpoint.CreateProducer()
 
 ---
 
+---
+
 ## Scheduling
 
 ### Cron
@@ -150,6 +152,41 @@ builder.From("cron://group/job?cron=0+*+*+*+*+*")
 // Simple interval:
 builder.From("cron://poller?trigger.repeatInterval=5000")
 ```
+
+---
+
+## Mail
+
+### Envoi/Réception d'emails
+
+Le composant Mail supporte SMTP/SMTPS (envoi) et IMAP/IMAPS/POP3/POP3S (réception).
+
+```go
+// Envoi SMTP
+builder.To("smtps://smtp.gmail.com:465?to=dest@example.com")
+
+// Réception IMAP avec IDLE
+builder.From("imaps://imap.gmail.com:993?folderName=INBOX&idle=true")
+
+// Réception POP3
+builder.From("pop3s://pop.gmail.com:995?username=user&password=pass")
+```
+
+| Option | Type | Défaut | Description |
+|--------|------|--------|-------------|
+| `username` | string | "" | Credentials d'authentification |
+| `password` | string | "" | Credentials d'authentification |
+| `to` | string | "" | Destinataire(s) (Producer) |
+| `subject` | string | "" | Sujet du message (Producer) |
+| `contentType` | string | "text/plain" | Type MIME (Producer) |
+| `folderName` | string | "INBOX" | Dossier IMAP (Consumer) |
+| `unseen` | bool | true | Messages non lus seulement |
+| `idle` | bool | false | IMAP IDLE pour notifications push |
+| `delete` | bool | false | Supprimer après traitement |
+| `fetchSize` | int | -1 | Messages max par poll |
+| `pollDelay` | int | 60000 | Délai entre polls (ms) |
+
+Voir l'exemple complet dans [examples/mail/](../examples/mail/).
 
 ---
 

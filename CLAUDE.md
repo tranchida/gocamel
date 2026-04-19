@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## AI Agent Configuration
+
+**Preferred AI Agent:** Claude via Ollama
+
+**Launch Command:**
+```bash
+ollama launch claude --model glm-5.1:cloud
+```
+
+**Description:** Claude Code is configured to work with the GoCamel project using the GLM-5.1 model (Cloud provider). This ensures consistent and high-quality code generation across all sessions.
+
 ## Commands
 
 ```bash
@@ -95,6 +106,43 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 | `exec` | `exec_component.go` | Execute system commands (Producer only) |
 | `direct` | `direct_component.go` | Synchronous in-memory routing between routes (Consumer & Producer) |
 | `timer` | `timer_component.go` | Simple periodic timer (Consumer only) |
+| `mail` | `mail_component.go` | Email send/receive via SMTP/IMAP/POP3 (Consumer & Producer) |
+
+### Composant Mail
+
+Le composant mail supporte l'envoi et la réception d'emails via plusieurs protocoles.
+
+**Protocoles supportés:**
+- SMTP (port 587) / SMTPS (port 465) - Envoi
+- IMAP (port 143) / IMAPS (port 993) - Réception avec IDLE
+- POP3 (port 110) / POP3S (port 995) - Réception
+
+**Exemples d'URI:**
+```
+// Envoi SMTP
+smtp://smtp.gmail.com:587?username=user@gmail.com&password=pass&to=dest@example.com
+
+// Réception IMAP avec IDLE
+imaps://imap.gmail.com:993?folderName=INBOX&username=user@gmail.com&password=pass&idle=true
+
+// Réception POP3
+pop3://pop.gmail.com:995?username=user@gmail.com&password=pass&delete=false
+```
+
+**Options communes:**
+- `username`, `password` - Credentials
+- `folderName` - Dossier IMAP (défaut: INBOX)
+- `unseen` - Messages non lus seulement (défaut: true)
+- `idle` - Utiliser IMAP IDLE pour notifications push
+- `delete` - Supprimer après traitement
+- `pollDelay` - Délai entre polls en ms (défaut: 60000)
+- `fetchSize` - Nombre max de messages par poll
+
+**Headers spéciaux:**
+- `From`, `To`, `Cc`, `Subject` - En-têtes standards
+- `Reply-To` - Adresse de réponse
+- `CamelMailBodyHTML` - Propriété contenant version HTML
+- `CamelMailAttachment_<nom>` - Pièces jointes
 
 ### Exchange Properties API (`exchange.go`)
 - `SetProperty(key, value)`, `GetProperty(key)`, `GetPropertyOrDefault(key, default)`, `HasProperty(key)`
