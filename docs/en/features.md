@@ -82,6 +82,12 @@ When("${date:now:yyyy-MM-dd}")
 - **Direct** — In-memory routing
 - **Timer** — Scheduled execution
 
+#### Security
+- **Path Validation** — Protection against directory traversal attacks
+- **SQL Injection Prevention** — Input validation for database queries
+- **Input Sanitization** — Null byte and control character removal
+- **Safe Path Operations** — Bounds-checking for file operations
+
 #### File Transfer
 - **File** — Local filesystem
 - **FTP/FTPS** — File Transfer Protocol

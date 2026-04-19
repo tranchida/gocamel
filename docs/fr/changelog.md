@@ -1,11 +1,31 @@
 # Changelog
 
-Toutes les modifications notables de ce projet.
+Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Ajouté
+- Documentation complète en anglais
+- Structure de documentation bilingue (EN/FR)
+- Support du thème MkDocs Material
+- Nouveau fichier `security.go` avec utilitaires de validation de sécurité
+  - `ValidatePath()` - valide les chemins de fichiers contre les traversées
+  - `ValidatePathInDir()` - garantit que les chemins restent dans les répertoires autorisés
+  - `IsSafePath()` - vérifie si un chemin est sûr
+  - `SanitizeInput()` - supprime les caractères dangereux des entrées utilisateur
+
+### Sécurité
+- Corrigé les vulnérabilités de traversée de répertoire dans les composants FTP, SFTP et SMB
+- Corrigé la vulnérabilité d'injection de commandes dans le composant Exec
+- Corrigé les vulnérabilités d'injection SQL dans les composants SQL et SQL-Stored
+- Ajout de l'assainissement des entrées pour les URI des composants
+- Tous les composants valident désormais les chemins de fichiers avant les opérations
+
+### Modifié
+- **Traductions** : Tous les commentaires de code français traduits en anglais (650+ commentaires)
 
 ### Ajout
 - Composant SQL (producer) pour exécuter des requêtes `SELECT`/`INSERT`/`UPDATE`/`DELETE` via `database/sql`, avec support des paramètres positionnels, `outputType` (`SelectList`/`SelectOne`), mode batch et transactions
@@ -94,7 +114,7 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2
 ## Historique
 
 ```
-0.1.0 ── 0.2.0 ── 0.3.0 ── 0.4.0 ── 0.5.0 ── unreleased
-  │         │         │         │         │
-  └─────────┴─────────┴─────────┴─────────┴──────▶ main
+unreleased
+     │
+     ├──────▶ main
 ```

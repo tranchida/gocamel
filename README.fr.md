@@ -24,6 +24,7 @@ GoCamel est une bibliothèque d'intégration d'entreprise inspirée d'[Apache Ca
 - 📝 **Simple Language** - Expressions dynamiques (`${body}`, `${header.name}`, fonctions)
 - 🔌 **Composants Multiples** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, etc.
 - 🛠️ **API REST de Management** - Monitoring et contrôle inspiré de JMX
+- 🔒 **Utilitaires de Sécurité** - Protection contre les traversées de répertoire, prévention des injections SQL, assainissement des entrées
 
 ## 📦 Installation
 
@@ -94,6 +95,43 @@ builder.From("direct:start").
 | **XSLT/XSD** | Transformation/validation XML |
 | **Template** | Templates Go natifs |
 | **Exec** | Exécution commandes système |
+
+## 🔒 Sécurité
+
+GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre les vulnérabilités courantes :
+
+### Fonctionnalités de Sécurité
+
+- **Protection contre les Traversées de Répertoire** - Prévient les attaques de traversée de répertoire (ex. `../etc/passwd`)
+- **Prévention des Injections SQL** - Validation des entrées pour les requêtes SQL
+- **Assainissement des Entrées** - Supprime les octets nuls et caractères de contrôle des entrées utilisateur
+- **Validation des Chemins** - Garantit que les chemins restent dans les répertoires autorisés
+
+### Utilitaires de Sécurité (`security.go`)
+
+```go
+// Valider un chemin de fichier
+err := gocamel.ValidatePath("/data/file.txt")
+if err != nil {
+    // Le chemin contient des motifs de traversée ou des octets nuls
+}
+
+// S'assurer que le chemin est dans un répertoire spécifique
+err = gocamel.ValidatePathInDir("/data/output.txt", "/data")
+
+// Vérifier si le chemin est sûr
+isSafe := gocamel.IsSafePath("/data/file.txt", false)
+
+// Assainir une entrée utilisateur
+sanitized := gocamel.SanitizeInput(userInput)
+```
+
+### Bonnes Pratiques
+
+- Toujours valider les chemins de fichiers provenant des entrées utilisateur
+- Utiliser `ValidatePathInDir()` lors de l'utilisation d'uploads ou d'opérations de fichiers
+- Ne jamais exécuter des commandes externes non assainies
+- Utiliser le binding de paramètres pour les requêtes SQL au lieu de la concaténation de strings
 
 ## 📚 Documentation
 

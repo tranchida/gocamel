@@ -24,6 +24,7 @@ GoCamel is an enterprise integration library inspired by [Apache Camel](https://
 - 📝 **Simple Language** - Dynamic expressions (`${body}`, `${header.name}`, functions)
 - 🔌 **Multiple Components** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, etc.
 - 🛠️ **REST Management API** - JMX-like monitoring and control
+- 🔒 **Security Utilities** - Path traversal protection, SQL injection prevention, input sanitization
 
 ## 📦 Installation
 
@@ -94,6 +95,43 @@ builder.From("direct:start").
 | **XSLT/XSD** | XML transformation/validation |
 | **Template** | Go template processing |
 | **Exec** | System command execution |
+
+## 🔒 Security
+
+GoCamel includes built-in security utilities to protect against common vulnerabilities:
+
+### Security Features
+
+- **Path Traversal Protection** - Prevents directory traversal attacks (e.g., `../etc/passwd`)
+- **SQL Injection Prevention** - Input validation for SQL queries
+- **Input Sanitization** - Removes null bytes and control characters from user input
+- **Path Validation** - Ensures file paths stay within allowed directories
+
+### Security Utilities (`security.go`)
+
+```go
+// Validate a file path
+err := gocamel.ValidatePath("/data/file.txt")
+if err != nil {
+    // Path contains traversal patterns or null bytes
+}
+
+// Ensure path is within specific directory
+err = gocamel.ValidatePathInDir("/data/output.txt", "/data")
+
+// Check if path is safe
+isSafe := gocamel.IsSafePath("/data/file.txt", false)
+
+// Sanitize user input
+sanitized := gocamel.SanitizeInput(userInput)
+```
+
+### Best Practices
+
+- Always validate file paths from user input
+- Use `ValidatePathInDir()` when working with uploads or file operations
+- Never execute unsanitized external commands
+- Use parameter binding for SQL queries instead of string concatenation
 
 ## 📚 Documentation
 

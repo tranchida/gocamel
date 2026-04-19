@@ -19,6 +19,15 @@ GoCamel implements proven integration patterns from the *Enterprise Integration 
 | **Stop** | Stop routing without error |
 | **ToD** | Dynamic endpoint URI resolution |
 
+### Security Features
+
+GoCamel includes built-in security utilities to protect against common vulnerabilities:
+
+- **Path Validation** — Protection against directory traversal attacks
+- **SQL Injection Prevention** — Input validation for database queries
+- **Input Sanitization** — Null byte and control character removal
+- **Safe Path Operations** — Bounds-checking for file operations
+
 ### Type-Safe Message Exchange
 
 ```go
@@ -86,6 +95,15 @@ GoCamel implémente les patterns d'intégration éprouvés du livre *Enterprise 
 | **Multicast** | Envoi vers plusieurs destinations |
 | **Stop** | Arrêt du routage sans erreur |
 | **ToD** | Résolution dynamique d'URI d'endpoint |
+
+### Fonctionnalités de Sécurité
+
+GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre les vulnérabilités courantes :
+
+- **Validation des Chemins** — Protection contre les attaques de traversée de répertoire
+- **Prévention des Injections SQL** — Validation des entrées pour les requêtes base de données
+- **Assainissement des Entrées** — Suppression des octets nuls et caractères de contrôle
+- **Opérations de Chemins Sécurisées** — Vérification des limites pour les opérations fichiers
 
 ### Échange de Messages Type-Safe
 

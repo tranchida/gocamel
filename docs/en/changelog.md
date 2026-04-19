@@ -1,11 +1,31 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
 ## [Unreleased]
 
 ### Added
 - Comprehensive English documentation
 - Bilingual documentation structure (EN/FR)
 - MkDocs Material theme support
+- New `security.go` file with security validation utilities
+  - `ValidatePath()` - validates file paths for directory traversal
+  - `ValidatePathInDir()` - ensures paths stay within allowed directories
+  - `IsSafePath()` - checks if a path is safe
+  - `SanitizeInput()` - removes dangerous characters from user input
+
+### Security
+- Fixed path traversal vulnerabilities in FTP, SFTP, and SMB components
+- Fixed command injection vulnerability in Exec component
+- Fixed SQL injection vulnerabilities in SQL and SQL-Stored components
+- Added input sanitization for component URIs
+- All components now validate file paths before operations
+
+### Changed
+- **Translations**: All French code comments translated to English (650+ comments)
 
 ## [0.1.0] - 2026-04-19
 
@@ -25,7 +45,12 @@
 - REST Management API: JMX-like HTTP endpoints
 - Memory and SQLite aggregation repositories
 
-### Security
-- Support for environment variables for credentials
-- No hardcoded secrets
+---
 
+## History
+
+```
+0.1.0 ─────────────────── unreleased
+  │                            │
+  └────────────────────────────┴──────▶ main
+```
