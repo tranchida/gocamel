@@ -34,6 +34,14 @@ func (c *XsltComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		return nil, fmt.Errorf("path de file missing in l'URI: %s", uri)
 	}
 
+	// Security: validate path for directory traversal
+	if strings.Contains(path, "..") {
+		return nil, fmt.Errorf("path contains traversal sequence: %s", path)
+	}
+	if strings.Contains(path, "\x00") {
+		return nil, fmt.Errorf("path contains null byte")
+	}
+
 	return &XsltEndpoint{
 		uri:  uri,
 		path: path,

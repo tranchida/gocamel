@@ -195,6 +195,11 @@ func (p *SQLProducer) Send(exchange *Exchange) error {
 	}
 	query = Interpolate(query, exchange)
 
+	// Security: validate the interpolated query against SQL injection
+	if err := validateSQLQuery(query); err != nil {
+		return fmt.Errorf("sql: query validation failed: %w", err)
+	}
+
 	if p.endpoint.batch {
 		return p.execBatch(ctx, exchange, query)
 	}

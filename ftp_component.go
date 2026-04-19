@@ -173,6 +173,12 @@ func (p *FTPProducer) Send(exchange *Exchange) error {
 			return fmt.Errorf("le chemin est un répertoire mais CamelFileName n'est pas spécifié")
 		}
 	}
+
+	// Security: validate path for directory traversal
+	if err := validateRemotePath(path); err != nil {
+		return fmt.Errorf("ftp: invalid path: %w", err)
+	}
+
 	path = strings.TrimPrefix(path, "/")
 
 	var body []byte

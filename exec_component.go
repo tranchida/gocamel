@@ -26,17 +26,61 @@ const (
 // ExecComponent represents the exec component
 type ExecComponent struct{}
 
+// validateExecPath validates that the executable path is safe
+func validateExecPath(executable string) error {
+	// Reject if contains path traversal
+	if strings.Contains(executable, "..") {
+		return fmt.Errorf("executable contains path traversal: %s", executable)
+	}
+	// Reject shell metacharacters
+	dangerousChars := []string{"|", "&", ";", "$", "`", "<", ">", "\\", "\n", "\r"}
+	for _, char := range dangerousChars {
+		if strings.Contains(executable, char) {
+			return fmt.Errorf("executable contains dangerous character '%s': %s", char, executable)
+		}
+	}
+	// Reject if starts with dangerous character
+	if strings.HasPrefix(executable, "-") {
+		return fmt.Errorf("executable starts with dangerous character '-': %s", executable)
+	}
+	return nil
+}
+
+// validateExecArgs validates command arguments
+func validateExecArgs(args []string) error {
+	for _, arg := range args {
+		// Check for shell metacharacters in arguments
+		dangerousChars := []string{"|", "&", ";", "`", "$", "<", ">"}
+		for _, char := range dangerousChars {
+			if strings.Contains(arg, char) {
+				return fmt.Errorf("argument contains shell metacharacter '%s': %s", char, arg)
+			}
+		}
+		// Check for path traversal in file-related arguments
+		if strings.Contains(arg, "..") && (strings.Contains(arg, "/") || strings.Contains(arg, "\\")) {
+			return fmt.Errorf("argument contains path traversal: %s", arg)
+		}
+		// Check for control characters
+		for _, r := range arg {
+			if r < 32 || r == 127 {
+				return fmt.Errorf("argument contains control character: %q", arg)
+			}
+		}
+	}
+	return nil
+}
+
 // NewExecComponent creates a new ExecComponent
 func NewExecComponent() *ExecComponent {
 	return &ExecComponent{}
 }
 
-// CreateEndpoint crée un ExecEndpoint à partir de l'URI
+// CreateEndpoint creates an ExecEndpoint from the URI
 // Format: exec:executable[?args=arg1+arg2&workingDir=/tmp&timeout=5000&outFile=result.txt&useStderrOnEmpty=true]
 func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	parsedURL, err := url.Parse(uri)
 	if err != nil {
-		return nil, fmt.Errorf("URI exec invalid: %w", err)
+		return nil, fmt.Errorf("invalid exec URI: %w", err)
 	}
 
 	executable := parsedURL.Opaque
@@ -123,17 +167,22 @@ func (p *ExecProducer) Stop() error {
 	return nil
 }
 
-// Send executes commande et met le results in l'échange
+// Send executes the command and puts the results in the exchange
 func (p *ExecProducer) Send(exchange *Exchange) error {
-	// Résolution de l'exécutable (header > URI)
+	// Executable resolution (header > URI)
 	executable := p.endpoint.executable
 	if v, ok := exchange.GetHeader(CamelExecCommandExecutable); ok {
 		if s, ok := v.(string); ok && s != "" {
 			executable = s
 		}
 	}
+	
+	// Security: validate executable path
+	if err := validateExecPath(executable); err != nil {
+		return fmt.Errorf("exec: invalid executable: %w", err)
+	}
 
-	// Résolution des arguments (header > URI)
+	// Arguments resolution (header > URI)
 	args := append([]string(nil), p.endpoint.args...)
 	if v, ok := exchange.GetHeader(CamelExecCommandArgs); ok {
 		switch val := v.(type) {
@@ -143,12 +192,31 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 			args = strings.Fields(val)
 		}
 	}
+	
+	// Security: validate arguments
+	if err := validateExecArgs(args); err != nil {
+		return fmt.Errorf("exec: invalid arguments: %w", err)
+	}
 
-	// Résolution du directory de travail (header > URI)
+	// Working directory resolution (header > URI)
 	workingDir := p.endpoint.workingDir
 	if v, ok := exchange.GetHeader(CamelExecCommandWorkingDir); ok {
 		if s, ok := v.(string); ok && s != "" {
 			workingDir = s
+		}
+	}
+
+	// Security: validate working directory path
+	if workingDir != "" {
+		// Check for path traversal
+		if strings.Contains(workingDir, "..") {
+			return fmt.Errorf("exec: working directory contains path traversal: %s", workingDir)
+		}
+		// Check for shell metacharacters
+		for _, char := range []string{"|", "&", ";", "$", "`", "<", ">", "\\", "\n", "\r"} {
+			if strings.Contains(workingDir, char) {
+				return fmt.Errorf("exec: working directory contains dangerous character: %s", workingDir)
+			}
 		}
 	}
 

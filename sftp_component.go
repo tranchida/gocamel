@@ -213,6 +213,11 @@ func (p *SFTPProducer) Send(exchange *Exchange) error {
 		}
 	}
 
+	// Security: validate path for directory traversal
+	if err := validateRemotePath(path); err != nil {
+		return fmt.Errorf("sftp: invalid path: %w", err)
+	}
+
 	switch p.fileExist {
 	case FileExistFail:
 		if _, err := sftpClient.Stat(path); err == nil {

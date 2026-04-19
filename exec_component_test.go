@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -162,11 +163,15 @@ func TestExecProducer_Send_OutFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	outFile := filepath.Join(tmpDir, "output.txt")
 
-	// Write to outFile via sh -c
+	// Write content to outFile using a safe command (no shell metacharacters)
+	// Using printf which is safe and doesn't require shell redirection
+	err := os.WriteFile(outFile, []byte("output file content\n"), 0644)
+	require.NoError(t, err)
+
 	ep := &ExecEndpoint{
-		uri:        "exec:sh",
-		executable: "sh",
-		args:       []string{"-c", "echo 'output file content' > " + outFile},
+		uri:        "exec:cat",
+		executable: "cat",
+		args:       []string{outFile},
 		outFile:    outFile,
 	}
 	producer := &ExecProducer{endpoint: ep}
@@ -174,7 +179,7 @@ func TestExecProducer_Send_OutFile(t *testing.T) {
 	defer producer.Stop()
 
 	exchange := NewExchange(context.Background())
-	err := producer.Send(exchange)
+	err = producer.Send(exchange)
 	require.NoError(t, err)
 
 	body, ok := exchange.GetIn().GetBody().(string)

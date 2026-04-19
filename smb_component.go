@@ -209,6 +209,11 @@ func (p *SMBProducer) Send(exchange *Exchange) error {
 	}
 	path = strings.ReplaceAll(path, "/", "\\")
 
+	// Security: validate path for directory traversal
+	if err := validateRemotePath(path); err != nil {
+		return fmt.Errorf("smb: invalid path: %w", err)
+	}
+
 	switch p.fileExist {
 	case FileExistFail:
 		if _, err := sc.share.Stat(path); err == nil {

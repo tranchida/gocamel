@@ -187,7 +187,18 @@ func (p *TemplateProducer) Send(exchange *Exchange) error {
 	if p.endpoint.allowTemplateFromHeader {
 		if v, ok := exchange.GetHeader(CamelTemplatePath); ok && v != "" {
 			if s, isString := v.(string); isString && s != "" {
-				templatePath = s
+				// Security: validate template path before using from header
+				if strings.Contains(s, "..") {
+					return fmt.Errorf("template: path contains traversal sequence: %s", s)
+				}
+				if strings.Contains(s, "\x00") {
+					return fmt.Errorf("template: path contains null byte")
+				}
+				cleanPath := filepath.Clean(s)
+				if strings.Contains(cleanPath, "..") {
+					return fmt.Errorf("template: path contains traversal after cleaning: %s", s)
+				}
+				templatePath = cleanPath
 			}
 		}
 	}
