@@ -21,7 +21,7 @@ GoCamel est un framework d'intégration d'entreprise qui simplifie la connexion 
 | **Messaging** | Direct (in-memory), Telegram |
 | **Scheduling** | Timer, Cron |
 | **IA/LLM** | OpenAI Chat Completion |
-| **Transformation** | XSLT, XSD validation |
+| **Transformation** | XSLT, XSD validation, Template |
 | **Exécution** | Exec (commandes système) |
 
 ### 🧩 EIP (Enterprise Integration Patterns)
@@ -68,6 +68,7 @@ Moteur d'expressions inspiré d'Apache Camel pour manipuler les données d'écha
 - [x] Scheduling: Timer, Cron
 - [x] REST Management API
 - [x] Simple Language (expressions dynamiques)
+- [x] Composant Template (Velocity-like)
 
 ### 🚧 En cours
 

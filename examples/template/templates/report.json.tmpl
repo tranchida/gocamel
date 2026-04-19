@@ -1,0 +1,6 @@
+{
+  "timestamp": "{{now | formatDate "2006-01-02T15:04:05Z07:00"}}",
+  "content": {{.Body | toString | json}},
+  "user": "{{.Headers.user}}",
+  "status": {{if .Headers.status}}"{{.Headers.status | upper}}"{{else}}"UNKNOWN"{{end}}
+}

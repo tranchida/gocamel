@@ -1,0 +1,9 @@
+Bonjour {{.Headers.name}},
+
+Vous avez reçu le message suivant : {{.Body -}}
+
+Date: {{now | formatDate "2006-01-02 15:04:05"}}
+ID échange: {{.Exchange.ID}}
+
+--
+Ceci est un message automatique de GoCamel

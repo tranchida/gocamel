@@ -165,6 +165,47 @@ builder.To("xslt:file://transform.xsl")
 
 ---
 
+### Template
+
+Transformation via templates Go natifs (inspiré du composant Velocity d'Apache Camel).
+
+```go
+// Template basique
+builder.To("template:templates/email.tmpl")
+
+// Avec caching
+builder.To("template:templates/item.tmpl?contentCache=true")
+
+// Template dynamique
+builder.To("template:default.tmpl?allowTemplateFromHeader=true")
+```
+
+| Option | Type | Défaut | Description |
+|--------|------|--------|-------------|
+| `contentCache` | bool | `false` | Cache le template en mémoire |
+| `allowTemplateFromHeader` | bool | `false` | Permet override via header `CamelTemplatePath` |
+| `startDelimiter` | string | `{{` | Délimiteur de début |
+| `endDelimiter` | string | `}}` | Délimiteur de fin |
+
+**Variables disponibles dans le template :**
+
+```
+{{.Body}}              # Corps du message
+{{.Headers.name}}      # Valeur d'un header
+{{.Exchange.ID}}       # ID de l'échange
+{{.Exchange.Created}}  # Date de création
+```
+
+**Fonctions disponibles :**
+
+```
+{{.Body | upper}}, {{.Body | lower}}, {{.Body | trim}}
+{{now | formatDate "2006-01-02 15:04:05"}}
+{{"hello" | contains "ell"}}
+```
+
+---
+
 ### XSD
 
 Validation XML via schéma XSD.

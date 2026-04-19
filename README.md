@@ -395,6 +395,7 @@ gocamel/
 - **Exec** (`exec:...`) : Exécution de commandes système (Producer uniquement).
 - **XSLT** (`xslt:...`) : Transformation XML via une feuille de style (Producer uniquement).
 - **XSD** (`xsd:...`) : Validation de schéma XML (Producer uniquement).
+- **Template** (`template:...`) : Transformation texte via templates Go natifs (Producer uniquement, inspiré de Velocity).
 - **Quartz** (`quartz://...`) : Déclenchement planifié par expression cron ou intervalle fixe (Consumer uniquement).
 
 ## Configuration

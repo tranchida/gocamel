@@ -160,6 +160,63 @@ func main() {
     ctx.Start()
     select {}
 }
+
+---
+
+## Template Email
+
+Génération de messages formatés avec templates Go natifs (inspiré du composant Velocity d'Apache Camel).
+
+```go title="template_email.go"
+package main
+
+import (
+    "github.com/tranchida/gocamel"
+)
+
+// templates/email.tmpl:
+// Bonjour {{.Headers.name}},
+// 
+// {{.Body}}
+//
+// Envoyé le {{now | formatDate "2006-01-02"}}
+
+func main() {
+    ctx := gocamel.NewCamelContext()
+    ctx.AddComponent("template", gocamel.NewTemplateComponent())
+    
+    route := ctx.CreateRouteBuilder().
+        From("direct:notify").
+        SetHeader("name", "Alice").
+        SetBody("Votre commande est prête !").
+        To("template:templates/email.tmpl").
+        Log("Email généré: ${body}").
+        Build()
+    
+    ctx.AddRoute(route)
+    ctx.Start()
+    select {}
+}
+```
+
+### Avec cache du template
+
+```go
+To("template:templates/email.tmpl?contentCache=true")
+```
+
+### Fonctions disponibles dans les templates
+
+| Fonction | Description | Exemple |
+|----------|-------------|---------|
+| `upper` | Majuscules | `{{.Body | upper}}` |
+| `lower` | Minuscules | `{{.Body | lower}}` |
+| `trim` | Supprime espaces | `{{.Body | trim}}` |
+| `now` | Date actuelle | `{{now}}` |
+| `formatDate` | Formate date | `{{now | formatDate "2006-01-02"}}` |
+| `toString` | Convertit en string | `{{.Body | toString}}` |
+| `safeHTML` | HTML non échappé | `{{.Body | safeHTML}}` |
+
 ```
 
 ## Split & Aggregate
