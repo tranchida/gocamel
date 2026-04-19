@@ -1,13 +1,17 @@
-// Example: Simple Language expression parser demonstration
+// Example: Simple Language expression parser demonstration with Phase 3 & 4 Features
 //
 // This example demonstrates the Simple Language expression parser
-// which allows you to use expressions like ${body}, ${header.name},
-// ${exchangeProperty.name}, and functions like ${date:now}, ${random(100)}, ${uuid}
+// including all Phase 3 & 4 features:
 //
-// NEW FEATURES:
-// - Bracket notation: ${body['key']}, ${body[0]}, ${header['name']}
-// - Null-safe operator: ${body?.field}, ${header?.X-Header}
-// - Choice routing: .Choice().When(expr).Process().Otherwise().Process().EndChoice()
+// PHASE 3: String Operations, Logical Operators, Ternary Operator
+// - contains, startsWith, endsWith, regex operators
+// - && (AND), || (OR), ! (NOT) operators
+// - conditional: ${condition ? true-value : false-value}
+//
+// PHASE 4: String Functions, Math Operations, Type/Range Operations
+// - trim(), uppercase/upper(), lowercase/lower(), size/length(), substring(), replace()
+// - +, -, *, /, % math operations
+// - "in" list membership, "range" check, "is" type checking
 //
 // To run: go run simple_example.go
 package main
@@ -21,8 +25,8 @@ import (
 )
 
 func main() {
-	fmt.Println("=== GoCamel Simple Language Example ===")
-	fmt.Println("========================================")
+	fmt.Println("=== GoCamel Simple Language Example with Phase 3 & 4 Features ===")
+	fmt.Println("=================================================================")
 	fmt.Println()
 
 	// Create the Camel context
@@ -30,132 +34,165 @@ func main() {
 
 	// Create a test exchange
 	exchange := gocamel.NewExchange(ctx.GetContext())
-	exchange.GetIn().SetBody("Hello from GoCamel!")
+	exchange.GetIn().SetBody("  Hello from GoCamel!  ")
 	exchange.GetIn().SetHeader("Content-Type", "text/plain")
 	exchange.GetIn().SetHeader("X-Request-ID", "req-12345")
 	exchange.SetProperty("processedAt", time.Now().Format(time.RFC3339))
 	exchange.SetProperty("user", "john.doe")
 
-	// Demo 1: Basic variable access
-	fmt.Println("Demo 1: Variable Access")
-	fmt.Println("-----------------------")
+	// Demo 1: Basic variable access (existing functionality)
+	fmt.Println("Demo 1: Basic Variable Access")
+	fmt.Println("-----------------------------")
 	demoExpressions(ctx, exchange, []string{
-		"Simple body: ${body}",
+		"Body: ${body}",
 		"Content-Type header: ${header.Content-Type}",
-		"Request ID: ${header.X-Request-ID}",
 		"User property: ${exchangeProperty.user}",
-		"Processing time: ${exchangeProperty.processedAt}",
 	})
 	fmt.Println()
 
-	// Demo 2: Template composition
-	fmt.Println("Demo 2: Template Composition")
-	fmt.Println("----------------------------")
-	demoExpressions(ctx, exchange, []string{
-		"Received body: [${body}] from user: ${exchangeProperty.user}",
-		"Response type is ${header.Content-Type} with ID ${header.X-Request-ID}",
-		"Request at ${exchangeProperty.processedAt}",
-	})
-	fmt.Println()
-
-	// Demo 3: Date and Random Functions
-	fmt.Println("Demo 3: Functions")
-	fmt.Println("-----------------")
-	demoExpressions(ctx, exchange, []string{
-		"Current time (RFC3339): ${date:now}",
-		"Current date: ${date:now:2006-01-02}",
-		"Random number (0-99): ${random(100)}",
-		"Generated UUID: ${uuid}",
-		"Custom format: ${date:now:January 2, 2006 at 3:04 PM}",
-	})
-	fmt.Println()
-
-	// Demo 4: Comparisons
-	fmt.Println("Demo 4: Comparisons")
-	fmt.Println("-------------------")
-	exchange.GetIn().SetHeader("count", 10)
-	exchange.SetProperty("status", "active")
+	// Demo 2: PHASE 3 - String Operations
+	fmt.Println("Demo 2: String Operations (Phase 3)")
+	fmt.Println("------------------------------------")
+	exchange.GetIn().SetBody("URGENT: Process this order")
+	exchange.GetIn().SetHeader("filename", "/data/orders.json")
+	exchange.GetIn().SetHeader("email", "user@example.com")
 	demoExpressionsAsBool(exchange, []struct {
 		expr string
 		desc string
 	}{
-		{"${body == 'Hello from GoCamel!'}", "body equals 'Hello from GoCamel!'"},
-		{"${body != 'Goodbye'}", "body not equals 'Goodbye'"},
-		{"${header.count > 5}", "count greater than 5"},
-		{"${header.count <= 15}", "count less than or equal 15"},
-		{"${header.count == 10}", "count equals 10"},
-		{"${exchangeProperty.status == 'active'}", "status is active"},
+		{"${body contains 'URGENT'}", "body contains 'URGENT'"},
+		{"${body contains 'urgent'}", "body contains 'urgent' (case sensitive - false)"},
+		{"${header.filename startsWith '/data/'}", "filename starts with '/data/'"},
+		{"${header.filename endsWith '.json'}", "filename ends with '.json'"},
+		{"${header.email regex '^[a-z]+@[a-z]+\\\\.[a-z]+$'}", "email matches pattern"},
+		{"${body regex 'Order \\d+'}", "body matches 'Order \\d+' pattern"},
 	})
 	fmt.Println()
 
-	// Demo 5: Map Access with Bracket Notation
-	fmt.Println("Demo 5: Map Access with Bracket Notation")
-	fmt.Println("----------------------------------------")
-	exchange.GetIn().SetBody(map[string]interface{}{
-		"name":    "John Doe",
-		"email":   "john@example.com",
-		"address": map[string]interface{}{
-			"street":  "123 Main St",
-			"city":    "New York",
-			"country": "USA",
-		},
-		"hobbies": []interface{}{"reading", "coding", "gaming"},
-		"key with spaces": "value with spaces",
+	// Demo 3: PHASE 3 - Logical Operators
+	fmt.Println("Demo 3: Logical Operators (Phase 3)")
+	fmt.Println("-------------------------------------")
+	exchange.GetIn().SetHeader("count", 150)
+	exchange.GetIn().SetHeader("type", "gold")
+	exchange.GetIn().SetHeader("status", "active")
+	demoExpressionsAsBool(exchange, []struct {
+		expr string
+		desc string
+	}{
+		{"${header.count > 100 && header.type == 'gold'}", "count > 100 AND type == 'gold'"},
+		{"${header.count > 200 || header.type == 'gold'}", "count > 200 OR type == 'gold'"},
+		{"${!header.active}", "NOT header.active (false)"},
+		{"${header.status == 'active' && (header.count > 100 || header.type == 'silver')}", "complex: status active AND (count > 100 OR type silver)"},
 	})
-	demoMapAccess(ctx, exchange)
 	fmt.Println()
 
-	// Demo 6: List/Array Access with Bracket Notation
-	fmt.Println("Demo 6: List/Array Access with Bracket Notation")
-	fmt.Println("-----------------------------------------------")
-	exchange.GetIn().SetBody([]interface{}{
-		"first item",
-		"second item",
-		"third item",
-		map[string]interface{}{
-			"name":  "Nested Map",
-			"value": 42,
-		},
+	// Demo 4: PHASE 3 - Ternary Operator
+	fmt.Println("Demo 4: Ternary Operator (Phase 3)")
+	fmt.Println("----------------------------------")
+	demoExpressions(ctx, exchange, []string{
+		"Priority: ${header.count > 100 ? 'High' : 'Low'}",
+		"Customer Type: ${header.type == 'gold' ? 'Premium' : 'Standard'}",
+		"Status Message: ${header.status == 'active' ? body : 'Inactive'}",
 	})
-	demoListAccess(ctx, exchange)
 	fmt.Println()
 
-	// Demo 7: Nested Access (Mixed Notation)
-	fmt.Println("Demo 7: Nested Access (Map[List[Map]])")
-	fmt.Println("--------------------------------------")
-	exchange.GetIn().SetBody(map[string]interface{}{
-		"users": []interface{}{
-			map[string]interface{}{
-				"name":  "Alice",
-				"email": "alice@example.com",
-				"roles": []interface{}{"admin", "user"},
-			},
-			map[string]interface{}{
-				"name":  "Bob",
-				"email": "bob@example.com",
-				"roles": []interface{}{"user"},
-			},
-		},
-	})
-	demoNestedAccess(ctx, exchange)
-	fmt.Println()
-
-	// Demo 8: Null-Safe Operator
-	fmt.Println("Demo 8: Null-Safe Operator (?.)")
-	fmt.Println("--------------------------------")
-	demoNullSafeOperator(ctx, exchange)
-	fmt.Println()
-
-	// Demo 9: Route Builder with Choice Pattern
-	fmt.Println("Demo 9: Route Builder with Choice/When/Otherwise")
-	fmt.Println("--------------------------------------------------")
-	demoChoiceRouting(ctx)
-	fmt.Println()
-
-	// Demo 10: Route Builder with Simple Language Integration
-	fmt.Println("Demo 10: Route Builder Integration")
+	// Demo 5: PHASE 4 - String Functions
+	fmt.Println("Demo 5: String Functions (Phase 4)")
 	fmt.Println("-----------------------------------")
-	demoRouteBuilder(ctx)
+	exchange.GetIn().SetBody("  Hello World  ")
+	exchange.GetIn().SetHeader("name", "john doe")
+	demoExpressions(ctx, exchange, []string{
+		"Original: [${body}]",
+		"After trim(): [${body.trim()}]",
+		"Uppercase: ${header.name.uppercase()}",
+		"Lowercase: ${header.name.lowercase()}",
+		"Length: ${body.trim().size()}",
+		"Substring(0,5): ${body.trim().substring(0,5)}",
+		"Replace: ${body.trim().replace('World', 'Universe')}",
+	})
+	fmt.Println()
+
+	// Demo 6: PHASE 4 - Function Chaining
+	fmt.Println("Demo 6: Function Chaining (Phase 4)")
+	fmt.Println("------------------------------------")
+	exchange.GetIn().SetHeader("raw", "  TeXt  DaTa  ")
+	demoExpressions(ctx, exchange, []string{
+		"Input: [${header.raw}]",
+		"trim().uppercase(): [${header.raw.trim().uppercase()}]",
+		"trim().lowercase().substring(0,5): ${header.raw.trim().lowercase().substring(0,5)}",
+		"trim().size(): ${header.raw.trim().size()}",
+	})
+	fmt.Println()
+
+	// Demo 7: PHASE 4 - Math Operations
+	fmt.Println("Demo 7: Math Operations (Phase 4)")
+	fmt.Println("---------------------------------")
+	exchange.GetIn().SetBody("50")
+	exchange.GetIn().SetHeader("count", 10)
+	demoExpressions(ctx, exchange, []string{
+		"10 + 5 = ${header.count + 5}",
+		"10 - 3 = ${header.count - 3}",
+		"10 * 4 = ${header.count * 4}",
+		"10 / 2 = ${header.count / 2}",
+		"10 % 3 = ${header.count % 3}",
+		"50 + 10 - 20 = ${body + 10 - 20}",
+	})
+	fmt.Println()
+
+	// Demo 8: PHASE 4 - Type/Range Operations
+	fmt.Println("Demo 8: Type/Range Operations (Phase 4)")
+	fmt.Println("----------------------------------------")
+	exchange.GetIn().SetBody("Hello")
+	exchange.GetIn().SetHeader("code", 150)
+	exchange.GetIn().SetHeader("category", "A")
+	exchange.GetIn().SetHeader("data", map[string]interface{}{"key": "value"})
+	exchange.GetIn().SetHeader("numbers", []int{1, 2, 3})
+
+	demoExpressionsAsBool(exchange, []struct {
+		expr string
+		desc string
+	}{
+		{"${header.category in 'A,B,C'}", "category in list 'A,B,C'"},
+		{"${header.code range 100..199}", "code in range 100..199"},
+		{"${body is 'String'}", "body is 'String'"},
+		{"${header.data is 'Map'}", "header.data is 'Map'"},
+		{"${header.numbers is 'Slice'}", "header.numbers is 'Slice'"},
+	})
+	fmt.Println()
+
+	// Demo 9: PHASE 3 & 4 - Complex Expressions
+	fmt.Println("Demo 9: Complex Expressions (Phase 3 & 4 Combined)")
+	fmt.Println("--------------------------------------------------")
+	exchange.GetIn().SetBody("URGENT: Review order #12345")
+	exchange.GetIn().SetHeader("amount", 250)
+	exchange.GetIn().SetHeader("customer", "platinum")
+
+	demoExpressions(ctx, exchange, []string{
+		"Alert: ${body contains 'URGENT' && header.amount > 100 ? 'HIGH PRIORITY' : 'Standard'}",
+		"Category: ${header.customer in 'gold,platinum' ? header.customer.uppercase() : 'regular'}",
+		"Range Check: ${header.amount range 200..299 ? 'Tier 2' : 'Other Tier'}",
+		"Message: ${body.trim().substring(0,6).uppercase() == 'URGENT' ? 'Urgent' : 'Normal'}",
+	})
+	fmt.Println()
+
+	// Demo 10: Route Building with New Features
+	fmt.Println("Demo 10: Route Building with Logical Operators")
+	fmt.Println("----------------------------------------------")
+	demoChoiceWithLogicalOperators(ctx)
+	fmt.Println()
+
+	// Demo 11: Null-Safe Function Chaining
+	fmt.Println("Demo 11: Null-Safe Function Chaining")
+	fmt.Println("--------------------------------------")
+	exchange.GetIn().SetBody(nil)
+	demoExpressions(ctx, exchange, []string{
+		"Safe access: ${body?.trim()}",
+		"Safe access chain: ${body?.trim().uppercase()}",
+		"Safe ternary: ${body?.trim() == nil ? 'Empty' : body}",
+	})
+	fmt.Println()
+
+	fmt.Println("=== All demos complete! ===")
 }
 
 func demoExpressions(ctx *gocamel.CamelContext, exchange *gocamel.Exchange, expressions []string) {
@@ -172,8 +209,8 @@ func demoExpressions(ctx *gocamel.CamelContext, exchange *gocamel.Exchange, expr
 			continue
 		}
 
-		fmt.Printf("  Expression: %s\n", expr)
-		fmt.Printf("  Result:     %s\n\n", result)
+		fmt.Printf("  %s\n", expr)
+		fmt.Printf("  → %s\n\n", result)
 	}
 }
 
@@ -200,191 +237,47 @@ func demoExpressionsAsBool(exchange *gocamel.Exchange, expressions []struct {
 	}
 }
 
-func demoMapAccess(ctx *gocamel.CamelContext, exchange *gocamel.Exchange) {
-	expressions := []string{
-		"Name: ${body['name']}",
-		"Email: ${body[\"email\"]}",
-		"Address city: ${body['address']['city']}",
-		"Address country: ${body[\"address\"][\"country\"]}",
-		"Key with spaces: ${body['key with spaces']}",
-		"Missing key: ${body['nonexistent']}",
-	}
-
-	for _, expr := range expressions {
-		template, err := gocamel.ParseSimpleTemplate(expr)
-		if err != nil {
-			log.Printf("Error parsing '%s': %v", expr, err)
-			continue
-		}
-
-		result, err := template.EvaluateAsString(exchange)
-		if err != nil {
-			log.Printf("Error evaluating '%s': %v", expr, err)
-			continue
-		}
-
-		fmt.Printf("  %s\n", expr)
-		fmt.Printf("  → %s\n\n", result)
-	}
-}
-
-func demoListAccess(ctx *gocamel.CamelContext, exchange *gocamel.Exchange) {
-	expressions := []string{
-		"First element: ${body[0]}",
-		"Second element: ${body[1]}",
-		"Last element (map): ${body[3]}",
-		"Nested map value: ${body[3]['name']}",
-		"Out of bounds: ${body[10]}",
-	}
-
-	for _, expr := range expressions {
-		template, err := gocamel.ParseSimpleTemplate(expr)
-		if err != nil {
-			log.Printf("Error parsing '%s': %v", expr, err)
-			continue
-		}
-
-		result, err := template.EvaluateAsString(exchange)
-		if err != nil {
-			log.Printf("Error evaluating '%s': %v", expr, err)
-			continue
-		}
-
-		fmt.Printf("  %s\n", expr)
-		fmt.Printf("  → %s\n\n", result)
-	}
-
-	// Demo 'last' index
-	lastExpr := "Last index: ${body[last]}"
-	template, _ := gocamel.ParseSimpleTemplate(lastExpr)
-	result, _ := template.EvaluateAsString(exchange)
-	fmt.Printf("  %s\n", lastExpr)
-	fmt.Printf("  → %s\n\n", result)
-
-	lastMinusOne := "Last minus 1: ${body[last-1]}"
-	template, _ = gocamel.ParseSimpleTemplate(lastMinusOne)
-	result, _ = template.EvaluateAsString(exchange)
-	fmt.Printf("  %s\n", lastMinusOne)
-	fmt.Printf("  → %s\n\n", result)
-}
-
-func demoNestedAccess(ctx *gocamel.CamelContext, exchange *gocamel.Exchange) {
-	expressions := []string{
-		"First user name: ${body['users'][0]['name']}",
-		"First user email: ${body['users'][0]['email']}",
-		"First user's first role: ${body['users'][0]['roles'][0]}",
-		"Second user name: ${body['users'][1]['name']}",
-		"Second user's last role: ${body['users'][1]['roles'][0]}",
-	}
-
-	for _, expr := range expressions {
-		template, err := gocamel.ParseSimpleTemplate(expr)
-		if err != nil {
-			log.Printf("Error parsing '%s': %v", expr, err)
-			continue
-		}
-
-		result, err := template.EvaluateAsString(exchange)
-		if err != nil {
-			log.Printf("Error evaluating '%s': %v", expr, err)
-			continue
-		}
-
-		fmt.Printf("  %s\n", expr)
-		fmt.Printf("  → %s\n\n", result)
-	}
-}
-
-func demoNullSafeOperator(ctx *gocamel.CamelContext, exchange *gocamel.Exchange) {
-	// First, test with a map body that has nested structure
-	exchange.GetIn().SetBody(map[string]interface{}{
-		"user": map[string]interface{}{
-			"profile": map[string]interface{}{
-				"name": "John",
-			},
-		},
-	})
-
-	expressions := []string{
-		"Safe access: ${body?.user?.profile?.name}",
-		"Mixed access: ${body?.user?.profile}",
-	}
-
-	fmt.Println("  With non-nil body:")
-	for _, expr := range expressions {
-		template, err := gocamel.ParseSimpleTemplate(expr)
-		if err != nil {
-			log.Printf("Error parsing '%s': %v", expr, err)
-			continue
-		}
-
-		result, err := template.EvaluateAsString(exchange)
-		if err != nil {
-			log.Printf("Error evaluating '%s': %v", expr, err)
-			continue
-		}
-
-		fmt.Printf("    %s\n", expr)
-		fmt.Printf("    → %s\n\n", result)
-	}
-
-	// Test with nil body
-	exchange.GetIn().SetBody(nil)
-
-	fmt.Println("  With nil body:")
-	safeExpr := "Safe on nil: ${body?.field}"
-	template, _ := gocamel.ParseSimpleTemplate(safeExpr)
-	result, _ := template.EvaluateAsString(exchange)
-	fmt.Printf("    %s\n", safeExpr)
-	fmt.Printf("    → %s (no panic!)\n\n", result)
-
-	// Test with header using null-safe
-	exchange.GetIn().SetHeader("X-Exists", "present-value")
-
-	safeHeader := "Safe header access: ${header?.X-Exists}"
-	template, _ = gocamel.ParseSimpleTemplate(safeHeader)
-	result, _ = template.EvaluateAsString(exchange)
-	fmt.Printf("  %s\n", safeHeader)
-	fmt.Printf("    → %s\n\n", result)
-}
-
-func demoChoiceRouting(ctx *gocamel.CamelContext) {
-	// Create a route with Choice pattern
+func demoChoiceWithLogicalOperators(ctx *gocamel.CamelContext) {
+	// Create a route with Choice pattern using logical operators
 	builder := ctx.CreateRouteBuilder()
 	builder.
-		SetID("choice-demo-route").
+		SetID("logical-choice-demo").
 		Choice().
-		When("${header.priority == 'high'}").
-		SimpleSetBody("HIGH PRIORITY: ${body}").
-		SetHeader("X-Priority-Flag", "high").
-		When("${header.priority == 'medium'}").
-		SimpleSetBody("Medium Priority: ${body}").
-		SetHeader("X-Priority-Flag", "medium").
-		When("${header.priority == 'low'}").
-		SimpleSetBody("(low) ${body}").
-		SetHeader("X-Priority-Flag", "low").
+		When("${header.priority == 'high' && header.amount > 100}").
+		SimpleSetBody("HIGH PRIORITY TRANSACTION: ${body}").
+		SetHeader("X-Priority", "high").
+		When("${body contains 'URGENT' || body startsWith 'CRITICAL'}").
+		SimpleSetBody("URGENT: ${body}").
+		SetHeader("X-Priority", "urgent").
+		When("${header.category in 'A,B,C'}").
+		SimpleSetBody("Category ${header.category}: ${body}").
 		Otherwise().
-		SimpleSetBody("Unknown Priority: ${body}").
-		SetHeader("X-Priority-Flag", "unknown").
+		SimpleSetBody("Standard: ${body}").
+		SetHeader("X-Priority", "normal").
 		EndChoice()
 
 	route := builder.Build()
 
-	// Test different priorities
+	// Test different scenarios
 	testCases := []struct {
 		priority string
+		amount   int
 		body     string
+		category string
 	}{
-		{"high", "Critical task"},
-		{"medium", "Normal task"},
-		{"low", "Background task"},
-		{"invalid", "Unknown task"},
+		{"high", 150, "Transaction", ""},
+		{"normal", 50, "URGENT: Help needed", ""},
+		{"low", 10, "CRITICAL: Server down", ""},
+		{"normal", 50, "Regular task", "A"},
+		{"low", 10, "Background job", "Z"},
 	}
 
 	for _, tc := range testCases {
 		exchange := gocamel.NewExchange(ctx.GetContext())
 		exchange.GetIn().SetHeader("priority", tc.priority)
-		exchange.GetIn().SetBody(tc.body)
+		exchange.GetIn().SetHeader("amount", tc.amount)
+		exchange.GetIn().SetHeader("category", tc.category)
+		exchange.GetIn().SetBody(fmt.Sprintf("Message: %s", tc.body))
 
 		err := route.Process(exchange)
 		if err != nil {
@@ -392,148 +285,13 @@ func demoChoiceRouting(ctx *gocamel.CamelContext) {
 			continue
 		}
 
-		fmt.Printf("  Input: priority=%s, body=%s\n", tc.priority, tc.body)
-		fmt.Printf("  Output: %s\n", exchange.GetOut().GetBody())
-		if flag, exists := exchange.GetOut().GetHeader("X-Priority-Flag"); exists {
-			fmt.Printf("  Header X-Priority-Flag: %s\n", flag)
-		}
-		fmt.Println()
-	}
-
-	// Another example: Content-based routing
-	fmt.Println("  --- Content-Based Routing Example ---")
-
-	builder2 := ctx.CreateRouteBuilder()
-	builder2.
-		Choice().
-		When("${header.Content-Type == 'application/json'}").
-		SimpleSetBody("Processing JSON: ${body}").
-		When("${header.Content-Type == 'application/xml'}").
-		SimpleSetBody("Processing XML: ${body}").
-		When("${header.Content-Type == 'text/plain'}").
-		SimpleSetBody("Processing Plain Text: ${body}").
-		Otherwise().
-		SimpleSetBody("Unknown Content-Type: ${body}").
-		EndChoice()
-
-	route2 := builder2.Build()
-
-	contentTypes := []string{
-		"application/json",
-		"application/xml",
-		"text/plain",
-		"image/png",
-	}
-
-	for _, ct := range contentTypes {
-		exchange := gocamel.NewExchange(ctx.GetContext())
-		exchange.GetIn().SetHeader("Content-Type", ct)
-		exchange.GetIn().SetBody("Sample data")
-
-		err := route2.Process(exchange)
-		if err != nil {
-			log.Printf("Error: %v", err)
-			continue
-		}
-
-		fmt.Printf("    Content-Type: %s → %s\n", ct, exchange.GetOut().GetBody())
-	}
-	fmt.Println()
-}
-
-func demoRouteBuilder(ctx *gocamel.CamelContext) {
-	// Create a route that processes a message
-	exchange := gocamel.NewExchange(ctx.GetContext())
-	exchange.GetIn().SetBody("Original Message")
-	exchange.GetIn().SetHeader("X-Input", "input-value")
-	exchange.SetProperty("sessionId", "abc123")
-
-	fmt.Println("Creating route with SimpleSetBody and SimpleSetHeader...")
-	fmt.Println()
-
-	// Build a route using the SimpleSetBody and SimpleSetHeader methods
-	// Note: The RouteBuilder still requires a valid endpoint to be set
-	// so we'll use the route's AddProcessor directly for this demo
-	route := gocamel.NewRoute()
-	route.SetID("simple-demo-route")
-	route.AddProcessor(&gocamel.SimpleLanguageProcessor{
-		Template: mustParse("Processed: ${body}"),
-	})
-	route.AddProcessor(&gocamel.SimpleSetHeaderProcessor{
-		HeaderName: "X-Processed-By",
-		Expression: gocamel.ExpressionFunc(func(ex *gocamel.Exchange) (interface{}, error) {
-			return "GoCamel Processor", nil
-		}),
-	})
-	route.AddProcessor(&gocamel.SimpleSetHeaderProcessor{
-		HeaderName: "X-Session",
-		Expression: mustParse("${exchangeProperty.sessionId}"),
-	})
-	route.AddProcessor(&gocamel.SimpleSetHeaderProcessor{
-		HeaderName: "X-Timestamp",
-		Expression: mustParse("${date:now}"),
-	})
-
-	// Add a Choice processor to demonstrate mixing patterns
-	choice := gocamel.NewChoiceProcessor().
-		When("${header.type == 'special'}", gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
-			ex.GetOut().SetHeader("X-Special", "true")
-			return nil
-		})).
-		Otherwise(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
-			ex.GetOut().SetHeader("X-Special", "false")
-			return nil
-		}))
-	route.AddProcessor(choice)
-
-	// Test with 'special' header
-	exchange.GetIn().SetHeader("type", "special")
-
-	// Process the exchange
-	if err := route.Process(exchange); err != nil {
-		log.Printf("Error processing: %v", err)
-		return
-	}
-
-	// Display results
-	fmt.Println("Route processing complete!")
-	fmt.Println()
-	fmt.Printf("Original Body: %v\n", "Original Message")
-	fmt.Printf("Output Body:   %v\n", exchange.GetOut().GetBody())
-	fmt.Println()
-	fmt.Println("Output Headers:")
-	for key, value := range exchange.GetOut().GetHeaders() {
-		fmt.Printf("  %s: %v\n", key, value)
-	}
-	fmt.Println()
-
-	// Show the exchange properties
-	fmt.Println("Exchange Properties:")
-	if sessionId, exists := exchange.GetProperty("sessionId"); exists {
-		fmt.Printf("  sessionId: %v\n", sessionId)
-	}
-
-	// Test with non-special header
-	fmt.Println()
-	fmt.Println("--- Processing with non-special type ---")
-	exchange2 := gocamel.NewExchange(ctx.GetContext())
-	exchange2.GetIn().SetBody("Another Message")
-	exchange2.GetIn().SetHeader("type", "normal")
-	exchange2.SetProperty("sessionId", "xyz789")
-
-	route2 := gocamel.NewRoute()
-	route2.AddProcessor(choice) // Reuse the same choice processor
-
-	if err := route2.Process(exchange2); err != nil {
-		log.Printf("Error: %v", err)
-		return
-	}
-
-	if special, exists := exchange2.GetOut().GetHeader("X-Special"); exists {
-		fmt.Printf("X-Special header: %v (expected: false)\n", special)
+		priority, _ := exchange.GetOut().GetHeader("X-Priority")
+		fmt.Printf("  priority=%s, amount=%d, category=%s\n", tc.priority, tc.amount, tc.category)
+		fmt.Printf("    → %s (prioritized as: %s)\n\n", exchange.GetOut().GetBody(), priority)
 	}
 }
 
+// Additional helper for parsing expressions
 func mustParse(expr string) *gocamel.SimpleTemplate {
 	template, err := gocamel.ParseSimpleTemplate(expr)
 	if err != nil {
@@ -543,33 +301,49 @@ func mustParse(expr string) *gocamel.SimpleTemplate {
 }
 
 // Example output:
-// =================
-// === GoCamel Simple Language Example ===
+//=================
+//=== GoCamel Simple Language Example with Phase 3 & 4 Features ===
 //
-// Demo 1: Variable Access
-// -------------------------
+// Demo 1: Basic Variable Access
+// -----------------------------
 // ...
 //
-// Demo 5: Map Access with Bracket Notation
+// Demo 2: String Operations (Phase 3)
+// ------------------------------------
+// ...
+//
+// Demo 3: Logical Operators (Phase 3)
+// -------------------------------------
+// ...
+//
+// Demo 4: Ternary Operator (Phase 3)
+// ----------------------------------
+// ...
+//
+// Demo 5: String Functions (Phase 4)
+// -----------------------------------
+// ...
+//
+// Demo 6: Function Chaining (Phase 4)
+// ------------------------------------
+// ...
+//
+// Demo 7: Math Operations (Phase 4)
+// ---------------------------------
+// ...
+//
+// Demo 8: Type/Range Operations (Phase 4)
 // ----------------------------------------
 // ...
 //
-// Demo 6: List/Array Access with Bracket Notation
-// -----------------------------------------------
-// ...
-//
-// Demo 7: Nested Access (Map[List[Map]])
-// --------------------------------------
-// ...
-//
-// Demo 8: Null-Safe Operator
-// --------------------------------
-// ...
-//
-// Demo 9: Route Builder with Choice/When/Otherwise
+// Demo 9: Complex Expressions (Phase 3 & 4 Combined)
 // --------------------------------------------------
 // ...
 //
-// Demo 10: Route Builder Integration
-// -----------------------------------
+// Demo 10: Route Building with Logical Operators
+// ----------------------------------------------
+// ...
+//
+// Demo 11: Null-Safe Function Chaining
+// --------------------------------------
 // ...

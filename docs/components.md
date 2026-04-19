@@ -137,18 +137,18 @@ producer, _ := endpoint.CreateProducer()
 
 ## Scheduling
 
-### Quartz
+### Cron
 
 Scheduling avancé avec expressions cron.
 
 ```go
-ctx.AddComponent("quartz", gocamel.NewQuartzComponent())
+ctx.AddComponent("cron", gocamel.NewCronComponent())
 
 // Cron:
-builder.From("quartz://group/job?cron=0+*+*+*+*+*")
+builder.From("cron://group/job?cron=0+*+*+*+*+*")
 
 // Simple interval:
-builder.From("quartz://poller?trigger.repeatInterval=5000")
+builder.From("cron://poller?trigger.repeatInterval=5000")
 ```
 
 ---

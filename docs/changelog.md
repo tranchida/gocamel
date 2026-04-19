@@ -8,7 +8,7 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2
 ## [Unreleased]
 
 ### Ajout
-- Composant Quartz pour le scheduling avancé
+- Composant Cron pour le scheduling avancé
 - Nouveaux EIP : Stop, ToD (To Dynamic)
 - Headers/Properties manipulation
 - Management REST API
@@ -44,7 +44,7 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2
 ### Ajout
 - Composant Exe pour exécution de commandes
 - Composant Timer pour scheduling simple
-- Composant Quartz (beta)
+- Composant Cron (beta)
 - Support des Query Params dans les URIs Camel
 
 ### Modifié

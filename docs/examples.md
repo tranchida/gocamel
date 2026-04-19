@@ -145,13 +145,13 @@ import (
 
 func main() {
     ctx := gocamel.NewCamelContext()
-    ctx.AddComponent("quartz", gocamel.NewQuartzComponent())
+    ctx.AddComponent("cron", gocamel.NewCronComponent())
     
     // Run every minute
     route := ctx.CreateRouteBuilder().
-        From("quartz://jobs/minute?cron=0+*+*+*+*+*").
+        From("cron://jobs/minute?cron=0+*+*+*+*+*").
         ProcessFunc(func(e *gocamel.Exchange) error {
-            fmt.Println("Job executed at:", e.GetIn().Headers["quartz.fireTime"])
+            fmt.Println("Job executed at:", e.GetIn().Headers["cron.fireTime"])
             return nil
         }).
         Build()

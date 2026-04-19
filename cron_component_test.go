@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestQuartzComponent_CreateEndpoint_CronTrigger(t *testing.T) {
-	comp := NewQuartzComponent()
-	ep, err := comp.CreateEndpoint("quartz://myGroup/myTimer?cron=0+*+*+*+*+*")
+func TestCronComponent_CreateEndpoint_CronTrigger(t *testing.T) {
+	comp := NewCronComponent()
+	ep, err := comp.CreateEndpoint("cron://myGroup/myTimer?cron=0+*+*+*+*+*")
 	require.NoError(t, err)
 
-	qep := ep.(*QuartzEndpoint)
+	qep := ep.(*CronEndpoint)
 	assert.Equal(t, "myGroup", qep.group)
 	assert.Equal(t, "myTimer", qep.name)
 	assert.Equal(t, "0 * * * * *", qep.cronExpr)
@@ -24,12 +24,12 @@ func TestQuartzComponent_CreateEndpoint_CronTrigger(t *testing.T) {
 	assert.False(t, qep.stateful)
 }
 
-func TestQuartzComponent_CreateEndpoint_SimpleTrigger(t *testing.T) {
-	comp := NewQuartzComponent()
-	ep, err := comp.CreateEndpoint("quartz://myTimer?trigger.repeatInterval=2000&trigger.repeatCount=3")
+func TestCronComponent_CreateEndpoint_SimpleTrigger(t *testing.T) {
+	comp := NewCronComponent()
+	ep, err := comp.CreateEndpoint("cron://myTimer?trigger.repeatInterval=2000&trigger.repeatCount=3")
 	require.NoError(t, err)
 
-	qep := ep.(*QuartzEndpoint)
+	qep := ep.(*CronEndpoint)
 	assert.Equal(t, "Camel", qep.group)
 	assert.Equal(t, "myTimer", qep.name)
 	assert.Equal(t, "", qep.cronExpr)
@@ -37,10 +37,10 @@ func TestQuartzComponent_CreateEndpoint_SimpleTrigger(t *testing.T) {
 	assert.Equal(t, int64(3), qep.repeatCount)
 }
 
-func TestQuartzComponent_CreateEndpoint_Options(t *testing.T) {
-	comp := NewQuartzComponent()
+func TestCronComponent_CreateEndpoint_Options(t *testing.T) {
+	comp := NewCronComponent()
 	ep, err := comp.CreateEndpoint(
-		"quartz://myTimer?cron=0+*+*+*+*+*" +
+		"cron://myTimer?cron=0+*+*+*+*+*" +
 			"&trigger.timeZone=Europe/Paris" +
 			"&triggerStartDelay=1000" +
 			"&deleteJob=false" +
@@ -49,7 +49,7 @@ func TestQuartzComponent_CreateEndpoint_Options(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	qep := ep.(*QuartzEndpoint)
+	qep := ep.(*CronEndpoint)
 	assert.Equal(t, "Europe/Paris", qep.timezone)
 	assert.Equal(t, 1000*time.Millisecond, qep.triggerStartDelay)
 	assert.False(t, qep.deleteJob)
@@ -57,44 +57,44 @@ func TestQuartzComponent_CreateEndpoint_Options(t *testing.T) {
 	assert.True(t, qep.stateful)
 }
 
-func TestQuartzComponent_CreateEndpoint_MissingName(t *testing.T) {
-	comp := NewQuartzComponent()
-	_, err := comp.CreateEndpoint("quartz://?cron=0+*+*+*+*+*")
+func TestCronComponent_CreateEndpoint_MissingName(t *testing.T) {
+	comp := NewCronComponent()
+	_, err := comp.CreateEndpoint("cron://?cron=0+*+*+*+*+*")
 	assert.Error(t, err)
 }
 
-func TestQuartzEndpoint_NoProducer(t *testing.T) {
-	comp := NewQuartzComponent()
-	ep, _ := comp.CreateEndpoint("quartz://myTimer?cron=0+*+*+*+*+*")
+func TestCronEndpoint_NoProducer(t *testing.T) {
+	comp := NewCronComponent()
+	ep, _ := comp.CreateEndpoint("cron://myTimer?cron=0+*+*+*+*+*")
 	_, err := ep.CreateProducer()
 	assert.Error(t, err)
 }
 
-func TestQuartzConsumer_BuildSpec_NoCronNoInterval(t *testing.T) {
-	comp := NewQuartzComponent()
-	ep, _ := comp.CreateEndpoint("quartz://myTimer?triggerStartDelay=0")
+func TestCronConsumer_BuildSpec_NoCronNoInterval(t *testing.T) {
+	comp := NewCronComponent()
+	ep, _ := comp.CreateEndpoint("cron://myTimer?triggerStartDelay=0")
 	consumer, _ := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error { return nil }))
-	qc := consumer.(*QuartzConsumer)
+	qc := consumer.(*CronConsumer)
 	_, err := qc.buildSpec()
 	assert.Error(t, err)
 }
 
-func TestQuartzConsumer_SimpleTrigger_Fires(t *testing.T) {
+func TestCronConsumer_SimpleTrigger_Fires(t *testing.T) {
 	var count atomic.Int64
 
-	comp := NewQuartzComponent()
+	comp := NewCronComponent()
 	// @every 100ms, triggerStartDelay=0
-	ep, err := comp.CreateEndpoint("quartz://test?trigger.repeatInterval=100&triggerStartDelay=0")
+	ep, err := comp.CreateEndpoint("cron://test?trigger.repeatInterval=100&triggerStartDelay=0")
 	require.NoError(t, err)
 
 	consumer, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
 		count.Add(1)
 		// Vérifier que les en-têtes sont présents
-		_, hasFireTime := e.GetIn().GetHeader(QuartzFireTime)
-		_, hasTriggerName := e.GetIn().GetHeader(QuartzTriggerName)
-		_, hasTriggerGroup := e.GetIn().GetHeader(QuartzTriggerGroup)
+		_, hasFireTime := e.GetIn().GetHeader(CronFireTime)
+		_, hasTriggerName := e.GetIn().GetHeader(CronTriggerName)
+		_, hasTriggerGroup := e.GetIn().GetHeader(CronTriggerGroup)
 		if !hasFireTime || !hasTriggerName || !hasTriggerGroup {
-			t.Errorf("en-têtes Quartz manquants")
+			t.Errorf("en-têtes Cron manquants")
 		}
 		return nil
 	}))
@@ -110,11 +110,11 @@ func TestQuartzConsumer_SimpleTrigger_Fires(t *testing.T) {
 	}, 2*time.Second, 50*time.Millisecond)
 }
 
-func TestQuartzConsumer_RepeatCount(t *testing.T) {
+func TestCronConsumer_RepeatCount(t *testing.T) {
 	var count atomic.Int64
 
-	comp := NewQuartzComponent()
-	ep, err := comp.CreateEndpoint("quartz://test?trigger.repeatInterval=50&trigger.repeatCount=3&triggerStartDelay=0")
+	comp := NewCronComponent()
+	ep, err := comp.CreateEndpoint("cron://test?trigger.repeatInterval=50&trigger.repeatCount=3&triggerStartDelay=0")
 	require.NoError(t, err)
 
 	consumer, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
@@ -134,11 +134,11 @@ func TestQuartzConsumer_RepeatCount(t *testing.T) {
 	assert.LessOrEqual(t, count.Load(), int64(3))
 }
 
-func TestQuartzConsumer_PauseJob(t *testing.T) {
+func TestCronConsumer_PauseJob(t *testing.T) {
 	var count atomic.Int64
 
-	comp := NewQuartzComponent()
-	ep, err := comp.CreateEndpoint("quartz://test?trigger.repeatInterval=50&triggerStartDelay=0&pauseJob=true&deleteJob=false")
+	comp := NewCronComponent()
+	ep, err := comp.CreateEndpoint("cron://test?trigger.repeatInterval=50&triggerStartDelay=0&pauseJob=true&deleteJob=false")
 	require.NoError(t, err)
 
 	consumer, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
@@ -163,11 +163,11 @@ func TestQuartzConsumer_PauseJob(t *testing.T) {
 	assert.Equal(t, countBefore, count.Load())
 }
 
-func TestQuartzConsumer_Headers(t *testing.T) {
+func TestCronConsumer_Headers(t *testing.T) {
 	done := make(chan *Exchange, 1)
 
-	comp := NewQuartzComponent()
-	ep, err := comp.CreateEndpoint("quartz://grp/myTimer?trigger.repeatInterval=50&triggerStartDelay=0")
+	comp := NewCronComponent()
+	ep, err := comp.CreateEndpoint("cron://grp/myTimer?trigger.repeatInterval=50&triggerStartDelay=0")
 	require.NoError(t, err)
 
 	consumer, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
@@ -187,32 +187,32 @@ func TestQuartzConsumer_Headers(t *testing.T) {
 	select {
 	case exchange = <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("timeout: aucun échange Quartz reçu")
+		t.Fatal("timeout: aucun échange Cron reçu")
 	}
 
-	name, ok := exchange.GetIn().GetHeader(QuartzTriggerName)
+	name, ok := exchange.GetIn().GetHeader(CronTriggerName)
 	assert.True(t, ok)
 	assert.Equal(t, "myTimer", name)
 
-	group, ok := exchange.GetIn().GetHeader(QuartzTriggerGroup)
+	group, ok := exchange.GetIn().GetHeader(CronTriggerGroup)
 	assert.True(t, ok)
 	assert.Equal(t, "grp", group)
 
-	_, ok = exchange.GetIn().GetHeader(QuartzFireTime)
+	_, ok = exchange.GetIn().GetHeader(CronFireTime)
 	assert.True(t, ok)
 
-	_, ok = exchange.GetIn().GetHeader(QuartzNextFireTime)
+	_, ok = exchange.GetIn().GetHeader(CronNextFireTime)
 	assert.True(t, ok)
 }
 
-func TestQuartzComponent_SharedScheduler(t *testing.T) {
+func TestCronComponent_SharedScheduler(t *testing.T) {
 	// Deux routes utilisant le même composant partagent le même scheduler
-	comp := NewQuartzComponent()
+	comp := NewCronComponent()
 
 	var count1, count2 atomic.Int64
 
-	ep1, _ := comp.CreateEndpoint("quartz://t1?trigger.repeatInterval=50&triggerStartDelay=0")
-	ep2, _ := comp.CreateEndpoint("quartz://t2?trigger.repeatInterval=50&triggerStartDelay=0")
+	ep1, _ := comp.CreateEndpoint("cron://t1?trigger.repeatInterval=50&triggerStartDelay=0")
+	ep2, _ := comp.CreateEndpoint("cron://t2?trigger.repeatInterval=50&triggerStartDelay=0")
 
 	c1, _ := ep1.CreateConsumer(ProcessorFunc(func(e *Exchange) error { count1.Add(1); return nil }))
 	c2, _ := ep2.CreateConsumer(ProcessorFunc(func(e *Exchange) error { count2.Add(1); return nil }))

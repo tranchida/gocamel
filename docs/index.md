@@ -51,7 +51,7 @@ Framework d'intégration d'entreprise inspiré d'Apache Camel, écrit en Go
 
     ---
 
-    HTTP, FTP, SFTP, SMB, File, Telegram, OpenAI, Quartz, et plus encore
+    HTTP, FTP, SFTP, SMB, File, Telegram, OpenAI, Cron, et plus encore
 
 -   🧩 **EIP Natifs**
 

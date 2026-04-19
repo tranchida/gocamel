@@ -14,32 +14,32 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// En-têtes Quartz posés sur chaque Exchange déclenché.
-// Correspondent aux en-têtes du composant Apache Camel Quartz.
+// En-têtes Cron posés sur chaque Exchange déclenché.
+// Correspondent aux en-têtes du composant Apache Camel Cron.
 const (
-	QuartzFireTime          = "fireTime"          // Heure réelle de déclenchement
-	QuartzScheduledFireTime = "scheduledFireTime"  // Heure planifiée de déclenchement
-	QuartzNextFireTime      = "nextFireTime"       // Prochain déclenchement planifié
-	QuartzPreviousFireTime  = "previousFireTime"   // Déclenchement précédent (zero si premier)
-	QuartzTriggerName       = "triggerName"        // Nom du trigger
-	QuartzTriggerGroup      = "triggerGroup"       // Groupe du trigger
-	QuartzRefireCount       = "refireCount"        // Nombre de déclenchements effectués
+	CronFireTime          = "fireTime"          // Heure réelle de déclenchement
+	CronScheduledFireTime = "scheduledFireTime"  // Heure planifiée de déclenchement
+	CronNextFireTime      = "nextFireTime"       // Prochain déclenchement planifié
+	CronPreviousFireTime  = "previousFireTime"   // Déclenchement précédent (zero si premier)
+	CronTriggerName       = "triggerName"        // Nom du trigger
+	CronTriggerGroup      = "triggerGroup"       // Groupe du trigger
+	CronRefireCount       = "refireCount"        // Nombre de déclenchements effectués
 )
 
-// QuartzComponent implémente un scheduler cron partagé entre toutes ses routes,
-// inspiré du composant Apache Camel Quartz.
+// CronComponent implémente un scheduler cron partagé entre toutes ses routes,
+// inspiré du composant Apache Camel .
 //
-// Tous les QuartzEndpoint créés depuis le même QuartzComponent partagent
+// Tous les CronEndpoint créés depuis le même CronComponent partagent
 // une seule instance de scheduler (comportement Apache Camel).
-type QuartzComponent struct {
+type CronComponent struct {
 	mu        sync.Mutex
 	scheduler *cron.Cron
 	started   bool
 }
 
-// NewQuartzComponent crée un QuartzComponent avec un scheduler partagé.
+// NewCronComponent crée un CronComponent avec un scheduler partagé.
 // Le scheduler utilise des expressions cron à 6 champs (secondes incluses),
-// compatibles avec le format Quartz Java :
+// compatibles avec le format  Java :
 //
 //	┌───────────── secondes (0-59)
 //	│ ┌───────────── minutes (0-59)
@@ -49,14 +49,14 @@ type QuartzComponent struct {
 //	│ │ │ │ │ ┌───────────── jour de la semaine (0-6, 0=dimanche)
 //	│ │ │ │ │ │
 //	* * * * * *
-func NewQuartzComponent() *QuartzComponent {
-	return &QuartzComponent{
+func NewCronComponent() *CronComponent {
+	return &CronComponent{
 		scheduler: cron.New(cron.WithSeconds()),
 	}
 }
 
 // ensureStarted démarre le scheduler partagé si ce n'est pas encore fait.
-func (c *QuartzComponent) ensureStarted() {
+func (c *CronComponent) ensureStarted() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.started {
@@ -65,13 +65,13 @@ func (c *QuartzComponent) ensureStarted() {
 	}
 }
 
-// CreateEndpoint crée un QuartzEndpoint à partir d'une URI.
+// CreateEndpoint crée un CronEndpoint à partir d'une URI.
 //
 // Formats supportés :
 //
-//	quartz://timerName?cron=0+*+*+*+*+?
-//	quartz://groupName/timerName?cron=0+*+*+*+*+?
-//	quartz://timerName?trigger.repeatInterval=5000
+//	cron://timerName?cron=0+*+*+*+*+?
+//	cron://groupName/timerName?cron=0+*+*+*+*+?
+//	cron://timerName?trigger.repeatInterval=5000
 //
 // Options URI :
 //
@@ -83,10 +83,10 @@ func (c *QuartzComponent) ensureStarted() {
 //	deleteJob             Supprimer le job à l'arrêt (défaut: true)
 //	pauseJob              Mettre en pause au lieu de supprimer (défaut: false)
 //	stateful              Empêcher les exécutions concurrentes (défaut: false)
-func (c *QuartzComponent) CreateEndpoint(uri string) (Endpoint, error) {
+func (c *CronComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
-		return nil, fmt.Errorf("URI quartz invalide: %w", err)
+		return nil, fmt.Errorf("URI cron invalide: %w", err)
 	}
 
 	// groupName/timerName depuis host + path
@@ -97,7 +97,7 @@ func (c *QuartzComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		name = path
 	}
 	if name == "" {
-		return nil, errors.New("le nom du trigger quartz est requis (ex: quartz://monTimer)")
+		return nil, errors.New("le nom du trigger cron est requis (ex: cron://monTimer)")
 	}
 
 	q := u.Query()
@@ -126,10 +126,10 @@ func (c *QuartzComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 
-	// Les espaces dans les expressions cron Quartz sont encodés en "+" dans les URI
+	// Les espaces dans les expressions cron  sont encodés en "+" dans les URI
 	cronExpr := strings.ReplaceAll(q.Get("cron"), "+", " ")
 
-	return &QuartzEndpoint{
+	return &CronEndpoint{
 		uri:               uri,
 		group:             group,
 		name:              name,
@@ -149,8 +149,8 @@ func (c *QuartzComponent) CreateEndpoint(uri string) (Endpoint, error) {
 // Endpoint
 // ---------------------------------------------------------------------------
 
-// QuartzEndpoint représente un endpoint Quartz configuré.
-type QuartzEndpoint struct {
+// CronEndpoint représente un endpoint  configuré.
+type CronEndpoint struct {
 	uri               string
 	group             string
 	name              string
@@ -162,19 +162,19 @@ type QuartzEndpoint struct {
 	deleteJob         bool          // supprimer le job à l'arrêt
 	pauseJob          bool          // mettre en pause au lieu de supprimer
 	stateful          bool          // empêcher les exécutions concurrentes
-	component         *QuartzComponent
+	component         *CronComponent
 }
 
-func (e *QuartzEndpoint) URI() string { return e.uri }
+func (e *CronEndpoint) URI() string { return e.uri }
 
-// CreateProducer retourne une erreur : Quartz ne supporte que les consommateurs.
-func (e *QuartzEndpoint) CreateProducer() (Producer, error) {
-	return nil, errors.New("le composant quartz ne supporte pas les producteurs")
+// CreateProducer retourne une erreur :  ne supporte que les consommateurs.
+func (e *CronEndpoint) CreateProducer() (Producer, error) {
+	return nil, errors.New("le composant cron ne supporte pas les producteurs")
 }
 
-// CreateConsumer crée un consommateur Quartz.
-func (e *QuartzEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
-	return &QuartzConsumer{
+// CreateConsumer crée un consommateur .
+func (e *CronEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
+	return &CronConsumer{
 		endpoint:  e,
 		processor: processor,
 	}, nil
@@ -184,9 +184,9 @@ func (e *QuartzEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 // Consumer
 // ---------------------------------------------------------------------------
 
-// QuartzConsumer déclenche le processor selon l'expression cron ou l'intervalle configuré.
-type QuartzConsumer struct {
-	endpoint  *QuartzEndpoint
+// CronConsumer déclenche le processor selon l'expression cron ou l'intervalle configuré.
+type CronConsumer struct {
+	endpoint  *CronEndpoint
 	processor Processor
 
 	// CronTrigger : entrée dans le scheduler partagé
@@ -205,7 +205,7 @@ type QuartzConsumer struct {
 // buildSpec construit l'expression cron pour robfig/cron (CronTrigger uniquement).
 // Retourne une erreur si ni cron ni repeatInterval n'est configuré.
 // Préfixe "TZ=..." ajouté si trigger.timeZone est défini.
-func (c *QuartzConsumer) buildSpec() (string, error) {
+func (c *CronConsumer) buildSpec() (string, error) {
 	ep := c.endpoint
 	switch {
 	case ep.cronExpr != "":
@@ -216,14 +216,14 @@ func (c *QuartzConsumer) buildSpec() (string, error) {
 		return spec, nil
 	case ep.repeatInterval > 0:
 		// SimpleTrigger n'utilise pas robfig/cron
-		return "", errors.New("quartz: buildSpec() ne s'applique pas au SimpleTrigger")
+		return "", errors.New("cron: buildSpec() ne s'applique pas au SimpleTrigger")
 	default:
-		return "", errors.New("quartz: cron ou trigger.repeatInterval est requis")
+		return "", errors.New("cron: cron ou trigger.repeatInterval est requis")
 	}
 }
 
-// Start démarre le consommateur Quartz.
-func (c *QuartzConsumer) Start(ctx context.Context) error {
+// Start démarre le consommateur .
+func (c *CronConsumer) Start(ctx context.Context) error {
 	ep := c.endpoint
 	if ep.cronExpr != "" {
 		return c.startCronTrigger(ctx)
@@ -231,11 +231,11 @@ func (c *QuartzConsumer) Start(ctx context.Context) error {
 	if ep.repeatInterval > 0 {
 		return c.startSimpleTrigger(ctx)
 	}
-	return errors.New("quartz: cron ou trigger.repeatInterval est requis")
+	return errors.New("cron: cron ou trigger.repeatInterval est requis")
 }
 
 // startCronTrigger enregistre le job dans le scheduler robfig/cron partagé.
-func (c *QuartzConsumer) startCronTrigger(ctx context.Context) error {
+func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 	spec, err := c.buildSpec()
 	if err != nil {
 		return err
@@ -263,16 +263,16 @@ func (c *QuartzConsumer) startCronTrigger(ctx context.Context) error {
 		n := c.fireCount.Add(1)
 
 		exchange := NewExchange(ctx)
-		exchange.GetIn().SetHeader(QuartzFireTime, now)
-		exchange.GetIn().SetHeader(QuartzScheduledFireTime, entry.Prev)
-		exchange.GetIn().SetHeader(QuartzNextFireTime, entry.Next)
-		exchange.GetIn().SetHeader(QuartzPreviousFireTime, prevTime)
-		exchange.GetIn().SetHeader(QuartzTriggerName, ep.name)
-		exchange.GetIn().SetHeader(QuartzTriggerGroup, ep.group)
-		exchange.GetIn().SetHeader(QuartzRefireCount, n)
+		exchange.GetIn().SetHeader(CronFireTime, now)
+		exchange.GetIn().SetHeader(CronScheduledFireTime, entry.Prev)
+		exchange.GetIn().SetHeader(CronNextFireTime, entry.Next)
+		exchange.GetIn().SetHeader(CronPreviousFireTime, prevTime)
+		exchange.GetIn().SetHeader(CronTriggerName, ep.name)
+		exchange.GetIn().SetHeader(CronTriggerGroup, ep.group)
+		exchange.GetIn().SetHeader(CronRefireCount, n)
 
 		if err := c.processor.Process(exchange); err != nil && !errors.Is(err, ErrStopRouting) {
-			fmt.Printf("Erreur lors du traitement Quartz [%s/%s]: %v\n", ep.group, ep.name, err)
+			fmt.Printf("Erreur lors du traitement  [%s/%s]: %v\n", ep.group, ep.name, err)
 		}
 
 		t := now
@@ -297,7 +297,7 @@ func (c *QuartzConsumer) startCronTrigger(ctx context.Context) error {
 		c.mu.Lock()
 		entryID, err := sched.AddJob(spec, job)
 		if err != nil {
-			fmt.Printf("Erreur ajout job quartz [%s/%s]: %v\n", ep.group, ep.name, err)
+			fmt.Printf("Erreur ajout job cron [%s/%s]: %v\n", ep.group, ep.name, err)
 			c.mu.Unlock()
 			return
 		}
@@ -313,7 +313,7 @@ func (c *QuartzConsumer) startCronTrigger(ctx context.Context) error {
 
 // startSimpleTrigger démarre un ticker Go pour les déclenchements à intervalle fixe.
 // Contrairement à robfig/cron, cette approche supporte les intervalles sub-secondes.
-func (c *QuartzConsumer) startSimpleTrigger(ctx context.Context) error {
+func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 	ep := c.endpoint
 	interval := time.Duration(ep.repeatInterval) * time.Millisecond
 
@@ -346,7 +346,7 @@ func (c *QuartzConsumer) startSimpleTrigger(ctx context.Context) error {
 }
 
 // fireSimpleJob exécute le processor pour un déclenchement SimpleTrigger.
-func (c *QuartzConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
+func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 	if c.paused.Load() {
 		return
 	}
@@ -377,16 +377,16 @@ func (c *QuartzConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time)
 	nextFireTime := now.Add(time.Duration(ep.repeatInterval) * time.Millisecond)
 
 	exchange := NewExchange(ctx)
-	exchange.GetIn().SetHeader(QuartzFireTime, now)
-	exchange.GetIn().SetHeader(QuartzScheduledFireTime, now)
-	exchange.GetIn().SetHeader(QuartzNextFireTime, nextFireTime)
-	exchange.GetIn().SetHeader(QuartzPreviousFireTime, prevTime)
-	exchange.GetIn().SetHeader(QuartzTriggerName, ep.name)
-	exchange.GetIn().SetHeader(QuartzTriggerGroup, ep.group)
-	exchange.GetIn().SetHeader(QuartzRefireCount, n)
+	exchange.GetIn().SetHeader(CronFireTime, now)
+	exchange.GetIn().SetHeader(CronScheduledFireTime, now)
+	exchange.GetIn().SetHeader(CronNextFireTime, nextFireTime)
+	exchange.GetIn().SetHeader(CronPreviousFireTime, prevTime)
+	exchange.GetIn().SetHeader(CronTriggerName, ep.name)
+	exchange.GetIn().SetHeader(CronTriggerGroup, ep.group)
+	exchange.GetIn().SetHeader(CronRefireCount, n)
 
 	if err := c.processor.Process(exchange); err != nil && !errors.Is(err, ErrStopRouting) {
-		fmt.Printf("Erreur lors du traitement Quartz [%s/%s]: %v\n", ep.group, ep.name, err)
+		fmt.Printf("Erreur lors du traitement  [%s/%s]: %v\n", ep.group, ep.name, err)
 	}
 
 	t := now
@@ -394,7 +394,7 @@ func (c *QuartzConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time)
 }
 
 // Stop arrête le consommateur selon les options deleteJob / pauseJob.
-func (c *QuartzConsumer) Stop() error {
+func (c *CronConsumer) Stop() error {
 	ep := c.endpoint
 
 	if ep.pauseJob {

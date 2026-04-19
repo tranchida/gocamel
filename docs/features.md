@@ -19,7 +19,7 @@ GoCamel est un framework d'intégration d'entreprise qui simplifie la connexion 
 |-----------|------------|
 | **Protocoles** | HTTP, FTP, SFTP, SMB, File |
 | **Messaging** | Direct (in-memory), Telegram |
-| **Scheduling** | Timer, Quartz (cron) |
+| **Scheduling** | Timer, Cron |
 | **IA/LLM** | OpenAI Chat Completion |
 | **Transformation** | XSLT, XSD validation |
 | **Exécution** | Exec (commandes système) |
@@ -65,7 +65,7 @@ Moteur d'expressions inspiré d'Apache Camel pour manipuler les données d'écha
 - [x] EIP: Split, Aggregate, Multicast, Choice, Pipeline
 - [x] Composants HTTP, File, FTP, SFTP, SMB
 - [x] Composants Telegram, OpenAI
-- [x] Scheduling: Timer, Quartz
+- [x] Scheduling: Timer, Cron
 - [x] REST Management API
 - [x] Simple Language (expressions dynamiques)
 
