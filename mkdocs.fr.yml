@@ -1,5 +1,6 @@
 site_name: GoCamel
-site_url: https://tranchida.github.io/gocamel/
+site_url: https://tranchida.github.io/gocamel/fr/
+site_dir: site/fr
 repo_url: https://github.com/tranchida/gocamel
 repo_name: tranchida/gocamel
 
@@ -7,9 +8,7 @@ copyright: Copyright &copy; 2026 GoCamel
 
 theme:
   name: material
-  
-  # Language
-  language: en
+  language: fr
   
   palette:
     - media: "(prefers-color-scheme: light)"
@@ -18,14 +17,14 @@ theme:
       accent: indigo
       toggle:
         icon: material/brightness-7
-        name: Switch to dark mode
+        name: Passer au mode sombre
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: indigo
       accent: indigo
       toggle:
         icon: material/brightness-4
-        name: Switch to light mode
+        name: Passer au mode clair
   
   features:
     - navigation.instant
@@ -45,7 +44,7 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/tranchida/gocamel
   generator: false
-
+  
 plugins:
   - search
 
@@ -66,21 +65,21 @@ markdown_extensions:
   - attr_list
   - md_in_html
 
-# Navigation - English (default)
+# Navigation - Français
 nav:
-  - Home: 
-    - en/index.md
-    - Features: en/features.md
-    - Quick Start: en/quickstart.md
+  - Accueil: 
+    - fr/index.md
+    - Fonctionnalités: fr/features.md
+    - Démarrage Rapide: fr/quickstart.md
   - Documentation:
-    - Concepts: en/concepts.md
-    - Architecture: en/architecture.md
-    - Components: en/components.md
-    - EIP Patterns: en/eip.md
-    - Simple Language: en/simple-language.md
+    - Concepts: fr/concepts.md
+    - Architecture: fr/architecture.md
+    - Composants: fr/components.md
+    - Patterns EIP: fr/eip.md
+    - Simple Language: fr/simple-language.md
   - Guide:
-    - Installation: en/installation.md
-    - Configuration: en/configuration.md
-    - Examples: en/examples.md
-  - API Reference: en/reference.md
-  - Changelog: en/changelog.md
+    - Installation: fr/installation.md
+    - Configuration: fr/configuration.md
+    - Exemples: fr/examples.md
+  - Référence API: fr/reference.md
+  - Changelog: fr/changelog.md
