@@ -19,7 +19,7 @@ func ExampleMailProducer() {
 	mailComponent.SetDefaultFrom("sender@example.com")
 	ctx.AddComponent("smtp", mailComponent)
 	ctx.AddComponent("smtps", mailComponent)
-
+	ctx.AddComponent("direct", gocamel.NewDirectComponent())
 	// Creer une route qui envoie un email
 	route := ctx.CreateRoute()
 	route.From("direct:send-email").
@@ -55,7 +55,7 @@ func ExampleMailWithAttachments() {
 
 	mailComponent := gocamel.NewMailComponent()
 	ctx.AddComponent("smtp", mailComponent)
-
+	ctx.AddComponent("direct", gocamel.NewDirectComponent())
 	route := ctx.CreateRoute()
 	route.From("direct:send-with-attachments").
 		To("smtp://smtp.gmail.com:587?username=user@gmail.com&password=mypassword&to=dest@example.com&subject=Rapport%20quotidien")
