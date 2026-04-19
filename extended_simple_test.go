@@ -1200,6 +1200,8 @@ func TestChoiceWithNewOperators(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ex.GetIn().SetBody(tt.body)
+			// Clear all headers before setting new ones for each test
+			ex.GetIn().Headers = make(map[string]any)
 			for k, v := range tt.headers {
 				ex.GetIn().SetHeader(k, v)
 			}

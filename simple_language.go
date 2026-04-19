@@ -1748,6 +1748,30 @@ func evaluateDotNotationRegex(match []string, exchange *Exchange) (interface{}, 
 
 // compareValues compares two values with the given operator
 func compareValues(left interface{}, op string, right interface{}) (bool, error) {
+	// Handle nil values - nil is only equal to nil, all other comparisons return false
+	if left == nil {
+		switch op {
+		case "==":
+			return right == nil, nil
+		case "!=":
+			return right != nil, nil
+		default:
+			// Any comparison with nil is false (e.g., nil > 5 = false)
+			return false, nil
+		}
+	}
+	if right == nil {
+		switch op {
+		case "==":
+			return false, nil // left != nil
+		case "!=":
+			return true, nil  // left != nil
+		default:
+			// Any comparison with nil is false
+			return false, nil
+		}
+	}
+
 	leftStr := fmt.Sprintf("%v", left)
 	rightStr := fmt.Sprintf("%v", right)
 
