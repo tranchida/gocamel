@@ -343,6 +343,63 @@ func main() {
 **En-têtes posés sur chaque Exchange :**
 `fireTime`, `scheduledFireTime`, `nextFireTime`, `previousFireTime`, `triggerName`, `triggerGroup`, `refireCount`
 
+### Exemple SQL-Stored
+
+```go
+package main
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+    "github.com/tranchida/gocamel"
+    _ "github.com/mattn/go-sqlite3"
+)
+
+func main() {
+    db, _ := sql.Open("sqlite3", ":memory:")
+    defer db.Close()
+
+    // Créer une procédure de test
+    db.Exec(`
+        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+        INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
+    `)
+
+    ctx := gocamel.NewCamelContext()
+    
+    sqlStored := gocamel.NewSQLStoredComponent()
+    sqlStored.RegisterDataSource("mydb", db)
+    ctx.AddComponent("sql-stored", sqlStored)
+
+    builder := ctx.CreateRouteBuilder().
+        From("direct:call").
+        SetBody([]gocamel.StoredProcedureParam{
+            {Name: "userId", Direction: gocamel.ParamDirectionIn, Value: 1},
+        }).
+        To("sql-stored://mydb?procedure=GET_USER").
+        Log("Résultat: ${body}")
+
+    ctx.AddRoute(builder.Build())
+    ctx.Start()
+}
+```
+
+**Utilisation des paramètres IN/OUT/INOUT:**
+
+```go
+// IN only
+{Direction: gocamel.ParamDirectionIn, Value: "input"}
+
+// OUT only (récupère une valeur de retour)
+{Direction: gocamel.ParamDirectionOut}
+
+// INOUT (passe une valeur et reçoit le résultat)
+{Direction: gocamel.ParamDirectionInOut, Value: 123}
+```
+
+---
+
 ## Structure du projet
 
 ```
@@ -399,6 +456,7 @@ gocamel/
 - **Quartz** (`quartz://...`) : Déclenchement planifié par expression cron ou intervalle fixe (Consumer uniquement).
 - **Mail** (`smtp://...`, `smtps://...`, `imap://...`, `imaps://...`, `pop3://...`, `pop3s://...`) : Envoi et réception d'emails (Consumer & Producer).
 - **SQL** (`sql://...`) : Exécution de requêtes SQL via `database/sql` (Producer uniquement).
+- **SQL-Stored** (`sql-stored://...`) : Exécution de procédures stockées (Producer uniquement).
 
 ## Configuration
 
