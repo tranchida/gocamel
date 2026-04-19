@@ -6,39 +6,39 @@ import (
 	"sync"
 )
 
-// Multicast est un Processor qui implémente l'EIP Multicast.
-// Il envoie une copie du message à plusieurs destinations ou processeurs.
+// Multicast is a Processor that implements the Multicast EIP.
+// It sends a copy of the message to multiple destinations or processors.
 type Multicast struct {
 	processors          []Processor
 	AggregationStrategy AggregationStrategy
 	ParallelProcessing  bool
 }
 
-// NewMulticast crée une nouvelle instance de Multicast
+// NewMulticast creates a new Multicast instance
 func NewMulticast() *Multicast {
 	return &Multicast{
 		processors: make([]Processor, 0),
 	}
 }
 
-// AddProcessor ajoute un processeur (une branche) au multicast
+// AddProcessor adds a processor (a branch) to the multicast
 func (m *Multicast) AddProcessor(processor Processor) {
 	m.processors = append(m.processors, processor)
 }
 
-// SetAggregationStrategy définit la stratégie d'agrégation pour collecter les résultats
+// SetAggregationStrategy sets the aggregation strategy for collecting results
 func (m *Multicast) SetAggregationStrategy(strategy AggregationStrategy) *Multicast {
 	m.AggregationStrategy = strategy
 	return m
 }
 
-// SetParallelProcessing active ou désactive le traitement parallèle
+// SetParallelProcessing enables or disables parallel processing
 func (m *Multicast) SetParallelProcessing(parallel bool) *Multicast {
 	m.ParallelProcessing = parallel
 	return m
 }
 
-// Process exécute le multicast sur l'échange fourni
+// Process executes the multicast on the provided exchange
 func (m *Multicast) Process(exchange *Exchange) error {
 	if len(m.processors) == 0 {
 		return nil
@@ -55,10 +55,10 @@ func (m *Multicast) processSequential(exchange *Exchange) error {
 	var aggregatedExchange *Exchange
 
 	for i, p := range m.processors {
-		// Pour chaque branche, on crée une copie de l'échange original
+		// For each branch, create a copy of the original exchange
 		branchExchange := exchange.Copy()
 		
-		// On peut ajouter des propriétés spécifiques au multicast
+		// Can add multicast-specific properties
 		branchExchange.SetProperty("CamelMulticastIndex", i)
 		branchExchange.SetProperty("CamelMulticastSize", len(m.processors))
 		branchExchange.SetProperty("CamelMulticastComplete", i == len(m.processors)-1)
@@ -67,7 +67,7 @@ func (m *Multicast) processSequential(exchange *Exchange) error {
 			if !errors.Is(err, ErrStopRouting) {
 				return err
 			}
-			// En cas de Stop EIP, on ignore l'erreur et on continue vers la branche suivante
+			// In case of Stop EIP, ignore the error and continue to the next branch
 		}
 
 		if m.AggregationStrategy != nil {
@@ -76,7 +76,7 @@ func (m *Multicast) processSequential(exchange *Exchange) error {
 	}
 
 	if m.AggregationStrategy != nil && aggregatedExchange != nil {
-		// Mettre à jour l'échange original avec le résultat de l'agrégation
+		// Update the original exchange with the aggregation result
 		exchange.In = aggregatedExchange.In
 		exchange.Out = aggregatedExchange.Out
 		exchange.Properties = aggregatedExchange.Properties

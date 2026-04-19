@@ -101,13 +101,13 @@ func TestXsdProducer_Send(t *testing.T) {
 	exchange.GetIn().SetBody(invalidXml)
 	err = producer.Send(exchange)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "erreur de validation XSD")
+	assert.Contains(t, err.Error(), "XSD validation")
 
 	// Test avec un corps de type non supporté
 	exchange.GetIn().SetBody(123)
 	err = producer.Send(exchange)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "type de corps non supporté")
+	assert.Contains(t, err.Error(), "unsupported body")
 }
 
 func TestXsdProducer_Send_MissingFile(t *testing.T) {
@@ -117,5 +117,5 @@ func TestXsdProducer_Send_MissingFile(t *testing.T) {
 
 	err := producer.Start(context.Background())
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "erreur lors du parsing du fichier XSD")
+	assert.Contains(t, err.Error(), "XSD file")
 }

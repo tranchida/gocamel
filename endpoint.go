@@ -6,7 +6,7 @@ import (
 	"net/url"
 )
 
-// Endpoint représente un point de terminaison dans une route
+// Endpoint represents an endpoint in a route
 type Endpoint interface {
 	// URI retourne l'URI de l'endpoint
 	URI() string

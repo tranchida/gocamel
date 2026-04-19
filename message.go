@@ -5,13 +5,13 @@ import (
 	"regexp"
 )
 
-// Message représente un message dans une route
+// Message represents a message in a route
 type Message struct {
 	Body    any
 	Headers map[string]any
 }
 
-// NewMessage crée une nouvelle instance de Message
+// NewMessage creates a new Message instance
 func NewMessage() *Message {
 	return &Message{
 		Headers: make(map[string]any),

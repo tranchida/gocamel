@@ -8,15 +8,15 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-// OpenAIComponent représente le composant OpenAI
+// OpenAIComponent represents the OpenAI component
 type OpenAIComponent struct{}
 
-// NewOpenAIComponent crée une nouvelle instance de OpenAIComponent
+// NewOpenAIComponent creates a new OpenAIComponent
 func NewOpenAIComponent() *OpenAIComponent {
 	return &OpenAIComponent{}
 }
 
-// CreateEndpoint crée un nouvel endpoint OpenAI
+// CreateEndpoint creates a new endpoint OpenAI
 func (c *OpenAIComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -30,14 +30,14 @@ func (c *OpenAIComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// OpenAIEndpoint représente un endpoint OpenAI
+// OpenAIEndpoint represents a OpenAI endpoint
 type OpenAIEndpoint struct {
 	uri  string
 	url  *url.URL
 	comp *OpenAIComponent
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the URI de l'endpoint
 func (e *OpenAIEndpoint) URI() string {
 	return e.uri
 }
@@ -54,7 +54,7 @@ func (e *OpenAIEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return nil, fmt.Errorf("le composant OpenAI ne supporte pas le mode Consumer (uniquement Producer)")
 }
 
-// OpenAIProducer représente un producteur OpenAI
+// OpenAIProducer represents a producteur OpenAI
 type OpenAIProducer struct {
 	endpoint *OpenAIEndpoint
 	client   *openai.Client
@@ -66,7 +66,7 @@ func (p *OpenAIProducer) Start(ctx context.Context) error {
 	if token == "" {
 		token = GetConfigValue(p.endpoint.url, "apiKey") // alias
 		if token == "" {
-			return fmt.Errorf("authorizationToken (ou apiKey) manquant pour OpenAI")
+			return fmt.Errorf("authorizationToken (ou apiKey) missing for OpenAI")
 		}
 	}
 
@@ -114,7 +114,7 @@ func (p *OpenAIProducer) Send(exchange *Exchange) error {
 	)
 
 	if err != nil {
-		return fmt.Errorf("erreur de requête OpenAI: %w", err)
+		return fmt.Errorf("error de requête OpenAI: %w", err)
 	}
 
 	if len(resp.Choices) > 0 {

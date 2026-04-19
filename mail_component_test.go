@@ -111,7 +111,7 @@ func TestMailComponent_CreateEndpoint_InvalidScheme(t *testing.T) {
 
 	_, err := comp.CreateEndpoint("http://example.com")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "protocole mail non supporte")
+	assert.Contains(t, err.Error(), "mail protocol")
 }
 
 func TestMailComponent_CreateEndpoint_MissingHost(t *testing.T) {
@@ -119,7 +119,7 @@ func TestMailComponent_CreateEndpoint_MissingHost(t *testing.T) {
 
 	_, err := comp.CreateEndpoint("smtp:")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "host requis")
+	assert.Contains(t, err.Error(), "host required")
 }
 
 func TestMailEndpoint_URI(t *testing.T) {

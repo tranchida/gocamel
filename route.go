@@ -7,9 +7,9 @@ import (
 	"sync"
 )
 
-// ErrStopRouting est une erreur spéciale utilisée pour arrêter
-// le routage d'un message sans que cela soit considéré comme un échec.
-// Utilisé notamment par l'EIP Aggregator.
+// ErrStopRouting is a special error used to stop
+// routing of a message without it being considered a failure.
+// Used notably by the Aggregator EIP.
 var ErrStopRouting = errors.New("stop routing")
 
 // Processor définit l'interface pour le traitement des messages

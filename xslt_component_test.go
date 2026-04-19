@@ -91,7 +91,7 @@ func TestXsltProducer_Send(t *testing.T) {
 	exchange.GetIn().SetBody(123)
 	err = producer.Send(exchange)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "type de corps non supporté")
+	assert.Contains(t, err.Error(), "unsupported body")
 }
 
 func TestXsltProducer_Send_MissingFile(t *testing.T) {
@@ -101,7 +101,7 @@ func TestXsltProducer_Send_MissingFile(t *testing.T) {
 
 	err := producer.Start(context.Background())
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "erreur lors de la lecture du fichier XSLT")
+	assert.Contains(t, err.Error(), "XSLT file")
 }
 
 func TestXsltProducer_Send_InvalidXslt(t *testing.T) {
@@ -119,5 +119,5 @@ func TestXsltProducer_Send_InvalidXslt(t *testing.T) {
 
 	err = producer.Start(context.Background())
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "erreur lors du parsing du fichier XSLT")
+assert.Contains(t, err.Error(), "parsing")
 }

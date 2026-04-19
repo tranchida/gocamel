@@ -12,26 +12,26 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// FileComponent représente le composant File
+// FileComponent represents the File component
 type FileComponent struct {
 	watchers map[string]*fsnotify.Watcher
 }
 
-// NewFileComponent crée une nouvelle instance de FileComponent
+// NewFileComponent creates a new FileComponent
 func NewFileComponent() *FileComponent {
 	return &FileComponent{
 		watchers: make(map[string]*fsnotify.Watcher),
 	}
 }
 
-// CreateEndpoint crée un nouvel endpoint File
+// CreateEndpoint creates a new endpoint File
 func (c *FileComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
 		return nil, err
 	}
 
-	// Format de l'URI: file:///chemin/vers/fichier?options
+	// Format de l'URI: file:///path/vers/file?options
 	path := u.Path
 	if u.Host != "" && u.Host != "." {
 		path = u.Host + path
@@ -43,7 +43,7 @@ func (c *FileComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 	if path == "" {
-		return nil, fmt.Errorf("chemin de fichier manquant dans l'URI: %s", uri)
+		return nil, fmt.Errorf("path de file missing in l'URI: %s", uri)
 	}
 
 	return &FileEndpoint{
@@ -54,7 +54,7 @@ func (c *FileComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// FileEndpoint représente un endpoint File
+// FileEndpoint represents a File endpoint
 type FileEndpoint struct {
 	uri  string
 	url  *url.URL
@@ -62,7 +62,7 @@ type FileEndpoint struct {
 	comp *FileComponent
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the URI de l'endpoint
 func (e *FileEndpoint) URI() string {
 	return e.uri
 }
@@ -85,32 +85,32 @@ func (e *FileEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	}, nil
 }
 
-// FileProducer représente un producteur File
+// FileProducer represents a producteur File
 type FileProducer struct {
 	path      string
 	fileExist FileExistBehavior
 }
 
-// Start démarre le producteur File
+// Start starts the producteur File
 func (p *FileProducer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop arrête le producteur File
+// Stop stops the producteur File
 func (p *FileProducer) Stop() error {
 	return nil
 }
 
-// Send écrit le contenu de l'échange dans un fichier selon l'option fileExist.
+// Send écrit le contenu de l'échange in un file according to l'option fileExist.
 func (p *FileProducer) Send(exchange *Exchange) error {
 	if err := os.MkdirAll(filepath.Dir(p.path), 0755); err != nil {
-		return fmt.Errorf("erreur lors de la création du répertoire: %v", err)
+		return fmt.Errorf("error during la creation du directory: %v", err)
 	}
 
 	switch p.fileExist {
 	case FileExistFail:
 		if _, err := os.Stat(p.path); err == nil {
-			return fmt.Errorf("le fichier existe déjà: %s", p.path)
+			return fmt.Errorf("le file existe déjà: %s", p.path)
 		}
 	case FileExistIgnore:
 		if _, err := os.Stat(p.path); err == nil {
@@ -125,7 +125,7 @@ func (p *FileProducer) Send(exchange *Exchange) error {
 
 	file, err := os.OpenFile(p.path, flags, 0644)
 	if err != nil {
-		return fmt.Errorf("erreur lors de l'ouverture du fichier: %v", err)
+		return fmt.Errorf("error during l'ouverture du file: %v", err)
 	}
 	defer file.Close()
 
@@ -136,16 +136,16 @@ func (p *FileProducer) Send(exchange *Exchange) error {
 	case string:
 		content = []byte(body)
 	default:
-		return fmt.Errorf("type de corps non supporté: %T", exchange.GetIn().GetBody())
+		return fmt.Errorf("type de body non supported: %T", exchange.GetIn().GetBody())
 	}
 
 	if _, err := file.Write(content); err != nil {
-		return fmt.Errorf("erreur lors de l'écriture dans le fichier: %v", err)
+		return fmt.Errorf("error during l'writing in le file: %v", err)
 	}
 	return nil
 }
 
-// FileConsumer représente un consommateur File
+// FileConsumer represents a consommateur File
 type FileConsumer struct {
 	path      string
 	url       *url.URL
@@ -155,11 +155,11 @@ type FileConsumer struct {
 	stopChan  chan struct{}
 }
 
-// Start démarre le consommateur File
+// Start starts the consommateur File
 func (c *FileConsumer) Start(ctx context.Context) error {
 	info, err := os.Stat(c.path)
 	if err != nil {
-		return fmt.Errorf("erreur lors de l'accès au chemin: %v", err)
+		return fmt.Errorf("error during l'accès au path: %v", err)
 	}
 	if info.IsDir() {
 		return c.watchDirectory(ctx)
@@ -167,11 +167,11 @@ func (c *FileConsumer) Start(ctx context.Context) error {
 	return c.watchFile(ctx)
 }
 
-// watchDirectory surveille un répertoire pour les nouveaux fichiers
+// watchDirectory onveille un directory for les nouveaux files
 func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return fmt.Errorf("erreur lors de la création du watcher: %v", err)
+		return fmt.Errorf("error during la creation du watcher: %v", err)
 	}
 	c.watcher = watcher
 	c.stopChan = make(chan struct{})
@@ -185,17 +185,17 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	recursive := strings.EqualFold(GetConfigValue(c.url, "recursive"), "true")
 
 	if err := watcher.Add(c.path); err != nil {
-		return fmt.Errorf("erreur lors de l'ajout au watcher: %v", err)
+		return fmt.Errorf("error during l'adding au watcher: %v", err)
 	}
 
-	// Si recursive, ajouter tous les sous-répertoires existants
+	// Si recursive, addinger tous les sous-directorys existants
 	if recursive {
 		filepath.Walk(c.path, func(path string, info os.FileInfo, err error) error {
 			if err != nil || path == c.path {
 				return nil
 			}
 			if info.IsDir() {
-				watcher.Add(path) // erreur ignorée volontairement
+				watcher.Add(path) // error ignorée volontairement
 			}
 			return nil
 		})
@@ -215,7 +215,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				if statErr != nil {
 					continue
 				}
-				// Nouveau répertoire : l'ajouter au watcher si recursive
+				// Nouveau directory : l'addinger au watcher si recursive
 				if info.IsDir() {
 					if recursive {
 						watcher.Add(event.Name)
@@ -229,7 +229,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 
 				content, err := os.ReadFile(event.Name)
 				if err != nil {
-					fmt.Printf("Erreur lors de la lecture du fichier %s: %v\n", event.Name, err)
+					fmt.Printf("error during la reading du file %s: %v\n", event.Name, err)
 					continue
 				}
 
@@ -240,16 +240,16 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 
 				if err := c.processor.Process(exchange); err != nil {
 					if !errors.Is(err, ErrStopRouting) {
-						fmt.Printf("Erreur lors du traitement du fichier %s: %v\n", event.Name, err)
+						fmt.Printf("error during traitement du file %s: %v\n", event.Name, err)
 						if !noop && moveFailed != "" {
-							moveFileLocal(event.Name, moveFailed)
+							moveFilelocal(event.Name, moveFailed)
 						}
 					}
 					continue
 				}
 				if !noop {
 					if move != "" {
-						moveFileLocal(event.Name, move)
+						moveFilelocal(event.Name, move)
 					} else if delete_ {
 						os.Remove(event.Name)
 					}
@@ -259,7 +259,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				if !ok {
 					return
 				}
-				fmt.Printf("Erreur du watcher: %v\n", err)
+				fmt.Printf("error du watcher: %v\n", err)
 			case <-c.stopChan:
 				return
 			}
@@ -269,7 +269,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	return nil
 }
 
-// watchFile lit et traite un fichier unique, puis applique les options post-traitement.
+// watchFile lit et traite un file unique, puis applique les options post-traitement.
 func (c *FileConsumer) watchFile(ctx context.Context) error {
 	filename := filepath.Base(c.path)
 	include := GetConfigValue(c.url, "include")
@@ -280,7 +280,7 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 
 	content, err := os.ReadFile(c.path)
 	if err != nil {
-		return fmt.Errorf("erreur lors de la lecture du fichier: %v", err)
+		return fmt.Errorf("error during la reading du file: %v", err)
 	}
 
 	exchange := NewExchange(ctx)
@@ -295,13 +295,13 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 
 	if err := c.processor.Process(exchange); err != nil {
 		if !errors.Is(err, ErrStopRouting) && !noop && moveFailed != "" {
-			moveFileLocal(c.path, moveFailed)
+			moveFilelocal(c.path, moveFailed)
 		}
 		return nil
 	}
 	if !noop {
 		if move != "" {
-			moveFileLocal(c.path, move)
+			moveFilelocal(c.path, move)
 		} else if delete_ {
 			os.Remove(c.path)
 		}
@@ -309,7 +309,7 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 	return nil
 }
 
-// Stop arrête le consommateur File
+// Stop stops the consommateur File
 func (c *FileConsumer) Stop() error {
 	if c.watcher != nil {
 		close(c.stopChan)
@@ -318,14 +318,14 @@ func (c *FileConsumer) Stop() error {
 	return nil
 }
 
-// moveFileLocal déplace src vers destDir en créant le répertoire si nécessaire.
-func moveFileLocal(src, destDir string) {
+// moveFilelocal déplace src vers destDir en créant le directory si nécessaire.
+func moveFilelocal(src, destDir string) {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
-		fmt.Printf("Erreur création répertoire %s: %v\n", destDir, err)
+		fmt.Printf("error creation directory %s: %v\n", destDir, err)
 		return
 	}
 	dest := filepath.Join(destDir, filepath.Base(src))
 	if err := os.Rename(src, dest); err != nil {
-		fmt.Printf("Erreur déplacement %s -> %s: %v\n", src, dest, err)
+		fmt.Printf("error déplacement %s -> %s: %v\n", src, dest, err)
 	}
 }

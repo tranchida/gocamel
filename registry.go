@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// ComponentRegistry gère l'enregistrement et la récupération des composants
+// ComponentRegistry manages component registration and retrieval
 type ComponentRegistry struct {
 	components map[string]Component
 	mu         sync.RWMutex

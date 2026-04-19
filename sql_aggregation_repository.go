@@ -8,20 +8,21 @@ import (
 	"time"
 )
 
-// SQLAggregationRepository est une implémentation basée sur SQL de AggregationRepository.
+// SQLAggregationRepository is a SQL-based implementation of AggregationRepository.
 type SQLAggregationRepository struct {
 	db             *sql.DB
 	tableName      string
-	useDollarParam bool // true pour PostgreSQL ($1, $2), false pour MySQL/SQLite (?, ?)
+	// UseDollarParam uses dollar parameters (true for PostgreSQL $1, $2; false for MySQL/SQLite ?, ?)
+	UseDollarParam bool
 }
 
-// SQLAggregationOptions contient les options pour configurer SQLAggregationRepository.
+// SQLAggregationOptions contains the options for configuring SQLAggregationRepository.
 type SQLAggregationOptions struct {
 	TableName      string
 	UseDollarParam bool
 }
 
-// ExchangeData est utilisé pour sérialiser le contenu de l'Exchange en JSON.
+// ExchangeData is used to serialize the Exchange content to JSON.
 type ExchangeData struct {
 	Body       any            `json:"body"`
 	Headers    map[string]any `json:"headers"`
@@ -30,7 +31,7 @@ type ExchangeData struct {
 	Modified   time.Time      `json:"modified"`
 }
 
-// NewSQLAggregationRepository crée une nouvelle instance de SQLAggregationRepository.
+// NewSQLAggregationRepository creates a new SQLAggregationRepository instance.
 func NewSQLAggregationRepository(db *sql.DB, opts SQLAggregationOptions) *SQLAggregationRepository {
 	tableName := opts.TableName
 	if tableName == "" {
@@ -39,11 +40,11 @@ func NewSQLAggregationRepository(db *sql.DB, opts SQLAggregationOptions) *SQLAgg
 	return &SQLAggregationRepository{
 		db:             db,
 		tableName:      tableName,
-		useDollarParam: opts.UseDollarParam,
+		UseDollarParam: opts.UseDollarParam,
 	}
 }
 
-// InitDB crée la table si elle n'existe pas.
+// InitDB creates the table if it doesn't exist.
 func (r *SQLAggregationRepository) InitDB(ctx context.Context) error {
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -56,7 +57,7 @@ func (r *SQLAggregationRepository) InitDB(ctx context.Context) error {
 	return err
 }
 
-// Add ajoute ou met à jour un échange dans le repository.
+// Add adds or updates an exchange in the repository.
 func (r *SQLAggregationRepository) Add(ctx context.Context, key string, exchange *Exchange) error {
 	data := ExchangeData{
 		Body:       exchange.GetIn().GetBody(),
@@ -71,16 +72,16 @@ func (r *SQLAggregationRepository) Add(ctx context.Context, key string, exchange
 	}
 
 	var query string
-	if r.useDollarParam {
+	if r.UseDollarParam {
 		query = fmt.Sprintf(`
 			INSERT INTO %s (correlation_key, exchange_data)
 			VALUES ($1, $2)
 			ON CONFLICT(correlation_key) DO UPDATE SET exchange_data = $2
 		`, r.tableName)
 	} else {
-		// Compatible avec SQLite et MySQL (ON DUPLICATE KEY UPDATE ou REPLACE INTO)
-		// On utilise REPLACE INTO pour SQLite par simplicité et compatibilité large dans le cadre de ce clone.
-		// Pour un vrai support multi-DB en production, il faudrait une abstraction plus fine.
+		// Compatible with SQLite and MySQL (ON DUPLICATE KEY UPDATE or REPLACE INTO)
+		// We use REPLACE INTO for SQLite for simplicity and broad compatibility within the scope of this clone.
+		// For true multi-DB production support, a finer abstraction would be needed.
 		query = fmt.Sprintf(`
 			REPLACE INTO %s (correlation_key, exchange_data)
 			VALUES (?, ?)
@@ -91,10 +92,10 @@ func (r *SQLAggregationRepository) Add(ctx context.Context, key string, exchange
 	return err
 }
 
-// Get récupère un échange par sa clé de corrélation.
+// Get retrieves an exchange by its correlation key.
 func (r *SQLAggregationRepository) Get(ctx context.Context, key string) (*Exchange, error) {
 	var query string
-	if r.useDollarParam {
+	if r.UseDollarParam {
 		query = fmt.Sprintf("SELECT exchange_data FROM %s WHERE correlation_key = $1", r.tableName)
 	} else {
 		query = fmt.Sprintf("SELECT exchange_data FROM %s WHERE correlation_key = ?", r.tableName)
@@ -126,10 +127,10 @@ func (r *SQLAggregationRepository) Get(ctx context.Context, key string) (*Exchan
 	return exchange, nil
 }
 
-// Remove supprime un échange du repository.
+// Remove removes an exchange from the repository.
 func (r *SQLAggregationRepository) Remove(ctx context.Context, key string) error {
 	var query string
-	if r.useDollarParam {
+	if r.UseDollarParam {
 		query = fmt.Sprintf("DELETE FROM %s WHERE correlation_key = $1", r.tableName)
 	} else {
 		query = fmt.Sprintf("DELETE FROM %s WHERE correlation_key = ?", r.tableName)

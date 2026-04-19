@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// TimerComponent implémente Component pour la gestion des timers
+// TimerComponent implémente Component for la gestion des timers
 type TimerComponent struct{}
 
-// NewTimerComponent crée une nouvelle instance de TimerComponent
+// NewTimerComponent creates a new TimerComponent
 func NewTimerComponent() *TimerComponent {
 	return &TimerComponent{}
 }
@@ -22,7 +22,7 @@ func NewTimerComponent() *TimerComponent {
 func (c *TimerComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	parsedURL, err := url.Parse(uri)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lors de l'analyse de l'URI timer: %w", err)
+		return nil, fmt.Errorf("error during l'analyse de l'URI timer: %w", err)
 	}
 
 	timerName := parsedURL.Host
@@ -34,7 +34,7 @@ func (c *TimerComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	if timerName == "" {
-		return nil, errors.New("le nom du timer est requis")
+		return nil, errors.New("le nom du timer est required")
 	}
 
 	endpoint := &TimerEndpoint{
@@ -75,7 +75,7 @@ func (c *TimerComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	return endpoint, nil
 }
 
-// TimerEndpoint représente un point de terminaison de type timer
+// TimerEndpoint represents a point de terminaison de type timer
 type TimerEndpoint struct {
 	uri         string
 	timerName   string
@@ -85,17 +85,17 @@ type TimerEndpoint struct {
 	fixedRate   bool
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the URI de l'endpoint
 func (e *TimerEndpoint) URI() string {
 	return e.uri
 }
 
-// CreateProducer retourne une erreur car Timer ne supporte que les consommateurs
+// CreateProducer returns an error car Timer ne supporte que les consommateurs
 func (e *TimerEndpoint) CreateProducer() (Producer, error) {
 	return nil, errors.New("le composant timer ne supporte pas les producteurs, seulement les consommateurs")
 }
 
-// CreateConsumer crée un consommateur pour le timer
+// CreateConsumer crée un consommateur for le timer
 func (e *TimerEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &TimerConsumer{
 		endpoint:  e,
@@ -130,7 +130,7 @@ func (c *TimerConsumer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop arrête le timer
+// Stop stops the timer
 func (c *TimerConsumer) Stop() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -186,8 +186,8 @@ func (c *TimerConsumer) run(ctx context.Context) {
 
 		err := c.processor.Process(exchange)
 		if err != nil && err != ErrStopRouting {
-			// Log l'erreur (dans une vraie implémentation)
-			// fmt.Printf("erreur lors du traitement de l'événement timer: %v\n", err)
+			// Log l'error (in une vraie implémentation)
+			// fmt.Printf("error during traitement de l'événement timer: %v\n", err)
 		}
 
 		if c.endpoint.repeatCount > 0 && counter >= c.endpoint.repeatCount {
@@ -213,7 +213,7 @@ func (c *TimerConsumer) run(ctx context.Context) {
 					return
 				}
 			} else {
-				// si period est <= 0, on continue avec un léger délai pour éviter la boucle infinie CPU
+				// si period est <= 0, on continue with un léger délai for éviter la boucle infinie CPU
 				select {
 				case <-time.After(1 * time.Millisecond):
 				case <-c.stopChan:

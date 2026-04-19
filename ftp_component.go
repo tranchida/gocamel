@@ -15,15 +15,15 @@ import (
 	"github.com/jlaffaye/ftp"
 )
 
-// FTPComponent représente le composant FTP
+// FTPComponent represents the FTP component
 type FTPComponent struct{}
 
-// NewFTPComponent crée une nouvelle instance de FTPComponent
+// NewFTPComponent creates a new FTPComponent
 func NewFTPComponent() *FTPComponent {
 	return &FTPComponent{}
 }
 
-// CreateEndpoint crée un nouvel endpoint FTP
+// CreateEndpoint creates a new FTP endpoint
 func (c *FTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -38,12 +38,12 @@ func (c *FTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		// passiveMode=false : désactive EPSV et tombe sur PASV basique.
 		passiveMode: !strings.EqualFold(GetConfigValue(u, "passiveMode"), "false"),
 		// disconnect=true : se déconnecter après chaque opération.
-		// disconnect=false (défaut) : maintenir la connexion entre les polls.
+		// disconnect=false (default): maintain the connection between polls.
 		disconnect: strings.EqualFold(GetConfigValue(u, "disconnect"), "true"),
 	}, nil
 }
 
-// FTPEndpoint représente un endpoint FTP
+// FTPEndpoint represents an FTP endpoint
 type FTPEndpoint struct {
 	uri            string
 	url            *url.URL
@@ -53,12 +53,12 @@ type FTPEndpoint struct {
 	disconnect     bool
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the endpoint URI
 func (e *FTPEndpoint) URI() string {
 	return e.uri
 }
 
-// connect établit une connexion FTP
+// connect establishes an FTP connection
 func (e *FTPEndpoint) connect() (*ftp.ServerConn, error) {
 	host := e.url.Host
 	if !strings.Contains(host, ":") {
@@ -86,12 +86,12 @@ func (e *FTPEndpoint) connect() (*ftp.ServerConn, error) {
 	return conn, nil
 }
 
-// CreateProducer crée un producteur FTP
+// CreateProducer creates an FTP producer
 func (e *FTPEndpoint) CreateProducer() (Producer, error) {
 	return &FTPProducer{endpoint: e, fileExist: ParseFileExist(e.url)}, nil
 }
 
-// CreateConsumer crée un consommateur FTP
+// CreateConsumer creates an FTP consumer
 func (e *FTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &FTPConsumer{
 		endpoint:  e,
@@ -104,12 +104,12 @@ func (e *FTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 // Producer
 // ---------------------------------------------------------------------------
 
-// FTPProducer représente un producteur FTP
+// FTPProducer represents an FTP producer
 type FTPProducer struct {
 	endpoint   *FTPEndpoint
 	fileExist  FileExistBehavior
 	mu         sync.Mutex
-	conn       *ftp.ServerConn // connexion persistante (disconnect=false)
+	conn       *ftp.ServerConn // persistent connection (disconnect=false)
 }
 
 func (p *FTPProducer) Start(ctx context.Context) error { return nil }
@@ -151,7 +151,7 @@ func (p *FTPProducer) releaseConn(conn *ftp.ServerConn) {
 	}
 }
 
-// Send envoie le contenu de l'échange vers le serveur FTP.
+// Send sends the exchange content to the FTP server.
 func (p *FTPProducer) Send(exchange *Exchange) error {
 	conn, err := p.getConn()
 	if err != nil {
@@ -187,7 +187,7 @@ func (p *FTPProducer) Send(exchange *Exchange) error {
 			return fmt.Errorf("erreur lecture du corps: %w", err)
 		}
 	default:
-		return fmt.Errorf("type de corps non supporté par FTP: %T", exchange.GetIn().GetBody())
+		return fmt.Errorf("unsupported body type for FTP: %T", exchange.GetIn().GetBody())
 	}
 
 	switch p.fileExist {
@@ -209,7 +209,7 @@ func (p *FTPProducer) Send(exchange *Exchange) error {
 	}
 
 	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		conn.ChangeDir(dir) // ignore l'erreur si le répertoire existe déjà
+		conn.ChangeDir(dir) // ignore the error if the directory already exists
 	}
 	if err := conn.Stor(filepath.Base(path), bytes.NewReader(body)); err != nil {
 		return fmt.Errorf("erreur lors de l'envoi FTP: %w", err)
@@ -221,13 +221,13 @@ func (p *FTPProducer) Send(exchange *Exchange) error {
 // Consumer
 // ---------------------------------------------------------------------------
 
-// FTPConsumer représente un consommateur FTP
+// FTPConsumer represents an FTP consumer
 type FTPConsumer struct {
 	endpoint  *FTPEndpoint
 	processor Processor
 	opts      PollingOptions
 	cancel    context.CancelFunc
-	conn      *ftp.ServerConn // connexion persistante (disconnect=false)
+	conn      *ftp.ServerConn // persistent connection (disconnect=false)
 }
 
 func (c *FTPConsumer) Start(ctx context.Context) error {
@@ -385,7 +385,7 @@ func (c *FTPConsumer) Stop() error {
 	return nil
 }
 
-// moveFTPFile renomme/déplace un fichier sur le serveur FTP.
+// moveFTPFile renames/moves a file on the FTP server.
 func moveFTPFile(conn *ftp.ServerConn, srcPath, destDir string) {
 	destPath := destDir + "/" + filepath.Base(srcPath)
 	if err := conn.Rename(srcPath, destPath); err != nil {

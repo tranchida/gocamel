@@ -18,20 +18,20 @@ import (
 
 var xsltMutex sync.Mutex
 
-// XsltComponent représente le composant XSLT
+// XsltComponent represents the XSLT component
 type XsltComponent struct{}
 
-// NewXsltComponent crée une nouvelle instance de XsltComponent
+// NewXsltComponent creates a new XsltComponent
 func NewXsltComponent() *XsltComponent {
 	return &XsltComponent{}
 }
 
-// CreateEndpoint crée un nouvel endpoint XSLT
+// CreateEndpoint creates a new endpoint XSLT
 func (c *XsltComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	// Format de l'URI: xslt:chemin/vers/fichier.xsl
+	// Format de l'URI: xslt:path/vers/file.xsl
 	path := strings.TrimPrefix(uri, "xslt:")
 	if path == "" {
-		return nil, fmt.Errorf("chemin de fichier manquant dans l'URI: %s", uri)
+		return nil, fmt.Errorf("path de file missing in l'URI: %s", uri)
 	}
 
 	return &XsltEndpoint{
@@ -41,14 +41,14 @@ func (c *XsltComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// XsltEndpoint représente un endpoint XSLT
+// XsltEndpoint represents a XSLT endpoint
 type XsltEndpoint struct {
 	uri  string
 	path string
 	comp *XsltComponent
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the URI de l'endpoint
 func (e *XsltEndpoint) URI() string {
 	return e.uri
 }
@@ -60,43 +60,43 @@ func (e *XsltEndpoint) CreateProducer() (Producer, error) {
 	}, nil
 }
 
-// CreateConsumer n'est pas supporté pour le composant XSLT
+// CreateConsumer n'est pas supported for le composant XSLT
 func (e *XsltEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return nil, fmt.Errorf("le composant XSLT ne supporte pas les consommateurs")
 }
 
-// XsltProducer représente un producteur XSLT
+// XsltProducer represents a producteur XSLT
 type XsltProducer struct {
 	path       string
 	stylesheet *xslt.Stylesheet
 }
 
-// Start démarre le producteur XSLT
+// Start starts the producteur XSLT
 func (p *XsltProducer) Start(ctx context.Context) error {
 	xsltMutex.Lock()
 	defer xsltMutex.Unlock()
 
-	// Lecture du fichier XSL
+	// reading du file XSL
 	xslContent, err := os.ReadFile(p.path)
 	if err != nil {
-		return fmt.Errorf("erreur lors de la lecture du fichier XSLT: %v", err)
+		return fmt.Errorf("error reading XSLT file: %v", err)
 	}
 
-	// Réinitialise l'état d'erreur global de libxml2 pour éviter que des erreurs
-	// résiduelles (ex. validation XSD) ne causent de faux échecs dans make_style
+	// Réinitialise l'état d'error global de libxml2 for éviter que des errors
+	// résiduelles (ex. validation XSD) ne causent de faux échecs in make_style
 	// qui appelle xmlGetLastError() après un xmlParseMemory réussi.
 	C.xmlResetLastError()
 
 	stylesheet, err := xslt.NewStylesheet(xslContent)
 	if err != nil {
-		return fmt.Errorf("erreur lors du parsing du fichier XSLT: %v", err)
+		return fmt.Errorf("error parsing XSLT: %v", err)
 	}
 	p.stylesheet = stylesheet
 
 	return nil
 }
 
-// Stop arrête le producteur XSLT
+// Stop stops the producteur XSLT
 func (p *XsltProducer) Stop() error {
 	if p.stylesheet != nil {
 		p.stylesheet.Close()
@@ -108,7 +108,7 @@ func (p *XsltProducer) Stop() error {
 // Send effectue la transformation XSLT
 func (p *XsltProducer) Send(exchange *Exchange) error {
 	if p.stylesheet == nil {
-		return fmt.Errorf("le producteur XSLT n'est pas démarré ou la feuille de style est invalide")
+		return fmt.Errorf("le producteur XSLT n'est pas démarré ou la feuille de style est invalid")
 	}
 
 	xsltMutex.Lock()
@@ -122,13 +122,13 @@ func (p *XsltProducer) Send(exchange *Exchange) error {
 	case string:
 		xmlContent = []byte(body)
 	default:
-		return fmt.Errorf("type de corps non supporté pour la transformation XSLT: %T", exchange.GetIn().GetBody())
+		return fmt.Errorf("unsupported body type for for la transformation XSLT: %T", exchange.GetIn().GetBody())
 	}
 
-	// Transformation
+	// transformation
 	result, err := p.stylesheet.Transform(xmlContent)
 	if err != nil {
-		return fmt.Errorf("erreur lors de la transformation XSLT: %v", err)
+		return fmt.Errorf("error during la transformation XSLT: %v", err)
 	}
 
 	exchange.GetIn().SetBody(result)

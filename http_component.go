@@ -10,22 +10,22 @@ import (
 	"strconv"
 )
 
-// HTTPComponent représente le composant HTTP
+// HTTPComponent represents the HTTP component
 type HTTPComponent struct {
 	client *http.Client
 }
 
-// NewHTTPComponent crée une nouvelle instance de HTTPComponent
+// NewHTTPComponent creates a new HTTPComponent instance
 func NewHTTPComponent() *HTTPComponent {
 	return &HTTPComponent{
 		client: &http.Client{},
 	}
 }
 
-// CreateEndpoint crée un nouvel endpoint HTTP
+// CreateEndpoint creates a new HTTP endpoint
 func (c *HTTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	if _, err := url.Parse(uri); err != nil {
-		return nil, fmt.Errorf("URI HTTP invalide: %v", err)
+		return nil, fmt.Errorf("invalid HTTP URI: %v", err)
 	}
 
 	return &HTTPEndpoint{
@@ -34,18 +34,18 @@ func (c *HTTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// HTTPEndpoint représente un endpoint HTTP
+// HTTPEndpoint represents an HTTP endpoint
 type HTTPEndpoint struct {
 	uri    string
 	client *http.Client
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the endpoint URI
 func (e *HTTPEndpoint) URI() string {
 	return e.uri
 }
 
-// CreateProducer crée un producteur HTTP
+// CreateProducer creates an HTTP producer
 func (e *HTTPEndpoint) CreateProducer() (Producer, error) {
 	return &HTTPProducer{
 		uri:    e.uri,
@@ -53,7 +53,7 @@ func (e *HTTPEndpoint) CreateProducer() (Producer, error) {
 	}, nil
 }
 
-// CreateConsumer crée un consommateur HTTP
+// CreateConsumer creates an HTTP consumer
 func (e *HTTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &HTTPConsumer{
 		uri:       e.uri,
@@ -61,25 +61,25 @@ func (e *HTTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	}, nil
 }
 
-// HTTPProducer représente un producteur HTTP
+// HTTPProducer represents an HTTP producer
 type HTTPProducer struct {
 	uri    string
 	client *http.Client
 }
 
-// Start démarre le producteur HTTP
+// Start starts the HTTP producer
 func (p *HTTPProducer) Start(ctx context.Context) error {
-	return nil // Pas d'initialisation nécessaire pour le producteur HTTP
+	return nil // No initialization needed for HTTP producer
 }
 
-// Stop arrête le producteur HTTP
+// Stop stops the HTTP producer
 func (p *HTTPProducer) Stop() error {
-	return nil // Pas de nettoyage nécessaire pour le producteur HTTP
+	return nil // No cleanup needed for HTTP producer
 }
 
-// Send envoie un message via HTTP
+// Send sends a message via HTTP
 func (p *HTTPProducer) Send(exchange *Exchange) error {
-	// Création de la requête
+	// Creating the request
 	var bodyReader io.Reader
 	if body, ok := exchange.GetIn().GetBody().([]byte); ok {
 		bodyReader = bytes.NewReader(body)
@@ -89,30 +89,30 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 
 	req, err := http.NewRequest("POST", p.uri, bodyReader)
 	if err != nil {
-		return fmt.Errorf("erreur lors de la création de la requête HTTP: %v", err)
+		return fmt.Errorf("error creating HTTP request: %v", err)
 	}
 
-	// Ajout des en-têtes
+	// Adding headers
 	for key, value := range exchange.GetIn().GetHeaders() {
 		if strValue, ok := value.(string); ok {
 			req.Header.Set(key, strValue)
 		}
 	}
 
-	// Envoi de la requête
+	// Sending the request
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("erreur lors de l'envoi de la requête HTTP: %v", err)
+		return fmt.Errorf("error sending HTTP request: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Lecture du corps de la réponse
+	// Reading the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("erreur lors de la lecture de la réponse HTTP: %v", err)
+		return fmt.Errorf("error reading HTTP response: %v", err)
 	}
 
-	// Mise à jour de l'échange avec la réponse
+	// Updating the exchange with the response
 	exchange.GetOut().SetBody(body)
 	for key, value := range resp.Header {
 		exchange.GetOut().SetHeader(key, value[0])
@@ -122,37 +122,37 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	return nil
 }
 
-// HTTPConsumer représente un consommateur HTTP
+// HTTPConsumer represents an HTTP consumer
 type HTTPConsumer struct {
 	uri       string
 	processor Processor
 	server    *http.Server
 }
 
-// Start démarre le consommateur HTTP
+// Start starts the HTTP consumer
 func (c *HTTPConsumer) Start(ctx context.Context) error {
 	parsedURL, err := url.Parse(c.uri)
 	if err != nil {
-		return fmt.Errorf("URI HTTP invalide: %v", err)
+		return fmt.Errorf("invalid HTTP URI: %v", err)
 	}
 
 	port := parsedURL.Port()
 	if port == "" {
-		port = "8080" // Port par défaut
+		port = "8080" // Default port
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(parsedURL.Path, func(w http.ResponseWriter, r *http.Request) {
 		exchange := NewExchange(ctx)
 
-		// Lecture du corps de la requête
+		// Reading the request body
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		// Configuration de l'échange
+		// Configuring the exchange
 		exchange.SetBody(body)
 		for key, values := range r.Header {
 			if len(values) > 0 {
@@ -160,13 +160,13 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			}
 		}
 
-		// Traitement du message
+		// Processing the message
 		if err := c.processor.Process(exchange); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		// Réponse : Out si défini, sinon In (comportement InOut Apache Camel)
+		// Response: Out if defined, otherwise In (InOut Apache Camel behavior)
 		response := exchange.GetResponse()
 
 		for key, value := range response.GetHeaders() {
@@ -188,17 +188,17 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		Handler: mux,
 	}
 
-	// Démarrage du serveur
+	// Starting the server
 	go func() {
 		if err := c.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("Erreur du serveur HTTP: %v\n", err)
+			fmt.Printf("HTTP server error: %v\n", err)
 		}
 	}()
 
 	return nil
 }
 
-// Stop arrête le consommateur HTTP
+// Stop stops the HTTP consumer
 func (c *HTTPConsumer) Stop() error {
 	if c.server != nil {
 		return c.server.Shutdown(context.Background())

@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// CamelContext représente le contexte principal de l'application
+// CamelContext represents the main application context
 type CamelContext struct {
 	ctx          context.Context
 	cancel       context.CancelFunc

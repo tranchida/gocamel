@@ -6,15 +6,15 @@ import (
 	"reflect"
 )
 
-// Splitter est un Processor qui implémente l'EIP Split.
-// Il divise un message en plusieurs et les traite individuellement.
+// Splitter is a Processor that implements the Split EIP.
+// It divides a message into multiple parts and processes them individually.
 type Splitter struct {
 	Expression          func(*Exchange) (any, error)
 	processors          []Processor
 	AggregationStrategy AggregationStrategy
 }
 
-// NewSplitter crée une nouvelle instance de Splitter
+// NewSplitter creates a new Splitter instance
 func NewSplitter(expression func(*Exchange) (any, error)) *Splitter {
 	return &Splitter{
 		Expression: expression,
@@ -22,18 +22,18 @@ func NewSplitter(expression func(*Exchange) (any, error)) *Splitter {
 	}
 }
 
-// AddProcessor ajoute un processeur au traitement de chaque partie du message splité
+// AddProcessor adds a processor for processing each split message part
 func (s *Splitter) AddProcessor(processor Processor) {
 	s.processors = append(s.processors, processor)
 }
 
-// SetAggregationStrategy définit la stratégie d'agrégation pour collecter les résultats
+// SetAggregationStrategy sets the aggregation strategy for collecting results
 func (s *Splitter) SetAggregationStrategy(strategy AggregationStrategy) *Splitter {
 	s.AggregationStrategy = strategy
 	return s
 }
 
-// Process exécute le split sur l'échange fourni
+// Process executes the split on the provided exchange
 func (s *Splitter) Process(exchange *Exchange) error {
 	parts, err := s.Expression(exchange)
 	if err != nil {
@@ -44,10 +44,10 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		return nil
 	}
 
-	// Déterminer comment itérer sur 'parts'
+	// Determine how to iterate over 'parts'
 	v := reflect.ValueOf(parts)
 	
-	// Si ce n'est pas une slice ou un tableau, on le traite comme un seul élément
+	// If it's not a slice or array, treat it as a single element
 	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
 		partExchange := exchange.Copy()
 		partExchange.In.SetBody(parts)
@@ -59,7 +59,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 			if !errors.Is(err, ErrStopRouting) {
 				return err
 			}
-			// En cas de Stop EIP, on continue vers l'agrégation
+			// In case of Stop EIP, continue to aggregation
 		}
 
 		if s.AggregationStrategy != nil {
@@ -82,11 +82,11 @@ func (s *Splitter) Process(exchange *Exchange) error {
 	for i := 0; i < length; i++ {
 		part := v.Index(i).Interface()
 		
-		// Pour chaque partie, on crée une copie de l'échange original
+		// For each part, create a copy of the original exchange
 		partExchange := exchange.Copy()
 		partExchange.In.SetBody(part)
 		
-		// On peut ajouter des propriétés spécifiques au split (index, total, etc.)
+		// Can add split-specific properties (index, total, etc.)
 		partExchange.SetProperty("CamelSplitIndex", i)
 		partExchange.SetProperty("CamelSplitSize", length)
 		partExchange.SetProperty("CamelSplitComplete", i == length-1)
@@ -95,7 +95,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 			if !errors.Is(err, ErrStopRouting) {
 				return err
 			}
-			// En cas de Stop EIP, on ignore l'erreur et on continue vers la partie suivante
+			// In case of Stop EIP, ignore the error and continue to the next part
 		}
 
 		if s.AggregationStrategy != nil {
@@ -104,7 +104,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 	}
 
 	if s.AggregationStrategy != nil && aggregatedExchange != nil {
-		// Mettre à jour l'échange original avec le résultat de l'agrégation
+		// Update the original exchange with the aggregation result
 		exchange.In = aggregatedExchange.In
 		exchange.Out = aggregatedExchange.Out
 		exchange.Properties = aggregatedExchange.Properties

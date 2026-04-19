@@ -7,47 +7,47 @@ import (
 	"time"
 )
 
-// FileExistBehavior définit le comportement du producer lorsque le fichier cible existe déjà.
-// Correspond à l'option fileExist d'Apache Camel.
+// FileExistBehavior defines the behavior of the producer when the target file already exists.
+// Corresponds to the fileExist option in Apache Camel.
 type FileExistBehavior string
 
 const (
-	// FileExistOverride écrase le fichier existant (défaut).
+	// FileExistOverride overwrites the existing file (default).
 	FileExistOverride FileExistBehavior = "Override"
-	// FileExistAppend ajoute le contenu à la suite du fichier existant.
+	// FileExistAppend appends content to the existing file.
 	FileExistAppend FileExistBehavior = "Append"
-	// FileExistFail retourne une erreur si le fichier existe déjà.
+	// FileExistFail returns an error if the file already exists.
 	FileExistFail FileExistBehavior = "Fail"
-	// FileExistIgnore ignore silencieusement l'écriture si le fichier existe déjà.
+	// FileExistIgnore silently ignores writing if the file already exists.
 	FileExistIgnore FileExistBehavior = "Ignore"
 )
 
-// PollingOptions regroupe les paramètres URI communs aux consumers à base de polling
-// (FTP, SFTP, SMB). Correspond aux options GenericFile consumer d'Apache Camel.
+// PollingOptions groups the common consumer URI parameters for polling-based consumers
+// (FTP, SFTP, SMB). Corresponds to Apache Camel's GenericFile consumer options.
 type PollingOptions struct {
-	// Delay entre deux cycles de poll (défaut : 5s).
+	// Delay between poll cycles (default: 5s).
 	Delay time.Duration
-	// InitialDelay avant le premier poll (défaut : 1s).
+	// InitialDelay before the first poll (default: 1s).
 	InitialDelay time.Duration
-	// MaxMessagesPerPoll limite le nombre de fichiers traités par cycle ; 0 = illimité.
+	// MaxMessagesPerPoll limits the number of files processed per cycle; 0 = unlimited.
 	MaxMessagesPerPoll int
-	// Noop empêche toute action post-traitement (delete/move) sur le fichier.
+	// Noop prevents any post-processing action (delete/move) on the file.
 	Noop bool
-	// Delete supprime le fichier distant après traitement réussi.
+	// Delete deletes the remote file after successful processing.
 	Delete bool
-	// Move déplace le fichier vers ce répertoire distant après traitement réussi.
+	// Move moves the file to this remote directory after successful processing.
 	Move string
-	// MoveFailed déplace le fichier vers ce répertoire distant en cas d'erreur de traitement.
+	// MoveFailed moves the file to this remote directory in case of processing error.
 	MoveFailed string
-	// Recursive descend dans les sous-répertoires.
+	// Recursive descends into subdirectories.
 	Recursive bool
-	// Include est une regex que les noms de fichiers doivent satisfaire pour être traités.
+	// Include is a regex that filenames must satisfy to be processed.
 	Include string
-	// Exclude est une regex ; les noms correspondants sont ignorés.
+	// Exclude is a regex; matching filenames are ignored.
 	Exclude string
 }
 
-// ParsePollingOptions lit les options consumer de polling depuis une URI parsée.
+// ParsePollingOptions reads the polling consumer options from a parsed URI.
 func ParsePollingOptions(u *url.URL) PollingOptions {
 	opts := PollingOptions{
 		Delay:        5 * time.Second,
@@ -78,8 +78,8 @@ func ParsePollingOptions(u *url.URL) PollingOptions {
 	return opts
 }
 
-// ParseFileExist lit l'option fileExist producer depuis une URI parsée.
-// Retourne FileExistOverride si absent ou non reconnu.
+// ParseFileExist reads the producer fileExist option from a parsed URI.
+// Returns FileExistOverride if absent or not recognized.
 func ParseFileExist(u *url.URL) FileExistBehavior {
 	switch FileExistBehavior(GetConfigValue(u, "fileExist")) {
 	case FileExistAppend:
@@ -93,7 +93,7 @@ func ParseFileExist(u *url.URL) FileExistBehavior {
 	}
 }
 
-// parseConnectTimeout lit le connectTimeout depuis une URI parsée (défaut : 10s).
+// parseConnectTimeout reads the connectTimeout from a parsed URI (default: 10s).
 func parseConnectTimeout(u *url.URL) time.Duration {
 	if s := GetConfigValue(u, "connectTimeout"); s != "" {
 		if d, err := time.ParseDuration(s); err == nil {

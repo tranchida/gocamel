@@ -14,46 +14,46 @@ import (
 
 // Headers constants pour MongoDB
 const (
-	CamelMongoDbDatabase    = "CamelMongoDbDatabase"    // Nom de la base de données
-	CamelMongoDbCollection  = "CamelMongoDbCollection"  // Nom de la collection
+	CamelMongoDbDatabase    = "CamelMongoDbDatabase"    // Name of the database
+	CamelMongoDbCollection  = "CamelMongoDbCollection"  // Name of the collection
 	CamelMongoDbOperation   = "CamelMongoDbOperation"   // Opération: find, findOne, insert, insertOne, save, update, remove, count
-	CamelMongoDbResultTotal = "CamelMongoDbResultTotal" // Nombre total de documents
-	CamelMongoDbOid         = "CamelMongoDbOid"         // ObjectID du document
-	CamelMongoDbCriteria    = "CamelMongoDbCriteria"    // Critères/filtre pour les opérations de recherche
-	CamelMongoDbLimit       = "CamelMongoDbLimit"       // Limite pour les opérations find
-	CamelMongoDbSkip        = "CamelMongoDbSkip"        // Nombre de documents à sauter
+	CamelMongoDbResultTotal = "CamelMongoDbResultTotal" // Total number of documents
+	CamelMongoDbOid         = "CamelMongoDbOid"         // Document ObjectID
+	CamelMongoDbCriteria    = "CamelMongoDbCriteria"    // Criteria/filter for search operations
+	CamelMongoDbLimit       = "CamelMongoDbLimit"       // Limit for find operations
+	CamelMongoDbSkip        = "CamelMongoDbSkip"        // Number of documents to skip
 	CamelMongoDbSort        = "CamelMongoDbSort"        // Tri des résultats (ex: {"field": 1} ou {"field": -1})
 )
 
-// MongoDBConnection représente une connexion MongoDB partagée.
+// MongoDBConnection represents a shared MongoDB connection.
 type MongoDBConnection struct {
 	uri      string
 	client   *mongo.Client
 	database string
 }
 
-// MongoDBComponent gère les clients MongoDB et crée des endpoints.
+// MongoDBComponent manages MongoDB clients and creates endpoints.
 type MongoDBComponent struct {
 	mu          sync.RWMutex
 	connections map[string]*MongoDBConnection // key = connection name
 	defaultConn *MongoDBConnection
 }
 
-// NewMongoDBComponent crée une nouvelle instance de MongoDBComponent.
+// NewMongoDBComponent creates a new MongoDBComponent instance.
 func NewMongoDBComponent() *MongoDBComponent {
 	return &MongoDBComponent{
 		connections: make(map[string]*MongoDBConnection),
 	}
 }
 
-// RegisterConnection enregistre une connexion MongoDB sous un nom.
+// RegisterConnection registers a MongoDB connection with a name.
 func (c *MongoDBComponent) RegisterConnection(name string, conn *MongoDBConnection) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.connections[name] = conn
 }
 
-// SetDefaultConnection définit la connexion utilisée par défaut.
+// SetDefaultConnection sets the default connection to use.
 func (c *MongoDBComponent) SetDefaultConnection(conn *MongoDBConnection) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -74,7 +74,7 @@ func (c *MongoDBComponent) lookup(name string) (*MongoDBConnection, bool) {
 	return nil, false
 }
 
-// CreateEndpoint crée un MongoDBEndpoint depuis une URI.
+// CreateEndpoint creates a MongoDBEndpoint from a URI.
 //
 // Format:
 //
@@ -86,7 +86,7 @@ func (c *MongoDBComponent) lookup(name string) (*MongoDBConnection, bool) {
 //	database       Nom de la base de données
 //	collection     Nom de la collection
 //	operation      Opération par défaut (find, findOne, insert, insertOne, save, update, remove, count)
-//	connectionRef  Nom d'une connexion enregistrée
+// Name of a registered connection
 func (c *MongoDBComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -127,7 +127,7 @@ func (c *MongoDBComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// MongoDBEndpoint représente un endpoint MongoDB configuré.
+// MongoDBEndpoint represents a configured MongoDB endpoint.
 type MongoDBEndpoint struct {
 	uri        string
 	connName   string
@@ -137,27 +137,27 @@ type MongoDBEndpoint struct {
 	connection *MongoDBConnection
 }
 
-// URI retourne l'URI de l'endpoint.
+// URI returns the endpoint URI.
 func (e *MongoDBEndpoint) URI() string { return e.uri }
 
-// CreateProducer crée un MongoDBProducer.
+// CreateProducer creates a MongoDBProducer.
 func (e *MongoDBEndpoint) CreateProducer() (Producer, error) {
 	return &MongoDBProducer{endpoint: e}, nil
 }
 
-// CreateConsumer retourne une erreur : le composant MongoDB est producer-only.
+// CreateConsumer returns an error: MongoDB component is producer-only.
 func (e *MongoDBEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return nil, fmt.Errorf("le composant mongodb ne supporte pas les consommateurs")
 }
 
-// MongoDBProducer exécute les opérations MongoDB.
+// MongoDBProducer executes MongoDB operations.
 // Thread-safe: ne stocke pas d'état mutable lié aux messages.
 type MongoDBProducer struct {
 	endpoint *MongoDBEndpoint
 	client   *mongo.Client
 }
 
-// Start démarre le producteur et établit la connexion si nécessaire.
+// Start starts the producer and establishes the connection if needed.
 func (p *MongoDBProducer) Start(ctx context.Context) error {
 	p.client = p.endpoint.connection.client
 	if p.client == nil {
@@ -167,22 +167,22 @@ func (p *MongoDBProducer) Start(ctx context.Context) error {
 }
 
 // Stop arrête le producteur.
-// Note: Le client MongoDB n'est pas fermé car il est géré par MongoDBConnection.
+// Note: The MongoDB client is not closed as it is managed by MongoDBConnection.
 func (p *MongoDBProducer) Stop() error {
 	return nil
 }
 
-// getCollection retourne la collection MongoDB à utiliser.
-// Cette méthode est thread-safe car elle calcule tout localement.
+// getCollection returns the MongoDB collection to use.
+// This method is thread-safe as it computes everything locally.
 func (p *MongoDBProducer) getCollection(exchange *Exchange) (*mongo.Collection, error) {
-	// Commence par les valeurs de l'endpoint
+	// Start with the endpoint values
 	dbName := p.endpoint.dbConfig
 	if dbName == "" {
 		dbName = p.endpoint.connection.database
 	}
 	collName := p.endpoint.collConfig
 
-	// Override via headers si présents
+	// Override via headers if present
 	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbDatabase); ok {
 		if s, ok := v.(string); ok && s != "" {
 			dbName = s
@@ -204,7 +204,7 @@ func (p *MongoDBProducer) getCollection(exchange *Exchange) (*mongo.Collection, 
 	return p.client.Database(dbName).Collection(collName), nil
 }
 
-// getOperation retourne l'opération à exécuter.
+// getOperation returns the operation to execute.
 func (p *MongoDBProducer) getOperation(exchange *Exchange) string {
 	// Priorité au header
 	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbOperation); ok {
@@ -215,7 +215,7 @@ func (p *MongoDBProducer) getOperation(exchange *Exchange) string {
 	return strings.ToLower(p.endpoint.operation)
 }
 
-// Send exécute l'opération MongoDB et remplit le message Out avec les résultats.
+// Send executes the MongoDB operation and fills the Out message with results.
 func (p *MongoDBProducer) Send(exchange *Exchange) error {
 	ctx := exchange.Context
 	if ctx == nil {
@@ -392,8 +392,8 @@ func (p *MongoDBProducer) execInsertOne(ctx context.Context, exchange *Exchange,
 }
 
 // execSave exécute un replaceOne avec upsert=true (save/upsert).
-// Si le document possède un _id, utilise replaceOne avec upsert.
-// Sinon, utilise insertOne pour créer un nouveau document.
+// If the document has an _id, use replaceOne with upsert.
+// Otherwise, use insertOne to create a new document.
 func (p *MongoDBProducer) execSave(ctx context.Context, exchange *Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
 	doc, ok := body.(map[string]interface{})
@@ -420,7 +420,7 @@ func (p *MongoDBProducer) execSave(ctx context.Context, exchange *Exchange, coll
 		return nil
 	}
 
-	// Pas d'_id: c'est un nouveau document, insère-le
+	// No _id: it is a new document, insert it
 	result, err := coll.InsertOne(ctx, doc)
 	if err != nil {
 		return fmt.Errorf("erreur lors du save (insertOne): %w", err)
@@ -457,7 +457,7 @@ func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *Exchange, co
 		if rawUpdate, exists := v["update"]; exists {
 			update = rawUpdate
 		}
-		// Si pas de "update" clé, utilise le body entier
+		// If no "update" key, use the entire body
 		if update == nil {
 			update = v
 		}
@@ -532,8 +532,8 @@ func (p *MongoDBProducer) execCount(ctx context.Context, exchange *Exchange, col
 
 // extractFilter extrait le filtre depuis le body de l'Exchange.
 // Priority au header CamelMongoDbCriteria s'il existe, sinon utilise le body.
-// Si le body est nil ou string vide, retourne bson.M{} (tous les documents).
-// Si le body est une string JSON invalide ou un type non supporté, retourne une erreur.
+// If the body is nil or empty string, return bson.M{} (all documents).
+// If the body is an invalid JSON string or unsupported type, return an error.
 func (p *MongoDBProducer) extractFilter(exchange *Exchange) (interface{}, error) {
 	// Priorité au header de critère s'il existe
 	if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
@@ -567,7 +567,7 @@ func (p *MongoDBProducer) extractFilter(exchange *Exchange) (interface{}, error)
 	}
 }
 
-// CreateMongoDBConnection crée une nouvelle connexion MongoDB.
+// CreateMongoDBConnection creates a new MongoDB connection.
 // Cette fonction doit être appelée par l'utilisateur avant d'utiliser le composant.
 //
 // Exemple:

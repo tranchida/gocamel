@@ -18,15 +18,15 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// SFTPComponent représente le composant SFTP
+// SFTPComponent represents the SFTP component
 type SFTPComponent struct{}
 
-// NewSFTPComponent crée une nouvelle instance de SFTPComponent
+// NewSFTPComponent creates a new SFTPComponent
 func NewSFTPComponent() *SFTPComponent {
 	return &SFTPComponent{}
 }
 
-// CreateEndpoint crée un nouvel endpoint SFTP
+// CreateEndpoint creates a new SFTP endpoint
 func (c *SFTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -41,7 +41,7 @@ func (c *SFTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// SFTPEndpoint représente un endpoint SFTP
+// SFTPEndpoint represents an SFTP endpoint
 type SFTPEndpoint struct {
 	uri            string
 	url            *url.URL
@@ -50,7 +50,7 @@ type SFTPEndpoint struct {
 	disconnect     bool
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the endpoint URI
 func (e *SFTPEndpoint) URI() string {
 	return e.uri
 }
@@ -66,7 +66,7 @@ func (e *SFTPEndpoint) getHostKeyCallback(u *url.URL) (ssh.HostKeyCallback, erro
 	return knownhosts.New(knownHostsFile)
 }
 
-// connect établit une connexion SSH + SFTP
+// connect establishes an SSH + SFTP connection
 func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 	host := e.url.Host
 	if !strings.Contains(host, ":") {
@@ -116,12 +116,12 @@ func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 	return sshClient, sftpClient, nil
 }
 
-// CreateProducer crée un producteur SFTP
+// CreateProducer creates an SFTP producer
 func (e *SFTPEndpoint) CreateProducer() (Producer, error) {
 	return &SFTPProducer{endpoint: e, fileExist: ParseFileExist(e.url)}, nil
 }
 
-// CreateConsumer crée un consommateur SFTP
+// CreateConsumer creates an SFTP consumer
 func (e *SFTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &SFTPConsumer{
 		endpoint:  e,
@@ -134,7 +134,7 @@ func (e *SFTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 // Producer
 // ---------------------------------------------------------------------------
 
-// SFTPProducer représente un producteur SFTP
+// SFTPProducer represents an SFTP producer
 type SFTPProducer struct {
 	endpoint   *SFTPEndpoint
 	fileExist  FileExistBehavior
@@ -190,7 +190,7 @@ func (p *SFTPProducer) releaseClients(sshClient *ssh.Client, sftpClient *sftp.Cl
 	}
 }
 
-// Send envoie le contenu de l'échange vers le serveur SFTP.
+// Send sends the exchange content to the SFTP server.
 func (p *SFTPProducer) Send(exchange *Exchange) error {
 	sshClient, sftpClient, err := p.getClients()
 	if err != nil {
@@ -235,7 +235,7 @@ func (p *SFTPProducer) Send(exchange *Exchange) error {
 			return fmt.Errorf("erreur lecture du corps: %w", err)
 		}
 	default:
-		return fmt.Errorf("type de corps non supporté par SFTP: %T", exchange.GetIn().GetBody())
+		return fmt.Errorf("unsupported body type for SFTP: %T", exchange.GetIn().GetBody())
 	}
 
 	if p.fileExist == FileExistAppend {
@@ -247,7 +247,7 @@ func (p *SFTPProducer) Send(exchange *Exchange) error {
 	}
 
 	if dir := filepath.Dir(path); dir != "." && dir != "/" {
-		sftpClient.MkdirAll(dir) // ignore l'erreur si le répertoire existe
+		sftpClient.MkdirAll(dir) // ignore the error if the directory exists
 	}
 
 	file, err := sftpClient.Create(path)
@@ -266,14 +266,14 @@ func (p *SFTPProducer) Send(exchange *Exchange) error {
 // Consumer
 // ---------------------------------------------------------------------------
 
-// SFTPConsumer représente un consommateur SFTP
+// SFTPConsumer represents an SFTP consumer
 type SFTPConsumer struct {
 	endpoint   *SFTPEndpoint
 	processor  Processor
 	opts       PollingOptions
 	cancel     context.CancelFunc
-	sshClient  *ssh.Client  // connexion persistante (disconnect=false)
-	sftpClient *sftp.Client // connexion persistante (disconnect=false)
+	sshClient  *ssh.Client  // persistent connection (disconnect=false)
+	sftpClient *sftp.Client // persistent connection (disconnect=false)
 }
 
 func (c *SFTPConsumer) Start(ctx context.Context) error {
@@ -448,7 +448,7 @@ func (c *SFTPConsumer) Stop() error {
 	return nil
 }
 
-// moveSFTPFile renomme/déplace un fichier sur le serveur SFTP.
+// moveSFTPFile renames/moves a file on the SFTP server.
 func moveSFTPFile(client *sftp.Client, srcPath, destDir string) {
 	destPath := destDir + "/" + filepath.Base(srcPath)
 	if err := client.MkdirAll(destDir); err == nil || strings.Contains(err.Error(), "exist") {

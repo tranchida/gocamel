@@ -16,8 +16,8 @@ func ParseURI(uri string) (*url.URL, error) {
 	return u, nil
 }
 
-// Interpolate remplace les variables de type ${header.name}, ${property.name} ou ${body} 
-// dans une chaîne par les valeurs correspondantes de l'échange.
+// Interpolate replaces variables of type ${header.name}, ${property.name} or ${body}
+// in a string with corresponding values from the exchange.
 func Interpolate(text string, exchange *Exchange) string {
 	re := regexp.MustCompile(`\${(header|property|body)(?:\.([^}]+))?}`)
 	return re.ReplaceAllStringFunc(text, func(match string) string {

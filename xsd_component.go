@@ -9,20 +9,20 @@ import (
 	"github.com/lestrrat-go/libxml2/xsd"
 )
 
-// XsdComponent représente le composant XSD
+// XsdComponent represents the XSD component
 type XsdComponent struct{}
 
-// NewXsdComponent crée une nouvelle instance de XsdComponent
+// NewXsdComponent creates a new XsdComponent
 func NewXsdComponent() *XsdComponent {
 	return &XsdComponent{}
 }
 
-// CreateEndpoint crée un nouvel endpoint XSD
+// CreateEndpoint creates a new endpoint XSD
 func (c *XsdComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	// Format de l'URI: xsd:chemin/vers/schema.xsd
+	// Format de l'URI: xsd:path/vers/schema.xsd
 	path := strings.TrimPrefix(uri, "xsd:")
 	if path == "" {
-		return nil, fmt.Errorf("chemin de fichier manquant dans l'URI: %s", uri)
+		return nil, fmt.Errorf("file path missing in URI: %s", uri)
 	}
 
 	return &XsdEndpoint{
@@ -32,14 +32,14 @@ func (c *XsdComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// XsdEndpoint représente un endpoint XSD
+// XsdEndpoint represents a XSD endpoint
 type XsdEndpoint struct {
 	uri  string
 	path string
 	comp *XsdComponent
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the URI de l'endpoint
 func (e *XsdEndpoint) URI() string {
 	return e.uri
 }
@@ -51,29 +51,29 @@ func (e *XsdEndpoint) CreateProducer() (Producer, error) {
 	}, nil
 }
 
-// CreateConsumer n'est pas supporté pour le composant XSD
+// CreateConsumer n'est pas supported for le composant XSD
 func (e *XsdEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
-	return nil, fmt.Errorf("le composant XSD ne supporte pas les consommateurs")
+	return nil, fmt.Errorf("XSD component does not support consumers")
 }
 
-// XsdProducer représente un producteur XSD
+// XsdProducer represents a producteur XSD
 type XsdProducer struct {
 	path   string
 	schema *xsd.Schema
 }
 
-// Start démarre le producteur XSD
+// Start starts the producteur XSD
 func (p *XsdProducer) Start(ctx context.Context) error {
 	// Parsing du schéma XSD
 	schema, err := xsd.ParseFromFile(p.path)
 	if err != nil {
-		return fmt.Errorf("erreur lors du parsing du fichier XSD: %v", err)
+		return fmt.Errorf("error reading XSD file: %v", err)
 	}
 	p.schema = schema
 	return nil
 }
 
-// Stop arrête le producteur XSD
+// Stop stops the producteur XSD
 func (p *XsdProducer) Stop() error {
 	if p.schema != nil {
 		p.schema.Free()
@@ -85,10 +85,10 @@ func (p *XsdProducer) Stop() error {
 // Send effectue la validation XSD
 func (p *XsdProducer) Send(exchange *Exchange) error {
 	if p.schema == nil {
-		return fmt.Errorf("le producteur XSD n'est pas démarré ou le schéma est invalide")
+		return fmt.Errorf("XSD producer is not started or schema is invalid")
 	}
 
-	// Récupération du XML à valider
+	// Récupération du XML à validr
 	var xmlContent []byte
 	switch body := exchange.GetIn().GetBody().(type) {
 	case []byte:
@@ -96,19 +96,19 @@ func (p *XsdProducer) Send(exchange *Exchange) error {
 	case string:
 		xmlContent = []byte(body)
 	default:
-		return fmt.Errorf("type de corps non supporté pour la validation XSD: %T", exchange.GetIn().GetBody())
+		return fmt.Errorf("unsupported body type for XSD validation: %T", exchange.GetIn().GetBody())
 	}
 
-	// Parsing du document XML
+	// Parsing du documents XML
 	doc, err := libxml2.Parse(xmlContent)
 	if err != nil {
-		return fmt.Errorf("erreur lors du parsing du document XML: %v", err)
+		return fmt.Errorf("error parsing XML document: %v", err)
 	}
 	defer doc.Free()
 
-	// Validation
+	// validation
 	if err := p.schema.Validate(doc); err != nil {
-		return fmt.Errorf("erreur de validation XSD: %v", err)
+		return fmt.Errorf("XSD validation error: %v", err)
 	}
 
 	return nil

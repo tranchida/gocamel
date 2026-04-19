@@ -61,7 +61,7 @@ const (
 	CamelAuthorizationPolicy  = "CamelAuthorizationPolicy"  // Politique d'autorisation
 )
 
-// Exchange représente le contexte d'échange d'un message dans une route
+// Exchange represents the exchange context of a message in a route
 type Exchange struct {
 	Context    context.Context
 	In         *Message
@@ -72,7 +72,7 @@ type Exchange struct {
 	Error      error
 }
 
-// NewExchange crée une nouvelle instance d'Exchange
+// NewExchange creates a new Exchange instance
 func NewExchange(ctx context.Context) *Exchange {
 	now := time.Now()
 	return &Exchange{

@@ -5,20 +5,20 @@ import (
 	"sync"
 )
 
-// MemoryAggregationRepository est une implémentation en mémoire de AggregationRepository.
+// MemoryAggregationRepository is an in-memory implementation of AggregationRepository.
 type MemoryAggregationRepository struct {
 	mu    sync.RWMutex
 	store map[string]*Exchange
 }
 
-// NewMemoryAggregationRepository crée une nouvelle instance de MemoryAggregationRepository.
+// NewMemoryAggregationRepository creates a new MemoryAggregationRepository instance.
 func NewMemoryAggregationRepository() *MemoryAggregationRepository {
 	return &MemoryAggregationRepository{
 		store: make(map[string]*Exchange),
 	}
 }
 
-// Add ajoute ou met à jour un échange dans le repository.
+// Add adds or updates an exchange in the repository.
 func (r *MemoryAggregationRepository) Add(ctx context.Context, key string, exchange *Exchange) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -26,7 +26,7 @@ func (r *MemoryAggregationRepository) Add(ctx context.Context, key string, excha
 	return nil
 }
 
-// Get récupère un échange par sa clé. Retourne nil s'il n'existe pas.
+// Get retrieves an exchange by its key. Returns nil if it doesn't exist.
 func (r *MemoryAggregationRepository) Get(ctx context.Context, key string) (*Exchange, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -37,7 +37,7 @@ func (r *MemoryAggregationRepository) Get(ctx context.Context, key string) (*Exc
 	return exchange, nil
 }
 
-// Remove supprime un échange du repository.
+// Remove removes an exchange from the repository.
 func (r *MemoryAggregationRepository) Remove(ctx context.Context, key string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

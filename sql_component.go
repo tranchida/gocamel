@@ -13,44 +13,44 @@ import (
 // En-têtes SQL posés ou consommés sur les Exchange.
 // Correspondent aux en-têtes du composant Apache Camel SQL.
 const (
-	SqlQuery       = "CamelSqlQuery"       // Surcharge de la requête configurée dans l'URI
-	SqlSelect      = "CamelSqlQuery"       // Alias: surcharge de la requête (body utilisable comme paramètres)
-	SqlParameters  = "CamelSqlParameters"  // Paramètres positionnels ([]any)
-	SqlRowCount    = "CamelSqlRowCount"    // Nombre de lignes affectées ou retournées
-	SqlColumnNames = "CamelSqlColumnNames" // Noms des colonnes retournées pour un SELECT
+	SqlQuery       = "CamelSqlQuery"       // Overrides the query configured in the URI
+	SqlSelect      = "CamelSqlQuery"       // Alias: query override (body can be used as parameters)
+	SqlParameters  = "CamelSqlParameters"  // Positional parameters ([]any)
+	SqlRowCount    = "CamelSqlRowCount"    // Number of rows affected or returned
+	SqlColumnNames = "CamelSqlColumnNames" // Column names returned by a SELECT
 )
 
-// SQLOutputType contrôle la forme du body retourné par un SELECT.
+// SQLOutputType controls the shape of the body returned by a SELECT.
 type SQLOutputType string
 
 const (
-	SQLOutputSelectList SQLOutputType = "SelectList" // []map[string]any (défaut)
-	SQLOutputSelectOne  SQLOutputType = "SelectOne"  // map[string]any (première ligne)
+	SQLOutputSelectList SQLOutputType = "SelectList" // []map[string]any (default)
+	SQLOutputSelectOne  SQLOutputType = "SelectOne"  // map[string]any (first row)
 )
 
-// SQLComponent gère les endpoints SQL et les datasources partagées.
+// SQLComponent manages SQL endpoints and shared datasources.
 //
-// L'utilisateur enregistre ses *sql.DB via RegisterDataSource() ou SetDefaultDataSource()
-// avant de construire une route, puis référence la datasource par son nom dans l'URI.
+// The user registers their *sql.DB via RegisterDataSource() or SetDefaultDataSource()
+// before building a route, then references the datasource by its name in the URI.
 type SQLComponent struct {
 	mu                sync.RWMutex
 	dataSources       map[string]*sql.DB
 	defaultDataSource *sql.DB
 }
 
-// NewSQLComponent crée une nouvelle instance de SQLComponent.
+// NewSQLComponent creates a new SQLComponent instance.
 func NewSQLComponent() *SQLComponent {
 	return &SQLComponent{dataSources: make(map[string]*sql.DB)}
 }
 
-// RegisterDataSource enregistre une connexion *sql.DB sous un nom.
+// RegisterDataSource registers a *sql.DB connection under a name.
 func (c *SQLComponent) RegisterDataSource(name string, db *sql.DB) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.dataSources[name] = db
 }
 
-// SetDefaultDataSource définit la connexion utilisée quand aucune datasource nommée ne correspond.
+// SetDefaultDataSource sets the connection used when no named datasource matches.
 func (c *SQLComponent) SetDefaultDataSource(db *sql.DB) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -71,7 +71,7 @@ func (c *SQLComponent) lookup(name string) (*sql.DB, bool) {
 	return nil, false
 }
 
-// CreateEndpoint crée un SQLEndpoint depuis une URI.
+// CreateEndpoint creates an SQLEndpoint from a URI.
 //
 // Format:
 //
@@ -80,15 +80,15 @@ func (c *SQLComponent) lookup(name string) (*sql.DB, bool) {
 //
 // Options:
 //
-//	query          Requête SQL (obligatoire)
-//	dataSourceRef  Nom d'une datasource enregistrée (sinon on utilise le host de l'URI)
-//	batch          Active le mode batch : paramètres = [][]any (défaut: false)
-//	outputType     SelectList (défaut) ou SelectOne
-//	transacted     true pour englober la requête dans une transaction (défaut: false)
+//	query          SQL query (required)
+//	dataSourceRef  Name of a registered datasource (otherwise uses the host of the URI)
+//	batch          Enables batch mode: parameters = [][]any (default: false)
+//	outputType     SelectList (default) or SelectOne
+//	transacted     true to wrap the query in a transaction (default: false)
 func (c *SQLComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
-		return nil, fmt.Errorf("URI sql invalide: %w", err)
+		return nil, fmt.Errorf("invalid sql URI: %w", err)
 	}
 
 	name := u.Host
@@ -104,12 +104,12 @@ func (c *SQLComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 	query := GetConfigValue(u, "query")
 	if query == "" {
-		return nil, fmt.Errorf("option 'query' requise dans l'URI sql: %s", uri)
+		return nil, fmt.Errorf("required option 'query' missing in sql URI: %s", uri)
 	}
 
 	db, ok := c.lookup(name)
 	if !ok {
-		return nil, fmt.Errorf("datasource '%s' non trouvée: enregistrez-la via RegisterDataSource() ou SetDefaultDataSource()", name)
+		return nil, fmt.Errorf("datasource '%s' not found: register it via RegisterDataSource() or SetDefaultDataSource()", name)
 	}
 
 	outputType := SQLOutputSelectList
@@ -142,7 +142,7 @@ func (c *SQLComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// SQLEndpoint représente un endpoint SQL configuré.
+// SQLEndpoint represents a configured SQL endpoint.
 type SQLEndpoint struct {
 	uri        string
 	name       string
@@ -153,17 +153,17 @@ type SQLEndpoint struct {
 	db         *sql.DB
 }
 
-// URI retourne l'URI de l'endpoint.
+// URI returns the endpoint URI.
 func (e *SQLEndpoint) URI() string { return e.uri }
 
-// CreateProducer crée un SQLProducer.
+// CreateProducer creates a SQLProducer.
 func (e *SQLEndpoint) CreateProducer() (Producer, error) {
 	return &SQLProducer{endpoint: e}, nil
 }
 
-// CreateConsumer retourne une erreur : le composant SQL est producer-only pour l'instant.
+// CreateConsumer returns an error: the sql component is producer-only for now.
 func (e *SQLEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
-	return nil, fmt.Errorf("le composant sql ne supporte pas les consommateurs")
+	return nil, fmt.Errorf("the sql component does not support consumers")
 }
 
 // SQLProducer exécute la requête configurée sur l'Exchange.
@@ -171,29 +171,29 @@ type SQLProducer struct {
 	endpoint *SQLEndpoint
 }
 
-// Start ne fait rien : la connexion est gérée par l'utilisateur.
+// Start does nothing: the connection is managed by the user.
 func (p *SQLProducer) Start(ctx context.Context) error { return nil }
 
-// Stop ne fait rien : la connexion est gérée par l'utilisateur.
+// Stop does nothing: the connection is managed by the user.
 func (p *SQLProducer) Stop() error { return nil }
 
-// Send exécute la requête SQL et remplit le message Out avec les résultats.
+// Send executes the SQL query and fills the Out message with the results.
 //
-// Pour un SELECT : Out.Body = []map[string]any (ou map[string]any avec outputType=SelectOne).
-// Pour INSERT/UPDATE/DELETE : Out.Body = nombre de lignes affectées (int64).
+// For a SELECT: Out.Body = []map[string]any (or map[string]any with outputType=SelectOne).
+// For INSERT/UPDATE/DELETE: Out.Body = number of affected rows (int64).
 func (p *SQLProducer) Send(exchange *Exchange) error {
 	query := p.endpoint.query
 	if v, ok := exchange.GetIn().GetHeader(SqlQuery); ok {
-		if s, ok := v.(string); ok && s != "" {
+		if s, ok := v.(string); ok {
 			query = s
 		}
 	}
-	query = Interpolate(query, exchange)
 
 	ctx := exchange.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	query = Interpolate(query, exchange)
 
 	if p.endpoint.batch {
 		return p.execBatch(ctx, exchange, query)

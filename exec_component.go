@@ -12,21 +12,21 @@ import (
 	"time"
 )
 
-// Constantes de headers pour le composant exec
+// Header constants for the exec component
 const (
-	CamelExecCommandExecutable = "CamelExecCommandExecutable" // Commande exécutable (override)
-	CamelExecCommandArgs       = "CamelExecCommandArgs"       // Arguments de la commande (override)
-	CamelExecCommandWorkingDir = "CamelExecCommandWorkingDir" // Répertoire de travail (override)
-	CamelExecCommandTimeout    = "CamelExecCommandTimeout"    // Timeout en ms (override)
-	CamelExecExitValue         = "CamelExecExitValue"         // Code de sortie du processus
-	CamelExecStdout            = "CamelExecStdout"            // Contenu de stdout
-	CamelExecStderr            = "CamelExecStderr"            // Contenu de stderr
+	CamelExecCommandExecutable = "CamelExecCommandExecutable" // Executable command (override)
+	CamelExecCommandArgs       = "CamelExecCommandArgs"       // Command arguments (override)
+	CamelExecCommandWorkingDir = "CamelExecCommandWorkingDir" // Working directory (override)
+	CamelExecCommandTimeout    = "CamelExecCommandTimeout"    // Timeout in ms (override)
+	CamelExecExitValue         = "CamelExecExitValue"         // Process exit code
+	CamelExecStdout            = "CamelExecStdout"            // Stdout content
+	CamelExecStderr            = "CamelExecStderr"            // Stderr content
 )
 
-// ExecComponent représente le composant exec
+// ExecComponent represents the exec component
 type ExecComponent struct{}
 
-// NewExecComponent crée une nouvelle instance de ExecComponent
+// NewExecComponent creates a new ExecComponent
 func NewExecComponent() *ExecComponent {
 	return &ExecComponent{}
 }
@@ -36,7 +36,7 @@ func NewExecComponent() *ExecComponent {
 func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	parsedURL, err := url.Parse(uri)
 	if err != nil {
-		return nil, fmt.Errorf("URI exec invalide: %w", err)
+		return nil, fmt.Errorf("URI exec invalid: %w", err)
 	}
 
 	executable := parsedURL.Opaque
@@ -44,7 +44,7 @@ func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		executable = parsedURL.Host
 	}
 	if executable == "" {
-		return nil, fmt.Errorf("l'exécutable est requis dans l'URI exec: %s", uri)
+		return nil, fmt.Errorf("executable is required in exec URI: %s", uri)
 	}
 
 	endpoint := &ExecEndpoint{
@@ -82,7 +82,7 @@ func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	return endpoint, nil
 }
 
-// ExecEndpoint représente un endpoint de type exec
+// ExecEndpoint represents an exec endpoint
 type ExecEndpoint struct {
 	uri              string
 	executable       string
@@ -93,7 +93,7 @@ type ExecEndpoint struct {
 	useStderrOnEmpty bool
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the endpoint URI
 func (e *ExecEndpoint) URI() string {
 	return e.uri
 }
@@ -103,27 +103,27 @@ func (e *ExecEndpoint) CreateProducer() (Producer, error) {
 	return &ExecProducer{endpoint: e}, nil
 }
 
-// CreateConsumer n'est pas supporté pour le composant exec
+// CreateConsumer n'est pas supported for le composant exec
 func (e *ExecEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return nil, fmt.Errorf("le composant exec ne supporte pas les consommateurs")
 }
 
-// ExecProducer exécute une commande système
+// ExecProducer executesune commande système
 type ExecProducer struct {
 	endpoint *ExecEndpoint
 }
 
-// Start démarre le producteur exec
+// Start starts the producteur exec
 func (p *ExecProducer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop arrête le producteur exec
+// Stop stops the producteur exec
 func (p *ExecProducer) Stop() error {
 	return nil
 }
 
-// Send exécute la commande et met le résultat dans l'échange
+// Send executes commande et met le results in l'échange
 func (p *ExecProducer) Send(exchange *Exchange) error {
 	// Résolution de l'exécutable (header > URI)
 	executable := p.endpoint.executable
@@ -144,7 +144,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Résolution du répertoire de travail (header > URI)
+	// Résolution du directory de travail (header > URI)
 	workingDir := p.endpoint.workingDir
 	if v, ok := exchange.GetHeader(CamelExecCommandWorkingDir); ok {
 		if s, ok := v.(string); ok && s != "" {
@@ -165,7 +165,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Construction du contexte avec timeout éventuel
+	// Construction du contexte with timeout éventuel
 	ctx := exchange.Context
 	if timeoutMs > 0 {
 		var cancel context.CancelFunc
@@ -179,7 +179,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		cmd.Dir = workingDir
 	}
 
-	// Stdin depuis le corps du message
+	// Stdin from le body du message
 	switch body := exchange.GetIn().GetBody().(type) {
 	case []byte:
 		cmd.Stdin = bytes.NewReader(body)
@@ -201,38 +201,38 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 	stdoutStr := stdoutBuf.String()
 	stderrStr := stderrBuf.String()
 
-	// Si outFile est défini, lire le résultat depuis ce fichier
+	// If outFile is defined, read the results from this file
 	if p.endpoint.outFile != "" {
 		data, err := os.ReadFile(p.endpoint.outFile)
 		if err != nil {
-			return fmt.Errorf("erreur lors de la lecture du fichier de sortie %s: %w", p.endpoint.outFile, err)
+			return fmt.Errorf("error reading output file %s: %w", p.endpoint.outFile, err)
 		}
 		stdoutStr = string(data)
 	}
 
-	// Définition des headers de sortie
+	// Setting output headers
 	exchange.GetIn().SetHeader(CamelExecExitValue, exitValue)
 	exchange.GetIn().SetHeader(CamelExecStdout, stdoutStr)
 	exchange.GetIn().SetHeader(CamelExecStderr, stderrStr)
 
-	// Définition du corps : stdout, ou stderr si stdout vide et useStderrOnEmpty
+	// Setting body: stdout, or stderr if stdout is empty and useStderrOnEmpty
 	resultBody := stdoutStr
 	if resultBody == "" && p.endpoint.useStderrOnEmpty {
 		resultBody = stderrStr
 	}
 	exchange.GetIn().SetBody(resultBody)
 
-	// On ne remonte une erreur que si la commande a échoué ET que ce n'est pas
-	// simplement un code de sortie non-zéro (comportement Camel : exitValue est
-	// exposé dans le header, l'appelant décide quoi en faire).
+	// Only return an error if the command failed AND it is not
+	// just a non-zero exit code (Camel behavior: exitValue is
+	// exposé in le header, l'appelant décide quoi en faire).
 	if runErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("exec: timeout dépassé pour la commande %q: %w", executable, ctx.Err())
+			return fmt.Errorf("exec: timeout exceeded for command %q: %w", executable, ctx.Err())
 		}
-		// ExitError = code de sortie non-zéro → pas une erreur fatale, on laisse
+		// ExitError = non-zero exit code -> not a fatal error, let
 		// l'appelant inspecter CamelExecExitValue
 		if _, isExitErr := runErr.(*exec.ExitError); !isExitErr {
-			return fmt.Errorf("exec: erreur lors de l'exécution de %q: %w", executable, runErr)
+			return fmt.Errorf("exec: error during execution of %q: %w", executable, runErr)
 		}
 	}
 

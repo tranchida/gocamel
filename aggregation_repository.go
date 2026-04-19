@@ -2,14 +2,14 @@ package gocamel
 
 import "context"
 
-// AggregationRepository définit l'interface pour stocker les échanges en cours d'agrégation.
+// AggregationRepository defines the interface for storing exchanges being aggregated.
 type AggregationRepository interface {
-	// Add ajoute ou met à jour un échange dans le repository.
+	// Add adds or updates an exchange in the repository.
 	Add(ctx context.Context, key string, exchange *Exchange) error
 
-	// Get récupère un échange par sa clé de corrélation. Retourne (nil, nil) s'il n'existe pas.
+	// Get retrieves an exchange by its correlation key. Returns (nil, nil) if it doesn't exist.
 	Get(ctx context.Context, key string) (*Exchange, error)
 
-	// Remove supprime un échange du repository.
+	// Remove removes an exchange from the repository.
 	Remove(ctx context.Context, key string) error
 }

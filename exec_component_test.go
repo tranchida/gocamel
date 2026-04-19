@@ -162,11 +162,11 @@ func TestExecProducer_Send_OutFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	outFile := filepath.Join(tmpDir, "output.txt")
 
-	// Écrire dans outFile via sh -c
+	// Write to outFile via sh -c
 	ep := &ExecEndpoint{
 		uri:        "exec:sh",
 		executable: "sh",
-		args:       []string{"-c", "echo 'fichier de sortie' > " + outFile},
+		args:       []string{"-c", "echo 'output file content' > " + outFile},
 		outFile:    outFile,
 	}
 	producer := &ExecProducer{endpoint: ep}
@@ -179,7 +179,7 @@ func TestExecProducer_Send_OutFile(t *testing.T) {
 
 	body, ok := exchange.GetIn().GetBody().(string)
 	require.True(t, ok)
-	assert.Contains(t, body, "fichier de sortie")
+	assert.Contains(t, body, "output file")
 }
 
 func TestExecProducer_Send_Timeout(t *testing.T) {
@@ -273,7 +273,7 @@ func TestExecProducer_Send_OutFileMissing(t *testing.T) {
 	exchange := NewExchange(context.Background())
 	err := producer.Send(exchange)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "fichier de sortie")
+	assert.Contains(t, err.Error(), "output file")
 }
 
 func TestExecComponent_Integration_Route(t *testing.T) {

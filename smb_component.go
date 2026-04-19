@@ -15,15 +15,15 @@ import (
 	"github.com/hirochachacha/go-smb2"
 )
 
-// SMBComponent représente le composant SMB
+// SMBComponent represents the SMB component
 type SMBComponent struct{}
 
-// NewSMBComponent crée une nouvelle instance de SMBComponent
+// NewSMBComponent creates a new SMBComponent
 func NewSMBComponent() *SMBComponent {
 	return &SMBComponent{}
 }
 
-// CreateEndpoint crée un nouvel endpoint SMB
+// CreateEndpoint creates a new SMB endpoint
 func (c *SMBComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -38,7 +38,7 @@ func (c *SMBComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// SMBEndpoint représente un endpoint SMB
+// SMBEndpoint represents an SMB endpoint
 type SMBEndpoint struct {
 	uri            string
 	url            *url.URL
@@ -47,7 +47,7 @@ type SMBEndpoint struct {
 	disconnect     bool
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the endpoint URI
 func (e *SMBEndpoint) URI() string {
 	return e.uri
 }
@@ -70,7 +70,7 @@ func (sc *smbConn) close() {
 	}
 }
 
-// connect établit une connexion SMB
+// connect establishes an SMB connection
 func (e *SMBEndpoint) connect() (*smbConn, error) {
 	host := e.url.Host
 	if !strings.Contains(host, ":") {
@@ -113,7 +113,7 @@ func (e *SMBEndpoint) connect() (*smbConn, error) {
 	return &smbConn{tcp: tcp, session: session, share: share}, nil
 }
 
-// shareName retourne le nom du partage et le chemin relatif à ce partage.
+// shareName returns the share name and the relative path within that share.
 func (e *SMBEndpoint) shareName() (string, string) {
 	parts := strings.SplitN(strings.TrimPrefix(e.url.Path, "/"), "/", 2)
 	if len(parts) == 0 || parts[0] == "" {
@@ -125,18 +125,18 @@ func (e *SMBEndpoint) shareName() (string, string) {
 	return parts[0], parts[1]
 }
 
-// getFilePath retourne le chemin du fichier/répertoire relatif au partage.
+// getFilePath returns the file/directory path relative to the share.
 func (e *SMBEndpoint) getFilePath() string {
 	_, p := e.shareName()
 	return strings.ReplaceAll(p, "/", "\\")
 }
 
-// CreateProducer crée un producteur SMB
+// CreateProducer creates an SMB producer
 func (e *SMBEndpoint) CreateProducer() (Producer, error) {
 	return &SMBProducer{endpoint: e, fileExist: ParseFileExist(e.url)}, nil
 }
 
-// CreateConsumer crée un consommateur SMB
+// CreateConsumer creates an SMB consumer
 func (e *SMBEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &SMBConsumer{
 		endpoint:  e,
@@ -149,7 +149,7 @@ func (e *SMBEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 // Producer
 // ---------------------------------------------------------------------------
 
-// SMBProducer représente un producteur SMB
+// SMBProducer represents an SMB producer
 type SMBProducer struct {
 	endpoint  *SMBEndpoint
 	fileExist FileExistBehavior
@@ -191,7 +191,7 @@ func (p *SMBProducer) releaseConn(sc *smbConn) {
 	}
 }
 
-// Send envoie le contenu de l'échange vers le partage SMB.
+// Send sends the exchange content to the SMB share.
 func (p *SMBProducer) Send(exchange *Exchange) error {
 	sc, err := p.getConn()
 	if err != nil {
@@ -231,7 +231,7 @@ func (p *SMBProducer) Send(exchange *Exchange) error {
 			return fmt.Errorf("erreur lecture du corps: %w", err)
 		}
 	default:
-		return fmt.Errorf("type de corps non supporté par SMB: %T", exchange.GetIn().GetBody())
+		return fmt.Errorf("unsupported body type for SMB: %T", exchange.GetIn().GetBody())
 	}
 
 	if p.fileExist == FileExistAppend {
@@ -242,7 +242,7 @@ func (p *SMBProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Créer les répertoires parents si nécessaire
+	// Create parent directories if necessary
 	smbMkdirAll(sc.share, filepath.Dir(path))
 
 	file, err := sc.share.Create(path)
@@ -261,7 +261,7 @@ func (p *SMBProducer) Send(exchange *Exchange) error {
 // Consumer
 // ---------------------------------------------------------------------------
 
-// SMBConsumer représente un consommateur SMB
+// SMBConsumer represents an SMB consumer
 type SMBConsumer struct {
 	endpoint  *SMBEndpoint
 	processor Processor
@@ -328,7 +328,7 @@ type smbFile struct {
 	path string
 }
 
-// listSMBFiles liste les fichiers (récursivement si opts.Recursive) en appliquant include/exclude.
+// listSMBFiles lists files (recursively if opts.Recursive) applying include/exclude filters.
 func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile {
 	entries, err := share.ReadDir(dirPath)
 	if err != nil {
@@ -426,7 +426,7 @@ func (c *SMBConsumer) Stop() error {
 	return nil
 }
 
-// moveSMBFile renomme/déplace un fichier sur le partage SMB.
+// moveSMBFile renames/moves a file on the SMB share.
 func moveSMBFile(share *smb2.Share, srcPath, destDir string) {
 	destDir = strings.ReplaceAll(destDir, "/", "\\")
 	smbMkdirAll(share, destDir)
@@ -436,7 +436,7 @@ func moveSMBFile(share *smb2.Share, srcPath, destDir string) {
 	}
 }
 
-// smbMkdirAll crée récursivement les répertoires sur un partage SMB.
+// smbMkdirAll recursively creates directories on an SMB share.
 func smbMkdirAll(share *smb2.Share, path string) {
 	path = strings.ReplaceAll(path, "/", "\\")
 	parts := strings.Split(path, "\\")
@@ -450,6 +450,6 @@ func smbMkdirAll(share *smb2.Share, path string) {
 		} else {
 			current = current + "\\" + part
 		}
-		share.Mkdir(current, 0755) // ignore l'erreur si le répertoire existe déjà
+		share.Mkdir(current, 0755) // ignore error if directory already exists
 	}
 }

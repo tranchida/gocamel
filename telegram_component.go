@@ -13,15 +13,15 @@ const (
 	TelegramChatId = "CamelTelegramChatId"
 )
 
-// TelegramComponent représente le composant Telegram
+// TelegramComponent represents the Telegram component
 type TelegramComponent struct{}
 
-// NewTelegramComponent crée une nouvelle instance de TelegramComponent
+// NewTelegramComponent creates a new TelegramComponent
 func NewTelegramComponent() *TelegramComponent {
 	return &TelegramComponent{}
 }
 
-// CreateEndpoint crée un nouvel endpoint Telegram
+// CreateEndpoint creates a new endpoint Telegram
 func (c *TelegramComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -35,14 +35,14 @@ func (c *TelegramComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}, nil
 }
 
-// TelegramEndpoint représente un endpoint Telegram
+// TelegramEndpoint represents a Telegram endpoint
 type TelegramEndpoint struct {
 	uri  string
 	url  *url.URL
 	comp *TelegramComponent
 }
 
-// URI retourne l'URI de l'endpoint
+// URI returns the URI de l'endpoint
 func (e *TelegramEndpoint) URI() string {
 	return e.uri
 }
@@ -50,12 +50,12 @@ func (e *TelegramEndpoint) URI() string {
 func (e *TelegramEndpoint) getBot() (*tgbotapi.BotAPI, error) {
 	token := GetConfigValue(e.url, "authorizationToken")
 	if token == "" {
-		return nil, fmt.Errorf("authorizationToken manquant pour Telegram")
+		return nil, fmt.Errorf("authorizationToken missing for Telegram")
 	}
 
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lors de la création du bot Telegram: %w", err)
+		return nil, fmt.Errorf("error during la creation du bot Telegram: %w", err)
 	}
 
 	return bot, nil
@@ -76,7 +76,7 @@ func (e *TelegramEndpoint) CreateConsumer(processor Processor) (Consumer, error)
 	}, nil
 }
 
-// TelegramProducer représente un producteur Telegram
+// TelegramProducer represents a producteur Telegram
 type TelegramProducer struct {
 	endpoint *TelegramEndpoint
 }
@@ -96,7 +96,7 @@ func (p *TelegramProducer) Send(exchange *Exchange) error {
 	}
 
 	var chatID int64
-	// Essayez de récupérer le chat ID depuis les headers
+	// Essayez de récupérer le chat ID from les headers
 	if val, ok := exchange.GetIn().GetHeader(TelegramChatId); ok {
 		switch v := val.(type) {
 		case int64:
@@ -104,21 +104,21 @@ func (p *TelegramProducer) Send(exchange *Exchange) error {
 		case string:
 			parsed, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
-				return fmt.Errorf("chat ID invalide dans le header %s: %w", TelegramChatId, err)
+				return fmt.Errorf("chat ID invalid in le header %s: %w", TelegramChatId, err)
 			}
 			chatID = parsed
 		default:
-			return fmt.Errorf("type de %s non supporté: %T", TelegramChatId, val)
+			return fmt.Errorf("type de %s non supported: %T", TelegramChatId, val)
 		}
 	} else {
-		// Sinon, essayez de le récupérer depuis l'URI
+		// Sinon, essayez de le récupérer from l'URI
 		chatIdStr := GetConfigValue(p.endpoint.url, "chatId")
 		if chatIdStr == "" {
-			return fmt.Errorf("chatId manquant (requis via header %s ou paramètre d'URI)", TelegramChatId)
+			return fmt.Errorf("chatId missing (required via header %s ou paramètre d'URI)", TelegramChatId)
 		}
 		parsed, err := strconv.ParseInt(chatIdStr, 10, 64)
 		if err != nil {
-			return fmt.Errorf("chatId invalide dans l'URI: %w", err)
+			return fmt.Errorf("chatId invalid in l'URI: %w", err)
 		}
 		chatID = parsed
 	}
@@ -136,13 +136,13 @@ func (p *TelegramProducer) Send(exchange *Exchange) error {
 	msg := tgbotapi.NewMessage(chatID, text)
 	_, err = bot.Send(msg)
 	if err != nil {
-		return fmt.Errorf("erreur lors de l'envoi du message Telegram: %w", err)
+		return fmt.Errorf("error during l'sending du message Telegram: %w", err)
 	}
 
 	return nil
 }
 
-// TelegramConsumer représente un consommateur Telegram
+// TelegramConsumer represents a consommateur Telegram
 type TelegramConsumer struct {
 	endpoint  *TelegramEndpoint
 	processor Processor
@@ -184,7 +184,7 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 				}
 
 				if err := c.processor.Process(exchange); err != nil {
-					fmt.Printf("Erreur lors du traitement du message Telegram: %v\n", err)
+					fmt.Printf("error during traitement du message Telegram: %v\n", err)
 				}
 			}
 		}

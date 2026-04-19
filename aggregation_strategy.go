@@ -1,9 +1,9 @@
 package gocamel
 
-// AggregationStrategy définit la stratégie pour agréger plusieurs messages (Exchanges) en un seul.
+// AggregationStrategy defines the strategy for aggregating multiple messages (Exchanges) into one.
 type AggregationStrategy interface {
-	// Aggregate fusionne l'ancien échange avec le nouveau.
-	// Si oldExchange est nil, cela signifie que c'est le premier échange pour cette clé d'agrégation.
-	// Retourne l'échange fusionné (souvent oldExchange après modification, ou newExchange au premier appel).
+	// Aggregate merges the old exchange with the new one.
+	// If oldExchange is nil, it means this is the first exchange for this aggregation key.
+	// Returns the merged exchange (often oldExchange after modification, or newExchange on first call).
 	Aggregate(oldExchange *Exchange, newExchange *Exchange) *Exchange
 }
