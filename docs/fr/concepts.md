@@ -5,12 +5,11 @@
 L'unité fondamentale d'échange contenant:
 - **Body**: Le contenu du message (n'importe quel type)
 - **Headers**: Métadonnées clé-valeur (map[string]any)
-- **Attachments**: Pièces jointes optionnelles
 
+Les messages fournissent des accesseurs typés pour plus de commodité :
 ```go
-msg := gocamel.NewMessage()
-msg.SetBody("Hello World")
-msg.SetHeader("Content-Type", "text/plain")
+body, _ := msg.GetBodyAsString()
+count, _ := msg.GetHeaderAsInt("X-Count")
 ```
 
 ## Exchange
@@ -21,9 +20,34 @@ Conteneur pour les messages traversant une route:
 - **Properties**: Métadonnées liées à l'exchange
 - **Context**: Contexte Go pour l'annulation
 
+Les Exchanges relaient également les accesseurs typés vers le message **In** :
 ```go
-exchange := gocamel.NewExchange(context.Background())
-exchange.GetIn().SetBody(input)
+body, _ := exchange.GetBodyAsString()
+```
+
+## Processeur (Processor)
+
+Une interface pour implémenter une logique personnalisée. Vous pouvez utiliser des instances directes, des closures ou des références du registre.
+
+```go
+type MyProcessor struct {}
+func (p *MyProcessor) Process(exchange *gocamel.Exchange) error {
+    // logique personnalisée
+    return nil
+}
+
+// Dans le RouteBuilder
+builder.Process(&MyProcessor{})
+builder.ProcessFunc(func(e *gocamel.Exchange) error { ... })
+builder.ProcessRef("monBeanNomme")
+```
+
+## Registre (Registry)
+
+Un magasin clé-valeur central pour les objets nommés (Beans, Processeurs, Composants).
+
+```go
+context.GetComponentRegistry().Bind("monProcesseur", &MyProcessor{})
 ```
 
 ## Route

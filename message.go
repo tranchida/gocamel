@@ -28,6 +28,42 @@ func (m *Message) GetBody() any {
 	return m.Body
 }
 
+// GetBodyAsString récupère le corps du message sous forme de chaîne
+func (m *Message) GetBodyAsString() (string, bool) {
+	if m.Body == nil {
+		return "", false
+	}
+	if str, ok := m.Body.(string); ok {
+		return str, true
+	}
+	return "", false
+}
+
+// GetBodyAsInt récupère le corps du message sous forme d'entier
+func (m *Message) GetBodyAsInt() (int, bool) {
+	if m.Body == nil {
+		return 0, false
+	}
+	if i, ok := m.Body.(int); ok {
+		return i, true
+	}
+	if f, ok := m.Body.(float64); ok {
+		return int(f), true
+	}
+	return 0, false
+}
+
+// GetBodyAsBool récupère le corps du message sous forme de booléen
+func (m *Message) GetBodyAsBool() (bool, bool) {
+	if m.Body == nil {
+		return false, false
+	}
+	if b, ok := m.Body.(bool); ok {
+		return b, true
+	}
+	return false, false
+}
+
 // SetHeader définit un en-tête
 func (m *Message) SetHeader(key string, value any) {
 	m.Headers[key] = value
@@ -37,6 +73,39 @@ func (m *Message) SetHeader(key string, value any) {
 func (m *Message) GetHeader(key string) (any, bool) {
 	value, exists := m.Headers[key]
 	return value, exists
+}
+
+// GetHeaderAsString récupère un en-tête sous forme de chaîne
+func (m *Message) GetHeaderAsString(key string) (string, bool) {
+	if value, exists := m.Headers[key]; exists {
+		if str, ok := value.(string); ok {
+			return str, true
+		}
+	}
+	return "", false
+}
+
+// GetHeaderAsInt récupère un en-tête sous forme d'entier
+func (m *Message) GetHeaderAsInt(key string) (int, bool) {
+	if value, exists := m.Headers[key]; exists {
+		if i, ok := value.(int); ok {
+			return i, true
+		}
+		if f, ok := value.(float64); ok {
+			return int(f), true
+		}
+	}
+	return 0, false
+}
+
+// GetHeaderAsBool récupère un en-tête sous forme de booléen
+func (m *Message) GetHeaderAsBool(key string) (bool, bool) {
+	if value, exists := m.Headers[key]; exists {
+		if b, ok := value.(bool); ok {
+			return b, true
+		}
+	}
+	return false, false
 }
 
 // GetHeaders récupère tous les en-têtes

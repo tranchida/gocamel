@@ -18,8 +18,10 @@ GoCamel est une bibliothèque d'intégration d'entreprise inspirée d'[Apache Ca
 ## ✨ Fonctionnalités
 
 - 🔀 **Architecture Route & Endpoint** - DSL fluide pour construire des flux
-- 📬 **Gestion des Messages** - Corps et en-têtes avec sécurité de type
+- 📬 **Gestion des Messages** - Corps et en-têtes avec accesseurs typés (`GetBodyAsString`, `GetHeaderAsInt`, etc.)
 - 🔄 **Contexte Camel** - Gestion du cycle de vie des routes et composants
+- 📦 **Registre & Beans** - Enregistrez et recherchez des processeurs et beans personnalisés par nom
+- ⚙️ **Processeurs** - Implémentation de logique personnalisée via l'interface `Processor` et `ProcessRef`
 - ⚖️ **Routes Transactionnelles** - Pattern Unit of Work pour un traitement fiable
 - 🧩 **Patterns d'Intégration** - Split, Aggregate, Multicast, Choice, Stop, ToD
 - 📝 **Simple Language** - Expressions dynamiques (`${body}`, `${header.name}`, fonctions)

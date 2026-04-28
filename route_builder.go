@@ -34,6 +34,21 @@ func (b *RouteBuilder) Process(processor Processor) *RouteBuilder {
 	return b
 }
 
+// ProcessRef ajoute un processeur référencé par son nom dans le registre
+func (b *RouteBuilder) ProcessRef(name string) *RouteBuilder {
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		val, exists := b.context.GetComponentRegistry().Lookup(name)
+		if !exists {
+			return fmt.Errorf("processeur non trouvé dans le registre: %s", name)
+		}
+		processor, ok := val.(Processor)
+		if !ok {
+			return fmt.Errorf("l'objet trouvé n'est pas un processeur: %s", name)
+		}
+		return processor.Process(exchange)
+	})
+}
+
 // ProcessFunc ajoute une fonction de traitement au conteneur actuel
 func (b *RouteBuilder) ProcessFunc(f func(*Exchange) error) *RouteBuilder {
 	b.container.AddProcessor(ProcessorFunc(f))
@@ -325,6 +340,23 @@ func (b *RouteBuilder) LogBody(message string) *RouteBuilder {
 func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		log.Printf("%s: %+v", message, exchange.GetIn().GetHeaders())
+		return nil
+	})
+}
+
+// LogSimple ajoute un processeur qui log un message évalué via le Simple Language
+func (b *RouteBuilder) LogSimple(expression string) *RouteBuilder {
+	template, err := ParseSimpleTemplate(expression)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse simple expression for log: %v", err))
+	}
+	return b.ProcessFunc(func(exchange *Exchange) error {
+		result, err := template.EvaluateAsString(exchange)
+		if err != nil {
+			log.Printf("Error evaluating log expression: %v", err)
+			return nil // Don't fail the exchange just because logging failed
+		}
+		log.Println(result)
 		return nil
 	})
 }

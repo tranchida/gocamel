@@ -151,6 +151,21 @@ func (e *Exchange) GetBody() any {
 	return e.In.GetBody()
 }
 
+// GetBodyAsString récupère le corps du message d'entrée sous forme de chaîne
+func (e *Exchange) GetBodyAsString() (string, bool) {
+	return e.In.GetBodyAsString()
+}
+
+// GetBodyAsInt récupère le corps du message d'entrée sous forme d'entier
+func (e *Exchange) GetBodyAsInt() (int, bool) {
+	return e.In.GetBodyAsInt()
+}
+
+// GetBodyAsBool récupère le corps du message d'entrée sous forme de booléen
+func (e *Exchange) GetBodyAsBool() (bool, bool) {
+	return e.In.GetBodyAsBool()
+}
+
 // SetHeader définit un en-tête du message d'entrée
 func (e *Exchange) SetHeader(key string, value any) {
 	e.In.SetHeader(key, value)
@@ -160,6 +175,21 @@ func (e *Exchange) SetHeader(key string, value any) {
 // GetHeader récupère un en-tête du message d'entrée
 func (e *Exchange) GetHeader(key string) (any, bool) {
 	return e.In.GetHeader(key)
+}
+
+// GetHeaderAsString récupère un en-tête du message d'entrée sous forme de chaîne
+func (e *Exchange) GetHeaderAsString(key string) (string, bool) {
+	return e.In.GetHeaderAsString(key)
+}
+
+// GetHeaderAsInt récupère un en-tête du message d'entrée sous forme d'entier
+func (e *Exchange) GetHeaderAsInt(key string) (int, bool) {
+	return e.In.GetHeaderAsInt(key)
+}
+
+// GetHeaderAsBool récupère un en-tête du message d'entrée sous forme de booléen
+func (e *Exchange) GetHeaderAsBool(key string) (bool, bool) {
+	return e.In.GetHeaderAsBool(key)
 }
 
 // SetProperty définit une propriété de l'échange

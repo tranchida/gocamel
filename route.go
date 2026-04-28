@@ -176,7 +176,7 @@ func (f processorFunc) Process(exchange *Exchange) error {
 type routeProcessor struct {
 	processors []Processor
 	to         []string
-	registry   *Registry
+	registry   Registry
 }
 
 // Process exécute tous les processeurs de la route et envoie le message aux destinations

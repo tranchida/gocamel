@@ -33,9 +33,32 @@ func NewCamelContext() *CamelContext
 | `ToD(uri string) *RouteBuilder` | Dynamic destination |
 | `Process(p Processor) *RouteBuilder` | Custom processor |
 | `ProcessFunc(fn) *RouteBuilder` | Function processor |
-| `Log(msg string) *RouteBuilder` | Log message |
+| `ProcessRef(name) *RouteBuilder` | Reference from registry |
+| `Log(msg string) *RouteBuilder` | Log static message |
+| `LogSimple(expr) *RouteBuilder` | Log dynamic expression |
 
-### EIP
+## Message / Exchange Accessors
+
+Common methods available on `Message` and proxied on `Exchange` (accessing the `In` message):
+
+| Method | Return | Description |
+|--------|--------|-------------|
+| `GetBodyAsString()` | `(string, bool)` | Body as string |
+| `GetBodyAsInt()` | `(int, bool)` | Body as integer |
+| `GetBodyAsBool()` | `(bool, bool)` | Body as boolean |
+| `GetHeaderAsString(k)` | `(string, bool)` | Header as string |
+| `GetHeaderAsInt(k)` | `(int, bool)` | Header as integer |
+| `GetHeaderAsBool(k)` | `(bool, bool)` | Header as boolean |
+
+## Registry
+
+Accessible via `ctx.GetComponentRegistry()`:
+
+| Method | Description |
+|--------|-------------|
+| `Bind(name, value)` | Register a bean, component or processor |
+| `Lookup(name)` | Retrieve an object by name |
+| `Remove(name)` | Remove an object from registry |
 
 | Method | Description |
 |--------|-------------|

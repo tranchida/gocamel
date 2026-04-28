@@ -33,9 +33,32 @@ func NewCamelContext() *CamelContext
 | `ToD(uri)` | Destination dynamique |
 | `Process(p)` | Processeur personnalisé |
 | `ProcessFunc(fn)` | Processeur fonction |
-| `Log(msg)` | Logger un message |
+| `ProcessRef(name)` | Référence depuis le registre |
+| `Log(msg)` | Log message statique |
+| `LogSimple(expr)` | Log expression dynamique |
 
-### EIP
+## Accesseurs Message / Exchange
+
+Méthodes communes sur `Message` et relayées sur `Exchange` (accès au message `In`) :
+
+| Méthode | Retour | Description |
+|---------|--------|-------------|
+| `GetBodyAsString()` | `(string, bool)` | Corps en string |
+| `GetBodyAsInt()` | `(int, bool)` | Corps en entier |
+| `GetBodyAsBool()` | `(bool, bool)` | Corps en booléen |
+| `GetHeaderAsString(k)` | `(string, bool)` | En-tête en string |
+| `GetHeaderAsInt(k)` | `(int, bool)` | En-tête en entier |
+| `GetHeaderAsBool(k)` | `(bool, bool)` | En-tête en booléen |
+
+## Registre (Registry)
+
+Accessible via `ctx.GetComponentRegistry()` :
+
+| Méthode | Description |
+|---------|-------------|
+| `Bind(name, value)` | Enregistrer un bean, composant ou processeur |
+| `Lookup(name)` | Récupérer un objet par nom |
+| `Remove(name)` | Supprimer un objet du registre |
 
 | Méthode | Description |
 |---------|-------------|

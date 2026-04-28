@@ -5,12 +5,11 @@
 The fundamental unit of exchange containing:
 - **Body**: The message payload (any type)
 - **Headers**: Key-value metadata (map[string]any)
-- **Attachments**: Optional file attachments
 
+Messages provide typed accessors for convenience:
 ```go
-msg := gocamel.NewMessage()
-msg.SetBody("Hello World")
-msg.SetHeader("Content-Type", "text/plain")
+body, _ := msg.GetBodyAsString()
+count, _ := msg.GetHeaderAsInt("X-Count")
 ```
 
 ## Exchange
@@ -21,9 +20,34 @@ Container for messages passing through a route:
 - **Properties**: Exchange-scoped metadata
 - **Context**: Go context for cancellation
 
+Exchanges also proxy typed accessors to the **In** message:
 ```go
-exchange := gocamel.NewExchange(context.Background())
-exchange.GetIn().SetBody(input)
+body, _ := exchange.GetBodyAsString()
+```
+
+## Processor
+
+An interface for implementing custom logic. You can use direct instances, closures, or references from the registry.
+
+```go
+type MyProcessor struct {}
+func (p *MyProcessor) Process(exchange *gocamel.Exchange) error {
+    // custom logic
+    return nil
+}
+
+// In RouteBuilder
+builder.Process(&MyProcessor{})
+builder.ProcessFunc(func(e *gocamel.Exchange) error { ... })
+builder.ProcessRef("myNamedBean")
+```
+
+## Registry
+
+A central key-value store for named objects (Beans, Processors, Components).
+
+```go
+context.GetComponentRegistry().Bind("myProcessor", &MyProcessor{})
 ```
 
 ## Route

@@ -6,10 +6,11 @@
 ### Core Architecture
 - **`CamelContext`**: The main container that manages the lifecycle of routes and components.
 - **`Route`**: A sequence of processors starting from a source (Consumer) to one or more destinations (Producers).
-- **`Exchange` & `Message`**: The data model. An `Exchange` carries an `In` message, an optional `Out` message, and a map of properties.
+- **`Exchange` & `Message`**: The data model. An `Exchange` carries an `In` message, an optional `Out` message, and a map of properties. Includes typed accessors: `GetBodyAsString()`, `GetHeaderAsInt()`, etc.
 - **`Component`**: A factory for `Endpoint`s, registered by URI scheme (e.g., `http:`, `file:`, `ftp:`).
-- **`Endpoint`**: Represents an external system URI; creates `Consumer`s (to read) or `Producer`s (to write).
-- **`RouteBuilder`**: A fluent Go DSL for defining routes: `.From(uri).ProcessFunc(fn).To(uri).Build()`.
+- **`Registry`**: A generic key-value store in the context for components, processors, and beans. Access via `ctx.GetComponentRegistry().Bind/Lookup`.
+- **`Processor`**: An interface `Process(exchange *Exchange) error` for custom logic.
+- **`RouteBuilder`**: A fluent Go DSL for defining routes: `.From(uri).ProcessFunc(fn).ProcessRef("name").To(uri).Build()`.
 
 ### Key Components
 | Scheme | Description |
