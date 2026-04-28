@@ -74,3 +74,19 @@ Usine pour créer des endpoints d'un type spécifique:
 context.AddComponent("ftp", gocamel.NewFTPComponent())
 context.AddComponent("http", gocamel.NewHTTPComponent())
 ```
+
+## Unit of Work & Transactions
+
+GoCamel supporte un modèle transactionnel basé sur le pattern **Unit of Work**. Cela garantit que la source du message (par exemple, un fichier, un email ou un enregistrement de base de données) n'est marquée comme "consommée" qu'une fois que toute la route a été traitée avec succès.
+
+- **Synchronization**: Vous pouvez enregistrer des callbacks (`OnComplete`, `OnFailure`) sur un `Exchange`.
+- **Route Transactionnelle**: Marquez une route comme transactionnelle en utilisant `.Transacted()` dans le DSL.
+- **Composants Transactionnels**: Les composants tels que `file`, `ftp`, `sftp`, `smb` et `mail` supportent ce modèle en retardant la suppression ou le déplacement du fichier source jusqu'à la fin de la route.
+
+```go
+context.CreateRouteBuilder().
+    From("file:///data/in?move=.done&moveFailed=.error").
+    Transacted(). // Active le comportement transactionnel
+    To("http://api.service.com").
+    Build()
+```

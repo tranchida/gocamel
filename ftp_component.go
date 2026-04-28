@@ -289,6 +289,39 @@ func (c *FTPConsumer) releaseConn(conn *ftp.ServerConn) {
 	}
 }
 
+type ftpSynchronization struct {
+	conn     *ftp.ServerConn
+	path     string
+	noop     bool
+	delete   bool
+	move     string
+	moveFailed string
+}
+
+func (s *ftpSynchronization) OnComplete(exchange *Exchange) {
+	if s.noop {
+		return
+	}
+	if s.move != "" {
+		moveFTPFile(s.conn, s.path, s.move)
+	} else if s.delete {
+		if err := s.conn.Delete(s.path); err != nil {
+			fmt.Printf("Erreur lors de la suppression du fichier FTP %s: %v\n", s.path, err)
+		}
+	}
+}
+
+func (s *ftpSynchronization) OnFailure(exchange *Exchange) {
+	if errors.Is(exchange.Error, ErrStopRouting) {
+		s.OnComplete(exchange)
+		return
+	}
+
+	if !s.noop && s.moveFailed != "" {
+		moveFTPFile(s.conn, s.path, s.moveFailed)
+	}
+}
+
 func (c *FTPConsumer) doPoll(ctx context.Context) {
 	conn, err := c.getConn()
 	if err != nil {
@@ -357,25 +390,20 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 		exchange.SetHeader(CamelFileName, f.name)
 		exchange.SetHeader(CamelFilePath, f.path)
 
-		if err := c.processor.Process(exchange); err != nil {
-			if !errors.Is(err, ErrStopRouting) {
-				fmt.Printf("Erreur lors du traitement du fichier FTP %s: %v\n", f.path, err)
-				if !c.opts.Noop && c.opts.MoveFailed != "" {
-					moveFTPFile(conn, f.path, c.opts.MoveFailed)
-				}
-			}
-			continue
-		}
+		exchange.AddSynchronization(&ftpSynchronization{
+			conn:       conn,
+			path:       f.path,
+			noop:       c.opts.Noop,
+			delete:     c.opts.Delete,
+			move:       c.opts.Move,
+			moveFailed: c.opts.MoveFailed,
+		})
 
-		count++
-		if !c.opts.Noop {
-			if c.opts.Move != "" {
-				moveFTPFile(conn, f.path, c.opts.Move)
-			} else if c.opts.Delete {
-				if err := conn.Delete(f.path); err != nil {
-					fmt.Printf("Erreur lors de la suppression du fichier FTP %s: %v\n", f.path, err)
-				}
-			}
+		procErr := c.processor.Process(exchange)
+		exchange.Done(procErr)
+
+		if procErr == nil || errors.Is(procErr, ErrStopRouting) {
+			count++
 		}
 	}
 }

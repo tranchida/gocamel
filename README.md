@@ -20,6 +20,7 @@ GoCamel is an enterprise integration library inspired by [Apache Camel](https://
 - 🔀 **Route & Endpoint Architecture** - Fluent DSL for building integration flows
 - 📬 **Message Management** - Body and headers with type safety
 - 🔄 **Camel Context** - Lifecycle management for routes and components
+- ⚖️ **Transactional Routes** - Unit of Work pattern for reliable message processing
 - 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Stop, ToD
 - 📝 **Simple Language** - Dynamic expressions (`${body}`, `${header.name}`, functions)
 - 🔌 **Multiple Components** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, etc.

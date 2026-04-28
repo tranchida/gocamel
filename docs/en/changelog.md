@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Transactional support via **Unit of Work** and **Synchronization**
+  - New `.Transacted()` method in RouteBuilder DSL
+  - Transactional processing in `file`, `ftp`, `sftp`, `smb`, and `mail` components (post-processing triggered at the end of the route)
 - Comprehensive English documentation
 - Bilingual documentation structure (EN/FR)
 - MkDocs Material theme support

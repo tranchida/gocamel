@@ -36,6 +36,7 @@ type Route struct {
 	ID          string
 	Description string
 	Group       string
+	Transacted  bool
 	context     *CamelContext
 	from        Endpoint
 	consumer    Consumer
@@ -49,6 +50,12 @@ func NewRoute() *Route {
 	return &Route{
 		processors: make([]Processor, 0),
 	}
+}
+
+// SetTransacted définit si la route est transactionnelle
+func (r *Route) SetTransacted(transacted bool) *Route {
+	r.Transacted = transacted
+	return r
 }
 
 // From définit l'endpoint source de la route

@@ -183,6 +183,36 @@ func (c *FileConsumer) Start(ctx context.Context) error {
 	return c.watchFile(ctx)
 }
 
+type fileSynchronization struct {
+	path       string
+	noop       bool
+	delete     bool
+	move       string
+	moveFailed string
+}
+
+func (s *fileSynchronization) OnComplete(exchange *Exchange) {
+	if s.noop {
+		return
+	}
+	if s.move != "" {
+		moveFilelocal(s.path, s.move)
+	} else if s.delete {
+		os.Remove(s.path)
+	}
+}
+
+func (s *fileSynchronization) OnFailure(exchange *Exchange) {
+	if errors.Is(exchange.Error, ErrStopRouting) {
+		s.OnComplete(exchange)
+		return
+	}
+
+	if !s.noop && s.moveFailed != "" {
+		moveFilelocal(s.path, s.moveFailed)
+	}
+}
+
 // watchDirectory onveille un directory for les nouveaux files
 func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	watcher, err := fsnotify.NewWatcher()
@@ -254,22 +284,16 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				exchange.SetHeader("FileName", filename)
 				exchange.SetHeader("FilePath", event.Name)
 
-				if err := c.processor.Process(exchange); err != nil {
-					if !errors.Is(err, ErrStopRouting) {
-						fmt.Printf("error during traitement du file %s: %v\n", event.Name, err)
-						if !noop && moveFailed != "" {
-							moveFilelocal(event.Name, moveFailed)
-						}
-					}
-					continue
-				}
-				if !noop {
-					if move != "" {
-						moveFilelocal(event.Name, move)
-					} else if delete_ {
-						os.Remove(event.Name)
-					}
-				}
+				exchange.AddSynchronization(&fileSynchronization{
+					path:       event.Name,
+					noop:       noop,
+					delete:     delete_,
+					move:       move,
+					moveFailed: moveFailed,
+				})
+
+				err = c.processor.Process(exchange)
+				exchange.Done(err)
 
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -309,19 +333,16 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 	move := GetConfigValue(c.url, "move")
 	moveFailed := GetConfigValue(c.url, "moveFailed")
 
-	if err := c.processor.Process(exchange); err != nil {
-		if !errors.Is(err, ErrStopRouting) && !noop && moveFailed != "" {
-			moveFilelocal(c.path, moveFailed)
-		}
-		return nil
-	}
-	if !noop {
-		if move != "" {
-			moveFilelocal(c.path, move)
-		} else if delete_ {
-			os.Remove(c.path)
-		}
-	}
+	exchange.AddSynchronization(&fileSynchronization{
+		path:       c.path,
+		noop:       noop,
+		delete:     delete_,
+		move:       move,
+		moveFailed: moveFailed,
+	})
+
+	procErr := c.processor.Process(exchange)
+	exchange.Done(procErr)
 	return nil
 }
 

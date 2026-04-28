@@ -359,6 +359,39 @@ func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile 
 	return result
 }
 
+type smbSynchronization struct {
+	share    *smb2.Share
+	path     string
+	noop     bool
+	delete   bool
+	move     string
+	moveFailed string
+}
+
+func (s *smbSynchronization) OnComplete(exchange *Exchange) {
+	if s.noop {
+		return
+	}
+	if s.move != "" {
+		moveSMBFile(s.share, s.path, s.move)
+	} else if s.delete {
+		if err := s.share.Remove(s.path); err != nil {
+			fmt.Printf("Erreur lors de la suppression du fichier SMB %s: %v\n", s.path, err)
+		}
+	}
+}
+
+func (s *smbSynchronization) OnFailure(exchange *Exchange) {
+	if errors.Is(exchange.Error, ErrStopRouting) {
+		s.OnComplete(exchange)
+		return
+	}
+
+	if !s.noop && s.moveFailed != "" {
+		moveSMBFile(s.share, s.path, s.moveFailed)
+	}
+}
+
 func (c *SMBConsumer) doPoll(ctx context.Context) {
 	sc, err := c.getConn()
 	if err != nil {
@@ -397,25 +430,20 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 		exchange.SetHeader(CamelFileName, f.name)
 		exchange.SetHeader(CamelFilePath, f.path)
 
-		if err := c.processor.Process(exchange); err != nil {
-			if !errors.Is(err, ErrStopRouting) {
-				fmt.Printf("Erreur lors du traitement du fichier SMB %s: %v\n", f.path, err)
-				if !c.opts.Noop && c.opts.MoveFailed != "" {
-					moveSMBFile(sc.share, f.path, c.opts.MoveFailed)
-				}
-			}
-			continue
-		}
+		exchange.AddSynchronization(&smbSynchronization{
+			share:      sc.share,
+			path:       f.path,
+			noop:       c.opts.Noop,
+			delete:     c.opts.Delete,
+			move:       c.opts.Move,
+			moveFailed: c.opts.MoveFailed,
+		})
 
-		count++
-		if !c.opts.Noop {
-			if c.opts.Move != "" {
-				moveSMBFile(sc.share, f.path, c.opts.Move)
-			} else if c.opts.Delete {
-				if err := sc.share.Remove(f.path); err != nil {
-					fmt.Printf("Erreur lors de la suppression du fichier SMB %s: %v\n", f.path, err)
-				}
-			}
+		procErr := c.processor.Process(exchange)
+		exchange.Done(procErr)
+
+		if procErr == nil || errors.Is(procErr, ErrStopRouting) {
+			count++
 		}
 	}
 }

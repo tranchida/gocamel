@@ -338,6 +338,39 @@ func (c *SFTPConsumer) releaseClients(sshClient *ssh.Client, sftpClient *sftp.Cl
 	}
 }
 
+type sftpSynchronization struct {
+	client   *sftp.Client
+	path     string
+	noop     bool
+	delete   bool
+	move     string
+	moveFailed string
+}
+
+func (s *sftpSynchronization) OnComplete(exchange *Exchange) {
+	if s.noop {
+		return
+	}
+	if s.move != "" {
+		moveSFTPFile(s.client, s.path, s.move)
+	} else if s.delete {
+		if err := s.client.Remove(s.path); err != nil {
+			fmt.Printf("Erreur lors de la suppression du fichier SFTP %s: %v\n", s.path, err)
+		}
+	}
+}
+
+func (s *sftpSynchronization) OnFailure(exchange *Exchange) {
+	if errors.Is(exchange.Error, ErrStopRouting) {
+		s.OnComplete(exchange)
+		return
+	}
+
+	if !s.noop && s.moveFailed != "" {
+		moveSFTPFile(s.client, s.path, s.moveFailed)
+	}
+}
+
 func (c *SFTPConsumer) doPoll(ctx context.Context) {
 	sshClient, sftpClient, err := c.getClients()
 	if err != nil {
@@ -415,25 +448,20 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 		exchange.SetHeader(CamelFileName, f.name)
 		exchange.SetHeader(CamelFilePath, f.path)
 
-		if err := c.processor.Process(exchange); err != nil {
-			if !errors.Is(err, ErrStopRouting) {
-				fmt.Printf("Erreur lors du traitement du fichier SFTP %s: %v\n", f.path, err)
-				if !c.opts.Noop && c.opts.MoveFailed != "" {
-					moveSFTPFile(sftpClient, f.path, c.opts.MoveFailed)
-				}
-			}
-			continue
-		}
+		exchange.AddSynchronization(&sftpSynchronization{
+			client:     sftpClient,
+			path:       f.path,
+			noop:       c.opts.Noop,
+			delete:     c.opts.Delete,
+			move:       c.opts.Move,
+			moveFailed: c.opts.MoveFailed,
+		})
 
-		count++
-		if !c.opts.Noop {
-			if c.opts.Move != "" {
-				moveSFTPFile(sftpClient, f.path, c.opts.Move)
-			} else if c.opts.Delete {
-				if err := sftpClient.Remove(f.path); err != nil {
-					fmt.Printf("Erreur lors de la suppression du fichier SFTP %s: %v\n", f.path, err)
-				}
-			}
+		procErr := c.processor.Process(exchange)
+		exchange.Done(procErr)
+
+		if procErr == nil || errors.Is(procErr, ErrStopRouting) {
+			count++
 		}
 	}
 }

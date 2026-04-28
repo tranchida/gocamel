@@ -61,27 +61,55 @@ const (
 	CamelAuthorizationPolicy  = "CamelAuthorizationPolicy"  // Politique d'autorisation
 )
 
+// Synchronization defines the interface for callbacks triggered when an Exchange is done.
+type Synchronization interface {
+	// OnComplete is called when the Exchange was processed successfully.
+	OnComplete(exchange *Exchange)
+	// OnFailure is called when the Exchange failed during processing.
+	OnFailure(exchange *Exchange)
+}
+
 // Exchange represents the exchange context of a message in a route
 type Exchange struct {
-	Context    context.Context
-	In         *Message
-	Out        *Message
-	Properties map[string]any
-	Created    time.Time
-	Modified   time.Time
-	Error      error
+	Context          context.Context
+	In               *Message
+	Out              *Message
+	Properties       map[string]any
+	Created          time.Time
+	Modified         time.Time
+	Error            error
+	synchronizations []Synchronization
 }
 
 // NewExchange creates a new Exchange instance
 func NewExchange(ctx context.Context) *Exchange {
 	now := time.Now()
 	return &Exchange{
-		Context:    ctx,
-		In:         NewMessage(),
-		Out:        NewMessage(),
-		Properties: make(map[string]any),
-		Created:    now,
-		Modified:   now,
+		Context:          ctx,
+		In:               NewMessage(),
+		Out:              NewMessage(),
+		Properties:       make(map[string]any),
+		Created:          now,
+		Modified:         now,
+		synchronizations: make([]Synchronization, 0),
+	}
+}
+
+// AddSynchronization adds a synchronization callback to the exchange.
+func (e *Exchange) AddSynchronization(s Synchronization) {
+	e.synchronizations = append(e.synchronizations, s)
+}
+
+// Done signals that the exchange processing is complete.
+// It triggers the OnComplete or OnFailure callbacks of registered synchronizations.
+func (e *Exchange) Done(err error) {
+	e.Error = err
+	for _, s := range e.synchronizations {
+		if err != nil {
+			s.OnFailure(e)
+		} else {
+			s.OnComplete(e)
+		}
 	}
 }
 

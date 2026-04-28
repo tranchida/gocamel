@@ -142,9 +142,11 @@ func (b *RouteBuilder) SetDescription(description string) *RouteBuilder {
 	return b
 }
 
-// SetGroup définit le groupe de la route
-func (b *RouteBuilder) SetGroup(group string) *RouteBuilder {
-	b.route.SetGroup(group)
+// Transacted active le mode transactionnel for la route.
+// In GoCamel, cela garantit que les synchronisations de l'Exchange (comme la consommation du message source)
+// sont exécutées with le statut approprié à la fin de la route.
+func (b *RouteBuilder) Transacted() *RouteBuilder {
+	b.route.SetTransacted(true)
 	return b
 }
 
