@@ -138,10 +138,10 @@ sanitized := gocamel.SanitizeInput(userInput)
 
 ## 📚 Documentation
 
-- [Full Documentation](docs/)
+- [**Live Documentation Website**](https://tranchida.gitlab.io/gocamel/)
 - [Examples](examples/)
-- [Architecture](docs/architecture.md)
-- [API Reference](docs/reference.md)
+- [Architecture](https://tranchida.gitlab.io/gocamel/en/architecture/)
+- [API Reference](https://tranchida.gitlab.io/gocamel/en/reference/)
 
 ## 🤝 Contributing
 
