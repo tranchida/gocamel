@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tranchida/gocamel"
+	"gitlab.com/tranchida/gocamel"
 )
 
 // headerFileName est la clé du header posé par le composant File.

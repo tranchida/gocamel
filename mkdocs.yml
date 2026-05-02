@@ -1,6 +1,6 @@
 site_name: GoCamel
-site_url: https://tranchida.github.io/gocamel/
-repo_url: https://github.com/tranchida/gocamel
+site_url: https://tranchida.gitlab.io/gocamel/
+repo_url: https://gitlab.com/tranchida/gocamel
 repo_name: tranchida/gocamel
 
 copyright: Copyright &copy; 2026 GoCamel
@@ -38,12 +38,12 @@ theme:
     - content.code.copy
     
   icon:
-    repo: fontawesome/brands/github
+    repo: fontawesome/brands/gitlab
 
 extra:
   social:
-    - icon: fontawesome/brands/github
-      link: https://github.com/tranchida/gocamel
+    - icon: fontawesome/brands/gitlab
+      link: https://gitlab.com/tranchida/gocamel
   generator: false
 
 plugins:

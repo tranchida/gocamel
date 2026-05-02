@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/tranchida/gocamel"
+	"gitlab.com/tranchida/gocamel"
 )
 
 // ExampleMailProducer montre comment envoyer un email via SMTP.

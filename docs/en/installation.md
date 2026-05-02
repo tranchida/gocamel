@@ -8,13 +8,13 @@
 ## Install
 
 ```bash
-go get github.com/tranchida/gocamel
+go get gitlab.com/tranchida/gocamel
 ```
 
 Or add to `go.mod`:
 
 ```go
-require github.com/tranchida/gocamel v0.1.0
+require gitlab.com/tranchida/gocamel v0.1.0
 ```
 
 Then:
@@ -30,7 +30,7 @@ package main
 
 import (
     "fmt"
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {

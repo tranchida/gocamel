@@ -15,7 +15,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/tranchida/gocamel"
+	"gitlab.com/tranchida/gocamel"
 )
 
 // MyCustomProcessor is a structured processor, similar to implementing Processor in Java

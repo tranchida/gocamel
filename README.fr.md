@@ -32,7 +32,7 @@ GoCamel est une bibliothèque d'intégration d'entreprise inspirée d'[Apache Ca
 ## 📦 Installation
 
 ```bash
-go get github.com/tranchida/gocamel
+go get gitlab.com/tranchida/gocamel
 ```
 
 ## 🚀 Démarrage Rapide
@@ -41,7 +41,7 @@ go get github.com/tranchida/gocamel
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -145,7 +145,7 @@ sanitized := gocamel.SanitizeInput(userInput)
 
 ## 🤝 Contribution
 
-Les contributions sont les bienvenues ! Voir les [Issues GitHub](https://github.com/tranchida/gocamel/issues).
+Les contributions sont les bienvenues ! Voir les [GitLab Issues](https://gitlab.com/tranchida/gocamel/-/issues).
 
 ## 📄 Licence
 

@@ -8,7 +8,7 @@ Collection d'exemples pratiques.
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -32,7 +32,7 @@ func main() {
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -62,7 +62,7 @@ func main() {
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -88,7 +88,7 @@ package main
 
 import (
     "fmt"
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -113,7 +113,7 @@ func main() {
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -140,7 +140,7 @@ package main
 
 import (
     "fmt"
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -171,7 +171,7 @@ Génération de messages formatés avec templates Go natifs (inspiré du composa
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 // templates/email.tmpl:
@@ -226,7 +226,7 @@ package main
 
 import (
     "strings"
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 type StringConcatStrategy struct{}
@@ -281,7 +281,7 @@ func main() {
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -308,7 +308,7 @@ func main() {
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -345,7 +345,7 @@ func main() {
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -382,7 +382,7 @@ func main() {
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {

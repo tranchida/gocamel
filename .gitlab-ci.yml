@@ -1,0 +1,26 @@
+image: python:3.12-slim
+
+# Speed up pip installs by caching
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  # Required for mkdocs-git-revision-date-localized-plugin to have access to git history
+  GIT_DEPTH: 0
+
+cache:
+  paths:
+    - .cache/pip
+
+pages:
+  stage: deploy
+  script:
+    - pip install -r requirements.txt
+    - mkdocs build
+    - mkdocs build -f mkdocs.fr.yml
+    - mv site public
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "master"

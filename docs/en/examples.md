@@ -12,7 +12,7 @@ Collection of practical examples demonstrating GoCamel features.
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -57,7 +57,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -109,7 +109,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -149,7 +149,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -280,7 +280,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -320,7 +320,7 @@ route := ctx.CreateRouteBuilder().
 import (
     "database/sql"
     _ "github.com/mattn/go-sqlite3"
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -370,7 +370,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
@@ -436,7 +436,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "github.com/tranchida/gocamel"
+    "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
