@@ -59,9 +59,9 @@ func (m *Multicast) processSequential(exchange *Exchange) error {
 		branchExchange := exchange.Copy()
 		
 		// Can add multicast-specific properties
-		branchExchange.SetProperty("CamelMulticastIndex", i)
-		branchExchange.SetProperty("CamelMulticastSize", len(m.processors))
-		branchExchange.SetProperty("CamelMulticastComplete", i == len(m.processors)-1)
+		branchExchange.SetProperty(CamelMulticastIndex, i)
+		branchExchange.SetProperty(CamelMulticastSize, len(m.processors))
+		branchExchange.SetProperty(CamelMulticastComplete, i == len(m.processors)-1)
 
 		if err := p.Process(branchExchange); err != nil {
 			if !errors.Is(err, ErrStopRouting) {
@@ -97,9 +97,9 @@ func (m *Multicast) processParallel(exchange *Exchange) error {
 			defer wg.Done()
 
 			branchExchange := exchange.Copy()
-			branchExchange.SetProperty("CamelMulticastIndex", index)
-			branchExchange.SetProperty("CamelMulticastSize", len(m.processors))
-			branchExchange.SetProperty("CamelMulticastComplete", index == len(m.processors)-1)
+			branchExchange.SetProperty(CamelMulticastIndex, index)
+			branchExchange.SetProperty(CamelMulticastSize, len(m.processors))
+			branchExchange.SetProperty(CamelMulticastComplete, index == len(m.processors)-1)
 
 			err := processor.Process(branchExchange)
 			

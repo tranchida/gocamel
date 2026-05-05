@@ -68,13 +68,13 @@ func (a *Aggregator) Process(exchange *Exchange) error {
 	// Manage the count for completion
 	count := 1
 	if oldExchange != nil {
-		if c, ok := oldExchange.GetPropertyAsInt("CamelAggregatorSize"); ok {
+		if c, ok := oldExchange.GetPropertyAsInt(CamelAggregatorSize); ok {
 			count = c + 1
 		} else {
 			count = 2
 		}
 	}
-	aggregatedExchange.SetProperty("CamelAggregatorSize", count)
+	aggregatedExchange.SetProperty(CamelAggregatorSize, count)
 
 	if a.CompletionSize > 0 && count >= a.CompletionSize {
 		// Completed: remove from repository

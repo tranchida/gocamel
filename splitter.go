@@ -51,9 +51,9 @@ func (s *Splitter) Process(exchange *Exchange) error {
 	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
 		partExchange := exchange.Copy()
 		partExchange.In.SetBody(parts)
-		partExchange.SetProperty("CamelSplitIndex", 0)
-		partExchange.SetProperty("CamelSplitSize", 1)
-		partExchange.SetProperty("CamelSplitComplete", true)
+		partExchange.SetProperty(CamelSplitIndex, 0)
+		partExchange.SetProperty(CamelSplitSize, 1)
+		partExchange.SetProperty(CamelSplitComplete, true)
 
 		if err := s.processPart(partExchange, parts, 0, 1); err != nil {
 			if !errors.Is(err, ErrStopRouting) {
@@ -87,9 +87,9 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		partExchange.In.SetBody(part)
 		
 		// Can add split-specific properties (index, total, etc.)
-		partExchange.SetProperty("CamelSplitIndex", i)
-		partExchange.SetProperty("CamelSplitSize", length)
-		partExchange.SetProperty("CamelSplitComplete", i == length-1)
+		partExchange.SetProperty(CamelSplitIndex, i)
+		partExchange.SetProperty(CamelSplitSize, length)
+		partExchange.SetProperty(CamelSplitComplete, i == length-1)
 
 		if err := s.processPart(partExchange, part, i, length); err != nil {
 			if !errors.Is(err, ErrStopRouting) {

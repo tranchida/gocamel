@@ -51,6 +51,15 @@ const (
 	CamelContextId      = "CamelContextId"      // ID du contexte
 	CamelContextVersion = "CamelContextVersion" // Version du contexte
 
+	// Propriétés EIP (Enterprise Integration Patterns)
+	CamelSplitIndex        = "CamelSplitIndex"        // Index de la partie courante dans un Split
+	CamelSplitSize         = "CamelSplitSize"         // Nombre total de parties dans un Split
+	CamelSplitComplete     = "CamelSplitComplete"     // Booléen indiquant si c'est la dernière partie
+	CamelAggregatorSize    = "CamelAggregatorSize"    // Nombre de messages agrégés
+	CamelMulticastIndex    = "CamelMulticastIndex"    // Index de la branche courante dans un Multicast
+	CamelMulticastSize     = "CamelMulticastSize"     // Nombre total de branches dans un Multicast
+	CamelMulticastComplete = "CamelMulticastComplete" // Booléen indiquant si c'est la dernière branche
+
 	// Propriétés de transaction
 	CamelTransactionId     = "CamelTransactionId"     // ID de transaction
 	CamelTransactionKey    = "CamelTransactionKey"    // Clé de transaction
