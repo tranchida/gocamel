@@ -5,11 +5,16 @@ import (
 	"sync"
 )
 
-// Registry defines a generic registry for beans, components, and other objects
+// Registry defines a generic registry for beans, components, and other objects.
+// ComponentRegistry is the default implementation.
 type Registry interface {
+	// Bind registers an object under the given name.
 	Bind(name string, value any)
+	// Lookup retrieves an object by name. The second return value indicates if it was found.
 	Lookup(name string) (any, bool)
+	// Remove deletes the object with the given name from the registry.
 	Remove(name string)
+	// CreateEndpoint parses the URI, looks up the component by scheme, and creates an Endpoint.
 	CreateEndpoint(uri string) (Endpoint, error)
 }
 

@@ -107,14 +107,17 @@ func (cp *compositeProcessor) Process(exchange *Exchange) error {
 	return nil
 }
 
-// ChoiceBuilder provides fluent API for building Choice patterns within RouteBuilder
+// ChoiceBuilder provides a fluent API for building Choice/When/Otherwise patterns.
+// Use .When(expression) to add conditions, chain DSL methods for each branch,
+// then call .Otherwise() for the fallback or .EndChoice() to finish.
+// Errors during DSL construction are accumulated and surfaced at EndChoice().
 type ChoiceBuilder struct {
 	routeBuilder        *RouteBuilder
 	choice              *ChoiceProcessor
 	activeExpression    string
 	activeProcessors    []Processor
 	otherwiseProcessors []Processor
-	err                 error // accumulated during DSL construction, surfaced at EndChoice()
+	err                 error // accumulated during DSL construction, surfaced at EndChoice().
 }
 
 // Choice starts a Choice pattern in the RouteBuilder
@@ -259,7 +262,8 @@ func (cb *ChoiceBuilder) EndChoice() *RouteBuilder {
 	return cb.routeBuilder
 }
 
-// OtherwiseBuilder provides fluent API for the Otherwise clause
+// OtherwiseBuilder provides a fluent API for the Otherwise (fallback) clause
+// of a Choice pattern. Chain DSL methods, then call .EndChoice() to finish.
 type OtherwiseBuilder struct {
 	choiceBuilder *ChoiceBuilder
 }

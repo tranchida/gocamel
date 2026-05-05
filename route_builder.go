@@ -4,12 +4,14 @@ import (
 	"fmt"
 )
 
-// RouteBuilder facilite la création de routes
+// RouteBuilder provides a fluent DSL for constructing Camel routes.
+// It wraps a Route and delegates method calls to build the processor pipeline.
+// Errors during construction are accumulated and surfaced at Build() time.
 type RouteBuilder struct {
 	context   *CamelContext
 	route     *Route
-	container ProcessorContainer
-	err       error // accumulated error during DSL construction
+	container ProcessorContainer // Current processor container (route or nested EIP).
+	err       error              // accumulated error during DSL construction.
 }
 
 // NewRouteBuilder crée une nouvelle instance de RouteBuilder
@@ -188,7 +190,9 @@ func (b *RouteBuilder) Split(expression func(*Exchange) (any, error)) *SplitDefi
 	}
 }
 
-// SplitDefinition permet de configurer le traitement de chaque partie du message splité
+// SplitDefinition is a fluent sub-DSL for configuring the Split EIP.
+// It wraps an inner RouteBuilder whose container is the Splitter,
+// allowing .Process(), .To(), etc. on each split part before calling .End().
 type SplitDefinition struct {
 	*RouteBuilder
 	parent   *RouteBuilder
@@ -501,7 +505,9 @@ func (b *RouteBuilder) Multicast() *MulticastDefinition {
 	}
 }
 
-// MulticastDefinition permet de configurer le Multicast EIP
+// MulticastDefinition is a fluent sub-DSL for configuring the Multicast EIP.
+// Supports .ParallelProcessing(), .AggregationStrategy(), .Pipeline() for
+// grouping processors, and .End() to return to the parent builder.
 type MulticastDefinition struct {
 	*RouteBuilder
 	parent    *RouteBuilder
@@ -576,7 +582,8 @@ func (d *MulticastDefinition) End() *RouteBuilder {
 	return d.parent
 }
 
-// PipelineDefinition permet de configurer un groupe de processeurs
+// PipelineDefinition is a fluent sub-DSL for grouping processors inside a
+// multicast branch. Call .End() to return to the MulticastDefinition.
 type PipelineDefinition struct {
 	*RouteBuilder
 	parent *MulticastDefinition

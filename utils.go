@@ -7,7 +7,8 @@ import (
 	"strings"
 )
 
-// ParseURI parses an endpoint URI into a *url.URL
+// ParseURI parses an endpoint URI into a *url.URL.
+// Returns an error if the URI is malformed.
 func ParseURI(uri string) (*url.URL, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -16,8 +17,9 @@ func ParseURI(uri string) (*url.URL, error) {
 	return u, nil
 }
 
-// Interpolate replaces variables of type ${header.name}, ${property.name} or ${body}
-// in a string with corresponding values from the exchange.
+// Interpolate replaces ${header.name}, ${property.name} and ${body} placeholders
+// in a string with values from the Exchange. Used by ToD (To Dynamic) for
+// runtime URI resolution.
 func Interpolate(text string, exchange *Exchange) string {
 	re := regexp.MustCompile(`\${(header|property|body)(?:\.([^}]+))?}`)
 	return re.ReplaceAllStringFunc(text, func(match string) string {

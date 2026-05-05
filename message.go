@@ -5,10 +5,11 @@ import (
 	"regexp"
 )
 
-// Message represents a message in a route
+// Message represents a message flowing through a Camel route.
+// It carries a body of any type and a set of string-keyed headers.
 type Message struct {
-	Body    any
-	Headers map[string]any
+	Body    any            // Body carries the message payload.
+	Headers map[string]any // Headers carry metadata as key-value pairs.
 }
 
 // NewMessage creates a new Message instance
