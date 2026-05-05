@@ -59,8 +59,8 @@ var (
 	// Now supports names with hyphens and other characters
 	dotNotationRegex = regexp.MustCompile(`^(body)$|^(header|[a-zA-Z]+)\.([a-zA-Z0-9_\-\.]+)$`)
 
-	// Matches date:now:FORMAT
-	dateFunctionRegex = regexp.MustCompile(`^date:now(?::([^:]+))?$`)
+	// Matches date:now:FORMAT (format may contain colons, e.g. "2006-01-02T15:04:05")
+	dateFunctionRegex = regexp.MustCompile(`^date:now(?::(.+))?$`)
 
 	// Matches random(MAX)
 	randomFunctionRegex = regexp.MustCompile(`^random\((\d+)\)$`)
@@ -258,40 +258,8 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 
 	// Check for simple variable access patterns FIRST (before any operators)
 	// This prevents header names with hyphens from being parsed as math operations
-
-	// Check for null-safe bracket notation first (e.g., body?.['key'])
-	if strings.Contains(expr, "?.") && strings.Contains(expr, "[") {
-		result, err := evaluateNullSafeBracketNotation(expr, exchange)
-		if err == nil {
-			return result, nil
-		}
-		// If it fails, continue to other patterns
-	}
-
-	// Check for bracket notation (e.g., body['key'], body[0])
-	if strings.Contains(expr, "[") {
-		result, err := evaluateBracketNotation(expr, exchange)
-		if err == nil {
-			return result, nil
-		}
-		// If it fails, continue to other patterns
-	}
-
-	// Check for null-safe dot notation (e.g., body?.field)
-	if strings.Contains(expr, "?.") {
-		result, err := evaluateNullSafeDotNotation(expr, exchange)
-		if err == nil {
-			return result, nil
-		}
-		// If it fails, continue to other patterns
-	}
-
-	// Check for body.property (map/struct access)
-	if strings.HasPrefix(expr, "body.") && !strings.HasPrefix(expr, "body?") {
-		result, err := evaluateBodyProperty(expr, exchange)
-		if err == nil {
-			return result, nil
-		}
+	if result, err := evaluateSimpleVariableAccess(expr, exchange); err == nil {
+		return result, nil
 	}
 
 	// Check for function chaining: e.g., body.trim(), header.name.uppercase()
@@ -301,7 +269,6 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		if err == nil {
 			return result, nil
 		}
-		// If it fails, continue to other patterns
 	}
 
 	// Check for header. and exchangeProperty. patterns (avoid matching as math operation)
@@ -525,101 +492,45 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 
 	// Handle math operations (precedence: * / % then + -)
 	// First check + and - (lower precedence)
-	if mathMatch := mathAddRegex.FindStringSubmatch(expr); mathMatch != nil {
-		left := strings.TrimSpace(mathMatch[1])
-		right := strings.TrimSpace(mathMatch[2])
-
-		leftVal, err := evaluateVariable(left, exchange)
-		if err != nil {
-			return nil, err
-		}
-
-		rightVal, err := evaluateVariable(right, exchange)
-		if err != nil {
-			return nil, err
-		}
-
-		return toFloat64(leftVal) + toFloat64(rightVal), nil
+	if result, err := evaluateMathOperation(expr, mathAddRegex, func(a, b float64) (float64, error) { return a + b, nil }, exchange); err != nil {
+		return nil, err
+	} else if result != nil {
+		return result, nil
 	}
 
-	if mathMatch := mathSubtractRegex.FindStringSubmatch(expr); mathMatch != nil {
-		left := strings.TrimSpace(mathMatch[1])
-		right := strings.TrimSpace(mathMatch[2])
-
-		leftVal, err := evaluateVariable(left, exchange)
-		if err != nil {
-			return nil, err
-		}
-
-		rightVal, err := evaluateVariable(right, exchange)
-		if err != nil {
-			return nil, err
-		}
-
-		return toFloat64(leftVal) - toFloat64(rightVal), nil
+	if result, err := evaluateMathOperation(expr, mathSubtractRegex, func(a, b float64) (float64, error) { return a - b, nil }, exchange); err != nil {
+		return nil, err
+	} else if result != nil {
+		return result, nil
 	}
 
 	// Then check * / % (higher precedence)
-	if mathMatch := mathMultiplyRegex.FindStringSubmatch(expr); mathMatch != nil {
-		left := strings.TrimSpace(mathMatch[1])
-		right := strings.TrimSpace(mathMatch[2])
-
-		leftVal, err := evaluateVariable(left, exchange)
-		if err != nil {
-			return nil, err
-		}
-
-		rightVal, err := evaluateVariable(right, exchange)
-		if err != nil {
-			return nil, err
-		}
-
-		return toFloat64(leftVal) * toFloat64(rightVal), nil
+	if result, err := evaluateMathOperation(expr, mathMultiplyRegex, func(a, b float64) (float64, error) { return a * b, nil }, exchange); err != nil {
+		return nil, err
+	} else if result != nil {
+		return result, nil
 	}
 
-	if mathMatch := mathDivideRegex.FindStringSubmatch(expr); mathMatch != nil {
-		left := strings.TrimSpace(mathMatch[1])
-		right := strings.TrimSpace(mathMatch[2])
-
-		leftVal, err := evaluateVariable(left, exchange)
-		if err != nil {
-			return nil, err
+	if result, err := evaluateMathOperation(expr, mathDivideRegex, func(a, b float64) (float64, error) {
+		if b == 0 {
+			return 0, fmt.Errorf("division by zero")
 		}
-
-		rightVal, err := evaluateVariable(right, exchange)
-		if err != nil {
-			return nil, err
-		}
-
-		rightNum := toFloat64(rightVal)
-		if rightNum == 0 {
-			return nil, fmt.Errorf("division by zero")
-		}
-
-		return toFloat64(leftVal) / rightNum, nil
+		return a / b, nil
+	}, exchange); err != nil {
+		return nil, err
+	} else if result != nil {
+		return result, nil
 	}
 
-	if mathMatch := mathModuloRegex.FindStringSubmatch(expr); mathMatch != nil {
-		left := strings.TrimSpace(mathMatch[1])
-		right := strings.TrimSpace(mathMatch[2])
-
-		leftVal, err := evaluateVariable(left, exchange)
-		if err != nil {
-			return nil, err
+	if result, err := evaluateMathOperation(expr, mathModuloRegex, func(a, b float64) (float64, error) {
+		if b == 0 {
+			return 0, fmt.Errorf("modulo by zero")
 		}
-
-		rightVal, err := evaluateVariable(right, exchange)
-		if err != nil {
-			return nil, err
-		}
-
-		rightNum := toFloat64(rightVal)
-		if rightNum == 0 {
-			return nil, fmt.Errorf("modulo by zero")
-		}
-
-		// Modulo for floats
-		return float64(int(toFloat64(leftVal)) % int(rightNum)), nil
+		return float64(int(a) % int(b)), nil
+	}, exchange); err != nil {
+		return nil, err
+	} else if result != nil {
+		return result, nil
 	}
 
 	// Handle function chaining: body.trim().uppercase()
@@ -629,39 +540,9 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		return evaluateFunctionChain(expr, exchange)
 	}
 
-	// Check for null-safe bracket notation first (e.g., body?.['key'])
-	if strings.Contains(expr, "?.") && strings.Contains(expr, "[") {
-		result, err := evaluateNullSafeBracketNotation(expr, exchange)
-		if err == nil {
-			return result, nil
-		}
-		// If it fails, continue to other patterns
-	}
-
-	// Check for bracket notation (e.g., body['key'], body[0])
-	if strings.Contains(expr, "[") {
-		result, err := evaluateBracketNotation(expr, exchange)
-		if err == nil {
-			return result, nil
-		}
-		// If it fails, continue to other patterns
-	}
-
-	// Check for null-safe dot notation (e.g., body?.field)
-	if strings.Contains(expr, "?.") {
-		result, err := evaluateNullSafeDotNotation(expr, exchange)
-		if err == nil {
-			return result, nil
-		}
-		// If it fails, continue to other patterns
-	}
-
-	// Check for body.property (map/struct access)
-	if strings.HasPrefix(expr, "body.") && !strings.HasPrefix(expr, "body?") {
-		result, err := evaluateBodyProperty(expr, exchange)
-		if err == nil {
-			return result, nil
-		}
+	// Try variable access patterns as a fallback (after operators have been processed)
+	if result, err := evaluateSimpleVariableAccess(expr, exchange); err == nil {
+		return result, nil
 	}
 
 	// Check for variable access patterns - now more flexible
@@ -707,6 +588,69 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 	}
 
 	return nil, fmt.Errorf("unknown expression: %s", expr)
+}
+
+// evaluateMathOperation is a helper to reduce duplicate code across math operations (+, -, *, /, %).
+func evaluateMathOperation(expr string, re *regexp.Regexp, op func(float64, float64) (float64, error), exchange *Exchange) (interface{}, error) {
+	match := re.FindStringSubmatch(expr)
+	if match == nil {
+		return nil, nil // no match
+	}
+	left := strings.TrimSpace(match[1])
+	right := strings.TrimSpace(match[2])
+
+	leftVal, err := evaluateVariable(left, exchange)
+	if err != nil {
+		return nil, err
+	}
+	rightVal, err := evaluateVariable(right, exchange)
+	if err != nil {
+		return nil, err
+	}
+	result, err := op(toFloat64(leftVal), toFloat64(rightVal))
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// evaluateSimpleVariableAccess handles common variable access patterns (bracket notation,
+// null-safe access, dot notation, function chaining). Used from two places in evaluateVariable
+// to avoid duplication.
+func evaluateSimpleVariableAccess(expr string, exchange *Exchange) (interface{}, error) {
+	// Check for null-safe bracket notation first (e.g., body?.['key'])
+	if strings.Contains(expr, "?.") && strings.Contains(expr, "[") {
+		result, err := evaluateNullSafeBracketNotation(expr, exchange)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	// Check for bracket notation (e.g., body['key'], body[0])
+	if strings.Contains(expr, "[") {
+		result, err := evaluateBracketNotation(expr, exchange)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	// Check for null-safe dot notation (e.g., body?.field)
+	if strings.Contains(expr, "?.") {
+		result, err := evaluateNullSafeDotNotation(expr, exchange)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	// Check for body.property (map/struct access)
+	if strings.HasPrefix(expr, "body.") && !strings.HasPrefix(expr, "body?") {
+		result, err := evaluateBodyProperty(expr, exchange)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no variable access pattern matched: %s", expr)
 }
 
 // findFirstMethodCall finds the index of the first dot that starts a method call
@@ -942,6 +886,43 @@ func applyStringFunction(funcName string, val interface{}, args []interface{}) (
 			result = result[:limit]
 		}
 		return result, nil
+	case "capitalize":
+		// Uppercase first letter, lowercase rest
+		if len(strVal) == 0 {
+			return strVal, nil
+		}
+		return strings.ToUpper(string(strVal[0])) + strings.ToLower(strVal[1:]), nil
+	case "title":
+		// Title case each word separated by spaces
+		return strings.Title(strVal), nil
+	case "padstart":
+		if len(args) < 1 {
+			return strVal, nil
+		}
+		targetLen := int(toFloat64(args[0]))
+		padChar := " "
+		if len(args) >= 2 {
+			padChar = fmt.Sprintf("%v", args[1])
+		}
+		if len(strVal) >= targetLen {
+			return strVal, nil
+		}
+		padding := strings.Repeat(padChar, targetLen-len(strVal))
+		return padding + strVal, nil
+	case "padend":
+		if len(args) < 1 {
+			return strVal, nil
+		}
+		targetLen := int(toFloat64(args[0]))
+		padChar := " "
+		if len(args) >= 2 {
+			padChar = fmt.Sprintf("%v", args[1])
+		}
+		if len(strVal) >= targetLen {
+			return strVal, nil
+		}
+		padding := strings.Repeat(padChar, targetLen-len(strVal))
+		return strVal + padding, nil
 	default:
 		return nil, fmt.Errorf("unknown function: %s", funcName)
 	}
