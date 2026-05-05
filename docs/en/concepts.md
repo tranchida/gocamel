@@ -90,6 +90,31 @@ context.Start()
 context.Stop()
 ```
 
+## Monitoring (Observability)
+
+GoCamel includes native support for Prometheus and OpenTelemetry, enabling production-grade monitoring for your integration pipelines.
+
+### Prometheus (Metrics)
+Expose metrics for any route by calling `.EnableMetrics()` in the DSL. The following metrics are collected automatically:
+- `gocamel_exchanges_total`: Total processed exchanges (with `route_id` and `status` labels).
+- `gocamel_exchange_duration_seconds`: Processing time distribution.
+- `gocamel_exchanges_inflight`: Number of exchanges currently in flight.
+
+### OpenTelemetry (Tracing)
+Enable distributed tracing with `.EnableTracing()`. GoCamel creates an OTel **Span** for each route execution, providing:
+- Route and Exchange identifiers in span attributes.
+- Automatic trace context propagation through the pipeline.
+- Error recording on the span if processing fails.
+
+```go
+route, _ := context.CreateRouteBuilder().
+    From("timer:tick?period=5000").
+    EnableMetrics().
+    EnableTracing().
+    To("http://api.service.com").
+    Build()
+```
+
 ## Component
 
 Factory for endpoints of a specific type:

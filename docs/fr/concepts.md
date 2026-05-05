@@ -90,6 +90,31 @@ context.Start()
 context.Stop()
 ```
 
+## Monitoring (Observabilité)
+
+GoCamel intègre nativement le support pour Prometheus et OpenTelemetry pour vous permettre de surveiller vos pipelines en production.
+
+### Prometheus (Métriques)
+Vous pouvez exposer des métriques pour chaque route en appelant `.EnableMetrics()` dans le DSL. Les métriques suivantes sont collectées automatiquement :
+- `gocamel_exchanges_total` : Nombre total de messages (avec labels `route_id` et `status`).
+- `gocamel_exchange_duration_seconds` : Temps de traitement des messages.
+- `gocamel_exchanges_inflight` : Nombre de messages en cours de traitement.
+
+### OpenTelemetry (Tracing)
+Activez le traçage distribué avec `.EnableTracing()`. GoCamel créera un **Span** pour chaque exécution de route, incluant :
+- L'ID de la route et de l'échange.
+- La propagation automatique du contexte de trace.
+- L'enregistrement des erreurs si le traitement échoue.
+
+```go
+route, _ := context.CreateRouteBuilder().
+    From("timer:tick?period=5000").
+    EnableMetrics().
+    EnableTracing().
+    To("http://api.service.com").
+    Build()
+```
+
 ## Component
 
 Usine pour créer des endpoints d'un type spécifique:

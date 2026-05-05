@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // ErrStopRouting is a special error used to stop
@@ -46,6 +47,8 @@ type Route struct {
 	startLock    sync.RWMutex                       // Protects started state for concurrent access.
 	err          error                              // Accumulated during construction, surfaced at Start().
 	errorHandler ErrorHandler                        // Error handler for this route (nil means propagate).
+	metrics      bool                               // Whether Prometheus metrics are enabled for this route.
+	tracing      bool                               // Whether OpenTelemetry tracing is enabled for this route.
 }
 
 // NewRoute crée une nouvelle instance de Route
@@ -87,6 +90,39 @@ func (r *Route) ProcessFunc(f func(*Exchange) error) *Route {
 // Process implémente l'interface Processor.
 // Errors are delegated to the configured ErrorHandler if one is set.
 func (r *Route) Process(exchange *Exchange) error {
+	if r.metrics && r.tracing {
+		return r.metricsProcess(exchange, func(e *Exchange) error {
+			return r.traceProcess(e)
+		})
+	}
+	if r.metrics {
+		return r.metricsProcess(exchange, r.doProcess)
+	}
+	if r.tracing {
+		return r.traceProcess(exchange)
+	}
+	return r.doProcess(exchange)
+}
+
+func (r *Route) metricsProcess(exchange *Exchange, next func(*Exchange) error) error {
+	start := time.Now()
+	exchangesInFlight.WithLabelValues(r.ID).Inc()
+	defer exchangesInFlight.WithLabelValues(r.ID).Dec()
+
+	err := next(exchange)
+
+	duration := time.Since(start).Seconds()
+	exchangesDuration.WithLabelValues(r.ID).Observe(duration)
+
+	status := "success"
+	if err != nil && err != ErrStopRouting {
+		status = "failure"
+	}
+	exchangesTotal.WithLabelValues(r.ID, status).Inc()
+	return err
+}
+
+func (r *Route) doProcess(exchange *Exchange) error {
 	for _, processor := range r.processors {
 		if err := processor.Process(exchange); err != nil {
 			if errors.Is(err, ErrStopRouting) {
@@ -191,6 +227,12 @@ func (r *Route) SetErrorHandler(handler ErrorHandler) *Route {
 // GetErrorHandler returns the route's error handler (may be nil if none configured).
 func (r *Route) GetErrorHandler() ErrorHandler {
 	return r.errorHandler
+}
+
+// EnableMetrics active la collecte des métriques Prometheus pour cette route
+func (r *Route) EnableMetrics() *Route {
+	r.metrics = true
+	return r
 }
 
 // SetBody définit le corps du message de sortie

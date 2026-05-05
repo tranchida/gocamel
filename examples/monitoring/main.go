@@ -1,0 +1,94 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"gitlab.com/tranchida/gocamel"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
+)
+
+func initTracer() (*sdktrace.TracerProvider, error) {
+	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
+	if err != nil {
+		return nil, err
+	}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String("gocamel-monitoring-example"),
+		)),
+	)
+	otel.SetTracerProvider(tp)
+	return tp, nil
+}
+
+func main() {
+	// 1. Initialisation d'OpenTelemetry (Export vers stdout pour l'exemple)
+	tp, err := initTracer()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	// 2. Initialisation du contexte GoCamel
+	ctx := gocamel.NewCamelContext()
+	ctx.AddComponent("direct", gocamel.NewDirectComponent())
+	ctx.AddComponent("timer", gocamel.NewTimerComponent())
+
+	// 3. Définition de la route avec Monitoring
+	_, err = ctx.CreateRouteBuilder().
+		From("timer:monitor?period=5000").
+		SetID("monitoring-route").
+		EnableMetrics(). // Active les métriques Prometheus
+		EnableTracing(). // Active le traçage OpenTelemetry
+		ProcessFunc(func(e *gocamel.Exchange) error {
+			fmt.Println("Processing exchange...")
+			e.GetIn().SetBody("Hello Monitoring!")
+			return nil
+		}).
+		To("direct:next").
+		Build()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Route de destination
+	_, _ = ctx.CreateRouteBuilder().
+		From("direct:next").
+		SetID("destination-route").
+		EnableMetrics().
+		EnableTracing().
+		ProcessFunc(func(e *gocamel.Exchange) error {
+			time.Sleep(100 * time.Millisecond) // Simule un traitement
+			fmt.Printf("Received: %v\n", e.GetIn().GetBody())
+			return nil
+		}).
+		Build()
+
+	// 4. Serveur HTTP pour exposer les métriques Prometheus
+	go func() {
+		fmt.Println("Prometheus metrics available at http://localhost:8080/metrics")
+		http.Handle("/metrics", promhttp.Handler())
+		log.Fatal(http.ListenAndServe(":8080", nil))
+	}()
+
+	// 5. Démarrage du contexte
+	if err := ctx.Start(); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("GoCamel started. Press Ctrl+C to stop.")
+	select {}
+}

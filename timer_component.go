@@ -185,8 +185,7 @@ func (c *TimerConsumer) run(ctx context.Context) {
 
 		err := c.processor.Process(exchange)
 		if err != nil && err != ErrStopRouting {
-			// Log l'error (in une vraie implémentation)
-			// fmt.Printf("error during traitement de l'événement timer: %v\n", err)
+			logError("error during traitement de l'événement timer", "name", c.endpoint.timerName, "error", err)
 		}
 
 		if c.endpoint.repeatCount > 0 && counter >= c.endpoint.repeatCount {

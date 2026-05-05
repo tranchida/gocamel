@@ -403,6 +403,18 @@ func (b *RouteBuilder) LogSimple(expression string) *RouteBuilder {
 	})
 }
 
+// EnableMetrics active la collecte des métriques Prometheus pour la route en cours
+func (b *RouteBuilder) EnableMetrics() *RouteBuilder {
+	b.route.EnableMetrics()
+	return b
+}
+
+// EnableTracing active le traçage OpenTelemetry pour la route en cours
+func (b *RouteBuilder) EnableTracing() *RouteBuilder {
+	b.route.EnableTracing()
+	return b
+}
+
 // ErrorHandler configures a custom ErrorHandler for this route.
 // This is a terminal DSL operation — it sets the handler on the route
 // being built. Multiple calls will overwrite previous settings.
