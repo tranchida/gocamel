@@ -319,6 +319,12 @@ func (d *SplitDefinition) LogHeaders(message string) *SplitDefinition {
 	return d
 }
 
+// WireTap ajoute un wiretap et reste dans le contexte du split
+func (d *SplitDefinition) WireTap(uri string) *SplitDefinition {
+	d.RouteBuilder.WireTap(uri)
+	return d
+}
+
 // End termine le bloc Split et revient au builder parent
 func (d *SplitDefinition) End() *RouteBuilder {
 	return d.parent
@@ -489,6 +495,23 @@ func (b *RouteBuilder) ToD(uriTemplates ...string) *RouteBuilder {
 	return b
 }
 
+// WireTap ajoute un processeur WireTap qui envoie une copie asynchrone
+// de l'échange vers l'endpoint spécifié sans bloquer la route principale.
+// La copie est indépendante : les modifications sur l'échange tapé n'affectent
+// pas la route principale et vice-versa.
+//
+// Exemple:
+//
+//	route, err := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    WireTap("direct:audit").
+//	    To("direct:result").
+//	    Build()
+func (b *RouteBuilder) WireTap(uri string) *RouteBuilder {
+	b.container.AddProcessor(NewWireTap(b.context, uri))
+	return b
+}
+
 // Multicast commence un bloc Multicast EIP
 func (b *RouteBuilder) Multicast() *MulticastDefinition {
 	m := NewMulticast()
@@ -577,6 +600,12 @@ func (d *MulticastDefinition) SetHeader(key string, value interface{}) *Multicas
 	return d
 }
 
+// WireTap ajoute un wiretap et reste dans le contexte du multicast
+func (d *MulticastDefinition) WireTap(uri string) *MulticastDefinition {
+	d.RouteBuilder.WireTap(uri)
+	return d
+}
+
 // End termine le bloc Multicast et revient au builder parent
 func (d *MulticastDefinition) End() *RouteBuilder {
 	return d.parent
@@ -616,6 +645,12 @@ func (d *PipelineDefinition) ToD(uriTemplates ...string) *PipelineDefinition {
 // SetBody définit le corps du message de sortie et reste dans le contexte du pipeline
 func (d *PipelineDefinition) SetBody(body interface{}) *PipelineDefinition {
 	d.RouteBuilder.SetBody(body)
+	return d
+}
+
+// WireTap ajoute un wiretap et reste dans le contexte du pipeline
+func (d *PipelineDefinition) WireTap(uri string) *PipelineDefinition {
+	d.RouteBuilder.WireTap(uri)
 	return d
 }
 
