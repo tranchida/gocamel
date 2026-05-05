@@ -13,7 +13,7 @@ type CamelContext struct {
 	routes       []*Route
 	registry     *ComponentRegistry
 	started      bool
-	startLock    sync.Mutex
+	startLock    sync.RWMutex
 	routeCounter int
 }
 
@@ -82,7 +82,8 @@ func (c *CamelContext) GetRoutes() []*Route {
 	return c.routes
 }
 
-// Start démarre le contexte et toutes ses routes
+// Start démarre le contexte et toutes ses routes.
+// If a route fails to start, previously started routes are stopped (rollback).
 func (c *CamelContext) Start() error {
 	c.startLock.Lock()
 	defer c.startLock.Unlock()
@@ -91,10 +92,16 @@ func (c *CamelContext) Start() error {
 		return fmt.Errorf("le contexte est déjà démarré")
 	}
 
-	// Démarrage de toutes les routes
-	for _, route := range c.routes {
+	// Démarrage de toutes les routes avec rollback en cas d'échec
+	for i, route := range c.routes {
 		if err := route.Start(c.ctx); err != nil {
-			return fmt.Errorf("erreur lors du démarrage de la route %s: %v", route.ID, err)
+			// Rollback: arrêter les routes déjà démarrées
+			for j := i - 1; j >= 0; j-- {
+				if stopErr := c.routes[j].Stop(); stopErr != nil {
+					err = fmt.Errorf("%w; rollback stop error for route %s: %v", err, c.routes[j].ID, stopErr)
+				}
+			}
+			return fmt.Errorf("erreur lors du démarrage de la route %s: %w", route.ID, err)
 		}
 	}
 
@@ -102,7 +109,8 @@ func (c *CamelContext) Start() error {
 	return nil
 }
 
-// Stop arrête le contexte et toutes ses routes
+// Stop arrête le contexte et toutes ses routes.
+// All routes are stopped even if some fail; errors are collected and returned as a combined error.
 func (c *CamelContext) Stop() error {
 	c.startLock.Lock()
 	defer c.startLock.Unlock()
@@ -111,22 +119,27 @@ func (c *CamelContext) Stop() error {
 		return nil
 	}
 
-	// Arrêt de toutes les routes
+	// Arrêt de toutes les routes en collectant les erreurs
+	var errs []error
 	for _, route := range c.routes {
 		if err := route.Stop(); err != nil {
-			return fmt.Errorf("erreur lors de l'arrêt de la route %s: %v", route.ID, err)
+			errs = append(errs, fmt.Errorf("route %s: %w", route.ID, err))
 		}
 	}
 
 	c.cancel()
 	c.started = false
+
+	if len(errs) > 0 {
+		return fmt.Errorf("erreurs lors de l'arrêt des routes: %v", errs)
+	}
 	return nil
 }
 
-// IsStarted vérifie si le contexte est démarré
+// IsStarted vérifie si le contexte est démarré (utilise RLock pour la lecture seule).
 func (c *CamelContext) IsStarted() bool {
-	c.startLock.Lock()
-	defer c.startLock.Unlock()
+	c.startLock.RLock()
+	defer c.startLock.RUnlock()
 	return c.started
 }
 

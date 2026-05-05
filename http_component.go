@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 // HTTPComponent represents the HTTP component
@@ -15,10 +17,21 @@ type HTTPComponent struct {
 	client *http.Client
 }
 
-// NewHTTPComponent creates a new HTTPComponent instance
+// NewHTTPComponent creates a new HTTPComponent instance with default timeouts.
 func NewHTTPComponent() *HTTPComponent {
 	return &HTTPComponent{
-		client: &http.Client{},
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		},
 	}
 }
 

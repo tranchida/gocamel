@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 )
 
@@ -31,20 +32,21 @@ func (f ProcessorFunc) Process(exchange *Exchange) error {
 	return f(exchange)
 }
 
-// Route représente une route dans le système
+// Route represents a Camel route: a pipeline of Processors fed by a single Consumer.
+// Routes are built via RouteBuilder (fluent DSL) and managed by CamelContext.
 type Route struct {
-	ID           string
-	Description  string
-	Group        string
-	Transacted   bool
+	ID           string     // Unique identifier for this route.
+	Description  string     // Human-readable description of the route purpose.
+	Group        string     // Logical group this route belongs to.
+	Transacted   bool       // Whether the route uses transactional semantics.
 	context      *CamelContext
 	from         Endpoint
 	consumer     Consumer
 	processors   []Processor
 	started      bool
-	startLock    sync.Mutex
-	err          error         // accumulated during construction, surfaced at Start()
-	errorHandler ErrorHandler  // error handler for this route
+	startLock    sync.RWMutex                       // Protects started state for concurrent access.
+	err          error                              // Accumulated during construction, surfaced at Start().
+	errorHandler ErrorHandler                        // Error handler for this route (nil means propagate).
 }
 
 // NewRoute crée une nouvelle instance de Route
@@ -151,10 +153,10 @@ func (r *Route) Stop() error {
 	return nil
 }
 
-// IsStarted vérifie si la route est démarrée
+// IsStarted vérifie si la route est démarrée (utilise RLock).
 func (r *Route) IsStarted() bool {
-	r.startLock.Lock()
-	defer r.startLock.Unlock()
+	r.startLock.RLock()
+	defer r.startLock.RUnlock()
 	return r.started
 }
 
