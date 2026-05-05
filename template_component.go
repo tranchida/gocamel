@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"html/template"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,7 +54,7 @@ func NewTemplateComponent() *TemplateComponent {
 // CreateEndpoint creates a new endpoint template
 // Format de l'URI: template:path/vers/file.tmpl[?contentCache=true&allowTemplateFromHeader=true]
 func (c *TemplateComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	parsedURL, err := url.Parse(uri)
+	parsedURL, err := ParseURI(uri)
 	if err != nil {
 		return nil, fmt.Errorf("URI template invalid: %w", err)
 	}

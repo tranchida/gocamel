@@ -24,7 +24,7 @@ func NewHTTPComponent() *HTTPComponent {
 
 // CreateEndpoint creates a new HTTP endpoint
 func (c *HTTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	if _, err := url.Parse(uri); err != nil {
+	if _, err := ParseURI(uri); err != nil {
 		return nil, fmt.Errorf("invalid HTTP URI: %v", err)
 	}
 

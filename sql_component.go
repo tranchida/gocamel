@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,7 +85,7 @@ func (c *SQLComponent) lookup(name string) (*sql.DB, bool) {
 //	outputType     SelectList (default) or SelectOne
 //	transacted     true to wrap the query in a transaction (default: false)
 func (c *SQLComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	u, err := url.Parse(uri)
+	u, err := ParseURI(uri)
 	if err != nil {
 		return nil, fmt.Errorf("invalid sql URI: %w", err)
 	}

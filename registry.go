@@ -2,7 +2,6 @@ package gocamel
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 )
 
@@ -108,12 +107,12 @@ func (r *ComponentRegistry) Clear() {
 
 // CreateEndpoint crée un endpoint à partir d'une URI
 func (r *ComponentRegistry) CreateEndpoint(uri string) (Endpoint, error) {
-	parts := strings.SplitN(uri, ":", 2)
-	if len(parts) != 2 {
+	u, err := ParseURI(uri)
+	if err != nil {
 		return nil, fmt.Errorf("URI invalide: %s", uri)
 	}
 
-	componentName := parts[0]
+	componentName := u.Scheme
 	component, err := r.GetComponent(componentName)
 	if err != nil {
 		return nil, fmt.Errorf("erreur lors de la récupération du composant %s: %v", componentName, err)

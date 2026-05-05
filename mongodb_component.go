@@ -3,7 +3,6 @@ package gocamel
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -88,7 +87,7 @@ func (c *MongoDBComponent) lookup(name string) (*MongoDBConnection, bool) {
 //	operation      Opération par défaut (find, findOne, insert, insertOne, save, update, remove, count)
 // Name of a registered connection
 func (c *MongoDBComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	u, err := url.Parse(uri)
+	u, err := ParseURI(uri)
 	if err != nil {
 		return nil, fmt.Errorf("URI mongodb invalide: %w", err)
 	}

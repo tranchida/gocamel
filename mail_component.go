@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/smtp"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -138,7 +137,7 @@ func (c *MailComponent) SetDefaultSubject(subject string) {
 //	skipFailedMessage  : Ignorer les messages en error (consommateur)
 //	handleFailedMessage: Gerer les errors via processor (consommateur)
 func (c *MailComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	u, err := url.Parse(uri)
+	u, err := ParseURI(uri)
 	if err != nil {
 		return nil, fmt.Errorf("URI mail invalid: %w", err)
 	}

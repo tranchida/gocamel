@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -107,7 +106,7 @@ func (c *SQLStoredComponent) lookup(name string) (*sql.DB, bool) {
 //	transacted     true to wrap procedure call in transaction (default: false)
 //	noop           true to consume message without calling procedure (default: false)
 func (c *SQLStoredComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	u, err := url.Parse(uri)
+	u, err := ParseURI(uri)
 	if err != nil {
 		return nil, fmt.Errorf("invalid sql-stored URI: %w", err)
 	}

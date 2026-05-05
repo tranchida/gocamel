@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -78,7 +77,7 @@ func NewExecComponent() *ExecComponent {
 // CreateEndpoint creates an ExecEndpoint from the URI
 // Format: exec:executable[?args=arg1+arg2&workingDir=/tmp&timeout=5000&outFile=result.txt&useStderrOnEmpty=true]
 func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	parsedURL, err := url.Parse(uri)
+	parsedURL, err := ParseURI(uri)
 	if err != nil {
 		return nil, fmt.Errorf("invalid exec URI: %w", err)
 	}

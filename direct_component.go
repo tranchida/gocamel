@@ -3,7 +3,6 @@ package gocamel
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"sync"
 )
 
@@ -29,7 +28,7 @@ func (c *DirectComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		return endpoint, nil
 	}
 
-	if _, err := url.Parse(uri); err != nil {
+	if _, err := ParseURI(uri); err != nil {
 		return nil, fmt.Errorf("invalid direct URI: %v", err)
 	}
 

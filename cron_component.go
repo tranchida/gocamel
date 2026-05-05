@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,7 +83,7 @@ func (c *CronComponent) enoneStarted() {
 //	pauseJob              Mettre en pause au lieu de supprimer (default: false)
 //	stateful              Empêcher les exécutions concurrentes (default: false)
 func (c *CronComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	u, err := url.Parse(uri)
+	u, err := ParseURI(uri)
 	if err != nil {
 		return nil, fmt.Errorf("URI cron invalid: %w", err)
 	}

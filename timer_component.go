@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -20,7 +19,7 @@ func NewTimerComponent() *TimerComponent {
 
 // CreateEndpoint crée un TimerEndpoint à partir de l'URI
 func (c *TimerComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	parsedURL, err := url.Parse(uri)
+	parsedURL, err := ParseURI(uri)
 	if err != nil {
 		return nil, fmt.Errorf("error during l'analyse de l'URI timer: %w", err)
 	}
