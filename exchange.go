@@ -59,6 +59,9 @@ const (
 	CamelMulticastIndex    = "CamelMulticastIndex"    // Index de la branche courante dans un Multicast
 	CamelMulticastSize     = "CamelMulticastSize"     // Nombre total de branches dans un Multicast
 	CamelMulticastComplete = "CamelMulticastComplete" // Booléen indiquant si c'est la dernière branche
+	CamelRecipientListIndex    = "CamelRecipientListIndex"    // Index du destinataire courant dans une RecipientList
+	CamelRecipientListSize     = "CamelRecipientListSize"     // Nombre total de destinataires dans une RecipientList
+	CamelRecipientListComplete = "CamelRecipientListComplete" // Booléen indiquant si c'est le dernier destinataire
 
 	// Propriétés de transaction
 	CamelTransactionId     = "CamelTransactionId"     // ID de transaction
