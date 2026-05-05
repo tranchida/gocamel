@@ -94,7 +94,10 @@ func main() {
 		Process(&MyCustomProcessor{Prefix: "FINAL"}).
 		To("direct:end")
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx.AddRoute(route)
 
 	// Add a consumer for direct:end to complete the flow
@@ -102,7 +105,11 @@ func main() {
 	endBuilder.From("direct:end").
 		LogSimple("Final result received: ${body} (Type: ${header.OrderType})")
 	
-	ctx.AddRoute(endBuilder.Build())
+	endBuilderroute, err := endBuilder.Build()
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx.AddRoute(endBuilderroute)
 
 	// Start the context
 	if err := ctx.Start(); err != nil {

@@ -2,7 +2,6 @@ package gocamel
 
 import (
 	"fmt"
-	"log"
 )
 
 // RouteBuilder facilite la création de routes
@@ -10,6 +9,7 @@ type RouteBuilder struct {
 	context   *CamelContext
 	route     *Route
 	container ProcessorContainer
+	err       error // accumulated error during DSL construction
 }
 
 // NewRouteBuilder crée une nouvelle instance de RouteBuilder
@@ -320,26 +320,35 @@ func (d *SplitDefinition) End() *RouteBuilder {
 	return d.parent
 }
 
-// Log ajoute un processeur qui log le message
+// Log ajoute un processeur qui log le message (structuré)
 func (b *RouteBuilder) Log(message string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
-		log.Printf("%s: %+v", message, exchange)
+		logInfo(message,
+			"exchange_id", fmt.Sprintf("%p", exchange),
+			"route_id", b.route.ID,
+		)
 		return nil
 	})
 }
 
-// LogBody ajoute un processeur qui log le corps du message
+// LogBody ajoute un processeur qui log le corps du message (structuré)
 func (b *RouteBuilder) LogBody(message string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
-		log.Printf("%s: %v", message, exchange.GetIn().GetBody())
+		logInfo(message,
+			"body", exchange.GetIn().GetBody(),
+			"route_id", b.route.ID,
+		)
 		return nil
 	})
 }
 
-// LogHeaders ajoute un processeur qui log les en-têtes du message
+// LogHeaders ajoute un processeur qui log les en-têtes du message (structuré)
 func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
-		log.Printf("%s: %+v", message, exchange.GetIn().GetHeaders())
+		logInfo(message,
+			"headers", exchange.GetIn().GetHeaders(),
+			"route_id", b.route.ID,
+		)
 		return nil
 	})
 }
@@ -348,31 +357,72 @@ func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
 func (b *RouteBuilder) LogSimple(expression string) *RouteBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		panic(fmt.Sprintf("failed to parse simple expression for log: %v", err))
+		b.err = fmt.Errorf("failed to parse simple expression for log: %w", err)
+		return b
 	}
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		result, err := template.EvaluateAsString(exchange)
 		if err != nil {
-			log.Printf("Error evaluating log expression: %v", err)
+			logError("Error evaluating log expression",
+				"error", err,
+				"expression", expression,
+				"route_id", b.route.ID,
+			)
 			return nil // Don't fail the exchange just because logging failed
 		}
-		log.Println(result)
+		logInfo("LogSimple", "message", result, "route_id", b.route.ID)
 		return nil
 	})
 }
 
-// Build finalise la construction de la route
-func (b *RouteBuilder) Build() *Route {
-	return b.route
+// ErrorHandler configures a custom ErrorHandler for this route.
+// This is a terminal DSL operation — it sets the handler on the route
+// being built. Multiple calls will overwrite previous settings.
+//
+// Example:
+//   route, err := ctx.CreateRouteBuilder().
+//       From("direct:start").
+//       ErrorHandler(NewDeadLetterChannel(ctx, "log:errors", MaxRedeliveries(3))).
+//       ProcessFunc(myProcessor).
+//       Build()
+func (b *RouteBuilder) ErrorHandler(handler ErrorHandler) *RouteBuilder {
+	b.route.SetErrorHandler(handler)
+	return b
+}
+
+// DeadLetterChannel configures a DeadLetterChannel error handler for this route.
+// This is a convenience method equivalent to:
+//   ErrorHandler(NewDeadLetterChannel(b.context, deadLetterURI, opts...))
+//
+// Example:
+//   route, err := ctx.CreateRouteBuilder().
+//       From("direct:start").
+//       DeadLetterChannel("file:errors", MaxRedeliveries(3), RedeliveryDelay(2*time.Second)).
+//       ProcessFunc(myProcessor).
+//       Build()
+func (b *RouteBuilder) DeadLetterChannel(deadLetterURI string, opts ...DeadLetterChannelOption) *RouteBuilder {
+	dlc := NewDeadLetterChannel(b.context, deadLetterURI, opts...)
+	b.route.SetErrorHandler(dlc)
+	return b
+}
+
+// Build finalise la construction de la route.
+// Returns the route or nil if an error occurred during DSL construction.
+func (b *RouteBuilder) Build() (*Route, error) {
+	if b.err != nil {
+		return nil, b.err
+	}
+	return b.route, nil
 }
 
 // SimpleSetBody sets the body using a Simple Language expression
 func (b *RouteBuilder) SimpleSetBody(expression string) *RouteBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		panic(fmt.Sprintf("failed to parse simple expression: %v", err))
+		b.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		return b
 	}
-	
+
 	b.route.AddProcessor(&SimpleLanguageProcessor{Template: template})
 	return b
 }
@@ -381,9 +431,10 @@ func (b *RouteBuilder) SimpleSetBody(expression string) *RouteBuilder {
 func (b *RouteBuilder) SimpleSetHeader(headerName string, expression string) *RouteBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		panic(fmt.Sprintf("failed to parse simple expression: %v", err))
+		b.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		return b
 	}
-	
+
 	b.route.AddProcessor(&SimpleSetHeaderProcessor{
 		HeaderName: headerName,
 		Expression: template,

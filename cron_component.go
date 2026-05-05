@@ -272,7 +272,7 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 		exchange.GetIn().SetHeader(CronRefireCount, n)
 
 		if err := c.processor.Process(exchange); err != nil && !errors.Is(err, ErrStopRouting) {
-			fmt.Printf("error during traitement  [%s/%s]: %v\n", ep.group, ep.name, err)
+			logError("Cron processing error", "group", ep.group, "name", ep.name, "error", err)
 		}
 
 		t := now
@@ -297,7 +297,7 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 		c.mu.Lock()
 		entryID, err := sched.AddJob(spec, job)
 		if err != nil {
-			fmt.Printf("error adding job cron [%s/%s]: %v\n", ep.group, ep.name, err)
+			logError("Cron job add error", "group", ep.group, "name", ep.name, "error", err)
 			c.mu.Unlock()
 			return
 		}
@@ -386,7 +386,7 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 	exchange.GetIn().SetHeader(CronRefireCount, n)
 
 	if err := c.processor.Process(exchange); err != nil && !errors.Is(err, ErrStopRouting) {
-		fmt.Printf("error during traitement  [%s/%s]: %v\n", ep.group, ep.name, err)
+		logError("Cron processing error", "group", ep.group, "name", ep.name, "error", err)
 	}
 
 	t := now

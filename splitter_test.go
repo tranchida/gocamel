@@ -37,7 +37,8 @@ func TestSplit_SimpleSlice(t *testing.T) {
 			return nil
 		})
 
-	route := builder.Build()
+	route, err := builder.Build()
+	assert.NoError(t, err)
 	// Pas besoin d'ajouter manuellement car CreateRoute le fait via NewRouteBuilder
 	
 	// On ne démarre pas tout le contexte pour un test unitaire de processeur si possible,
@@ -47,7 +48,7 @@ func TestSplit_SimpleSlice(t *testing.T) {
 	exchange := NewExchange(ctx)
 	exchange.GetIn().SetBody("a,b,c")
 	
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	assert.NoError(t, err)
 	
 	assert.Equal(t, []string{"a", "b", "c"}, processedItems)
@@ -78,12 +79,13 @@ func TestSplit_WithAggregation(t *testing.T) {
 		}).
 		End()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	assert.NoError(t, err)
 	
 	exchange := NewExchange(ctx)
 	exchange.GetIn().SetBody("initial")
 	
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	assert.NoError(t, err)
 	
 	// La stratégie StringConcatStrategy concatène avec des virgules.
@@ -121,10 +123,11 @@ func TestSplit_Properties(t *testing.T) {
 		}).
 		End()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	assert.NoError(t, err)
 	
 	exchange := NewExchange(ctx)
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	assert.NoError(t, err)
 	
 	assert.Equal(t, []int{0, 1, 2}, indices)
@@ -154,10 +157,11 @@ func TestSplit_SingleItem(t *testing.T) {
 		}).
 		End()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	assert.NoError(t, err)
 	
 	exchange := NewExchange(ctx)
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	assert.NoError(t, err)
 	
 	assert.Equal(t, []string{"single"}, processedItems)

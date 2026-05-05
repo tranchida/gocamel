@@ -337,7 +337,7 @@ type smbFile struct {
 func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile {
 	entries, err := share.ReadDir(dirPath)
 	if err != nil {
-		fmt.Printf("Erreur lors du listage SMB %s: %v\n", dirPath, err)
+		logError("Erreur lors du listage SMB", "directory", dirPath, "error", err)
 		return nil
 	}
 
@@ -376,7 +376,7 @@ func (s *smbSynchronization) OnComplete(exchange *Exchange) {
 		moveSMBFile(s.share, s.path, s.move)
 	} else if s.delete {
 		if err := s.share.Remove(s.path); err != nil {
-			fmt.Printf("Erreur lors de la suppression du fichier SMB %s: %v\n", s.path, err)
+			logError("Erreur lors de la suppression du fichier SMB", "file", s.path, "error", err)
 		}
 	}
 }
@@ -395,7 +395,7 @@ func (s *smbSynchronization) OnFailure(exchange *Exchange) {
 func (c *SMBConsumer) doPoll(ctx context.Context) {
 	sc, err := c.getConn()
 	if err != nil {
-		fmt.Printf("Erreur de connexion SMB pendant le polling: %v\n", err)
+		logError("Erreur de connexion SMB pendant le polling", "error", err)
 		return
 	}
 	defer c.releaseConn(sc)
@@ -415,13 +415,13 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 
 		file, err := sc.share.Open(f.path)
 		if err != nil {
-			fmt.Printf("Erreur lors de l'ouverture du fichier SMB %s: %v\n", f.path, err)
+			logError("Erreur lors de l'ouverture du fichier SMB", "file", f.path, "error", err)
 			continue
 		}
 		content, err := io.ReadAll(file)
 		file.Close()
 		if err != nil {
-			fmt.Printf("Erreur lors de la lecture du fichier SMB %s: %v\n", f.path, err)
+			logError("Erreur lors de la lecture du fichier SMB", "file", f.path, "error", err)
 			continue
 		}
 
@@ -465,7 +465,7 @@ func moveSMBFile(share *smb2.Share, srcPath, destDir string) {
 	smbMkdirAll(share, destDir)
 	destPath := strings.ReplaceAll(filepath.Join(destDir, filepath.Base(srcPath)), "/", "\\")
 	if err := share.Rename(srcPath, destPath); err != nil {
-		fmt.Printf("Erreur déplacement SMB %s -> %s: %v\n", srcPath, destPath, err)
+		logError("Erreur déplacement SMB", "src", srcPath, "dest", destPath, "error", err)
 	}
 }
 

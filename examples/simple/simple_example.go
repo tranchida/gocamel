@@ -256,7 +256,10 @@ func demoChoiceWithLogicalOperators(ctx *gocamel.CamelContext) {
 		SetHeader("X-Priority", "normal").
 		EndChoice()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Test different scenarios
 	testCases := []struct {

@@ -50,7 +50,7 @@ func (m *ManagementServer) Start(addr string) error {
 
 	go func() {
 		if err := m.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("Erreur du serveur de management REST: %v\n", err)
+			logError("Management REST server error", "error", err)
 		}
 	}()
 

@@ -355,7 +355,7 @@ func (s *sftpSynchronization) OnComplete(exchange *Exchange) {
 		moveSFTPFile(s.client, s.path, s.move)
 	} else if s.delete {
 		if err := s.client.Remove(s.path); err != nil {
-			fmt.Printf("Erreur lors de la suppression du fichier SFTP %s: %v\n", s.path, err)
+			logError("SFTP file deletion error", "file", s.path, "error", err)
 		}
 	}
 }
@@ -374,7 +374,7 @@ func (s *sftpSynchronization) OnFailure(exchange *Exchange) {
 func (c *SFTPConsumer) doPoll(ctx context.Context) {
 	sshClient, sftpClient, err := c.getClients()
 	if err != nil {
-		fmt.Printf("Erreur de connexion SFTP pendant le polling: %v\n", err)
+		logError("Erreur de connexion SFTP pendant le polling", "error", err)
 		return
 	}
 	defer c.releaseClients(sshClient, sftpClient)
@@ -407,7 +407,7 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 	} else {
 		entries, err := sftpClient.ReadDir(rootPath)
 		if err != nil {
-			fmt.Printf("Erreur lors du listage SFTP: %v\n", err)
+			logError("Erreur lors du listage SFTP", "error", err)
 			return
 		}
 		for _, entry := range entries {
@@ -433,13 +433,13 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 
 		file, err := sftpClient.Open(f.path)
 		if err != nil {
-			fmt.Printf("Erreur lors de l'ouverture du fichier SFTP %s: %v\n", f.path, err)
+			logError("Erreur lors de l'ouverture du fichier SFTP", "file", f.path, "error", err)
 			continue
 		}
 		content, err := io.ReadAll(file)
 		file.Close()
 		if err != nil {
-			fmt.Printf("Erreur lors de la lecture du fichier SFTP %s: %v\n", f.path, err)
+			logError("Erreur lors de la lecture du fichier SFTP", "file", f.path, "error", err)
 			continue
 		}
 
@@ -486,9 +486,9 @@ func moveSFTPFile(client *sftp.Client, srcPath, destDir string) {
 	destPath := destDir + "/" + filepath.Base(srcPath)
 	if err := client.MkdirAll(destDir); err == nil || strings.Contains(err.Error(), "exist") {
 		if err := client.PosixRename(srcPath, destPath); err != nil {
-			fmt.Printf("Erreur déplacement SFTP %s -> %s: %v\n", srcPath, destPath, err)
+			logError("Erreur déplacement SFTP", "src", srcPath, "dest", destPath, "error", err)
 		}
 	} else {
-		fmt.Printf("Erreur création répertoire SFTP %s: %v\n", destDir, err)
+		logError("Erreur création répertoire SFTP", "directory", destDir, "error", err)
 	}
 }

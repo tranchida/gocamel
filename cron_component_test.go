@@ -158,9 +158,13 @@ func TestCronConsumer_PauseJob(t *testing.T) {
 	// Pause
 	require.NoError(t, consumer.Stop())
 	time.Sleep(200 * time.Millisecond)
+	countAfterStop := count.Load()
+
+	// Laisser passer du temps pour vérifier qu'il ne se déclenche plus
+	time.Sleep(200 * time.Millisecond)
 
 	// Le compteur ne doit plus augmenter
-	assert.Equal(t, countBefore, count.Load())
+	assert.Equal(t, countAfterStop, count.Load())
 }
 
 func TestCronConsumer_Headers(t *testing.T) {

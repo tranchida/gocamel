@@ -287,7 +287,7 @@ func TestExecComponent_Integration_Route(t *testing.T) {
 	camelCtx.AddComponent("timer", NewTimerComponent())
 
 	done := make(chan string, 1)
-	_ = NewRouteBuilder(camelCtx).
+	_, err := NewRouteBuilder(camelCtx).
 		From("timer:trigger?period=100&repeatCount=1").
 		ProcessFunc(func(exchange *Exchange) error {
 			exchange.GetIn().SetBody("hello pipe")
@@ -304,6 +304,7 @@ func TestExecComponent_Integration_Route(t *testing.T) {
 			return nil
 		}).
 		Build()
+	require.NoError(t, err)
 
 	require.NoError(t, camelCtx.Start())
 	defer camelCtx.Stop()

@@ -66,7 +66,7 @@ func main() {
 		gocamel.NewMemoryAggregationRepository(),
 	).SetCompletionSize(2)
 
-	route := camelCtx.CreateRouteBuilder().
+	route, buildErr := camelCtx.CreateRouteBuilder().
 		From("file://"+watchDir+"?include=\\.(xml|pdf)$").
 		Aggregate(aggregator).
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
@@ -76,6 +76,10 @@ func main() {
 			return nil
 		}).
 		Build()
+	if buildErr != nil {
+		fmt.Printf("Erreur création route: %v\n", buildErr)
+		return
+	}
 
 	camelCtx.AddRoute(route)
 	if err := camelCtx.Start(); err != nil {

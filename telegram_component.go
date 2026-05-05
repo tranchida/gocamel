@@ -184,7 +184,7 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 				}
 
 				if err := c.processor.Process(exchange); err != nil {
-					fmt.Printf("error during traitement du message Telegram: %v\n", err)
+					logError("Error processing Telegram message", "error", err)
 				}
 			}
 		}

@@ -38,6 +38,7 @@ const (
 	CamelExceptionCaught = "CamelExceptionCaught" // Exception capturée
 	CamelFailureEndpoint = "CamelFailureEndpoint" // Endpoint en échec
 	CamelFailureRouteId  = "CamelFailureRouteId"  // ID de la route en échec
+	CamelRedeliveryCounter = "CamelRedeliveryCounter" // Compteur de redeliveries
 
 	// Propriétés de performance
 	CamelTimerName      = "CamelTimerName"      // Nom du timer

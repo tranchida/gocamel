@@ -501,7 +501,7 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 				delay = maxDelay
 			}
 			if ep.debugMode {
-				fmt.Printf("[Mail] Tentative %d/%d apres error: %v (attente %v)\n", attempt+1, maxRetries, lastErr, delay)
+				logInfo("Mail retry", "attempt", attempt+1, "max", maxRetries, "error", lastErr, "delay", delay)
 			}
 			time.Sleep(delay)
 		}
@@ -510,14 +510,14 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 		if err == nil {
 			// Succès
 			if attempt > 0 && ep.debugMode {
-				fmt.Printf("[Mail] sending reussi apres %d tentative(s)\n", attempt+1)
+				logInfo("Mail send succeeded after retries", "attempts", attempt+1)
 			}
 			return nil
 		}
 
 		lastErr = err
 		if ep.debugMode {
-			fmt.Printf("[Mail] error tentative %d/%d: %v\n", attempt+1, maxRetries, err)
+			logError("Mail send attempt failed", "attempt", attempt+1, "max", maxRetries, "error", err)
 		}
 
 		// Ne pas retry certaines errors (authentification, adresse invalid...)
@@ -638,7 +638,7 @@ func (c *MailConsumer) run(ctx context.Context) {
 	if ep.useIdle && ep.isIMAP() {
 		if err := c.runWithIdle(ctx); err != nil {
 			if ep.debugMode {
-				fmt.Printf("[Mail] IDLE echoue (%v), fallback on polling\n", err)
+				logError("Mail IDLE failed, fallback to polling", "error", err)
 			}
 			// Fallback vers polling classique
 			c.runPolling(ctx)
@@ -676,7 +676,7 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 	ep := c.endpoint
 
 	if ep.debugMode {
-		fmt.Printf("[Mail] Demarrage IMAP IDLE on %s (folder: %s)\n", ep.address(), ep.folderName)
+		logInfo("Mail IMAP IDLE started", "address", ep.address(), "folder", ep.folderName)
 	}
 
 	// connection au serveur
@@ -711,7 +711,7 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 		}
 
 		if ep.debugMode {
-			fmt.Printf("[Mail] IDLE actif, attente de notifications...\n")
+			logDebug("Mail IDLE active, waiting for notifications")
 		}
 
 		// Attendre soit une notification, soit un arret
@@ -741,7 +741,7 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 
 			if err != nil {
 				if ep.debugMode {
-					fmt.Printf("[Mail] IDLE termine with error: %v\n", err)
+					logError("Mail IDLE terminated with error", "error", err)
 				}
 				c.disconnect()
 				return err
@@ -749,12 +749,12 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 
 			// Notification recue - traiter les messages
 			if ep.debugMode {
-				fmt.Printf("[Mail] IDLE a detecte une modification, traitement...\n")
+				logDebug("Mail IDLE detected change, processing")
 			}
 
 			if processErr := c.processNewMessages(parentCtx); processErr != nil {
 				if !ep.skipFailedMessage {
-					fmt.Printf("[Mail] error traitement messages: %v\n", processErr)
+					logError("Mail error processing messages", "error", processErr)
 				}
 			}
 
@@ -788,7 +788,7 @@ func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 	}
 
 	if ep.debugMode {
-		fmt.Printf("[Mail] %d messages trouves via IDLE\n", len(uids))
+		logInfo("Mail messages found via IDLE", "count", len(uids))
 	}
 
 	// Limitation fetchSize
@@ -814,10 +814,10 @@ func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 		if err := c.processMessage(parentCtx, uid, selected); err != nil {
 			if ep.handleFailedMessage {
 				if err2 := c.handleFailedMessage(parentCtx, uid, err); err2 != nil {
-					fmt.Printf("[Mail] error handler: %v\n", err2)
+					logError("Mail error in error handler", "error", err2)
 				}
 			} else if !ep.skipFailedMessage {
-				fmt.Printf("[Mail] error traitement message %d: %v\n", uid, err)
+				logError("Mail error processing message", "uid", uid, "error", err)
 			}
 		}
 	}
@@ -834,13 +834,13 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 	defer cancel()
 
 	if ep.debugMode {
-		fmt.Printf("[Mail] Polling %s (folder: %s)\n", ep.address(), ep.folderName)
+		logInfo("Mail polling", "address", ep.address(), "folder", ep.folderName)
 	}
 
 	// connection au serveur IMAP
 	if err := c.connect(ctx); err != nil {
 		if !ep.skipFailedMessage {
-			fmt.Printf("[Mail] error connection: %v\n", err)
+			logError("Mail connection error", "error", err)
 		}
 		return
 	}
@@ -854,7 +854,7 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 	selected, err := c.selectFolder(ep.folderName)
 	if err != nil {
 		if !ep.skipFailedMessage {
-			fmt.Printf("[Mail] error selection dossier %s: %v\n", ep.folderName, err)
+			logError("Mail folder selection error", "folder", ep.folderName, "error", err)
 		}
 		return
 	}
@@ -865,7 +865,7 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 		uids, err = c.searchUnseen()
 		if err != nil {
 			if ep.debugMode {
-				fmt.Printf("[Mail] error recherche: %v\n", err)
+				logError("Mail search error", "error", err)
 			}
 			// Fallback: utiliser Fetch with range
 			uids = nil
@@ -875,7 +875,7 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 		uids, err = c.searchAll()
 		if err != nil {
 			if ep.debugMode {
-				fmt.Printf("[Mail] error recherche tous: %v\n", err)
+				logError("Mail search all error", "error", err)
 			}
 			uids = nil
 		}
@@ -884,13 +884,13 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 	// Si pas de resultats, quitter
 	if len(uids) == 0 {
 		if ep.debugMode {
-			fmt.Printf("[Mail] Aucun nouveau message\n")
+			logDebug("Mail no new messages")
 		}
 		return
 	}
 
 	if ep.debugMode {
-		fmt.Printf("[Mail] %d messages trouves\n", len(uids))
+		logInfo("Mail messages found", "count", len(uids))
 	}
 
 	// Limitation fetchSize
@@ -911,16 +911,16 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 		if err := c.processMessage(parentCtx, uid, selected); err != nil {
 			if ep.handleFailedMessage {
 				if err2 := c.handleFailedMessage(parentCtx, uid, err); err2 != nil {
-					fmt.Printf("[Mail] error handler: %v\n", err2)
+					logError("Mail error in error handler", "error", err2)
 				}
 			} else if !ep.skipFailedMessage {
-				fmt.Printf("[Mail] error traitement message %d: %v\n", uid, err)
+				logError("Mail error processing message", "uid", uid, "error", err)
 			}
 		}
 	}
 
 	if ep.debugMode {
-		fmt.Printf("[Mail] Poll termine\n")
+		logDebug("Mail poll finished")
 	}
 }
 
@@ -1098,7 +1098,7 @@ func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selecte
 	// Marquer comme vu si peek=false
 	if !ep.peek {
 		if err := c.markSeen(uid); err != nil {
-			fmt.Printf("[Mail] error marquage SEEN: %v\n", err)
+			logError("Mail SEEN marking error", "error", err)
 		}
 	}
 
@@ -1107,7 +1107,7 @@ func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selecte
 		// Echec du traitement - rollback si peek=true
 		if ep.peek {
 			if err2 := c.markUnseen(uid); err2 != nil {
-				fmt.Printf("[Mail] error rollback SEEN: %v\n", err2)
+				logError("Mail SEEN rollback error", "error", err2)
 			}
 		}
 		return err
@@ -1830,13 +1830,13 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 	defer cancel()
 
 	if ep.debugMode {
-		fmt.Printf("[POP3] Polling %s\n", ep.address())
+		logInfo("POP3 polling", "address", ep.address())
 	}
 
 	// connection au serveur POP3
 	if err := c.connect(ctx); err != nil {
 		if !ep.skipFailedMessage {
-			fmt.Printf("[POP3] error connection: %v\n", err)
+			logError("POP3 connection error", "error", err)
 		}
 		return
 	}
@@ -1846,20 +1846,20 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 	count, size, err := c.client.Stat()
 	if err != nil {
 		if !ep.skipFailedMessage {
-			fmt.Printf("[POP3] error stat messages: %v\n", err)
+			logError("POP3 stat error", "error", err)
 		}
 		return
 	}
 
 	if count == 0 {
 		if ep.debugMode {
-			fmt.Printf("[POP3] Aucun nouveau message\n")
+			logDebug("POP3 no new messages")
 		}
 		return
 	}
 
 	if ep.debugMode {
-		fmt.Printf("[POP3] %d messages trouves (size: %d)\n", count, size)
+		logInfo("POP3 messages found", "count", count, "size", size)
 	}
 
 	// Construire la liste des IDs de messages
@@ -1887,16 +1887,16 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 		if err := c.processMessage(parentCtx, msgID); err != nil {
 			if ep.handleFailedMessage {
 				if err2 := c.handleFailedMessage(parentCtx, msgID, err); err2 != nil {
-					fmt.Printf("[POP3] error handler: %v\n", err2)
+					logError("[POP3] error handler", "error", err2)
 				}
 			} else if !ep.skipFailedMessage {
-				fmt.Printf("[POP3] error traitement message %d: %v\n", msgID, err)
+				logError("POP3 message processing error", "msgID", msgID, "error", err)
 			}
 		}
 	}
 
 	if ep.debugMode {
-		fmt.Printf("[POP3] Poll termine\n")
+		logDebug("POP3 poll finished")
 	}
 }
 

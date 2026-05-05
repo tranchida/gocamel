@@ -275,7 +275,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 
 				content, err := os.ReadFile(event.Name)
 				if err != nil {
-					fmt.Printf("error during la reading du file %s: %v\n", event.Name, err)
+					logError("error during la reading du file", "file", event.Name, "error", err)
 					continue
 				}
 
@@ -299,7 +299,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				if !ok {
 					return
 				}
-				fmt.Printf("error du watcher: %v\n", err)
+				logError("error du watcher", "error", err)
 			case <-c.stopChan:
 				return
 			}
@@ -358,11 +358,11 @@ func (c *FileConsumer) Stop() error {
 // moveFilelocal déplace src vers destDir en créant le directory si nécessaire.
 func moveFilelocal(src, destDir string) {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
-		fmt.Printf("error creation directory %s: %v\n", destDir, err)
+		logError("error creation directory", "directory", destDir, "error", err)
 		return
 	}
 	dest := filepath.Join(destDir, filepath.Base(src))
 	if err := os.Rename(src, dest); err != nil {
-		fmt.Printf("error déplacement %s -> %s: %v\n", src, dest, err)
+		logError("error déplacement", "src", src, "dest", dest, "error", err)
 	}
 }

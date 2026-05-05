@@ -306,7 +306,7 @@ func (s *ftpSynchronization) OnComplete(exchange *Exchange) {
 		moveFTPFile(s.conn, s.path, s.move)
 	} else if s.delete {
 		if err := s.conn.Delete(s.path); err != nil {
-			fmt.Printf("Erreur lors de la suppression du fichier FTP %s: %v\n", s.path, err)
+			logError("FTP file deletion error", "file", s.path, "error", err)
 		}
 	}
 }
@@ -325,7 +325,7 @@ func (s *ftpSynchronization) OnFailure(exchange *Exchange) {
 func (c *FTPConsumer) doPoll(ctx context.Context) {
 	conn, err := c.getConn()
 	if err != nil {
-		fmt.Printf("Erreur de connexion FTP pendant le polling: %v\n", err)
+		logError("FTP polling connection error", "error", err)
 		return
 	}
 	defer c.releaseConn(conn)
@@ -345,7 +345,7 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 	listDir = func(dir string) {
 		entries, err := conn.List(dir)
 		if err != nil {
-			fmt.Printf("Erreur lors du listage FTP %s: %v\n", dir, err)
+			logError("FTP listing error", "directory", dir, "error", err)
 			return
 		}
 		for _, entry := range entries {
@@ -375,13 +375,13 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 
 		resp, err := conn.Retr(f.path)
 		if err != nil {
-			fmt.Printf("Erreur lors de la récupération du fichier FTP %s: %v\n", f.path, err)
+			logError("FTP file retrieval error", "file", f.path, "error", err)
 			continue
 		}
 		content, err := io.ReadAll(resp)
 		resp.Close()
 		if err != nil {
-			fmt.Printf("Erreur lors de la lecture du fichier FTP %s: %v\n", f.path, err)
+			logError("FTP file read error", "file", f.path, "error", err)
 			continue
 		}
 
@@ -423,6 +423,6 @@ func (c *FTPConsumer) Stop() error {
 func moveFTPFile(conn *ftp.ServerConn, srcPath, destDir string) {
 	destPath := destDir + "/" + filepath.Base(srcPath)
 	if err := conn.Rename(srcPath, destPath); err != nil {
-		fmt.Printf("Erreur déplacement FTP %s -> %s: %v\n", srcPath, destPath, err)
+		logError("FTP move error", "src", srcPath, "dest", destPath, "error", err)
 	}
 }

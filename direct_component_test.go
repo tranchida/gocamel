@@ -15,7 +15,7 @@ func TestDirectComponent(t *testing.T) {
 
 	var receivedBody interface{}
 
-	route := camelCtx.CreateRouteBuilder().
+	route, err := camelCtx.CreateRouteBuilder().
 		From("direct:start").
 		ProcessFunc(func(exchange *Exchange) error {
 			receivedBody = exchange.GetIn().GetBody()
@@ -23,9 +23,10 @@ func TestDirectComponent(t *testing.T) {
 			return nil
 		}).
 		Build()
+	assert.NoError(t, err)
 
 	camelCtx.AddRoute(route)
-	err := camelCtx.Start()
+	err = camelCtx.Start()
 	assert.NoError(t, err)
 
 	endpoint, err := camelCtx.CreateEndpoint("direct:start")
@@ -55,7 +56,7 @@ func TestDirectComponentMultipleRoutes(t *testing.T) {
 	var receivedBody2 interface{}
 
 	// Route 1 (starts from direct:start, goes to direct:next)
-	route1 := camelCtx.CreateRouteBuilder().
+	route1, err := camelCtx.CreateRouteBuilder().
 		From("direct:start").
 		ProcessFunc(func(exchange *Exchange) error {
             body := exchange.GetIn().GetBody().(string)
@@ -64,9 +65,10 @@ func TestDirectComponentMultipleRoutes(t *testing.T) {
 		}).
 		To("direct:next").
 		Build()
+	assert.NoError(t, err)
 
 	// Route 2 (starts from direct:next)
-	route2 := camelCtx.CreateRouteBuilder().
+	route2, err := camelCtx.CreateRouteBuilder().
 		From("direct:next").
 		ProcessFunc(func(exchange *Exchange) error {
             body := exchange.GetIn().GetBody().(string)
@@ -75,10 +77,11 @@ func TestDirectComponentMultipleRoutes(t *testing.T) {
 			return nil
 		}).
 		Build()
+	assert.NoError(t, err)
 
 	camelCtx.AddRoute(route1)
 	camelCtx.AddRoute(route2)
-	err := camelCtx.Start()
+	err = camelCtx.Start()
 	assert.NoError(t, err)
 
 	endpoint, err := camelCtx.CreateEndpoint("direct:start")

@@ -462,7 +462,10 @@ func TestRouteBuilderSimpleSetBody(t *testing.T) {
 		SimpleSetBody("Got: ${body}").
 		SimpleSetHeader("X-Simple", "simple")
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if route == nil {
 		t.Fatal("Expected non-nil route")
@@ -480,7 +483,10 @@ func TestRouteBuilderSimpleSetHeader(t *testing.T) {
 	builder.SetID("test-route").
 		SimpleSetHeader("X-Message", "${body}")
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if route == nil {
 		t.Fatal("Expected non-nil route")
@@ -1130,7 +1136,10 @@ func TestRouteBuilderChoicePattern(t *testing.T) {
 		SetBody("Unknown action").
 		EndChoice()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if route == nil {
 		t.Fatal("Expected non-nil route")
 	}
@@ -1172,7 +1181,10 @@ func TestChoiceProcessorWithSimpleExpressions(t *testing.T) {
 		SimpleSetBody("Normal priority: ${body}").
 		EndChoice()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name     string
@@ -1209,7 +1221,7 @@ func TestChoiceProcessorWithSimpleExpressions(t *testing.T) {
 			ex.GetOut().SetBody(nil)
 			ex.GetOut().SetHeaders(nil)
 
-			err := route.Process(ex)
+			err = route.Process(ex)
 			if err != nil {
 				t.Fatalf("Process() error = %v", err)
 			}
@@ -1278,11 +1290,14 @@ func TestChoiceWithSetHeader(t *testing.T) {
 		SetBody("Skipped").
 		EndChoice()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Test processed case
 	ex.GetIn().SetHeader("process", "true")
-	err := route.Process(ex)
+	err = route.Process(ex)
 	if err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
@@ -1323,10 +1338,13 @@ func TestChoiceProcessorWithMultipleProcessors(t *testing.T) {
 		SetBody("No steps run").
 		EndChoice()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ex.GetIn().SetHeader("multiple", "yes")
-	err := route.Process(ex)
+	err = route.Process(ex)
 	if err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}

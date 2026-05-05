@@ -11,7 +11,7 @@ func TestPropertyEIPs(t *testing.T) {
 	ctx := NewCamelContext()
 	ctx.AddComponent("direct", NewDirectComponent())
 
-	route := NewRouteBuilder(ctx).
+	route, err := NewRouteBuilder(ctx).
 		From("direct:props").
 		SetProperty("Prop1", "Value1").
 		SetPropertyFunc("Prop2", func(e *Exchange) (any, error) {
@@ -20,6 +20,7 @@ func TestPropertyEIPs(t *testing.T) {
 		RemoveProperty("ToBeRemoved").
 		RemoveProperties("Camel*", "CamelHttp*").
 		Build()
+	assert.NoError(t, err)
 
 	exchange := NewExchange(context.Background())
 	exchange.SetProperty("ToBeRemoved", "old")
@@ -28,7 +29,7 @@ func TestPropertyEIPs(t *testing.T) {
 	exchange.SetProperty("CamelHttpUrl", "http://localhost")
 	exchange.SetProperty("CamelHttpMethod", "GET")
 
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	assert.NoError(t, err)
 
 	assert.Equal(t, "Value1", exchange.Properties["Prop1"])

@@ -34,12 +34,13 @@ func TestMulticast_Simple(t *testing.T) {
 			}).
 		End()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	assert.NoError(t, err)
 	
 	exchange := NewExchange(ctx)
 	exchange.GetIn().SetBody("test")
 	
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	assert.NoError(t, err)
 	
 	assert.True(t, processedA)
@@ -74,10 +75,11 @@ func TestMulticast_Parallel(t *testing.T) {
 			}).
 		End()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	assert.NoError(t, err)
 	
 	exchange := NewExchange(ctx)
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	assert.NoError(t, err)
 	
 	assert.Len(t, order, 2)
@@ -106,10 +108,11 @@ func TestMulticast_Aggregation(t *testing.T) {
 			}).
 		End()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	assert.NoError(t, err)
 	
 	exchange := NewExchange(ctx)
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	assert.NoError(t, err)
 	
 	// resultA + "," + resultB
@@ -157,10 +160,11 @@ func TestMulticast_Pipeline(t *testing.T) {
 			End().
 		End()
 
-	route := builder.Build()
+	route, err := builder.Build()
+	assert.NoError(t, err)
 	
 	exchange := NewExchange(ctx)
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	assert.NoError(t, err)
 	
 	assert.Equal(t, []string{"A1", "A1A2", "B1"}, results)
@@ -185,7 +189,9 @@ func TestMulticast_ToVariadic(t *testing.T) {
 		mu.Unlock()
 		return nil
 	})
-	camel.AddRoute(builder1.Build())
+	builder1route, err := builder1.Build()
+	assert.NoError(t, err)
+	camel.AddRoute(builder1route)
 
 	builder2 := NewRouteBuilder(camel)
 	builder2.From("direct:b").ProcessFunc(func(e *Exchange) error {
@@ -194,15 +200,18 @@ func TestMulticast_ToVariadic(t *testing.T) {
 		mu.Unlock()
 		return nil
 	})
-	camel.AddRoute(builder2.Build())
+	builder2route, err := builder2.Build()
+	assert.NoError(t, err)
+	camel.AddRoute(builder2route)
 
 	builder := NewRouteBuilder(camel)
 	builder.From("direct:start").To("direct:a", "direct:b")
 	
-	route := builder.Build()
+	route, err := builder.Build()
+	assert.NoError(t, err)
 	camel.AddRoute(route)
 
-	err := camel.Start()
+	err = camel.Start()
 	assert.NoError(t, err)
 	defer camel.Stop()
 	

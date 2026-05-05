@@ -33,16 +33,18 @@ func (f ProcessorFunc) Process(exchange *Exchange) error {
 
 // Route représente une route dans le système
 type Route struct {
-	ID          string
-	Description string
-	Group       string
-	Transacted  bool
-	context     *CamelContext
-	from        Endpoint
-	consumer    Consumer
-	processors  []Processor
-	started     bool
-	startLock   sync.Mutex
+	ID           string
+	Description  string
+	Group        string
+	Transacted   bool
+	context      *CamelContext
+	from         Endpoint
+	consumer     Consumer
+	processors   []Processor
+	started      bool
+	startLock    sync.Mutex
+	err          error         // accumulated during construction, surfaced at Start()
+	errorHandler ErrorHandler  // error handler for this route
 }
 
 // NewRoute crée une nouvelle instance de Route
@@ -58,11 +60,13 @@ func (r *Route) SetTransacted(transacted bool) *Route {
 	return r
 }
 
-// From définit l'endpoint source de la route
+// From définit l'endpoint source de la route.
+// Errors are stored and surfaced at Start() time.
 func (r *Route) From(uri string) *Route {
 	endpoint, err := r.context.CreateEndpoint(uri)
 	if err != nil {
-		panic(fmt.Sprintf("erreur lors de la création de l'endpoint: %v", err))
+		r.err = fmt.Errorf("erreur lors de la création de l'endpoint: %w", err)
+		return r
 	}
 	r.from = endpoint
 	return r
@@ -79,10 +83,18 @@ func (r *Route) ProcessFunc(f func(*Exchange) error) *Route {
 	return r
 }
 
-// Process implémente l'interface Processor
+// Process implémente l'interface Processor.
+// Errors are delegated to the configured ErrorHandler if one is set.
 func (r *Route) Process(exchange *Exchange) error {
 	for _, processor := range r.processors {
 		if err := processor.Process(exchange); err != nil {
+			if errors.Is(err, ErrStopRouting) {
+				return err // StopRouting is a control signal, not a failure
+			}
+			// Delegate to error handler if configured
+			if r.errorHandler != nil {
+				return r.errorHandler.HandleError(exchange, err)
+			}
 			return err
 		}
 	}
@@ -96,6 +108,10 @@ func (r *Route) Start(ctx context.Context) error {
 
 	if r.started {
 		return fmt.Errorf("la route est déjà démarrée")
+	}
+
+	if r.err != nil {
+		return r.err
 	}
 
 	if r.from == nil {
@@ -165,49 +181,14 @@ func (r *Route) GetContext() *CamelContext {
 	return r.context
 }
 
-// processorFunc est une implémentation de l'interface Processor
-type processorFunc func(*Exchange) error
-
-func (f processorFunc) Process(exchange *Exchange) error {
-	return f(exchange)
+// SetErrorHandler configures the error handler for this route.
+func (r *Route) SetErrorHandler(handler ErrorHandler) *Route {
+	r.errorHandler = handler
+	return r
 }
 
-// routeProcessor est un processeur qui gère le traitement complet d'une route
-type routeProcessor struct {
-	processors []Processor
-	to         []string
-	registry   Registry
-}
-
-// Process exécute tous les processeurs de la route et envoie le message aux destinations
-func (p *routeProcessor) Process(exchange *Exchange) error {
-	// Exécution des processeurs
-	for _, processor := range p.processors {
-		if err := processor.Process(exchange); err != nil {
-			if errors.Is(err, ErrStopRouting) {
-				return err // Bubble up
-			}
-			return fmt.Errorf("erreur lors du traitement: %v", err)
-		}
-	}
-
-	// Envoi aux destinations
-	for _, toURI := range p.to {
-		endpoint, err := p.registry.CreateEndpoint(toURI)
-		if err != nil {
-			return fmt.Errorf("erreur lors de la création de l'endpoint de destination: %v", err)
-		}
-
-		producer, err := endpoint.CreateProducer()
-		if err != nil {
-			return fmt.Errorf("erreur lors de la création du producteur: %v", err)
-		}
-
-		if err := producer.Send(exchange); err != nil {
-			return fmt.Errorf("erreur lors de l'envoi du message: %v", err)
-		}
-	}
-
+// GetErrorHandler returns the route's error handler (may be nil).
+func (r *Route) GetErrorHandler() ErrorHandler {
 	return nil
 }
 

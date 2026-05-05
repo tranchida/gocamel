@@ -13,7 +13,7 @@ func TestStopEIP(t *testing.T) {
 	
 	continued := false
 	
-	route := NewRouteBuilder(ctx).
+	route, err := NewRouteBuilder(ctx).
 		From("direct:start").
 		Stop().
 		ProcessFunc(func(exchange *Exchange) error {
@@ -23,7 +23,7 @@ func TestStopEIP(t *testing.T) {
 		Build()
 	
 	exchange := NewExchange(context.Background())
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	
 	assert.ErrorIs(t, err, ErrStopRouting)
 	assert.False(t, continued, "Second processor should NOT have been executed")
@@ -37,7 +37,7 @@ func TestStopInSplit(t *testing.T) {
 	continuedAfterSplit := false
 	
 	// Route avec un split où on arrête le traitement pour chaque partie
-	route := NewRouteBuilder(ctx).
+	route, err := NewRouteBuilder(ctx).
 		From("direct:split-stop").
 		Split(func(e *Exchange) (any, error) {
 			return []string{"a", "b", "c"}, nil
@@ -55,7 +55,7 @@ func TestStopInSplit(t *testing.T) {
 		Build()
 	
 	exchange := NewExchange(context.Background())
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	
 	assert.NoError(t, err)
 	assert.Equal(t, 0, processedParts, "Processed parts should be 0 because of Stop()")
@@ -70,7 +70,7 @@ func TestStopInSplitPartial(t *testing.T) {
 	continuedAfterSplit := false
 	
 	// Route avec un split où on arrête le traitement seulement pour la partie "b"
-	route := NewRouteBuilder(ctx).
+	route, err := NewRouteBuilder(ctx).
 		From("direct:split-stop-partial").
 		Split(func(e *Exchange) (any, error) {
 			return []string{"a", "b", "c"}, nil
@@ -93,7 +93,7 @@ func TestStopInSplitPartial(t *testing.T) {
 		Build()
 	
 	exchange := NewExchange(context.Background())
-	err := route.Process(exchange)
+	err = route.Process(exchange)
 	
 	assert.NoError(t, err)
 	assert.Equal(t, 2, processedParts, "Expected 2 processed parts (a and c)")

@@ -109,11 +109,12 @@ func (cp *compositeProcessor) Process(exchange *Exchange) error {
 
 // ChoiceBuilder provides fluent API for building Choice patterns within RouteBuilder
 type ChoiceBuilder struct {
-	routeBuilder      *RouteBuilder
-	choice            *ChoiceProcessor
-	activeExpression  string
-	activeProcessors  []Processor
+	routeBuilder        *RouteBuilder
+	choice              *ChoiceProcessor
+	activeExpression    string
+	activeProcessors    []Processor
 	otherwiseProcessors []Processor
+	err                 error // accumulated during DSL construction, surfaced at EndChoice()
 }
 
 // Choice starts a Choice pattern in the RouteBuilder
@@ -154,8 +155,8 @@ func (cb *ChoiceBuilder) Process(processor Processor) *ChoiceBuilder {
 		// We're in a When clause
 		cb.activeProcessors = append(cb.activeProcessors, processor)
 	} else {
-		// We're not in a When clause - panic with helpful message
-		panic("Process called without a When clause. Call When() first, or use EndChoice to complete the Choice.")
+		// We're not in a When clause - record error with helpful message
+		cb.err = fmt.Errorf("Process called without a When clause. Call When() first, or use EndChoice to complete the Choice")
 	}
 	return cb
 }
@@ -185,7 +186,8 @@ func (cb *ChoiceBuilder) SetHeader(key string, value interface{}) *ChoiceBuilder
 func (cb *ChoiceBuilder) SimpleSetBody(expression string) *ChoiceBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		panic(fmt.Sprintf("failed to parse simple expression: %v", err))
+		cb.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		return cb
 	}
 	return cb.Process(&SimpleLanguageProcessor{Template: template})
 }
@@ -194,7 +196,8 @@ func (cb *ChoiceBuilder) SimpleSetBody(expression string) *ChoiceBuilder {
 func (cb *ChoiceBuilder) SimpleSetHeader(headerName string, expression string) *ChoiceBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		panic(fmt.Sprintf("failed to parse simple expression: %v", err))
+		cb.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		return cb
 	}
 	return cb.Process(&SimpleSetHeaderProcessor{
 		HeaderName: headerName,
@@ -213,7 +216,7 @@ func (cb *ChoiceBuilder) To(uri string) *ChoiceBuilder {
 // Log logs a message for the current When clause
 func (cb *ChoiceBuilder) Log(message string) *ChoiceBuilder {
 	return cb.ProcessFunc(func(exchange *Exchange) error {
-		fmt.Printf("[Choice] %s\n", message)
+		logInfo("Choice log", "message", message)
 		return nil
 	})
 }
@@ -221,7 +224,7 @@ func (cb *ChoiceBuilder) Log(message string) *ChoiceBuilder {
 // LogBody logs the body for the current When clause
 func (cb *ChoiceBuilder) LogBody(message string) *ChoiceBuilder {
 	return cb.ProcessFunc(func(exchange *Exchange) error {
-		fmt.Printf("[Choice] %s: %v\n", message, exchange.GetIn().GetBody())
+		logInfo("Choice log", "message", message, "body", exchange.GetIn().GetBody())
 		return nil
 	})
 }
@@ -237,6 +240,12 @@ func (cb *ChoiceBuilder) Otherwise() *OtherwiseBuilder {
 
 // EndChoice completes the Choice pattern and adds it to the route
 func (cb *ChoiceBuilder) EndChoice() *RouteBuilder {
+	// If we have an accumulated error, propagate it to the RouteBuilder
+	if cb.err != nil {
+		cb.routeBuilder.err = cb.err
+		return cb.routeBuilder
+	}
+
 	// Finalize any active when clause
 	cb.finalizeActiveWhen()
 
@@ -286,7 +295,8 @@ func (ob *OtherwiseBuilder) SetHeader(key string, value interface{}) *OtherwiseB
 func (ob *OtherwiseBuilder) SimpleSetBody(expression string) *OtherwiseBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		panic(fmt.Sprintf("failed to parse simple expression: %v", err))
+		ob.choiceBuilder.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		return ob
 	}
 	return ob.Process(&SimpleLanguageProcessor{Template: template})
 }
@@ -295,7 +305,8 @@ func (ob *OtherwiseBuilder) SimpleSetBody(expression string) *OtherwiseBuilder {
 func (ob *OtherwiseBuilder) SimpleSetHeader(headerName string, expression string) *OtherwiseBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		panic(fmt.Sprintf("failed to parse simple expression: %v", err))
+		ob.choiceBuilder.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		return ob
 	}
 	return ob.Process(&SimpleSetHeaderProcessor{
 		HeaderName: headerName,
@@ -314,7 +325,7 @@ func (ob *OtherwiseBuilder) To(uri string) *OtherwiseBuilder {
 // Log logs a message for the Otherwise clause
 func (ob *OtherwiseBuilder) Log(message string) *OtherwiseBuilder {
 	return ob.ProcessFunc(func(exchange *Exchange) error {
-		fmt.Printf("[Choice Otherwise] %s\n", message)
+		logInfo("Choice otherwise log", "message", message)
 		return nil
 	})
 }
@@ -322,7 +333,7 @@ func (ob *OtherwiseBuilder) Log(message string) *OtherwiseBuilder {
 // LogBody logs the body for the Otherwise clause
 func (ob *OtherwiseBuilder) LogBody(message string) *OtherwiseBuilder {
 	return ob.ProcessFunc(func(exchange *Exchange) error {
-		fmt.Printf("[Choice Otherwise] %s: %v\n", message, exchange.GetIn().GetBody())
+		logInfo("Choice otherwise log", "message", message, "body", exchange.GetIn().GetBody())
 		return nil
 	})
 }

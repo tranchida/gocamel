@@ -23,7 +23,7 @@ func main() {
 	context.AddComponent("file", gocamel.NewFileComponent())
 
 	// Création d'une route qui surveille le répertoire
-	route := context.CreateRouteBuilder().
+	route, err := context.CreateRouteBuilder().
 		From("file://" + tempDir).
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
 			fmt.Printf("Nouveau fichier détecté:\n")
@@ -37,6 +37,10 @@ func main() {
 			return nil
 		}).
 		Build()
+	if err != nil {
+		fmt.Printf("Erreur création route: %v\n", err)
+		return
+	}
 
 	// Démarrage de la route
 	context.AddRoute(route)

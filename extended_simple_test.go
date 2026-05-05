@@ -1232,12 +1232,15 @@ func TestSimpleSetBodyWithFunctions(t *testing.T) {
 		SimpleSetBody("${body.trim().uppercase()}").
 		SetID("test-route")
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if route == nil {
 		t.Fatal("Expected non-nil route")
 	}
 
-	err := route.Process(ex)
+	err = route.Process(ex)
 	if err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
@@ -1259,12 +1262,15 @@ func TestSimpleSetHeaderWithTernary(t *testing.T) {
 		SimpleSetHeader("X-Priority", "${header.amount > 100 ? 'High' : 'Low'}").
 		SetID("test-route")
 
-	route := builder.Build()
+	route, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if route == nil {
 		t.Fatal("Expected non-nil route")
 	}
 
-	err := route.Process(ex)
+	err = route.Process(ex)
 	if err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}

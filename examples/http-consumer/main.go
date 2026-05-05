@@ -14,7 +14,7 @@ func main() {
 	context.AddComponent("http", gocamel.NewHTTPComponent())
 
 	// Création d'une route qui écoute sur le port 8080 et renvoie le message reçu
-	route := context.CreateRouteBuilder().
+	route, err := context.CreateRouteBuilder().
 		From("http://localhost:8080/echo").
 		SetID("myroute").
 		LogBody("Received message").
@@ -24,6 +24,10 @@ func main() {
 		SetHeader("Status-Code", "200").
 		SetHeader("X-Processed-At", time.Now().Format(time.RFC3339)).
 		Build()
+	if err != nil {
+		fmt.Printf("Erreur création route: %v\n", err)
+		return
+	}
 
 	context.AddRoute(route)
 	context.Start()

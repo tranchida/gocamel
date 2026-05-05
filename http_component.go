@@ -191,7 +191,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	// Starting the server
 	go func() {
 		if err := c.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("HTTP server error: %v\n", err)
+			logError("HTTP server error", "error", err)
 		}
 	}()
 
