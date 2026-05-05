@@ -187,9 +187,9 @@ func (r *Route) SetErrorHandler(handler ErrorHandler) *Route {
 	return r
 }
 
-// GetErrorHandler returns the route's error handler (may be nil).
+// GetErrorHandler returns the route's error handler (may be nil if none configured).
 func (r *Route) GetErrorHandler() ErrorHandler {
-	return nil
+	return r.errorHandler
 }
 
 // SetBody définit le corps du message de sortie

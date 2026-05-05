@@ -199,3 +199,89 @@ func TestRouteBuilder_DeadLetterChannelDSL(t *testing.T) {
 	assert.Len(t, dlq.received, 1, "failed exchange should be sent to DLQ")
 	dlq.mu.Unlock()
 }
+
+func TestGetErrorHandler_ReturnsNilForNewRoute(t *testing.T) {
+	route := NewRoute()
+	assert.Nil(t, route.GetErrorHandler(), "new route should have no error handler")
+}
+
+func TestSetErrorHandler_ReturnsCorrectHandler(t *testing.T) {
+	route := NewRoute()
+	handler := &NoErrorHandler{}
+	route.SetErrorHandler(handler)
+	assert.Equal(t, handler, route.GetErrorHandler(), "should return the set handler")
+}
+
+func TestRouteBuilder_ErrorHandlerDSL(t *testing.T) {
+	ctx := NewCamelContext()
+	ctx.AddComponent("direct", NewDirectComponent())
+
+	handler := &NoErrorHandler{}
+	route, err := ctx.CreateRouteBuilder().
+		From("direct:test").
+		ErrorHandler(handler).
+		ProcessFunc(func(exchange *Exchange) error { return nil }).
+		Build()
+
+	assert.NoError(t, err)
+	assert.NotNil(t, route)
+	assert.Equal(t, handler, route.GetErrorHandler())
+}
+
+func TestRouteBuilder_NoErrorHandler_ErrorBubblesUp(t *testing.T) {
+	ctx := NewCamelContext()
+	ctx.AddComponent("direct", NewDirectComponent())
+
+	route, err := ctx.CreateRouteBuilder().
+		From("direct:test").
+		ProcessFunc(func(exchange *Exchange) error {
+			return errors.New("simulated error")
+		}).
+		Build()
+
+	assert.NoError(t, err)
+	assert.Nil(t, route.GetErrorHandler(), "no error handler configured")
+
+	exchange := NewExchange(context.Background())
+	processErr := route.Process(exchange)
+	assert.Error(t, processErr)
+	assert.Contains(t, processErr.Error(), "simulated error")
+}
+
+func TestDeadLetterChannel_ExponentialBackoff(t *testing.T) {
+	ctx := NewCamelContext()
+	dlc := NewDeadLetterChannel(ctx, "log:test",
+		MaxRedeliveries(3),
+		ExponentialBackoff(2.0),
+	)
+
+	assert.NotNil(t, dlc)
+	assert.True(t, dlc.useExponentialBackoff)
+	assert.Equal(t, 2.0, dlc.backoffMultiplier)
+	assert.Equal(t, 3, dlc.maxRedeliveries)
+}
+
+func TestDeadLetterChannel_MaxRedeliveriesZero(t *testing.T) {
+	comp, dlq := newMockDLQComponent()
+	ctx := NewCamelContext()
+	ctx.GetComponentRegistry().RegisterComponent("mockdlq", comp)
+
+	dlc := NewDeadLetterChannel(ctx, "mockdlq:errors", MaxRedeliveries(0))
+	assert.NotNil(t, dlc)
+	assert.Equal(t, 0, dlc.maxRedeliveries)
+
+	exchange := NewExchange(context.Background())
+	originalErr := errors.New("immediate DLQ test")
+
+	err := dlc.HandleError(exchange, originalErr)
+	assert.ErrorIs(t, err, originalErr)
+
+	dlq.mu.Lock()
+	assert.Len(t, dlq.received, 1, "should go directly to DLQ without retries")
+	dlq.mu.Unlock()
+}
+
+func TestNoErrorHandler_ImplementsInterface(t *testing.T) {
+	var handler ErrorHandler = &NoErrorHandler{}
+	assert.NotNil(t, handler)
+}
