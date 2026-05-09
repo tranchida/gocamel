@@ -540,6 +540,35 @@ func (b *RouteBuilder) Filter(expression any) *RouteBuilder {
 	return b
 }
 
+// IdempotentConsumer adds an Idempotent Consumer EIP step.
+// The expression evaluates to a unique key for the exchange.
+// If the key has been seen before (according to the repository), the exchange is dropped.
+//
+// Example:
+//
+//	repo := gocamel.NewMemoryIdempotentRepository()
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    IdempotentConsumer("${header.MessageId}", repo).
+//	    To("direct:next").
+//	    Build()
+func (b *RouteBuilder) IdempotentConsumer(expression any, repo IdempotentRepository) *RouteBuilder {
+	switch expr := expression.(type) {
+	case func(*Exchange) (string, error):
+		b.container.AddProcessor(NewIdempotentConsumer(expr, repo))
+	case string:
+		p, err := NewSimpleIdempotentConsumer(expr, repo)
+		if err != nil {
+			b.err = err
+			return b
+		}
+		b.container.AddProcessor(p)
+	default:
+		b.err = fmt.Errorf("IdempotentConsumer: unsupported expression type %T (want func(*Exchange)(string,error) or string)", expression)
+	}
+	return b
+}
+
 // To adds one or more destination endpoints to the current container.
 // If multiple URIs are provided, a Multicast is created automatically.
 func (b *RouteBuilder) To(uris ...string) *RouteBuilder {

@@ -277,6 +277,79 @@ builder.From("direct:start").
 
 ---
 
+## Idempotent Consumer
+
+Empêche le traitement de messages en double.
+
+```go
+repo := gocamel.NewMemoryIdempotentRepository()
+
+builder.From("direct:start").
+    IdempotentConsumer("${header.MessageId}", repo).
+    To("direct:suivant").
+    Build()
+```
+
+**Fonctionnement :**
+1. Évalue l'expression pour obtenir une clé unique.
+2. Vérifie si la clé existe déjà dans le dépôt (repository).
+3. Si elle n'est pas présente, ajoute la clé et continue le traitement.
+4. Si elle est déjà présente, arrête le routage (`ErrStopRouting`).
+
+**Dépôts (Repositories) :**
+- `NewMemoryIdempotentRepository()` : Stockage en mémoire vive (par défaut).
+- Des dépôts basés sur SQL peuvent être implémentés via l'interface `IdempotentRepository`.
+
+---
+
+## Circuit Breaker
+
+Protège les routes contre les pannes en cascade lors de l'appel de services externes instables.
+
+```go
+builder.From("direct:start").
+    CircuitBreaker().
+        FailureThreshold(5).           // Ouvre après 5 échecs
+        OpenTimeout(30 * time.Second).  // Reste ouvert pendant 30s
+        SuccessThreshold(2).           // Ferme après 2 succès en état Half-Open
+        Process(unstableProcessor).
+        OnFallback().
+            Log("Circuit ouvert ou échec, appel du fallback").
+            To("direct:fallback").
+        End().
+    End().
+    To("direct:resultat").
+    Build()
+```
+
+**États :**
+- **Closed (Fermé)** : Les requêtes passent normalement. Les échecs sont comptabilisés.
+- **Open (Ouvert)** : Les requêtes échouent immédiatement ou passent par le fallback.
+- **Half-Open (Semi-ouvert)** : Après le `OpenTimeout`, autorise quelques requêtes pour tester si le service est rétabli. Si le `SuccessThreshold` est atteint, il se referme. En cas d'échec, il s'ouvre à nouveau.
+
+---
+
+## Load Balancer
+
+Répartit les messages sur plusieurs endpoints.
+
+```go
+builder.From("direct:start").
+    LoadBalance().RoundRobin().
+        To("direct:serveur1").
+        To("direct:serveur2").
+        To("direct:serveur3").
+    End().
+    Build()
+```
+
+**Stratégies :**
+- `RoundRobin()` : Distribution circulaire (par défaut).
+- `Random()` : Distribution aléatoire.
+- `Custom(strategy)` : Fournir une implémentation personnalisée de l'interface `LoadBalancerStrategy`.
+
+---
+
 ## Stop
 
 Arrête le routage actuel sans erreur.
@@ -310,6 +383,36 @@ builder.From("direct:start").
 - `${header.<name>}` — Valeur d'en-tête
 - `${property.<name>}` — Valeur de propriété
 - `${body}` — Corps du message
+
+---
+
+## Dynamic Router
+
+Route un exchange à travers une séquence d'endpoints résolus dynamiquement en appelant une fonction de contrôle après chaque étape. Le routage s'arrête quand la fonction retourne une chaîne vide ou `nil`.
+
+```go
+// Utilisation d'une fonction Go
+builder.From("direct:start").
+    DynamicRouter(func(e *gocamel.Exchange) (string, error) {
+        // Décide de la prochaine étape selon l'état/contenu
+        val, _ := e.GetProperty("step")
+        count, _ := val.(int)
+        e.SetProperty("step", count + 1)
+        
+        if count == 0 { return "direct:a", nil }
+        if count == 1 { return "direct:b", nil }
+        return "", nil // Fin du routage
+    })
+
+// Utilisation du Simple Language
+builder.From("direct:start").
+    DynamicRouter("${header.nextEndpoint}")
+```
+
+**Fonctionnement :**
+1. Appelle la fonction ou l'expression de contrôle.
+2. Si le résultat n'est pas vide, envoie l'exchange à cet URI.
+3. Propage la sortie vers l'entrée et recommence à l'étape 1.
 
 ---
 
@@ -370,6 +473,36 @@ builder.SetPropertyFunc("status", func(e *gocamel.Exchange) (any, error) {
 builder.RemoveProperty("temp-token")
 builder.RemoveProperties("cache-*")
 ```
+
+---
+
+## Gestion des erreurs
+
+### Do-Try-Catch-Finally
+
+Gestion structurée des erreurs au sein d'une route.
+
+```go
+builder.From("direct:start").
+    DoTry().
+        To("http://service-instable").
+    DoCatch("connection refused").
+        Log("Le service est hors ligne, application du mode dégradé").
+        To("direct:recovery").
+    DoCatch(""). // Rattrape toutes les autres erreurs
+        Log("Erreur inattendue : ${exchangeProperty.CamelExceptionCaught}").
+        To("direct:error-handler").
+    DoFinally().
+        Log("Traitement terminé (succès ou échec)").
+    End().
+    To("direct:suivant")
+```
+
+**Fonctionnement :**
+1. Exécute les processeurs du bloc `DoTry`.
+2. Si une erreur survient, recherche un bloc `DoCatch` correspondant (une chaîne vide intercepte tout).
+3. Si une correspondance est trouvée, l'erreur est considérée comme "gérée" et le routage continue après le bloc `DoTry` (sauf si le bloc catch échoue lui-même).
+4. Le bloc `DoFinally` est **toujours** exécuté, qu'il y ait eu une erreur ou non.
 
 ---
 

@@ -164,6 +164,79 @@ builder.From("direct:start").
 
 ---
 
+### Idempotent Consumer
+
+Prevent duplicate messages from being processed.
+
+```go
+repo := gocamel.NewMemoryIdempotentRepository()
+
+builder.From("direct:start").
+    IdempotentConsumer("${header.MessageId}", repo).
+    To("direct:next").
+    Build()
+```
+
+**How it works:**
+1. Evaluates the expression to get a unique key.
+2. Checks if the key exists in the repository.
+3. If not present, adds the key and proceeds.
+4. If present, stops routing (`ErrStopRouting`).
+
+**Repositories:**
+- `NewMemoryIdempotentRepository()`: In-memory store (default).
+- SQL-based repositories can be implemented via the `IdempotentRepository` interface.
+
+---
+
+### Circuit Breaker
+
+Protect routes from cascading failures when calling unstable external services.
+
+```go
+builder.From("direct:start").
+    CircuitBreaker().
+        FailureThreshold(5).           // Open after 5 failures
+        OpenTimeout(30 * time.Second).  // Stay open for 30s
+        SuccessThreshold(2).           // Close after 2 successes in Half-Open
+        Process(unstableProcessor).
+        OnFallback().
+            Log("Circuit open or failed, calling fallback").
+            To("direct:fallback").
+        End().
+    End().
+    To("direct:result").
+    Build()
+```
+
+**States:**
+- **Closed**: Requests pass through. Failures are counted.
+- **Open**: Requests fail immediately or go to fallback.
+- **Half-Open**: After `OpenTimeout`, allows a few requests to test if the service has recovered. If `SuccessThreshold` is reached, it closes. If any fail, it opens again.
+
+---
+
+### Load Balancer
+
+Distribute messages across multiple endpoints.
+
+```go
+builder.From("direct:start").
+    LoadBalance().RoundRobin().
+        To("direct:server1").
+        To("direct:server2").
+        To("direct:server3").
+    End().
+    Build()
+```
+
+**Strategies:**
+- `RoundRobin()`: Circular distribution (default).
+- `Random()`: Random distribution.
+- `Custom(strategy)`: Provide a custom implementation of the `LoadBalancerStrategy` interface.
+
+---
+
 ### Multicast
 
 Send a copy of the message to multiple destinations.
@@ -395,6 +468,35 @@ builder.From("direct:start").
 
 ---
 
+### Dynamic Router
+
+Route an exchange through a sequence of endpoints resolved dynamically by calling a control function after each step. Routing ends when the function returns an empty string or `nil`.
+
+```go
+// Using a Go function
+builder.From("direct:start").
+    DynamicRouter(func(e *gocamel.Exchange) (string, error) {
+        // Decide next step based on state/content
+        count, _ := e.GetProperty("step")
+        e.SetProperty("step", count.(int) + 1)
+        
+        if count == 0 { return "direct:a", nil }
+        if count == 1 { return "direct:b", nil }
+        return "", nil // End routing
+    })
+
+// Using Simple Language
+builder.From("direct:start").
+    DynamicRouter("${header.nextEndpoint}")
+```
+
+**How it works:**
+1. Calls the control function/expression.
+2. If result is non-empty, sends exchange to that URI.
+3. Propagates output to input and repeats from step 1.
+
+---
+
 ### Routing Slip
 
 Route an exchange through a dynamic sequence of endpoints. Unlike Recipient List,
@@ -526,10 +628,29 @@ builder.RemoveProperties("processing*")
 
 ### Do-Try-Catch-Finally
 
+Structured error handling within a route.
+
 ```go
-// Not yet implemented in current version
-// Use error handling in processor
+builder.From("direct:start").
+    DoTry().
+        To("http://unstable-service").
+    DoCatch("connection refused").
+        Log("Service is down, applying recovery").
+        To("direct:recovery").
+    DoCatch(""). // Catch all other errors
+        Log("Unexpected error: ${exchangeProperty.CamelExceptionCaught}").
+        To("direct:error-handler").
+    DoFinally().
+        Log("Processing finished (success or failure)").
+    End().
+    To("direct:next")
 ```
+
+**How it works:**
+1. Executes the processors in the `DoTry` block.
+2. If an error occurs, it searches for a matching `DoCatch` block (empty string matches any error).
+3. If a match is found, the error is considered "handled" and routing continues after the `DoTry` block (unless the catch block itself fails).
+4. The `DoFinally` block is **always** executed, regardless of whether an error occurred or was caught.
 
 ---
 
@@ -539,6 +660,10 @@ builder.RemoveProperties("processing*")
 |---------|----------|-------------|
 | Choice | Routing | Content-based routing |
 | Filter | Routing | Conditional filtering |
+| Idempotent Consumer | Routing | Prevent duplicate messages |
+| Circuit Breaker | Routing | Resilience pattern for failures |
+| Load Balancer | Routing | Load distribution across endpoints |
+| Dynamic Router | Routing | Dynamic decision-based routing |
 | Throttle | Routing | Rate limiting |
 | Delay | Routing | Pause before next step |
 | Multicast | Routing | Multiple destinations |
@@ -551,5 +676,6 @@ builder.RemoveProperties("processing*")
 | Transform | Transformation | Content transformation |
 | ToD | Endpoint | Dynamic endpoint |
 | Stop | Control | Stop routing |
+| DoTry | Control | Try-Catch-Finally error handling |
 | SetHeader | Headers | Header manipulation |
 | SetProperty | Properties | Exchange properties |
