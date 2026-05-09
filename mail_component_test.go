@@ -304,9 +304,9 @@ func TestGetMailHeader(t *testing.T) {
 	assert.Equal(t, "Default", getMailHeader(ex, "Missing", "Default"))
 }
 
-// TestParseMimeMessageSimple teste le parsing d'un message MIME simple.
+// TestParseMimeMessageSimple tests the parsing of a simple MIME message.
 func TestParseMimeMessageSimple(t *testing.T) {
-	// Message text/plain simple
+	// Simple text/plain message
 	msg := `From: sender@example.com
 To: recipient@example.com
 Subject: Test Simple
@@ -323,9 +323,9 @@ This is a simple test message.`
 	assert.Empty(t, attachments)
 }
 
-// TestParseMimeMessageMultipartAlternative teste multipart/alternative.
+// TestParseMimeMessageMultipartAlternative tests multipart/alternative.
 func TestParseMimeMessageMultipartAlternative(t *testing.T) {
-	// Message avec text/plain + text/html
+	// Message with text/plain + text/html
 	boundary := "----=_Part_test_123456"
 	msg := fmt.Sprintf(`From: sender@example.com
 To: recipient@example.com
@@ -354,9 +354,9 @@ Content-Type: text/html; charset=utf-8
 	assert.Empty(t, attachments)
 }
 
-// TestParseMimeMessageWithAttachment teste un message avec piece jointe.
+// TestParseMimeMessageWithAttachment tests a message with an attachment.
 func TestParseMimeMessageWithAttachment(t *testing.T) {
-	// Utiliser CRLF comme requis par le standard MIME
+	// Use CRLF as required by the MIME standard
 	msg := "From: sender@example.com\r\n" +
 		"To: recipient@example.com\r\n" +
 		"Subject: Test with attachment\r\n" +
@@ -385,32 +385,32 @@ func TestParseMimeMessageWithAttachment(t *testing.T) {
 	assert.Contains(t, string(attachments["document.pdf"]), "%PDF-1.4")
 }
 
-// TestExtractFilenameFromDisposition teste l'extraction du filename.
+// TestExtractFilenameFromDisposition tests filename extraction.
 	func TestExtractFilenameFromDisposition(t *testing.T) {
 		consumer := &MailConsumer{}
 
-		// Test Content-Disposition avec filename
+		// Test Content-Disposition with filename
 		filename := consumer.extractFilenameFromDisposition(`attachment; filename="test.pdf"`, "")
 		assert.Equal(t, "test.pdf", filename)
 
-		// Test avec single quotes
+		// Test with single quotes
 		filename = consumer.extractFilenameFromDisposition(`attachment; filename='test.pdf'`, "")
 		assert.Equal(t, "test.pdf", filename)
 
-		// Test sans quotes
+		// Test without quotes
 		filename = consumer.extractFilenameFromDisposition(`attachment; filename=test.pdf`, "")
 		assert.Equal(t, "test.pdf", filename)
 
-		// Test depuis Content-Type
+		// Test from Content-Type
 		filename = consumer.extractFilenameFromDisposition("", `application/pdf; name="doc.pdf"`)
 		assert.Equal(t, "doc.pdf", filename)
 
-		// Test vide
+		// Empty test
 		filename = consumer.extractFilenameFromDisposition("", "")
 		assert.Equal(t, "", filename)
 	}
 
-	// TestReplyTo teste l'extraction du Reply-To depuis l'enveloppe.
+	// TestReplyTo tests Reply-To extraction from the envelope.
 	func TestReplyTo(t *testing.T) {
 		msg := &MailMessage{
 			From:    "sender@example.com",
@@ -422,7 +422,7 @@ func TestParseMimeMessageWithAttachment(t *testing.T) {
 		assert.Equal(t, "reply@example.com", msg.ReplyTo)
 	}
 
-// TestPop3Endpoint_CreateEndpoint teste la creation d'endpoint POP3.
+// TestPop3Endpoint_CreateEndpoint tests POP3 endpoint creation.
 func TestPop3Endpoint_CreateEndpoint_ValidPOP3(t *testing.T) {
 	comp := NewMailComponent()
 
@@ -441,7 +441,7 @@ func TestPop3Endpoint_CreateEndpoint_ValidPOP3(t *testing.T) {
 	assert.Equal(t, "pass", mailEp.password)
 }
 
-// TestPop3sEndpoint_CreateEndpoint teste la creation d'endpoint POP3S.
+// TestPop3sEndpoint_CreateEndpoint tests POP3S endpoint creation.
 func TestPop3sEndpoint_CreateEndpoint_ValidPOP3S(t *testing.T) {
 	comp := NewMailComponent()
 
@@ -457,24 +457,24 @@ func TestPop3sEndpoint_CreateEndpoint_ValidPOP3S(t *testing.T) {
 	assert.Equal(t, 50, mailEp.fetchSize)
 }
 
-// TestMailIdleOption teste le parsing de l'option idle.
+// TestMailIdleOption tests parsing of the idle option.
 func TestMailIdleOption(t *testing.T) {
 	comp := NewMailComponent()
 
-	// Sans IDLE (defaut)
+	// Without IDLE (default)
 	endpoint1, err := comp.CreateEndpoint("imap://imap.gmail.com:993?username=user&password=pass")
 	require.NoError(t, err)
 	mailEp1 := endpoint1.(*MailEndpoint)
 	assert.False(t, mailEp1.useIdle)
 
-	// Avec IDLE
+	// With IDLE
 	endpoint2, err := comp.CreateEndpoint("imap://imap.gmail.com:993?username=user&password=pass&idle=true")
 	require.NoError(t, err)
 	mailEp2 := endpoint2.(*MailEndpoint)
 	assert.True(t, mailEp2.useIdle)
 }
 
-// TestPop3ConsumerCreation teste la creation du consommateur POP3.
+// TestPop3ConsumerCreation tests POP3 consumer creation.
 func TestPop3ConsumerCreation(t *testing.T) {
 	comp := NewMailComponent()
 
@@ -489,7 +489,7 @@ func TestPop3ConsumerCreation(t *testing.T) {
 	assert.True(t, ok, "Should create Pop3Consumer for POP3 protocol")
 }
 
-// TestIMAPConsumerWithIdle teste la creation du consommateur IMAP avec IDLE.
+// TestIMAPConsumerWithIdle tests IMAP consumer creation with IDLE.
 func TestIMAPConsumerWithIdle(t *testing.T) {
 	comp := NewMailComponent()
 

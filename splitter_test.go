@@ -32,18 +32,18 @@ func TestSplit_SimpleSlice(t *testing.T) {
 		}).
 		End().
 		ProcessFunc(func(e *Exchange) error {
-			// Ce processeur s'exécute après le split sur l'échange original
+			// This processor runs after the split on the original exchange
 			e.GetIn().SetHeader("AfterSplit", true)
 			return nil
 		})
 
 	route, err := builder.Build()
 	assert.NoError(t, err)
-	// Pas besoin d'ajouter manuellement car CreateRoute le fait via NewRouteBuilder
+	// No need to add manually as CreateRoute does it via NewRouteBuilder
 	
-	// On ne démarre pas tout le contexte pour un test unitaire de processeur si possible,
-	// mais ici on utilise la route complète.
-	// direct:start nécessite un consommateur.
+	// We don't start the whole context for a processor unit test if possible,
+	// but here we use the complete route.
+	// direct:start requires a consumer.
 	
 	exchange := NewExchange(ctx)
 	exchange.GetIn().SetBody("a,b,c")
@@ -52,7 +52,7 @@ func TestSplit_SimpleSlice(t *testing.T) {
 	assert.NoError(t, err)
 	
 	assert.Equal(t, []string{"a", "b", "c"}, processedItems)
-	assert.Equal(t, "a,b,c", exchange.GetIn().GetBody(), "Le corps original doit être préservé")
+	assert.Equal(t, "a,b,c", exchange.GetIn().GetBody(), "Original body must be preserved")
 	
 	val, ok := exchange.GetIn().GetHeader("AfterSplit")
 	assert.True(t, ok)
@@ -88,9 +88,9 @@ func TestSplit_WithAggregation(t *testing.T) {
 	err = route.Process(exchange)
 	assert.NoError(t, err)
 	
-	// La stratégie StringConcatStrategy concatène avec des virgules.
-	// Comme c'est le premier appel, oldExchange est nil, donc le premier item reste "item-1".
-	// Ensuite "item-1" + "," + "item-2" = "item-1,item-2", etc.
+	// StringConcatStrategy concatenates with commas.
+	// Since this is the first call, oldExchange is nil, so the first item remains "item-1".
+	// Then "item-1" + "," + "item-2" = "item-1,item-2", etc.
 	assert.Equal(t, "item-1,item-2,item-3", exchange.GetIn().GetBody())
 }
 

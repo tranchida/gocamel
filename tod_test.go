@@ -75,7 +75,7 @@ func TestToDWithPropertyAndBody(t *testing.T) {
 		ToD("direct:${property.prefix}-${body}").
 		Build()
 
-	// Intercepter toutes les routes direct pour voir laquelle est appelée
+	// Intercept all direct routes to see which one is called
 	ctx.CreateRouteBuilder().
 		From("direct:msg-hello").
 		ProcessFunc(func(exchange *Exchange) error {

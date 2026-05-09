@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestSQLDB crée une base SQLite en mémoire peuplée de quelques utilisateurs.
+// newTestSQLDB creates an in-memory SQLite database populated with a few users.
 func newTestSQLDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -174,7 +174,7 @@ func TestSQLProducer_Insert(t *testing.T) {
 	require.True(t, ok, "body should be int64, got %T", exchange.GetOut().GetBody())
 	assert.EqualValues(t, 1, affected)
 
-	// Vérifie la persistance.
+	// Verify persistence.
 	var name string
 	require.NoError(t, db.QueryRow("SELECT name FROM users WHERE id = 4").Scan(&name))
 	assert.Equal(t, "Dave", name)
@@ -315,7 +315,7 @@ func TestSQLProducer_Transacted(t *testing.T) {
 	require.NoError(t, db.QueryRow("SELECT name FROM users WHERE id = 10").Scan(&name))
 	assert.Equal(t, "Eve", name)
 
-	// Une deuxième insertion avec la même clé doit remonter une erreur (rollback implicite).
+	// A second insertion with the same key should return an error (implicit rollback).
 	exchange = NewExchange(context.Background())
 	exchange.GetIn().SetHeader(SqlParameters, []any{10, "Eve2", "eve2@example.com"})
 	err = producer.Send(exchange)
@@ -323,7 +323,7 @@ func TestSQLProducer_Transacted(t *testing.T) {
 
 	var stored string
 	require.NoError(t, db.QueryRow("SELECT name FROM users WHERE id = 10").Scan(&stored))
-	assert.Equal(t, "Eve", stored, "la transaction en échec ne doit pas modifier la ligne existante")
+	assert.Equal(t, "Eve", stored, "failed transaction should not modify existing row")
 }
 
 func TestSQLProducer_Batch(t *testing.T) {

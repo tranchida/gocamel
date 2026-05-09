@@ -15,7 +15,7 @@ import (
 func TestExecComponent_CreateEndpoint(t *testing.T) {
 	comp := NewExecComponent()
 
-	// URI minimal
+	// Minimal URI
 	ep, err := comp.CreateEndpoint("exec:echo")
 	require.NoError(t, err)
 	assert.NotNil(t, ep)
@@ -28,7 +28,7 @@ func TestExecComponent_CreateEndpoint(t *testing.T) {
 	assert.Equal(t, int64(0), execEp.timeoutMs)
 	assert.False(t, execEp.useStderrOnEmpty)
 
-	// URI avec options
+	// URI with options
 	ep, err = comp.CreateEndpoint("exec:ls?args=-la+/tmp&workingDir=/tmp&timeout=3000&useStderrOnEmpty=true")
 	require.NoError(t, err)
 	execEp = ep.(*ExecEndpoint)
@@ -38,7 +38,7 @@ func TestExecComponent_CreateEndpoint(t *testing.T) {
 	assert.Equal(t, int64(3000), execEp.timeoutMs)
 	assert.True(t, execEp.useStderrOnEmpty)
 
-	// URI sans exécutable
+	// URI without executable
 	_, err = comp.CreateEndpoint("exec:")
 	assert.Error(t, err)
 }
@@ -74,18 +74,18 @@ func TestExecProducer_Send_Echo(t *testing.T) {
 }
 
 func TestExecProducer_Send_Stdin(t *testing.T) {
-	// cat lit stdin et l'écrit sur stdout
+	// cat reads stdin and writes it to stdout
 	ep := &ExecEndpoint{uri: "exec:cat", executable: "cat"}
 	producer := &ExecProducer{endpoint: ep}
 	require.NoError(t, producer.Start(context.Background()))
 	defer producer.Stop()
 
 	exchange := NewExchange(context.Background())
-	exchange.GetIn().SetBody("bonjour stdin")
+	exchange.GetIn().SetBody("hello stdin")
 
 	err := producer.Send(exchange)
 	require.NoError(t, err)
-	assert.Equal(t, "bonjour stdin", exchange.GetIn().GetBody())
+	assert.Equal(t, "hello stdin", exchange.GetIn().GetBody())
 }
 
 func TestExecProducer_Send_StdinBytes(t *testing.T) {
@@ -103,7 +103,7 @@ func TestExecProducer_Send_StdinBytes(t *testing.T) {
 }
 
 func TestExecProducer_Send_ExitCode(t *testing.T) {
-	// false retourne toujours exit code 1
+	// false always returns exit code 1
 	ep := &ExecEndpoint{uri: "exec:false", executable: "false"}
 	producer := &ExecProducer{endpoint: ep}
 	require.NoError(t, producer.Start(context.Background()))
@@ -111,7 +111,7 @@ func TestExecProducer_Send_ExitCode(t *testing.T) {
 
 	exchange := NewExchange(context.Background())
 	err := producer.Send(exchange)
-	// Pas d'erreur levée pour un code de sortie non-zéro
+	// No error raised for a non-zero exit code
 	assert.NoError(t, err)
 
 	exitVal, ok := exchange.GetIn().GetHeader(CamelExecExitValue)
@@ -120,14 +120,14 @@ func TestExecProducer_Send_ExitCode(t *testing.T) {
 }
 
 func TestExecProducer_Send_Stderr(t *testing.T) {
-	// ls d'un chemin inexistant écrit sur stderr
+	// ls of a non-existent path writes to stderr
 	ep := &ExecEndpoint{uri: "exec:ls", executable: "ls"}
 	producer := &ExecProducer{endpoint: ep}
 	require.NoError(t, producer.Start(context.Background()))
 	defer producer.Stop()
 
 	exchange := NewExchange(context.Background())
-	exchange.GetIn().SetHeader(CamelExecCommandArgs, []string{"/chemin/inexistant/xyz"})
+	exchange.GetIn().SetHeader(CamelExecCommandArgs, []string{"/non-existent/path/xyz"})
 
 	err := producer.Send(exchange)
 	assert.NoError(t, err)
@@ -148,14 +148,14 @@ func TestExecProducer_Send_UseStderrOnEmpty(t *testing.T) {
 	defer producer.Stop()
 
 	exchange := NewExchange(context.Background())
-	exchange.GetIn().SetHeader(CamelExecCommandArgs, []string{"/chemin/inexistant/xyz"})
+	exchange.GetIn().SetHeader(CamelExecCommandArgs, []string{"/non-existent/path/xyz"})
 
 	err := producer.Send(exchange)
 	assert.NoError(t, err)
 
 	body, ok := exchange.GetIn().GetBody().(string)
 	require.True(t, ok)
-	// Le corps doit contenir le message d'erreur de stderr
+	// Body should contain the error message from stderr
 	assert.NotEmpty(t, body)
 }
 
@@ -216,14 +216,14 @@ func TestExecProducer_Send_HeaderOverrides(t *testing.T) {
 
 	exchange := NewExchange(context.Background())
 	// Override args via header (string form)
-	exchange.GetIn().SetHeader(CamelExecCommandArgs, "override depuis header")
+	exchange.GetIn().SetHeader(CamelExecCommandArgs, "override from header")
 
 	err := producer.Send(exchange)
 	require.NoError(t, err)
 
 	body, ok := exchange.GetIn().GetBody().(string)
 	require.True(t, ok)
-	assert.Contains(t, body, "override depuis header")
+	assert.Contains(t, body, "override from header")
 }
 
 func TestExecProducer_Send_WorkingDir(t *testing.T) {
@@ -244,7 +244,7 @@ func TestExecProducer_Send_WorkingDir(t *testing.T) {
 	body, ok := exchange.GetIn().GetBody().(string)
 	require.True(t, ok)
 
-	// Résoudre les liens symboliques pour comparer correctement
+	// Resolve symbolic links for proper comparison
 	realTmpDir, _ := filepath.EvalSymlinks(tmpDir)
 	realBody, _ := filepath.EvalSymlinks(strings.TrimSpace(body))
 	assert.Equal(t, realTmpDir, realBody)
@@ -269,7 +269,7 @@ func TestExecProducer_Send_OutFileMissing(t *testing.T) {
 		uri:        "exec:echo",
 		executable: "echo",
 		args:       []string{"test"},
-		outFile:    "/chemin/inexistant/output.txt",
+		outFile:    "/non-existent/path/output.txt",
 	}
 	producer := &ExecProducer{endpoint: ep}
 	require.NoError(t, producer.Start(context.Background()))
@@ -313,6 +313,6 @@ func TestExecComponent_Integration_Route(t *testing.T) {
 	case body := <-done:
 		assert.Equal(t, "hello pipe", body)
 	case <-time.After(3 * time.Second):
-		t.Fatal("timeout: le résultat exec n'a pas été reçu")
+		t.Fatal("timeout: exec result was not received")
 	}
 }

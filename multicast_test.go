@@ -67,7 +67,7 @@ func TestMulticast_Parallel(t *testing.T) {
 				return nil
 			}).
 			ProcessFunc(func(e *Exchange) error {
-				// Pas de sleep, devrait finir en premier
+				// No sleep, should finish first
 				mu.Lock()
 				order = append(order, "B")
 				mu.Unlock()
@@ -83,7 +83,7 @@ func TestMulticast_Parallel(t *testing.T) {
 	assert.NoError(t, err)
 	
 	assert.Len(t, order, 2)
-	assert.Equal(t, "B", order[0], "B devrait avoir fini avant A grâce au sleep de A")
+	assert.Equal(t, "B", order[0], "B should have finished before A thanks to A's sleep")
 	assert.Equal(t, "A", order[1])
 }
 
@@ -175,8 +175,8 @@ func TestMulticast_ToVariadic(t *testing.T) {
 	ctx := context.Background()
 	camel := NewCamelContext()
 	
-	// On mock les endpoints pour vérifier qu'ils sont appelés
-	// En fait, on peut juste utiliser direct: et un processeur derrière.
+	// Mocking endpoints to verify they are called
+	// In fact, we can just use direct: and a processor behind it.
 	camel.AddComponent("direct", NewDirectComponent())
 	
 	var calls []string

@@ -89,12 +89,12 @@ func TestCronConsumer_SimpleTrigger_Fires(t *testing.T) {
 
 	consumer, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
 		count.Add(1)
-		// Vérifier que les en-têtes sont présents
+		// Verify that headers are present
 		_, hasFireTime := e.GetIn().GetHeader(CronFireTime)
 		_, hasTriggerName := e.GetIn().GetHeader(CronTriggerName)
 		_, hasTriggerGroup := e.GetIn().GetHeader(CronTriggerGroup)
 		if !hasFireTime || !hasTriggerName || !hasTriggerGroup {
-			t.Errorf("en-têtes Cron manquants")
+			t.Errorf("missing Cron headers")
 		}
 		return nil
 	}))
@@ -104,7 +104,7 @@ func TestCronConsumer_SimpleTrigger_Fires(t *testing.T) {
 	require.NoError(t, consumer.Start(ctx))
 	defer consumer.Stop()
 
-	// Attendre au moins 3 déclenchements
+	// Wait for at least 3 triggers
 	assert.Eventually(t, func() bool {
 		return count.Load() >= 3
 	}, 2*time.Second, 50*time.Millisecond)
@@ -127,10 +127,10 @@ func TestCronConsumer_RepeatCount(t *testing.T) {
 	require.NoError(t, consumer.Start(ctx))
 	defer consumer.Stop()
 
-	// Attendre que les 3 déclenchements soient effectués
+	// Wait for the 3 triggers to be completed
 	time.Sleep(500 * time.Millisecond)
 
-	// Ne doit pas dépasser repeatCount=3
+	// Must not exceed repeatCount=3
 	assert.LessOrEqual(t, count.Load(), int64(3))
 }
 
@@ -150,7 +150,7 @@ func TestCronConsumer_PauseJob(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, consumer.Start(ctx))
 
-	// Laisser tourner un peu
+	// Let it run for a bit
 	time.Sleep(200 * time.Millisecond)
 	countBefore := count.Load()
 	assert.Greater(t, countBefore, int64(0))
@@ -160,10 +160,10 @@ func TestCronConsumer_PauseJob(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	countAfterStop := count.Load()
 
-	// Laisser passer du temps pour vérifier qu'il ne se déclenche plus
+	// Allow time to pass to verify that it no longer triggers
 	time.Sleep(200 * time.Millisecond)
 
-	// Le compteur ne doit plus augmenter
+	// The counter must not increase further
 	assert.Equal(t, countAfterStop, count.Load())
 }
 
@@ -191,7 +191,7 @@ func TestCronConsumer_Headers(t *testing.T) {
 	select {
 	case exchange = <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("timeout: aucun échange Cron reçu")
+		t.Fatal("timeout: no Cron exchange received")
 	}
 
 	name, ok := exchange.GetIn().GetHeader(CronTriggerName)
@@ -210,7 +210,7 @@ func TestCronConsumer_Headers(t *testing.T) {
 }
 
 func TestCronComponent_SharedScheduler(t *testing.T) {
-	// Deux routes utilisant le même composant partagent le même scheduler
+	// Two routes using the same component share the same scheduler
 	comp := NewCronComponent()
 
 	var count1, count2 atomic.Int64
@@ -227,7 +227,7 @@ func TestCronComponent_SharedScheduler(t *testing.T) {
 	defer c1.Stop()
 	defer c2.Stop()
 
-	// Les deux routes doivent se déclencher
+	// Both routes must trigger
 	assert.Eventually(t, func() bool {
 		return count1.Load() >= 2 && count2.Load() >= 2
 	}, 2*time.Second, 50*time.Millisecond)

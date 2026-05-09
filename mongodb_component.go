@@ -11,7 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// Headers constants pour MongoDB
+// Header constants for MongoDB
 const (
 	CamelMongoDbDatabase    = "CamelMongoDbDatabase"    // Name of the database
 	CamelMongoDbCollection  = "CamelMongoDbCollection"  // Name of the collection
@@ -569,7 +569,7 @@ func (p *MongoDBProducer) extractFilter(exchange *Exchange) (interface{}, error)
 // CreateMongoDBConnection creates a new MongoDB connection.
 // This function must be called by the user before using the component.
 //
-// Exemple:
+// Example:
 //
 //	ctx := context.Background()
 //	client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))

@@ -16,23 +16,23 @@ func TestTemplateComponent_CreateEndpoint(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "endpoint valide simple",
+			name:    "simple valid endpoint",
 			uri:     "template:templates/hello.tmpl",
 			wantErr: false,
 		},
 		{
-			name:    "endpoint valide avec chemin absolu",
+			name:    "valid endpoint with absolute path",
 			uri:     "template:/path/to/template.tmpl",
 			wantErr: false,
 		},
 		{
-			name:    "endpoint sans chemin",
+			name:    "endpoint without path",
 			uri:     "template:",
 			wantErr: true,
 		},
 		{
-			// template:///path est valide en Go (path est dans Path)
-			name:    "endpoint avec triple slash",
+			// template:///path is valid in Go (path is in Path)
+			name:    "endpoint with triple slash",
 			uri:     "template:///path/to/template.tmpl",
 			wantErr: false,
 		},
@@ -59,24 +59,24 @@ func TestTemplateComponent_CreateEndpointWithOptions(t *testing.T) {
 		expectedEncoding    string
 	}{
 		{
-			name:                "avec contentCache",
+			name:                "with contentCache",
 			uri:                 "template:templates/hello.tmpl?contentCache=true",
 			expectedContentCache: true,
 			expectedEncoding:    "UTF-8",
 		},
 		{
-			name:                "avec allowTemplateFromHeader",
+			name:                "with allowTemplateFromHeader",
 			uri:                 "template:templates/hello.tmpl?allowTemplateFromHeader=true",
 			expectedAllowHeader: true,
 			expectedEncoding:    "UTF-8",
 		},
 		{
-			name:                "avec encoding personnalisé",
+			name:                "with custom encoding",
 			uri:                 "template:templates/hello.tmpl?encoding=ISO-8859-1",
 			expectedEncoding:    "ISO-8859-1",
 		},
 		{
-			name:                "avec tous les paramètres",
+			name:                "with all parameters",
 			uri:                 "template:templates/hello.tmpl?contentCache=true&allowTemplateFromHeader=true&startDelimiter={{&endDelimiter=}}",
 			expectedContentCache: true,
 			expectedAllowHeader: true,
@@ -110,17 +110,17 @@ func TestTemplateComponent_CreateEndpointWithOptions(t *testing.T) {
 }
 
 func TestTemplateProducer_Send(t *testing.T) {
-	// Créer un répertoire temporaire pour les tests
+	// Create a temporary directory for tests
 	tempDir := t.TempDir()
 
-	// Créer un template de test
+	// Create a test template
 	templateContent := "Hello {{.Body}}!"
 	templatePath := filepath.Join(tempDir, "hello.tmpl")
 	if err := os.WriteFile(templatePath, []byte(templateContent), 0644); err != nil {
 		t.Fatalf("Failed to create test template: %v", err)
 	}
 
-	// Créer un autre template de test pour headers
+	// Create another test template for headers
 	headerTemplateContent := "User: {{.Headers.user}}, Action: {{.Body}}"
 	headerTemplatePath := filepath.Join(tempDir, "withheaders.tmpl")
 	if err := os.WriteFile(headerTemplatePath, []byte(headerTemplateContent), 0644); err != nil {
@@ -138,21 +138,21 @@ func TestTemplateProducer_Send(t *testing.T) {
 		wantErr        bool
 	}{
 		{
-			name:           "template simple avec body string",
+			name:           "simple template with string body",
 			uri:            "template:" + templatePath,
 			body:           "World",
 			expectedResult: "Hello World!",
 			wantErr:        false,
 		},
 		{
-			name:           "template avec body bytes",
+			name:           "template with bytes body",
 			uri:            "template:" + templatePath,
 			body:           []byte("Camel"),
 			expectedResult: "Hello Camel!",
 			wantErr:        false,
 		},
 		{
-			name:           "template avec headers",
+			name:           "template with headers",
 			uri:            "template:" + headerTemplatePath,
 			body:           "create",
 			headers:        map[string]any{"user": "John"},
@@ -160,14 +160,14 @@ func TestTemplateProducer_Send(t *testing.T) {
 			wantErr:        false,
 		},
 		{
-			name:           "template avec fonctions",
+			name:           "template with functions",
 			uri:            "template:" + templatePath,
 			body:           "World",
 			expectedResult: "Hello World!",
 			wantErr:        false,
 		},
 		{
-			name:    "template inexistant",
+			name:    "non-existent template",
 			uri:     "template:/non/existent/template.tmpl",
 			body:    "test",
 			wantErr: true,
@@ -220,10 +220,10 @@ func TestTemplateProducer_Send(t *testing.T) {
 }
 
 func TestTemplateProducer_SendWithCachedTemplate(t *testing.T) {
-	// Créer un répertoire temporaire pour les tests
+	// Create a temporary directory for tests
 	tempDir := t.TempDir()
 
-	// Créer un template de test
+	// Create a test template
 	templateContent := "Cached: {{.Body}}"
 	templatePath := filepath.Join(tempDir, "cached.tmpl")
 	if err := os.WriteFile(templatePath, []byte(templateContent), 0644); err != nil {
@@ -248,7 +248,7 @@ func TestTemplateProducer_SendWithCachedTemplate(t *testing.T) {
 	}
 	defer producer.Stop()
 
-	// Premier envoi
+	// First send
 	exchange1 := NewExchange(nil)
 	exchange1.SetBody("First")
 	if err := producer.Send(exchange1); err != nil {
@@ -258,7 +258,7 @@ func TestTemplateProducer_SendWithCachedTemplate(t *testing.T) {
 		t.Errorf("First result = %q, want %q", result, "Cached: First")
 	}
 
-	// Deuxième envoi (devrait utiliser le cache)
+	// Second send (should use cache)
 	exchange2 := NewExchange(nil)
 	exchange2.SetBody("Second")
 	if err := producer.Send(exchange2); err != nil {
@@ -270,10 +270,10 @@ func TestTemplateProducer_SendWithCachedTemplate(t *testing.T) {
 }
 
 func TestTemplateProducer_SendWithTemplateFromHeader(t *testing.T) {
-	// Créer un répertoire temporaire pour les tests
+	// Create a temporary directory for tests
 	tempDir := t.TempDir()
 
-	// Créer deux templates
+	// Create two templates
 	template1 := "Template1: {{.Body}}"
 	template2 := "Template2: {{.Body}}"
 
@@ -305,7 +305,7 @@ func TestTemplateProducer_SendWithTemplateFromHeader(t *testing.T) {
 	}
 	defer producer.Stop()
 
-	// Envoi avec template par défaut
+	// Sending with default template
 	exchange1 := NewExchange(nil)
 	exchange1.SetBody("Test")
 	if err := producer.Send(exchange1); err != nil {
@@ -315,7 +315,7 @@ func TestTemplateProducer_SendWithTemplateFromHeader(t *testing.T) {
 		t.Errorf("Default result = %q, want %q", result, "Template1: Test")
 	}
 
-	// Envoi avec template via header
+	// Sending with template via header
 	exchange2 := NewExchange(nil)
 	exchange2.SetHeader(CamelTemplatePath, path2)
 	exchange2.SetBody("Test2")
@@ -328,7 +328,7 @@ func TestTemplateProducer_SendWithTemplateFromHeader(t *testing.T) {
 }
 
 func TestTemplateFuncs(t *testing.T) {
-	// Test des fonctions utilitaires
+	// Test utility functions
 	tests := []struct {
 		name     string
 		template string
@@ -337,37 +337,37 @@ func TestTemplateFuncs(t *testing.T) {
 		wantErr  bool
 	}{
 		{
-			name:     "fonction upper",
+			name:     "upper function",
 			template: `{{.Body | upper}}`,
 			data:     &TemplateData{Body: "hello"},
 			expected: "HELLO",
 		},
 		{
-			name:     "fonction lower",
+			name:     "lower function",
 			template: `{{.Body | lower}}`,
 			data:     &TemplateData{Body: "WORLD"},
 			expected: "world",
 		},
 		{
-			name:     "fonction trim",
+			name:     "trim function",
 			template: `{{.Body | trim}}`,
 			data:     &TemplateData{Body: "  hello  "},
 			expected: "hello",
 		},
 		{
-			name:     "fonction contains",
+			name:     "contains function",
 			template: `{{if contains .Body "test"}}yes{{else}}no{{end}}`,
 			data:     &TemplateData{Body: "this is a test"},
 			expected: "yes",
 		},
 		{
-			name:     "fonction replace",
+			name:     "replace function",
 			template: `{{replace "old" "new" .Body}}`,
 			data:     &TemplateData{Body: "old value old"},
 			expected: "new value new",
 		},
 		{
-			name:     "fonction toString",
+			name:     "toString function",
 			template: `{{toString .Headers.number}}`,
 			data:     &TemplateData{Headers: map[string]any{"number": 123}},
 			expected: "123",
@@ -376,7 +376,7 @@ func TestTemplateFuncs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Créer un répertoire temporaire pour les tests
+			// Create a temporary directory for tests
 			tempDir := t.TempDir()
 
 			templatePath := filepath.Join(tempDir, "test.tmpl")
@@ -401,7 +401,7 @@ func TestTemplateFuncs(t *testing.T) {
 			defer producer.Stop()
 
 			exchange := NewExchange(nil)
-			// Utiliser les données du test
+			// Use test data
 			if data, ok := tt.data.(*TemplateData); ok {
 				exchange.SetBody(data.Body)
 				for k, v := range data.Headers {

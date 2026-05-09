@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// StringConcatStrategy est une stratégie d'agrégation simple qui concatène les corps de messages.
+// StringConcatStrategy is a simple aggregation strategy that concatenates message bodies.
 type StringConcatStrategy struct{}
 
 func (s *StringConcatStrategy) Aggregate(oldExchange, newExchange *Exchange) *Exchange {

@@ -36,7 +36,7 @@ func TestStopInSplit(t *testing.T) {
 	processedParts := 0
 	continuedAfterSplit := false
 	
-	// Route avec un split où on arrête le traitement pour chaque partie
+	// Route with a split where processing is stopped for each part
 	route, err := NewRouteBuilder(ctx).
 		From("direct:split-stop").
 		Split(func(e *Exchange) (any, error) {
@@ -44,7 +44,7 @@ func TestStopInSplit(t *testing.T) {
 		}).
 			Stop().
 			ProcessFunc(func(exchange *Exchange) error {
-				processedParts++ // Ne devrait jamais être incrémenté
+				processedParts++ // Should never be incremented
 				return nil
 			}).
 		End().
@@ -69,7 +69,7 @@ func TestStopInSplitPartial(t *testing.T) {
 	processedParts := 0
 	continuedAfterSplit := false
 	
-	// Route avec un split où on arrête le traitement seulement pour la partie "b"
+	// Route with a split where processing is stopped only for part "b"
 	route, err := NewRouteBuilder(ctx).
 		From("direct:split-stop-partial").
 		Split(func(e *Exchange) (any, error) {
