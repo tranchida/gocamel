@@ -2,10 +2,14 @@ package gocamel
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"regexp"
+	"sync/atomic"
 	"time"
 )
+
+var globalExchangeID atomic.Uint64
 
 // Constantes pour les propriétés communes
 const (
@@ -84,6 +88,7 @@ type Synchronization interface {
 
 // Exchange represents the exchange context of a message in a route
 type Exchange struct {
+	ID               string
 	Context          context.Context
 	In               *Message
 	Out              *Message
@@ -98,6 +103,7 @@ type Exchange struct {
 func NewExchange(ctx context.Context) *Exchange {
 	now := time.Now()
 	return &Exchange{
+		ID:               fmt.Sprintf("ex-%d", globalExchangeID.Add(1)),
 		Context:          ctx,
 		In:               NewMessage(),
 		Out:              NewMessage(),

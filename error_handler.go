@@ -44,7 +44,7 @@ type DeadLetterChannel struct {
 	useExponentialBackoff bool
 	backoffMultiplier     float64
 	mu                    sync.Mutex
-	retryAttempts         map[string]int // keyed by exchange pointer address; protected by mu
+	retryAttempts         map[string]int // keyed by exchange.ID; protected by mu
 }
 
 // DeadLetterChannelOption is a functional option for configuring DeadLetterChannel.
@@ -94,18 +94,40 @@ func NewDeadLetterChannel(context *CamelContext, deadLetterURI string, opts ...D
 	return dlc
 }
 
+// deadLetterSynchronization cleans up retryAttempts when an exchange succeeds
+// after one or more retries — preventing a map leak on the happy path.
+type deadLetterSynchronization struct {
+	dlc        *DeadLetterChannel
+	exchangeID string
+}
+
+func (s *deadLetterSynchronization) OnComplete(exchange *Exchange) {
+	s.dlc.mu.Lock()
+	delete(s.dlc.retryAttempts, s.exchangeID)
+	s.dlc.mu.Unlock()
+}
+
+func (s *deadLetterSynchronization) OnFailure(exchange *Exchange) {
+	// Cleanup on the failure path is handled by HandleError when max redeliveries is reached.
+}
+
 // HandleError implements the ErrorHandler interface.
 // It first attempts redelivery (if configured), then sends the failed exchange
 // to the dead letter endpoint.
 func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
-	// Use a stable identifier: the exchange's creation timestamp + address.
-	// Protected by mu for concurrent route safety.
-	exID := fmt.Sprintf("%p-%d", exchange, exchange.Created.UnixNano())
+	exID := exchange.ID
 
 	dlc.mu.Lock()
 	attempt := dlc.retryAttempts[exID]
+	isFirst := attempt == 0
 	dlc.retryAttempts[exID] = attempt + 1
 	dlc.mu.Unlock()
+
+	// Register a one-time cleanup callback so that if the exchange eventually
+	// succeeds after retries the map entry is freed (avoids leak on happy path).
+	if isFirst {
+		exchange.AddSynchronization(&deadLetterSynchronization{dlc: dlc, exchangeID: exID})
+	}
 
 	// 1. Try redelivery
 	if attempt < dlc.maxRedeliveries {
