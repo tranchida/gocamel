@@ -350,6 +350,31 @@ builder.From("direct:start").
 
 ---
 
+## SEDA
+
+Staged Event-Driven Architecture. Découple les producteurs et les consommateurs via une file d'attente interne (Go channel).
+
+```go
+// Consommateur avec workers concurrents
+builder.From("seda:traitement?concurrentConsumers=5&size=1000").
+    Log("Traitement asynchrone : ${body}").
+    To("direct:suivant")
+
+// Producteur
+builder.To("seda:traitement")
+```
+
+**Fonctionnement :**
+1. Le producteur envoie une **copie** de l'exchange dans une file d'attente interne.
+2. Le producteur rend la main immédiatement (asynchrone).
+3. Un ou plusieurs workers lisent la file et traitent l'exchange de manière indépendante.
+
+**Paramètres :**
+- `size` : La capacité de la file d'attente (défaut 1000).
+- `concurrentConsumers` : Le nombre de goroutines esclaves traitant la file (défaut 1).
+
+---
+
 ## Stop
 
 Arrête le routage actuel sans erreur.

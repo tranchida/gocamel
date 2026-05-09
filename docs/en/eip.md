@@ -237,6 +237,31 @@ builder.From("direct:start").
 
 ---
 
+### SEDA
+
+Staged Event-Driven Architecture. Decouples producers and consumers using an internal queue (Go channel).
+
+```go
+// Consumer with concurrent workers
+builder.From("seda:process?concurrentConsumers=5&size=1000").
+    Log("Asynchronously processing: ${body}").
+    To("direct:next")
+
+// Producer
+builder.To("seda:process")
+```
+
+**How it works:**
+1. The producer sends a **copy** of the exchange to an internal queue.
+2. The producer returns immediately (non-blocking if queue is not full).
+3. One or more consumer workers read from the queue and process the exchange.
+
+**Parameters:**
+- `size`: The capacity of the internal queue (default 1000).
+- `concurrentConsumers`: The number of worker goroutines (default 1).
+
+---
+
 ### Multicast
 
 Send a copy of the message to multiple destinations.
