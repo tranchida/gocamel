@@ -58,6 +58,7 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 | Choice (CBR) | `choice.go` | `.Choice().When(expr)…Otherwise().EndChoice()` |
 | WireTap | `wiretap.go` | `.WireTap(uri)` — async fire-and-forget copy |
 | Recipient List | `recipient_list.go` | `.RecipientList(expr)` → `.ParallelProcessing()` → `.End()` |
+| Routing Slip | `routing_slip.go` | `.RoutingSlip(expr)` — dynamic sequential endpoint routing |
 | Message Filter | `filter.go` | `.Filter(expr)` — Go predicate or Simple Language string |
 | Content Enricher | `enricher.go` | `.Enrich(uri, strategy)` — nil strategy replaces body |
 | Throttle | `throttle.go` | `.Throttle(maxRequests, timePeriod)` — fixed-window rate limiter, delays excess |
@@ -68,6 +69,7 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 **Split** sets `CamelSplitIndex`, `CamelSplitSize`, `CamelSplitComplete` on each part exchange.  
 **Multicast** sets `CamelMulticastIndex`, `CamelMulticastSize`, `CamelMulticastComplete`.  
 **RecipientList** expression can be: comma-separated URI string, Simple Language expression (`${header.recipients}`), or `func(*Exchange) ([]string, error)`.  
+**RoutingSlip** uses the same expression forms as RecipientList, but routes sequentially through the endpoints using the same exchange.  
 **Choice** `.When(expr)` uses Simple Language expressions evaluated as bool.
 
 ### Simple Language (`simple_language.go`)

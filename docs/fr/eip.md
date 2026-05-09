@@ -313,6 +313,33 @@ builder.From("direct:start").
 
 ---
 
+## Routing Slip
+
+Route un exchange à travers une séquence dynamique d'endpoints. Contrairement à
+Recipient List, chaque étape reçoit la sortie de l'étape précédente.
+
+```go
+// Routing slip depuis un en-tête
+builder.From("direct:start").
+    RoutingSlip("${header.routingSlip}")
+
+// Fonction Go
+builder.From("direct:start").
+    RoutingSlip(func(e *gocamel.Exchange) ([]string, error) {
+        return []string{"direct:valider", "direct:transformer", "direct:envoyer"}, nil
+    })
+```
+
+**Propriétés Exchange pendant Routing Slip :**
+
+| Propriété | Type | Description |
+|-----------|------|-------------|
+| `CamelRoutingSlipIndex` | int | Index de l'étape courante (base 0) |
+| `CamelRoutingSlipSize` | int | Nombre total d'étapes |
+| `CamelRoutingSlipComplete` | bool | Indique la dernière étape |
+
+---
+
 ## Headers & Properties
 
 ### Set/Remove Headers

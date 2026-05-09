@@ -248,6 +248,12 @@ func (d *SplitDefinition) RecipientList(expression any) *SplitDefinition {
 	return d
 }
 
+// RoutingSlip routes each split part through a dynamically resolved sequence of endpoints.
+func (d *SplitDefinition) RoutingSlip(expression any) *SplitDefinition {
+	d.RouteBuilder.RoutingSlip(expression)
+	return d
+}
+
 // SetBody sets the output message body and stays in the split context.
 func (d *SplitDefinition) SetBody(body interface{}) *SplitDefinition {
 	d.RouteBuilder.SetBody(body)
@@ -742,6 +748,37 @@ func (b *RouteBuilder) RecipientList(expression any) *RecipientListDefinition {
 	}
 }
 
+// RoutingSlip adds a Routing Slip EIP processor that sends the exchange through
+// a sequence of endpoints resolved dynamically at runtime.
+//
+// The expression can be:
+//   - A string of comma-separated URIs (e.g. "direct:a,direct:b")
+//   - A Simple Language expression (e.g. "${header.routingSlip}")
+//   - A Go function returning []string
+//
+// Unlike RecipientList, RoutingSlip uses the same exchange for each step and
+// propagates each response into the next request.
+func (b *RouteBuilder) RoutingSlip(expression any) *RouteBuilder {
+	rs := NewRoutingSlip(b.context)
+
+	switch expr := expression.(type) {
+	case string:
+		if strings.Contains(expr, "${") {
+			rs.SetSimpleExpression(expr)
+		} else {
+			rs.SetStaticURIs(expr)
+		}
+	case func(*Exchange) ([]string, error):
+		rs.SetURIFunc(expr)
+	default:
+		b.err = fmt.Errorf("unsupported RoutingSlip expression type: %T", expression)
+		return b
+	}
+
+	b.container.AddProcessor(rs)
+	return b
+}
+
 // RecipientListDefinition is a fluent sub-DSL for configuring the Recipient List EIP.
 // Supports .ParallelProcessing(), .AggregationStrategy(), and .End() to return
 // to the parent builder.
@@ -844,6 +881,12 @@ func (d *MulticastDefinition) RecipientList(expression any) *MulticastDefinition
 	return d
 }
 
+// RoutingSlip routes within this multicast branch through a dynamic endpoint sequence.
+func (d *MulticastDefinition) RoutingSlip(expression any) *MulticastDefinition {
+	d.RouteBuilder.RoutingSlip(expression)
+	return d
+}
+
 // SetBody sets the output message body and stays in the multicast context.
 func (d *MulticastDefinition) SetBody(body interface{}) *MulticastDefinition {
 	d.RouteBuilder.SetBody(body)
@@ -912,6 +955,12 @@ func (d *PipelineDefinition) RecipientList(expression any) *PipelineDefinition {
 		rl.SetURIFunc(expr)
 	}
 	d.container.AddProcessor(rl)
+	return d
+}
+
+// RoutingSlip routes within this pipeline branch through a dynamic endpoint sequence.
+func (d *PipelineDefinition) RoutingSlip(expression any) *PipelineDefinition {
+	d.RouteBuilder.RoutingSlip(expression)
 	return d
 }
 

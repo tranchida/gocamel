@@ -395,6 +395,33 @@ builder.From("direct:start").
 
 ---
 
+### Routing Slip
+
+Route an exchange through a dynamic sequence of endpoints. Unlike Recipient List,
+each step receives the output from the previous step.
+
+```go
+// Routing slip from a header
+builder.From("direct:start").
+    RoutingSlip("${header.routingSlip}")
+
+// Go function
+builder.From("direct:start").
+    RoutingSlip(func(e *gocamel.Exchange) ([]string, error) {
+        return []string{"direct:validate", "direct:transform", "direct:send"}, nil
+    })
+```
+
+**Exchange Properties during Routing Slip:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `CamelRoutingSlipIndex` | int | Current step index (0-based) |
+| `CamelRoutingSlipSize` | int | Total number of routing steps |
+| `CamelRoutingSlipComplete` | bool | Last step indicator |
+
+---
+
 ## Control Flow
 
 ### Stop
@@ -516,6 +543,7 @@ builder.RemoveProperties("processing*")
 | Delay | Routing | Pause before next step |
 | Multicast | Routing | Multiple destinations |
 | Recipient List | Routing | Dynamic recipient routing |
+| Routing Slip | Routing | Dynamic sequential routing |
 | Wire Tap | Routing | Async fire-and-forget copy |
 | Split | Transformation | Message splitting |
 | Aggregate | Transformation | Message aggregation |

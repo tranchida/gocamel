@@ -39,9 +39,9 @@ const (
 	CamelRouteDescription = "CamelRouteDescription" // Route description
 
 	// Error properties
-	CamelExceptionCaught = "CamelExceptionCaught" // Caught exception
-	CamelFailureEndpoint = "CamelFailureEndpoint" // Failing endpoint
-	CamelFailureRouteId  = "CamelFailureRouteId"  // ID of the failing route
+	CamelExceptionCaught   = "CamelExceptionCaught"   // Caught exception
+	CamelFailureEndpoint   = "CamelFailureEndpoint"   // Failing endpoint
+	CamelFailureRouteId    = "CamelFailureRouteId"    // ID of the failing route
 	CamelRedeliveryCounter = "CamelRedeliveryCounter" // Redelivery counter
 
 	// Timer properties
@@ -56,16 +56,19 @@ const (
 	CamelContextVersion = "CamelContextVersion" // Context version
 
 	// EIP (Enterprise Integration Patterns) properties
-	CamelSplitIndex        = "CamelSplitIndex"        // Index of the current part in a Split
-	CamelSplitSize         = "CamelSplitSize"         // Total number of parts in a Split
-	CamelSplitComplete     = "CamelSplitComplete"     // Boolean indicating whether this is the last part
-	CamelAggregatorSize    = "CamelAggregatorSize"    // Number of aggregated messages
-	CamelMulticastIndex    = "CamelMulticastIndex"    // Index of the current branch in a Multicast
-	CamelMulticastSize     = "CamelMulticastSize"     // Total number of branches in a Multicast
-	CamelMulticastComplete = "CamelMulticastComplete" // Boolean indicating whether this is the last branch
+	CamelSplitIndex            = "CamelSplitIndex"            // Index of the current part in a Split
+	CamelSplitSize             = "CamelSplitSize"             // Total number of parts in a Split
+	CamelSplitComplete         = "CamelSplitComplete"         // Boolean indicating whether this is the last part
+	CamelAggregatorSize        = "CamelAggregatorSize"        // Number of aggregated messages
+	CamelMulticastIndex        = "CamelMulticastIndex"        // Index of the current branch in a Multicast
+	CamelMulticastSize         = "CamelMulticastSize"         // Total number of branches in a Multicast
+	CamelMulticastComplete     = "CamelMulticastComplete"     // Boolean indicating whether this is the last branch
 	CamelRecipientListIndex    = "CamelRecipientListIndex"    // Index of the current recipient in a RecipientList
 	CamelRecipientListSize     = "CamelRecipientListSize"     // Total number of recipients in a RecipientList
 	CamelRecipientListComplete = "CamelRecipientListComplete" // Boolean indicating whether this is the last recipient
+	CamelRoutingSlipIndex      = "CamelRoutingSlipIndex"      // Index of the current step in a Routing Slip
+	CamelRoutingSlipSize       = "CamelRoutingSlipSize"       // Total number of steps in a Routing Slip
+	CamelRoutingSlipComplete   = "CamelRoutingSlipComplete"   // Boolean indicating whether this is the last routing step
 
 	// Transaction properties
 	CamelTransactionId     = "CamelTransactionId"     // Transaction ID
@@ -157,7 +160,6 @@ func (e *Exchange) GetResponse() *Message {
 	}
 	return e.In
 }
-
 
 // SetBody sets the body of the input message
 func (e *Exchange) SetBody(body any) {

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Routing Slip EIP** — `.RoutingSlip(expression)` routes an exchange through a dynamic sequence of endpoints; supports comma-separated strings, Simple Language expressions, and Go functions
 - **Delay EIP** — `.Delay(duration)` pauses an exchange for a fixed duration; `.DelayFunc(fn)` computes the delay per exchange; both respect context cancellation and now fail cleanly when the dynamic delay function is nil
 - **Content Enricher EIP** — `.Enrich(uri, strategy)` fetches data from an external endpoint and merges it into the current exchange via an `AggregationStrategy`; pass `nil` to replace the body directly
 - **Throttle EIP** — `.Throttle(maxRequests, timePeriod)` rate-limits exchange processing; excess exchanges are delayed (not dropped) using a fixed-window counter; invalid limits now fail fast and queued exchanges respect context cancellation
