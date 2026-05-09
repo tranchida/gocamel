@@ -65,6 +65,9 @@ var (
 	// Matches random(MAX)
 	randomFunctionRegex = regexp.MustCompile(`^random\((\d+)\)$`)
 
+	// Matches file:functions
+	fileFunctionRegex = regexp.MustCompile(`^file:([a-zA-Z0-9_\.]+)$`)
+
 	// Matches uuid
 	uuidFunctionRegex = regexp.MustCompile(`^uuid$`)
 
@@ -313,6 +316,11 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 			format = time.RFC3339
 		}
 		return time.Now().Format(format), nil
+	}
+
+	// Check for file function
+	if fileMatch := fileFunctionRegex.FindStringSubmatch(expr); fileMatch != nil {
+		return evaluateFileFunction(fileMatch[1], exchange)
 	}
 
 	// Check for random function
@@ -1879,4 +1887,64 @@ func (p *SimpleLanguageProcessor) Process(exchange *Exchange) error {
 	exchange.GetOut().SetBody(result)
 	exchange.GetOut().SetHeaders(exchange.GetIn().GetHeaders())
 	return nil
+}
+
+// evaluateFileFunction evaluates file-specific functions
+func evaluateFileFunction(fn string, exchange *Exchange) (interface{}, error) {
+	// Standard file headers
+	name, _ := exchange.GetHeaderAsString(CamelFileName)
+	path, _ := exchange.GetHeaderAsString(CamelFilePath)
+	length, _ := exchange.GetHeaderAsInt(CamelFileLength)
+	modified, _ := exchange.GetHeader(CamelFileLastModified)
+
+	switch fn {
+	case "name":
+		return name, nil
+	case "name.noext":
+		if idx := strings.LastIndex(name, "."); idx != -1 {
+			return name[:idx], nil
+		}
+		return name, nil
+	case "name.ext", "ext":
+		if idx := strings.LastIndex(name, "."); idx != -1 {
+			return name[idx+1:], nil
+		}
+		return "", nil
+	case "onlyname":
+		// Only name without path
+		if idx := strings.LastIndex(name, "/"); idx != -1 {
+			return name[idx+1:], nil
+		}
+		if idx := strings.LastIndex(name, "\\"); idx != -1 {
+			return name[idx+1:], nil
+		}
+		return name, nil
+	case "onlyname.noext":
+		onlyName := name
+		if idx := strings.LastIndex(name, "/"); idx != -1 {
+			onlyName = name[idx+1:]
+		} else if idx := strings.LastIndex(name, "\\"); idx != -1 {
+			onlyName = name[idx+1:]
+		}
+		if idx := strings.LastIndex(onlyName, "."); idx != -1 {
+			return onlyName[:idx], nil
+		}
+		return onlyName, nil
+	case "path":
+		return path, nil
+	case "absolute":
+		// In GoCamel, Path is usually the full/absolute path if provided
+		return path, nil
+	case "absolute.path":
+		return path, nil
+	case "length", "size":
+		return length, nil
+	case "modified":
+		if t, ok := modified.(time.Time); ok {
+			return t.Format(time.RFC3339), nil
+		}
+		return modified, nil
+	default:
+		return nil, fmt.Errorf("unknown file function: %s", fn)
+	}
 }

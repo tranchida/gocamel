@@ -31,6 +31,22 @@ Expressions are enclosed in `${...}`:
 | `${uuid}` | UUID generation | `${uuid}` |
 | `${env:VAR}` | Environment variable | `${env:USER}` |
 
+## File Language
+
+The File Language is an extension of the Simple Language dedicated to file-related operations. It provides functions to extract parts of the filename, path, size, etc.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `${file:name}` | The name of the file (including path) | `data/reports/monthly.json` |
+| `${file:name.noext}` | The name of the file but without the extension | `data/reports/monthly` |
+| `${file:name.ext}` | The file extension | `json` |
+| `${file:ext}` | Alias for `${file:name.ext}` | `json` |
+| `${file:onlyname}` | The name of the file (without path) | `monthly.json` |
+| `${file:onlyname.noext}` | The name of the file (without path) and without extension | `monthly` |
+| `${file:path}` | The full path of the file | `/abs/path/data/reports/monthly.json` |
+| `${file:size}` | The length (size) of the file | `1234` |
+| `${file:modified}` | The last modified date of the file (RFC3339 format) | `2023-05-10T10:00:00Z` |
+
 ## Comparison Operators
 
 | Operator | Description | Example |

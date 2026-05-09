@@ -39,6 +39,22 @@ Expressions are enclosed in `${}`:
 | `${uuid}` | UUID generation | `${uuid}` |
 | `${env:VAR}` | Environment variable | `${env:USER}` |
 
+## File Language
+
+The File Language is an extension of the Simple Language dedicated to file-related operations. It provides functions to extract parts of the filename, path, size, etc.
+
+| Function | Description |
+|----------|-------------|
+| `${file:name}` | The name of the file (including path) |
+| `${file:name.noext}` | The name of the file but without the extension |
+| `${file:name.ext}` | The file extension |
+| `${file:ext}` | Alias for `${file:name.ext}` |
+| `${file:onlyname}` | The name of the file (without path) |
+| `${file:onlyname.noext}` | The name of the file (without path) and without extension |
+| `${file:path}` | The full path of the file |
+| `${file:size}` | The length (size) of the file |
+| `${file:modified}` | The last modified date of the file (RFC3339 format) |
+
 ## Operators
 
 ### Comparison Operators
@@ -161,6 +177,22 @@ Les expressions sont entourées de `${}`:
 | `${random(max)}` | Nombre aléatoire | `${random(100)}` |
 | `${uuid}` | Génération UUID | `${uuid}` |
 | `${env:VAR}` | Variable d'environnement | `${env:USER}` |
+
+## File Language
+
+File Language est une extension de Simple Language dédiée aux opérations liées aux fichiers. Elle fournit des fonctions pour extraire des parties du nom de fichier, du chemin, de la taille, etc.
+
+| Fonction | Description |
+|----------|-------------|
+| `${file:name}` | Le nom du fichier (incluant le chemin) |
+| `${file:name.noext}` | Le nom du fichier mais sans l'extension |
+| `${file:name.ext}` | L'extension du fichier |
+| `${file:ext}` | Alias pour `${file:name.ext}` |
+| `${file:onlyname}` | Le nom du fichier (sans le chemin) |
+| `${file:onlyname.noext}` | Le nom du fichier (sans le chemin) et sans l'extension |
+| `${file:path}` | Le chemin complet du fichier |
+| `${file:size}` | La longueur (taille) du fichier |
+| `${file:modified}` | La date de dernière modification du fichier (format RFC3339) |
 
 ## Opérateurs
 
