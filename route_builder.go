@@ -266,6 +266,30 @@ func (d *SplitDefinition) SetHeader(key string, value interface{}) *SplitDefinit
 	return d
 }
 
+// Marshal adds a dataformat marshal step and stays in the split context.
+func (d *SplitDefinition) Marshal(dataFormat DataFormat) *SplitDefinition {
+	d.RouteBuilder.Marshal(dataFormat)
+	return d
+}
+
+// Unmarshal adds a dataformat unmarshal step and stays in the split context.
+func (d *SplitDefinition) Unmarshal(dataFormat DataFormat) *SplitDefinition {
+	d.RouteBuilder.Unmarshal(dataFormat)
+	return d
+}
+
+// MarshalRSS converts an RSSFeed body to RSS XML and stays in the split context.
+func (d *SplitDefinition) MarshalRSS() *SplitDefinition {
+	d.RouteBuilder.MarshalRSS()
+	return d
+}
+
+// UnmarshalRSS converts RSS XML into an RSSFeed body and stays in the split context.
+func (d *SplitDefinition) UnmarshalRSS() *SplitDefinition {
+	d.RouteBuilder.UnmarshalRSS()
+	return d
+}
+
 // SetHeaders sets multiple headers and stays in the split context.
 func (d *SplitDefinition) SetHeaders(headers map[string]any) *SplitDefinition {
 	d.RouteBuilder.SetHeaders(headers)
@@ -490,6 +514,28 @@ func (b *RouteBuilder) SimpleSetHeader(headerName string, expression string) *Ro
 		Expression: template,
 	})
 	return b
+}
+
+// Marshal adds a dataformat marshal step to the current route.
+func (b *RouteBuilder) Marshal(dataFormat DataFormat) *RouteBuilder {
+	b.container.AddProcessor(&MarshalProcessor{DataFormat: dataFormat})
+	return b
+}
+
+// Unmarshal adds a dataformat unmarshal step to the current route.
+func (b *RouteBuilder) Unmarshal(dataFormat DataFormat) *RouteBuilder {
+	b.container.AddProcessor(&UnmarshalProcessor{DataFormat: dataFormat})
+	return b
+}
+
+// MarshalRSS converts an RSSFeed body to RSS XML.
+func (b *RouteBuilder) MarshalRSS() *RouteBuilder {
+	return b.Marshal(NewRSSDataFormat())
+}
+
+// UnmarshalRSS converts RSS XML into an RSSFeed body.
+func (b *RouteBuilder) UnmarshalRSS() *RouteBuilder {
+	return b.Unmarshal(NewRSSDataFormat())
 }
 
 // Stop halts processing of the current exchange.
@@ -928,6 +974,30 @@ func (d *MulticastDefinition) SetHeader(key string, value interface{}) *Multicas
 	return d
 }
 
+// Marshal adds a dataformat marshal step and stays in the multicast context.
+func (d *MulticastDefinition) Marshal(dataFormat DataFormat) *MulticastDefinition {
+	d.RouteBuilder.Marshal(dataFormat)
+	return d
+}
+
+// Unmarshal adds a dataformat unmarshal step and stays in the multicast context.
+func (d *MulticastDefinition) Unmarshal(dataFormat DataFormat) *MulticastDefinition {
+	d.RouteBuilder.Unmarshal(dataFormat)
+	return d
+}
+
+// MarshalRSS converts an RSSFeed body to RSS XML and stays in the multicast context.
+func (d *MulticastDefinition) MarshalRSS() *MulticastDefinition {
+	d.RouteBuilder.MarshalRSS()
+	return d
+}
+
+// UnmarshalRSS converts RSS XML into an RSSFeed body and stays in the multicast context.
+func (d *MulticastDefinition) UnmarshalRSS() *MulticastDefinition {
+	d.RouteBuilder.UnmarshalRSS()
+	return d
+}
+
 // WireTap adds a WireTap step and stays in the multicast context.
 func (d *MulticastDefinition) WireTap(uri string) *MulticastDefinition {
 	d.RouteBuilder.WireTap(uri)
@@ -996,6 +1066,30 @@ func (d *PipelineDefinition) RoutingSlip(expression any) *PipelineDefinition {
 // SetBody sets the output message body and stays in the pipeline context.
 func (d *PipelineDefinition) SetBody(body interface{}) *PipelineDefinition {
 	d.RouteBuilder.SetBody(body)
+	return d
+}
+
+// Marshal adds a dataformat marshal step and stays in the pipeline context.
+func (d *PipelineDefinition) Marshal(dataFormat DataFormat) *PipelineDefinition {
+	d.RouteBuilder.Marshal(dataFormat)
+	return d
+}
+
+// Unmarshal adds a dataformat unmarshal step and stays in the pipeline context.
+func (d *PipelineDefinition) Unmarshal(dataFormat DataFormat) *PipelineDefinition {
+	d.RouteBuilder.Unmarshal(dataFormat)
+	return d
+}
+
+// MarshalRSS converts an RSSFeed body to RSS XML and stays in the pipeline context.
+func (d *PipelineDefinition) MarshalRSS() *PipelineDefinition {
+	d.RouteBuilder.MarshalRSS()
+	return d
+}
+
+// UnmarshalRSS converts RSS XML into an RSSFeed body and stays in the pipeline context.
+func (d *PipelineDefinition) UnmarshalRSS() *PipelineDefinition {
+	d.RouteBuilder.UnmarshalRSS()
 	return d
 }
 
