@@ -301,12 +301,30 @@ ${body.substring(0, 5)}
 ${header.name.trim()}
 ```
 
-### Math Functions | Fonctions Mathématiques
+### Fonctions Mathématiques | Math Functions
 
-```go
-${random(100)}        // 0-99
-${random(1, 10)}      // 1-10 range
-```
+Opérations mathématiques via la fonction `math(...)`. Supporte les opérateurs de base (+, -, *, /, %) et les parenthèses.
+
+| Fonction | Description | Exemple |
+|----------|-------------|---------|
+| `${math(body * 2)}` | Multiplie le corps par 2 | `20` |
+| `${math(header.val + 10)}` | Ajoute 10 au header | `15` |
+| `${math((body + 2) * 3)}` | Expression complexe | `36` |
+
+### Fonctions Numériques | Numeric Functions
+
+Utilitaires numériques pour les arrondis et transformations. Utilisables seuls ou dans `math()`.
+
+| Fonction | Description | Exemple |
+|----------|-------------|---------|
+| `${round(val)}` | Arrondi à l'entier le plus proche | `${round(5.6)}` -> `6` |
+| `${floor(val)}` | Arrondi vers le bas | `${floor(5.6)}` -> `5` |
+| `${ceil(val)}` | Arrondi vers le haut | `${ceil(5.1)}` -> `6` |
+| `${abs(val)}` | Valeur absolue | `${abs(-10)}` -> `10` |
+| `${sqrt(val)}` | Racine carrée | `${sqrt(16)}` -> `4` |
+| `${sin(val)}`, `${cos(val)}`, `${tan(val)}` | Fonctions trigonométriques | `${sin(0)}` -> `0` |
+
+---
 
 ---
 

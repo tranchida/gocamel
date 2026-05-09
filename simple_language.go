@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"reflect"
 	"regexp"
@@ -64,6 +65,12 @@ var (
 
 	// Matches random(MAX)
 	randomFunctionRegex = regexp.MustCompile(`^random\((\d+)\)$`)
+
+	// Matches math(expr)
+	mathFunctionRegex = regexp.MustCompile(`^math\((.+)\)$`)
+
+	// Matches numeric functions: round(val), floor(val), etc.
+	numericFunctionRegex = regexp.MustCompile(`^(round|floor|ceil|abs|sqrt|sin|cos|tan)\((.+)\)$`)
 
 	// Matches file:functions
 	fileFunctionRegex = regexp.MustCompile(`^file:([a-zA-Z0-9_\.]+)$`)
@@ -285,14 +292,23 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		return nil, nil
 	}
 
-	// Check for simple variable access patterns FIRST (before any operators)
-	// This prevents header names with hyphens from being parsed as math operations
+	// Check if it's a numeric literal - check very early to avoid confusion with math ops or dots
+	if num, err := strconv.ParseFloat(expr, 64); err == nil {
+		return num, nil
+	}
+
+	// Check if it's a literal string (quoted)
+	if (strings.HasPrefix(expr, "'") && strings.HasSuffix(expr, "'")) ||
+		(strings.HasPrefix(expr, "\"") && strings.HasSuffix(expr, "\"")) {
+		return strings.Trim(expr, "'\""), nil
+	}
+
+	// Check for simple variable access patterns FIRST
 	if result, err := evaluateSimpleVariableAccess(expr, exchange); err == nil {
 		return result, nil
 	}
 
 	// Check for function chaining: e.g., body.trim(), header.name.uppercase()
-	// This must be checked before the simple variable patterns
 	if idx := findFirstMethodCall(expr); idx > 0 {
 		result, err := evaluateFunctionChain(expr, exchange)
 		if err == nil {
@@ -321,6 +337,16 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 	// Check for file function
 	if fileMatch := fileFunctionRegex.FindStringSubmatch(expr); fileMatch != nil {
 		return evaluateFileFunction(fileMatch[1], exchange)
+	}
+
+	// Check for math function
+	if mathMatch := mathFunctionRegex.FindStringSubmatch(expr); mathMatch != nil {
+		return evaluateVariable(mathMatch[1], exchange)
+	}
+
+	// Check for numeric function
+	if numMatch := numericFunctionRegex.FindStringSubmatch(expr); numMatch != nil {
+		return evaluateNumericFunction(numMatch[1], numMatch[2], exchange)
 	}
 
 	// Check for random function
@@ -524,54 +550,47 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		}
 	}
 
-	// Handle math operations (precedence: * / % then + -)
-	// First check + and - (lower precedence)
-	if result, err := evaluateMathOperation(expr, mathAddRegex, func(a, b float64) (float64, error) { return a + b, nil }, exchange); err != nil {
-		return nil, err
-	} else if result != nil {
-		return result, nil
-	}
-
-	if result, err := evaluateMathOperation(expr, mathSubtractRegex, func(a, b float64) (float64, error) { return a - b, nil }, exchange); err != nil {
-		return nil, err
-	} else if result != nil {
-		return result, nil
-	}
-
-	// Then check * / % (higher precedence)
-	if result, err := evaluateMathOperation(expr, mathMultiplyRegex, func(a, b float64) (float64, error) { return a * b, nil }, exchange); err != nil {
-		return nil, err
-	} else if result != nil {
-		return result, nil
-	}
-
-	if result, err := evaluateMathOperation(expr, mathDivideRegex, func(a, b float64) (float64, error) {
-		if b == 0 {
-			return 0, fmt.Errorf("division by zero")
+	// Handle math operations (precedence: + - then * / %)
+	// We split by + and - first (outermost level)
+	if left, right, op := splitMath(expr, "+", "-"); op != "" {
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
 		}
-		return a / b, nil
-	}, exchange); err != nil {
-		return nil, err
-	} else if result != nil {
-		return result, nil
-	}
-
-	if result, err := evaluateMathOperation(expr, mathModuloRegex, func(a, b float64) (float64, error) {
-		if b == 0 {
-			return 0, fmt.Errorf("modulo by zero")
+		rightVal, err := evaluateVariable(right, exchange)
+		if err != nil {
+			return nil, err
 		}
-		return float64(int(a) % int(b)), nil
-	}, exchange); err != nil {
-		return nil, err
-	} else if result != nil {
-		return result, nil
+		if op == "+" {
+			return toFloat64(leftVal) + toFloat64(rightVal), nil
+		}
+		return toFloat64(leftVal) - toFloat64(rightVal), nil
 	}
 
-	// Handle function chaining: body.trim().uppercase()
-	if strings.Contains(expr, ".") && !strings.HasPrefix(expr, "header.") &&
-		!strings.HasPrefix(expr, "exchangeProperty.") &&
-		!strings.HasPrefix(expr, "body?.") {
-		return evaluateFunctionChain(expr, exchange)
+	if left, right, op := splitMath(expr, "*", "/", "%"); op != "" {
+		leftVal, err := evaluateVariable(left, exchange)
+		if err != nil {
+			return nil, err
+		}
+		rightVal, err := evaluateVariable(right, exchange)
+		if err != nil {
+			return nil, err
+		}
+		l, r := toFloat64(leftVal), toFloat64(rightVal)
+		switch op {
+		case "*":
+			return l * r, nil
+		case "/":
+			if r == 0 {
+				return 0, fmt.Errorf("division by zero")
+			}
+			return l / r, nil
+		case "%":
+			if r == 0 {
+				return 0, fmt.Errorf("modulo by zero")
+			}
+			return float64(int(l) % int(r)), nil
+		}
 	}
 
 	// Try variable access patterns as a fallback (after operators have been processed)
@@ -584,17 +603,6 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		return evaluateDotNotationRegex(match, exchange)
 	}
 
-
-	// Check if it's a literal string (quoted)
-	if (strings.HasPrefix(expr, "'") && strings.HasSuffix(expr, "'")) ||
-		(strings.HasPrefix(expr, "\"") && strings.HasSuffix(expr, "\"")) {
-		return strings.Trim(expr, "'\""), nil
-	}
-
-	// Check if it's a numeric literal
-	if num, err := strconv.ParseFloat(expr, 64); err == nil {
-		return num, nil
-	}
 	// Check if it's a boolean literal
 	if expr == "true" || expr == "TRUE" {
 		return true, nil
@@ -624,28 +632,28 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 	return nil, fmt.Errorf("unknown expression: %s", expr)
 }
 
-// evaluateMathOperation is a helper to reduce duplicate code across math operations (+, -, *, /, %).
-func evaluateMathOperation(expr string, re *regexp.Regexp, op func(float64, float64) (float64, error), exchange *Exchange) (interface{}, error) {
-	match := re.FindStringSubmatch(expr)
-	if match == nil {
-		return nil, nil // no match
+// splitMath splits an expression by the first matching operator (from right to left)
+// that is NOT inside parentheses. This respects left-associativity and precedence
+// when called in the correct order.
+func splitMath(expr string, ops ...string) (string, string, string) {
+	depth := 0
+	for i := len(expr) - 1; i >= 0; i-- {
+		ch := expr[i]
+		if ch == ')' {
+			depth++
+		} else if ch == '(' {
+			depth--
+		} else if depth == 0 {
+			for _, op := range ops {
+				if i >= len(op)-1 && expr[i-len(op)+1:i+1] == op {
+					// Check if it's really the operator and not part of a name (simplified)
+					// For single char ops like +, -, *, /, % this is usually fine if surrounded by spaces or not letters
+					return expr[:i-len(op)+1], expr[i+1:], op
+				}
+			}
+		}
 	}
-	left := strings.TrimSpace(match[1])
-	right := strings.TrimSpace(match[2])
-
-	leftVal, err := evaluateVariable(left, exchange)
-	if err != nil {
-		return nil, err
-	}
-	rightVal, err := evaluateVariable(right, exchange)
-	if err != nil {
-		return nil, err
-	}
-	result, err := op(toFloat64(leftVal), toFloat64(rightVal))
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return "", "", ""
 }
 
 // evaluateSimpleVariableAccess handles common variable access patterns (bracket notation,
@@ -1946,5 +1954,36 @@ func evaluateFileFunction(fn string, exchange *Exchange) (interface{}, error) {
 		return modified, nil
 	default:
 		return nil, fmt.Errorf("unknown file function: %s", fn)
+	}
+}
+
+// evaluateNumericFunction evaluates numeric functions like round, floor, ceil, etc.
+func evaluateNumericFunction(fn, arg string, exchange *Exchange) (interface{}, error) {
+	val, err := evaluateVariable(arg, exchange)
+	if err != nil {
+		return nil, err
+	}
+
+	num := toFloat64(val)
+
+	switch fn {
+	case "round":
+		return math.Round(num), nil
+	case "floor":
+		return math.Floor(num), nil
+	case "ceil":
+		return math.Ceil(num), nil
+	case "abs":
+		return math.Abs(num), nil
+	case "sqrt":
+		return math.Sqrt(num), nil
+	case "sin":
+		return math.Sin(num), nil
+	case "cos":
+		return math.Cos(num), nil
+	case "tan":
+		return math.Tan(num), nil
+	default:
+		return nil, fmt.Errorf("unknown numeric function: %s", fn)
 	}
 }

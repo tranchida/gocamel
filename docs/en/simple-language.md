@@ -153,7 +153,25 @@ ${header.name.trim()}
 
 ### Math Functions
 
-```go
-${random(100)}        // 0-99
-${random(1, 10)}      // 1-10 range
-```
+Mathematical operations using the `math(...)` function. Supports basic operators (+, -, *, /, %) and parentheses.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `${math(body * 2)}` | Multiply body by 2 | `20` |
+| `${math(header.val + 10)}` | Add 10 to header | `15` |
+| `${math((body + 2) * 3)}` | Complex expression | `36` |
+
+### Numeric Functions
+
+Numeric utilities for rounding and transformations. Can be used standalone or inside `math()`.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `${round(val)}` | Round to nearest integer | `${round(5.6)}` -> `6` |
+| `${floor(val)}` | Round down | `${floor(5.6)}` -> `5` |
+| `${ceil(val)}` | Round up | `${ceil(5.1)}` -> `6` |
+| `${abs(val)}` | Absolute value | `${abs(-10)}` -> `10` |
+| `${sqrt(val)}` | Square root | `${sqrt(16)}` -> `4` |
+| `${sin(val)}`, `${cos(val)}`, `${tan(val)}` | Trigonometric functions | `${sin(0)}` -> `0` |
+
+---
