@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -36,13 +37,14 @@ func (h *NoErrorHandler) HandleError(exchange *Exchange, err error) error {
 //   - Delay between redeliveries (fixed or exponential backoff)
 //   - Error details injected into exchange properties
 type DeadLetterChannel struct {
-	context              *CamelContext
-	deadLetterURI        string
-	maxRedeliveries      int
-	redeliveryDelay      time.Duration
+	context               *CamelContext
+	deadLetterURI         string
+	maxRedeliveries       int
+	redeliveryDelay       time.Duration
 	useExponentialBackoff bool
-	backoffMultiplier    float64
-	retryAttempts        map[string]int // keyed by exchange property
+	backoffMultiplier     float64
+	mu                    sync.Mutex
+	retryAttempts         map[string]int // keyed by exchange pointer address; protected by mu
 }
 
 // DeadLetterChannelOption is a functional option for configuring DeadLetterChannel.
@@ -96,17 +98,16 @@ func NewDeadLetterChannel(context *CamelContext, deadLetterURI string, opts ...D
 // It first attempts redelivery (if configured), then sends the failed exchange
 // to the dead letter endpoint.
 func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
-	// Generate an exchange identifier for retry tracking.
-	// Use the exchange pointer address + route ID as a unique key.
-	exID := fmt.Sprintf("%p", exchange)
+	// Use a stable identifier: the exchange's creation timestamp + address.
+	// Protected by mu for concurrent route safety.
+	exID := fmt.Sprintf("%p-%d", exchange, exchange.Created.UnixNano())
+
+	dlc.mu.Lock()
+	attempt := dlc.retryAttempts[exID]
+	dlc.retryAttempts[exID] = attempt + 1
+	dlc.mu.Unlock()
 
 	// 1. Try redelivery
-	attempt, exists := dlc.retryAttempts[exID]
-	if !exists {
-		attempt = 0
-	}
-	dlc.retryAttempts[exID] = attempt + 1
-
 	if attempt < dlc.maxRedeliveries {
 		// Wait before retrying
 		delay := dlc.redeliveryDelay
@@ -122,9 +123,10 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 		return nil // signal to retry the exchange
 	}
 
-	// 2. Max redeliveries reached or no redelivery configured
-	// Clean up retry state
+	// 2. Max redeliveries reached or no redelivery configured — clean up retry state
+	dlc.mu.Lock()
 	delete(dlc.retryAttempts, exID)
+	dlc.mu.Unlock()
 
 	// Prepare exchange for dead letter — inject error details as properties and headers
 	exchange.SetProperty(CamelExceptionCaught, err)
@@ -183,8 +185,9 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 	return err
 }
 
-// ResetRetryState clears the retry counter for a specific exchange.
-// Call this after a successful retry to clean up.
+// ResetRetryState clears the retry counter for a specific exchange ID.
 func (dlc *DeadLetterChannel) ResetRetryState(exchangeID string) {
+	dlc.mu.Lock()
 	delete(dlc.retryAttempts, exchangeID)
+	dlc.mu.Unlock()
 }

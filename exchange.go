@@ -372,6 +372,17 @@ func (e *Exchange) GetPropertyAsSlice(key string) ([]any, bool) {
 	return nil, false
 }
 
+// PropagateOutToIn copies the Out body and headers into In when a processor has written
+// a response to Out. This is the standard inter-step propagation in a Camel pipeline.
+func (e *Exchange) PropagateOutToIn() {
+	if body := e.Out.GetBody(); body != nil {
+		e.In.SetBody(body)
+	}
+	for k, v := range e.Out.GetHeaders() {
+		e.In.SetHeader(k, v)
+	}
+}
+
 // Copy crée une copie de l'échange
 func (e *Exchange) Copy() *Exchange {
 	copy := NewExchange(e.Context)

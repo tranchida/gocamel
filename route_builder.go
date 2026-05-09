@@ -489,6 +489,47 @@ func (b *RouteBuilder) Stop() *RouteBuilder {
 	})
 }
 
+// Filter adds a Message Filter EIP step. The expression can be:
+//   - A func(*Exchange) (bool, error) — arbitrary Go predicate
+//   - A string — evaluated as a Simple Language expression
+//
+// Exchanges that do not match the predicate are silently dropped (ErrStopRouting).
+//
+// Example:
+//
+//	// Go predicate
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    Filter(func(e *Exchange) (bool, error) {
+//	        body, _ := e.GetBodyAsString()
+//	        return body != "", nil
+//	    }).
+//	    To("direct:nonEmpty").
+//	    Build()
+//
+//	// Simple Language
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    Filter("${header.type} == 'order'").
+//	    To("direct:orders").
+//	    Build()
+func (b *RouteBuilder) Filter(expression any) *RouteBuilder {
+	switch expr := expression.(type) {
+	case func(*Exchange) (bool, error):
+		b.container.AddProcessor(NewMessageFilter(expr))
+	case string:
+		f, err := NewSimpleMessageFilter(expr)
+		if err != nil {
+			b.err = err
+			return b
+		}
+		b.container.AddProcessor(f)
+	default:
+		b.err = fmt.Errorf("Filter: unsupported expression type %T (want func(*Exchange)(bool,error) or string)", expression)
+	}
+	return b
+}
+
 // To ajoute un ou plusieurs endpoints de destination au conteneur actuel.
 // Si plusieurs URIs sont fournies, un Multicast est créé automatiquement.
 func (b *RouteBuilder) To(uris ...string) *RouteBuilder {

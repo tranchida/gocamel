@@ -315,14 +315,7 @@ func createToProcessor(context *CamelContext, uri string) Processor {
 			return initErr
 		}
 
-		// Propagation de la sortie vers l'entrée si une modification a eu lieu
-		if outBody := exchange.GetOut().GetBody(); outBody != nil {
-			exchange.GetIn().SetBody(outBody)
-		}
-		for k, v := range exchange.GetOut().GetHeaders() {
-			exchange.GetIn().SetHeader(k, v)
-		}
-
+		exchange.PropagateOutToIn()
 		return producer.Send(exchange)
 	})
 }
@@ -352,14 +345,7 @@ func createToDProcessor(context *CamelContext, uriTemplate string) Processor {
 		// Si on ne met pas en cache, on devrait probablement arrêter le producteur après l'envoi.
 		defer producer.Stop()
 
-		// Propagation de la sortie vers l'entrée si une modification a eu lieu
-		if outBody := exchange.GetOut().GetBody(); outBody != nil {
-			exchange.GetIn().SetBody(outBody)
-		}
-		for k, v := range exchange.GetOut().GetHeaders() {
-			exchange.GetIn().SetHeader(k, v)
-		}
-
+		exchange.PropagateOutToIn()
 		return producer.Send(exchange)
 	})
 }

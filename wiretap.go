@@ -78,13 +78,6 @@ func (w *WireTap) sendTap(exchange *Exchange) error {
 	}
 	defer producer.Stop()
 
-	// Propagate Out → In before sending (same pattern as createToProcessor)
-	if outBody := exchange.GetOut().GetBody(); outBody != nil {
-		exchange.GetIn().SetBody(outBody)
-	}
-	for k, v := range exchange.GetOut().GetHeaders() {
-		exchange.GetIn().SetHeader(k, v)
-	}
-
+	exchange.PropagateOutToIn()
 	return producer.Send(exchange)
 }
