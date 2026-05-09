@@ -161,6 +161,88 @@ When(expression).
 
 ---
 
+## Filter
+
+Filtre les messages selon une condition. Les exchanges qui ne correspondent pas sont silencieusement supprimés (`ErrStopRouting`).
+
+```go
+// Expression Simple Language (comparaison à l'intérieur de ${...})
+builder.From("direct:start").
+    Filter("${header.type == 'order'}").
+    To("direct:commandes").
+    Build()
+
+// Prédicat Go
+builder.From("direct:start").
+    Filter(func(e *gocamel.Exchange) (bool, error) {
+        body, ok := e.GetBodyAsString()
+        return ok && body != "", nil
+    }).
+    To("direct:nonVide").
+    Build()
+```
+
+---
+
+## Throttle
+
+Limite le débit de traitement à N messages maximum par fenêtre de temps. Les exchanges excédentaires sont **retardés** (jamais perdus) jusqu'à ce que la fenêtre se réinitialise.
+
+```go
+// Maximum 100 messages par seconde
+builder.From("direct:start").
+    Throttle(100, time.Second).
+    To("direct:aval").
+    Build()
+
+// Maximum 10 messages par 500ms (fenêtre plus fine)
+builder.From("direct:start").
+    Throttle(10, 500*time.Millisecond).
+    To("direct:api").
+    Build()
+```
+
+**Notes :**
+- Utilise un compteur à fenêtre fixe — pour un lissage plus fin, réduire la durée de la fenêtre
+- Bloquant : le goroutine attend que la fenêtre autorise le passage
+
+---
+
+## Content Enricher
+
+Enrichit l'exchange courant avec des données provenant d'une source externe.
+
+```go
+// Avec stratégie d'agrégation
+type FusionStrategy struct{}
+
+func (s *FusionStrategy) Aggregate(original, enriched *gocamel.Exchange) *gocamel.Exchange {
+    origBody, _ := original.GetBodyAsString()
+    enrichBody, _ := enriched.GetBodyAsString()
+    original.GetIn().SetBody(origBody + " | " + enrichBody)
+    return original
+}
+
+builder.From("direct:start").
+    Enrich("http://api.example.com/data", &FusionStrategy{}).
+    To("direct:suivant").
+    Build()
+
+// Sans stratégie — remplace le corps par la réponse d'enrichissement
+builder.From("direct:start").
+    Enrich("direct:lookup", nil).
+    To("direct:suivant").
+    Build()
+```
+
+**Fonctionnement :**
+1. Une copie de l'exchange courant est envoyée à l'URI d'enrichissement
+2. La réponse est récupérée
+3. `AggregationStrategy.Aggregate(original, réponse)` fusionne les deux
+4. Sans stratégie, le corps de la réponse remplace le corps original
+
+---
+
 ## Stop
 
 Arrête le routage actuel sans erreur.

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Content Enricher EIP** — `.Enrich(uri, strategy)` fetches data from an external endpoint and merges it into the current exchange via an `AggregationStrategy`; pass `nil` to replace the body directly
+- **Throttle EIP** — `.Throttle(maxRequests, timePeriod)` rate-limits exchange processing; excess exchanges are delayed (not dropped) using a fixed-window counter
+- **Message Filter EIP** — `.Filter(expression)` drops exchanges that do not match a Go predicate or a Simple Language expression
+- **`Exchange.PropagateOutToIn()`** — extracted helper that copies `Out` body and headers into `In`; used internally by `To`, `ToD`, and `WireTap`
+- **Aggregator improvements** — per-correlation-key locking via `sync.Map` (replaces the previous global mutex), `SetCompletionTimeout(d)`, and `SetCompletionPredicate(fn)` completion strategies
+- **`DeadLetterChannel` concurrency fix** — `retryAttempts` map is now protected by a `sync.Mutex`; exchange ID uses creation timestamp to avoid pointer-reuse after GC
 - Transactional support via **Unit of Work** and **Synchronization**
   - New `.Transacted()` method in RouteBuilder DSL
   - Transactional processing in `file`, `ftp`, `sftp`, `smb`, and `mail` components (post-processing triggered at the end of the route)

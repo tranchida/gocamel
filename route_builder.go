@@ -3,6 +3,7 @@ package gocamel
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // RouteBuilder provides a fluent DSL for constructing Camel routes.
@@ -563,6 +564,47 @@ func (b *RouteBuilder) ToD(uriTemplates ...string) *RouteBuilder {
 		}
 		b.container.AddProcessor(m)
 	}
+	return b
+}
+
+// Enrich adds a Content Enricher EIP step. It calls the given URI, retrieves
+// a response, and merges it into the current exchange via the AggregationStrategy.
+// Pass nil as strategy to simply replace the exchange body with the response body.
+//
+// Example:
+//
+//	// Merge enrichment into current exchange
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    Enrich("direct:lookup", &MyMergeStrategy{}).
+//	    To("direct:next").
+//	    Build()
+//
+//	// Replace body (no strategy)
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    Enrich("http://api.example.com/extra", nil).
+//	    To("direct:next").
+//	    Build()
+func (b *RouteBuilder) Enrich(uri string, strategy AggregationStrategy) *RouteBuilder {
+	b.container.AddProcessor(NewContentEnricher(b.context, uri, strategy))
+	return b
+}
+
+// Throttle adds a Throttle EIP step that limits the exchange rate to at most
+// maxRequests per timePeriod. Exchanges that exceed the rate are delayed until
+// the current window resets (they are never dropped).
+//
+// Example:
+//
+//	// Max 100 messages per second
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    Throttle(100, time.Second).
+//	    To("direct:downstream").
+//	    Build()
+func (b *RouteBuilder) Throttle(maxRequests int64, timePeriod time.Duration) *RouteBuilder {
+	b.container.AddProcessor(NewThrottler(maxRequests, timePeriod))
 	return b
 }
 

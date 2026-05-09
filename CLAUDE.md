@@ -58,6 +58,9 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 | Choice (CBR) | `choice.go` | `.Choice().When(expr)…Otherwise().EndChoice()` |
 | WireTap | `wiretap.go` | `.WireTap(uri)` — async fire-and-forget copy |
 | Recipient List | `recipient_list.go` | `.RecipientList(expr)` → `.ParallelProcessing()` → `.End()` |
+| Message Filter | `filter.go` | `.Filter(expr)` — Go predicate or Simple Language string |
+| Content Enricher | `enricher.go` | `.Enrich(uri, strategy)` — nil strategy replaces body |
+| Throttle | `throttle.go` | `.Throttle(maxRequests, timePeriod)` — fixed-window rate limiter, delays excess |
 | Stop | `route_builder.go` | `.Stop()` — returns `ErrStopRouting` |
 | ToD | `route_builder.go` | `.ToD(template)` — `${header.x}`, `${property.x}`, `${body}` interpolation via `utils.go:Interpolate()` |
 

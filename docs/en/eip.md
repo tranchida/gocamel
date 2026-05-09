@@ -50,14 +50,83 @@ builder.From("direct:start").
 
 ### Filter
 
-Filter messages based on a condition.
+Filter messages based on a condition. Exchanges that do not match are silently dropped (`ErrStopRouting`).
 
 ```go
+// Simple Language expression (comparison inside ${...})
 builder.From("direct:start").
-    Filter("${header.active} == true").
-        To("direct:process").
-    End()
+    Filter("${header.type == 'order'}").
+    To("direct:orders").
+    Build()
+
+// Go predicate
+builder.From("direct:start").
+    Filter(func(e *gocamel.Exchange) (bool, error) {
+        body, ok := e.GetBodyAsString()
+        return ok && body != "", nil
+    }).
+    To("direct:nonEmpty").
+    Build()
 ```
+
+---
+
+### Throttle
+
+Rate-limit exchange processing to at most N messages per time window. Exchanges that exceed the rate are **delayed**, not dropped, until the window resets.
+
+```go
+// Max 100 messages per second
+builder.From("direct:start").
+    Throttle(100, time.Second).
+    To("direct:downstream").
+    Build()
+
+// Max 10 messages per 500ms (smoother than 1s window)
+builder.From("direct:start").
+    Throttle(10, 500*time.Millisecond).
+    To("direct:api").
+    Build()
+```
+
+**Notes:**
+- Uses a fixed-window counter; for smoother behaviour use smaller windows
+- Blocking: the goroutine sleeps until the window allows the exchange through
+
+---
+
+### Content Enricher
+
+Fetch additional data from an external resource and merge it into the current exchange.
+
+```go
+// With aggregation strategy
+type MergeStrategy struct{}
+
+func (s *MergeStrategy) Aggregate(original, enriched *gocamel.Exchange) *gocamel.Exchange {
+    origBody, _ := original.GetBodyAsString()
+    enrichBody, _ := enriched.GetBodyAsString()
+    original.GetIn().SetBody(origBody + " enriched with: " + enrichBody)
+    return original
+}
+
+builder.From("direct:start").
+    Enrich("http://api.example.com/data", &MergeStrategy{}).
+    To("direct:next").
+    Build()
+
+// Without strategy — replaces body with enrichment response
+builder.From("direct:start").
+    Enrich("direct:lookup", nil).
+    To("direct:next").
+    Build()
+```
+
+**How it works:**
+1. A copy of the current exchange is sent to the enrichment URI
+2. The response is received
+3. `AggregationStrategy.Aggregate(original, response)` merges the two
+4. If no strategy is provided, the response body replaces the original body
 
 ---
 
@@ -409,9 +478,13 @@ builder.RemoveProperties("processing*")
 |---------|----------|-------------|
 | Choice | Routing | Content-based routing |
 | Filter | Routing | Conditional filtering |
+| Throttle | Routing | Rate limiting |
 | Multicast | Routing | Multiple destinations |
+| Recipient List | Routing | Dynamic recipient routing |
+| Wire Tap | Routing | Async fire-and-forget copy |
 | Split | Transformation | Message splitting |
 | Aggregate | Transformation | Message aggregation |
+| Content Enricher | Transformation | Enrich with external data |
 | Transform | Transformation | Content transformation |
 | ToD | Endpoint | Dynamic endpoint |
 | Stop | Control | Stop routing |
