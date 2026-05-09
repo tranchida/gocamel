@@ -262,6 +262,27 @@ builder.To("seda:process")
 
 ---
 
+### Resequencer
+
+Reorder messages that arrived out of order based on a sequence number or timestamp.
+
+```go
+builder.From("direct:start").
+    Resequence("${header.seq}", 1). // Starts with sequence 1
+        Timeout(500 * time.Millisecond).
+        Log("Processing in order: ${header.seq}").
+        To("direct:next").
+    End()
+```
+
+**How it works:**
+1. Evaluates the expression to get the sequence number.
+2. If the sequence is the next expected one, it's processed immediately.
+3. If it's a future sequence, it's buffered and sorted.
+4. If a gap persists longer than the `Timeout`, the resequencer skips the missing sequence and continues with the next available one in the buffer.
+
+---
+
 ### Multicast
 
 Send a copy of the message to multiple destinations.
@@ -689,6 +710,7 @@ builder.From("direct:start").
 | Circuit Breaker | Routing | Resilience pattern for failures |
 | Load Balancer | Routing | Load distribution across endpoints |
 | Dynamic Router | Routing | Dynamic decision-based routing |
+| Resequencer | Routing | Reorder messages by sequence |
 | Throttle | Routing | Rate limiting |
 | Delay | Routing | Pause before next step |
 | Multicast | Routing | Multiple destinations |

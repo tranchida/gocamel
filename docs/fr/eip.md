@@ -358,7 +358,7 @@ Staged Event-Driven Architecture. Découple les producteurs et les consommateurs
 // Consommateur avec workers concurrents
 builder.From("seda:traitement?concurrentConsumers=5&size=1000").
     Log("Traitement asynchrone : ${body}").
-    To("direct:suivant")
+    To("direct: suivant")
 
 // Producteur
 builder.To("seda:traitement")
@@ -375,7 +375,29 @@ builder.To("seda:traitement")
 
 ---
 
+## Resequencer
+
+Remet dans l'ordre les messages arrivés de manière désordonnée en se basant sur un numéro de séquence ou un horodatage.
+
+```go
+builder.From("direct:start").
+    Resequence("${header.seq}", 1). // Commence à la séquence 1
+        Timeout(500 * time.Millisecond).
+        Log("Traitement dans l'ordre : ${header.seq}").
+        To("direct:suivant").
+    End()
+```
+
+**Fonctionnement :**
+1. Évalue l'expression pour obtenir le numéro de séquence.
+2. Si la séquence est celle attendue, elle est traitée immédiatement.
+3. S'il s'agit d'une séquence future, elle est mise en tampon et triée.
+4. Si un trou (gap) persiste plus longtemps que le `Timeout`, le resequenceur saute la séquence manquante et continue avec la suivante disponible.
+
+---
+
 ## Stop
+
 
 Arrête le routage actuel sans erreur.
 

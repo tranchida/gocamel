@@ -207,6 +207,32 @@ func (t *SimpleTemplate) EvaluateAsString(exchange *Exchange) (string, error) {
 	return fmt.Sprintf("%v", result), nil
 }
 
+// EvaluateAsInt evaluates the template and returns an integer
+func (t *SimpleTemplate) EvaluateAsInt(exchange *Exchange) (int, bool) {
+	result, err := t.Evaluate(exchange)
+	if err != nil {
+		return 0, false
+	}
+
+	switch v := result.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		if i, err := strconv.Atoi(v); err == nil {
+			return i, true
+		}
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return int(f), true
+		}
+	}
+
+	return 0, false
+}
+
 // EvaluateAsBool evaluates the template and returns a boolean
 func (t *SimpleTemplate) EvaluateAsBool(exchange *Exchange) (bool, error) {
 	result, err := t.Evaluate(exchange)
