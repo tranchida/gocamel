@@ -283,6 +283,30 @@ builder.From("direct:start").
 
 ---
 
+### Claim Check
+
+Reduce the size of messages by storing the payload in an external repository and passing only a reference (key).
+
+```go
+repo := gocamel.NewMemoryClaimCheckRepository()
+
+builder.From("direct:start").
+    // Store body and replace with key
+    ClaimCheck(gocamel.ClaimCheckPush, "my-ticket", repo).
+    To("direct:other-system"). // Only the key "my-ticket" is sent
+    // Restore original body
+    ClaimCheck(gocamel.ClaimCheckPop, "my-ticket", repo).
+    To("direct:next")
+```
+
+**Operations:**
+- `ClaimCheckPush`: Stores the body and replaces it with a key. If no key is provided, one is generated.
+- `ClaimCheckPop`: Retrieves the data by key, restores the body, and removes it from the repository.
+- `ClaimCheckGet`: Retrieves the data by key and restores the body (keeps it in the repository).
+- `ClaimCheckDiscard`: Removes the data from the repository without restoring it.
+
+---
+
 ### Multicast
 
 Send a copy of the message to multiple destinations.
@@ -711,6 +735,7 @@ builder.From("direct:start").
 | Load Balancer | Routing | Load distribution across endpoints |
 | Dynamic Router | Routing | Dynamic decision-based routing |
 | Resequencer | Routing | Reorder messages by sequence |
+| Claim Check | Routing | Store payload and pass reference |
 | Throttle | Routing | Rate limiting |
 | Delay | Routing | Pause before next step |
 | Multicast | Routing | Multiple destinations |

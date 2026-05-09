@@ -396,6 +396,30 @@ builder.From("direct:start").
 
 ---
 
+## Claim Check
+
+Réduit la taille des messages en stockant le contenu (payload) dans un dépôt externe et en ne faisant circuler qu'une référence (une clé).
+
+```go
+repo := gocamel.NewMemoryClaimCheckRepository()
+
+builder.From("direct:start").
+    // Stocke le corps et le remplace par une clé
+    ClaimCheck(gocamel.ClaimCheckPush, "mon-ticket", repo).
+    To("direct:autre-systeme"). // Seule la clé "mon-ticket" est envoyée
+    // Restaure le corps original
+    ClaimCheck(gocamel.ClaimCheckPop, "mon-ticket", repo).
+    To("direct:suivant")
+```
+
+**Opérations :**
+- `ClaimCheckPush` : Stocke le corps et le remplace par une clé. Si aucune clé n'est fournie, elle est générée.
+- `ClaimCheckPop` : Récupère les données par clé, restaure le corps et les supprime du dépôt.
+- `ClaimCheckGet` : Récupère les données par clé et restaure le corps (les garde dans le dépôt).
+- `ClaimCheckDiscard` : Supprime les données du dépôt sans les restaurer.
+
+---
+
 ## Stop
 
 
