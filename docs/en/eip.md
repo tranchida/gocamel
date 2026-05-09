@@ -95,6 +95,37 @@ builder.From("direct:start").
 
 ---
 
+### Delay
+
+Pause exchange processing for a fixed or dynamically computed duration. The sleep respects context cancellation.
+
+```go
+// Fixed delay
+builder.From("direct:start").
+    Delay(500 * time.Millisecond).
+    To("direct:next").
+    Build()
+
+// Dynamic delay from a header
+builder.From("direct:start").
+    DelayFunc(func(e *gocamel.Exchange) (time.Duration, error) {
+        ms, ok := e.GetHeaderAsInt("X-Delay-Ms")
+        if !ok {
+            return 0, nil  // no delay if header absent
+        }
+        return time.Duration(ms) * time.Millisecond, nil
+    }).
+    To("direct:next").
+    Build()
+```
+
+**Notes:**
+- Blocking: the goroutine sleeps for the computed duration
+- If the exchange context is cancelled during the sleep, `Process` returns an error
+- Return `0` from `DelayFunc` to skip the delay for a given exchange
+
+---
+
 ### Content Enricher
 
 Fetch additional data from an external resource and merge it into the current exchange.
@@ -479,6 +510,7 @@ builder.RemoveProperties("processing*")
 | Choice | Routing | Content-based routing |
 | Filter | Routing | Conditional filtering |
 | Throttle | Routing | Rate limiting |
+| Delay | Routing | Pause before next step |
 | Multicast | Routing | Multiple destinations |
 | Recipient List | Routing | Dynamic recipient routing |
 | Wire Tap | Routing | Async fire-and-forget copy |

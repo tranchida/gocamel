@@ -208,6 +208,37 @@ builder.From("direct:start").
 
 ---
 
+## Delay
+
+Met le traitement de l'exchange en pause pour une durée fixe ou calculée dynamiquement. Le sleep respecte l'annulation du contexte.
+
+```go
+// Délai fixe
+builder.From("direct:start").
+    Delay(500 * time.Millisecond).
+    To("direct:suivant").
+    Build()
+
+// Délai dynamique depuis un en-tête
+builder.From("direct:start").
+    DelayFunc(func(e *gocamel.Exchange) (time.Duration, error) {
+        ms, ok := e.GetHeaderAsInt("X-Delay-Ms")
+        if !ok {
+            return 0, nil  // pas de délai si l'en-tête est absent
+        }
+        return time.Duration(ms) * time.Millisecond, nil
+    }).
+    To("direct:suivant").
+    Build()
+```
+
+**Notes :**
+- Bloquant : le goroutine dort pendant la durée calculée
+- Si le contexte de l'exchange est annulé pendant le sleep, `Process` retourne une erreur
+- Retourner `0` depuis `DelayFunc` pour ignorer le délai pour un exchange donné
+
+---
+
 ## Content Enricher
 
 Enrichit l'exchange courant avec des données provenant d'une source externe.

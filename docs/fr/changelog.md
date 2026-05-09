@@ -8,6 +8,7 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2
 ## [Unreleased]
 
 ### Ajouté
+- **EIP Delay** — `.Delay(duration)` met l'exchange en pause pour une durée fixe ; `.DelayFunc(fn)` calcule la durée par exchange ; tous deux respectent l'annulation du contexte
 - **EIP Content Enricher** — `.Enrich(uri, stratégie)` récupère des données depuis un endpoint externe et les fusionne dans l'exchange via une `AggregationStrategy` ; passer `nil` pour remplacer directement le corps
 - **EIP Throttle** — `.Throttle(maxRequests, période)` limite le débit ; les exchanges excédentaires sont retardés (jamais perdus) via un compteur à fenêtre fixe
 - **EIP Message Filter** — `.Filter(expression)` supprime les exchanges ne correspondant pas à un prédicat Go ou à une expression Simple Language

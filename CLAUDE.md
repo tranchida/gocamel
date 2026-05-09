@@ -61,6 +61,7 @@ GoCamel is a Go implementation of Apache Camel's Enterprise Integration Patterns
 | Message Filter | `filter.go` | `.Filter(expr)` — Go predicate or Simple Language string |
 | Content Enricher | `enricher.go` | `.Enrich(uri, strategy)` — nil strategy replaces body |
 | Throttle | `throttle.go` | `.Throttle(maxRequests, timePeriod)` — fixed-window rate limiter, delays excess |
+| Delay | `delay.go` | `.Delay(duration)` / `.DelayFunc(fn)` — sleeps for fixed or dynamic duration, context-aware |
 | Stop | `route_builder.go` | `.Stop()` — returns `ErrStopRouting` |
 | ToD | `route_builder.go` | `.ToD(template)` — `${header.x}`, `${property.x}`, `${body}` interpolation via `utils.go:Interpolate()` |
 

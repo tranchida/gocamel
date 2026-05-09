@@ -567,6 +567,42 @@ func (b *RouteBuilder) ToD(uriTemplates ...string) *RouteBuilder {
 	return b
 }
 
+// Delay adds a Delay EIP step that pauses exchange processing for the given
+// fixed duration. The sleep respects context cancellation.
+//
+// Example:
+//
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    Delay(500 * time.Millisecond).
+//	    To("direct:next").
+//	    Build()
+func (b *RouteBuilder) Delay(d time.Duration) *RouteBuilder {
+	b.container.AddProcessor(NewDelayer(d))
+	return b
+}
+
+// DelayFunc adds a Delay EIP step whose duration is computed per exchange.
+// Return 0 to skip the delay for a given exchange.
+//
+// Example:
+//
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    DelayFunc(func(e *gocamel.Exchange) (time.Duration, error) {
+//	        ms, ok := e.GetHeaderAsInt("X-Delay-Ms")
+//	        if !ok {
+//	            return 0, nil
+//	        }
+//	        return time.Duration(ms) * time.Millisecond, nil
+//	    }).
+//	    To("direct:next").
+//	    Build()
+func (b *RouteBuilder) DelayFunc(fn func(*Exchange) (time.Duration, error)) *RouteBuilder {
+	b.container.AddProcessor(NewDelayerFunc(fn))
+	return b
+}
+
 // Enrich adds a Content Enricher EIP step. It calls the given URI, retrieves
 // a response, and merges it into the current exchange via the AggregationStrategy.
 // Pass nil as strategy to simply replace the exchange body with the response body.
