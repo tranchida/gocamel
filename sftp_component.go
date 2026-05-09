@@ -90,11 +90,11 @@ func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 		Timeout:         e.connectTimeout,
 	}
 
-	// Authentification par clé privée (prioritaire sur le mot de passe si présent)
+	// Private key authentication (takes priority over password if present).
 	if privateKeyFile := GetConfigValue(e.url, "privateKeyFile"); privateKeyFile != "" {
 		key, err := os.ReadFile(privateKeyFile)
 		if err != nil {
-			return nil, nil, fmt.Errorf("impossible de lire la clé privée %s: %w", privateKeyFile, err)
+			return nil, nil, fmt.Errorf("cannot read private key %s: %w", privateKeyFile, err)
 		}
 		signer, err := ssh.ParsePrivateKey(key)
 		if err != nil {

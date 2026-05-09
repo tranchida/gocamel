@@ -13,21 +13,21 @@ import (
 // Used notably by the Aggregator EIP.
 var ErrStopRouting = errors.New("stop routing")
 
-// Processor définit l'interface pour le traitement des messages
+// Processor defines the interface for message processing.
 type Processor interface {
 	Process(exchange *Exchange) error
 }
 
-// ProcessorContainer définit l'interface pour les objets pouvant contenir des processeurs.
-// Cela permet de supporter l'imbrication des EIP comme le Splitter.
+// ProcessorContainer defines the interface for objects that can hold processors.
+// This enables nesting of EIPs such as the Splitter.
 type ProcessorContainer interface {
 	AddProcessor(processor Processor)
 }
 
-// ProcessorFunc est un type de fonction qui implémente l'interface Processor
+// ProcessorFunc is a function type that implements the Processor interface.
 type ProcessorFunc func(*Exchange) error
 
-// Process implémente l'interface Processor pour ProcessorFunc
+// Process implements the Processor interface for ProcessorFunc.
 func (f ProcessorFunc) Process(exchange *Exchange) error {
 	return f(exchange)
 }
@@ -51,43 +51,43 @@ type Route struct {
 	tracing      bool                               // Whether OpenTelemetry tracing is enabled for this route.
 }
 
-// NewRoute crée une nouvelle instance de Route
+// NewRoute creates a new Route instance.
 func NewRoute() *Route {
 	return &Route{
 		processors: make([]Processor, 0),
 	}
 }
 
-// SetTransacted définit si la route est transactionnelle
+// SetTransacted sets whether the route uses transactional semantics.
 func (r *Route) SetTransacted(transacted bool) *Route {
 	r.Transacted = transacted
 	return r
 }
 
-// From définit l'endpoint source de la route.
+// From sets the source endpoint of the route.
 // Errors are stored and surfaced at Start() time.
 func (r *Route) From(uri string) *Route {
 	endpoint, err := r.context.CreateEndpoint(uri)
 	if err != nil {
-		r.err = fmt.Errorf("erreur lors de la création de l'endpoint: %w", err)
+		r.err = fmt.Errorf("error creating endpoint: %w", err)
 		return r
 	}
 	r.from = endpoint
 	return r
 }
 
-// AddProcessor ajoute un processeur à la route
+// AddProcessor adds a processor to the route.
 func (r *Route) AddProcessor(processor Processor) {
 	r.processors = append(r.processors, processor)
 }
 
-// ProcessFunc ajoute une fonction de traitement à la route
+// ProcessFunc adds a processing function to the route.
 func (r *Route) ProcessFunc(f func(*Exchange) error) *Route {
 	r.AddProcessor(ProcessorFunc(f))
 	return r
 }
 
-// Process implémente l'interface Processor.
+// Process implements the Processor interface.
 // Errors are delegated to the configured ErrorHandler if one is set.
 func (r *Route) Process(exchange *Exchange) error {
 	if r.metrics && r.tracing {
@@ -138,13 +138,13 @@ func (r *Route) doProcess(exchange *Exchange) error {
 	return nil
 }
 
-// Start démarre la route
+// Start starts the route.
 func (r *Route) Start(ctx context.Context) error {
 	r.startLock.Lock()
 	defer r.startLock.Unlock()
 
 	if r.started {
-		return fmt.Errorf("la route est déjà démarrée")
+		return fmt.Errorf("route is already started")
 	}
 
 	if r.err != nil {
@@ -152,24 +152,24 @@ func (r *Route) Start(ctx context.Context) error {
 	}
 
 	if r.from == nil {
-		return fmt.Errorf("aucun endpoint source défini")
+		return fmt.Errorf("no source endpoint defined")
 	}
 
 	consumer, err := r.from.CreateConsumer(r)
 	if err != nil {
-		return fmt.Errorf("erreur lors de la création du consommateur: %v", err)
+		return fmt.Errorf("error creating consumer: %v", err)
 	}
 	r.consumer = consumer
 
 	if err := consumer.Start(ctx); err != nil {
-		return fmt.Errorf("erreur lors du démarrage du consommateur: %v", err)
+		return fmt.Errorf("error starting consumer: %v", err)
 	}
 
 	r.started = true
 	return nil
 }
 
-// Stop arrête la route
+// Stop stops the route.
 func (r *Route) Stop() error {
 	r.startLock.Lock()
 	defer r.startLock.Unlock()
@@ -180,7 +180,7 @@ func (r *Route) Stop() error {
 
 	if r.consumer != nil {
 		if err := r.consumer.Stop(); err != nil {
-			return fmt.Errorf("erreur lors de l'arrêt du consommateur: %v", err)
+			return fmt.Errorf("error stopping consumer: %v", err)
 		}
 	}
 
@@ -188,32 +188,32 @@ func (r *Route) Stop() error {
 	return nil
 }
 
-// IsStarted vérifie si la route est démarrée (utilise RLock).
+// IsStarted returns true if the route is started (uses RLock).
 func (r *Route) IsStarted() bool {
 	r.startLock.RLock()
 	defer r.startLock.RUnlock()
 	return r.started
 }
 
-// SetID définit l'ID de la route
+// SetID sets the route ID.
 func (r *Route) SetID(id string) *Route {
 	r.ID = id
 	return r
 }
 
-// SetDescription définit la description de la route
+// SetDescription sets the route description.
 func (r *Route) SetDescription(description string) *Route {
 	r.Description = description
 	return r
 }
 
-// SetGroup définit le groupe de la route
+// SetGroup sets the route group.
 func (r *Route) SetGroup(group string) *Route {
 	r.Group = group
 	return r
 }
 
-// GetContext récupère le contexte Camel associé à la route
+// GetContext returns the CamelContext associated with the route.
 func (r *Route) GetContext() *CamelContext {
 	return r.context
 }
@@ -229,13 +229,13 @@ func (r *Route) GetErrorHandler() ErrorHandler {
 	return r.errorHandler
 }
 
-// EnableMetrics active la collecte des métriques Prometheus pour cette route
+// EnableMetrics enables Prometheus metrics collection for this route.
 func (r *Route) EnableMetrics() *Route {
 	r.metrics = true
 	return r
 }
 
-// SetBody définit le corps du message de sortie
+// SetBody sets the output message body.
 func (r *Route) SetBody(body interface{}) *Route {
 	return r.ProcessFunc(func(exchange *Exchange) error {
 		exchange.GetOut().SetBody(body)
@@ -243,7 +243,7 @@ func (r *Route) SetBody(body interface{}) *Route {
 	})
 }
 
-// SetHeader définit un en-tête du message de sortie
+// SetHeader sets a header on the output message.
 func (r *Route) SetHeader(key string, value interface{}) *Route {
 	return r.ProcessFunc(func(exchange *Exchange) error {
 		exchange.GetOut().SetHeader(key, value)
@@ -251,8 +251,8 @@ func (r *Route) SetHeader(key string, value interface{}) *Route {
 	})
 }
 
-// To ajoute un ou plusieurs endpoints de destination à la route.
-// Si plusieurs URIs sont fournies, un Multicast est créé automatiquement.
+// To adds one or more destination endpoints to the route.
+// If multiple URIs are provided, a Multicast is created automatically.
 func (r *Route) To(uris ...string) *Route {
 	if len(uris) == 0 {
 		return r
@@ -269,8 +269,8 @@ func (r *Route) To(uris ...string) *Route {
 	return r
 }
 
-// ToD ajoute un ou plusieurs processeurs dynamiques d'envoi à une URI calculée à chaque échange.
-// Si plusieurs templates sont fournis, un Multicast est créé automatiquement.
+// ToD adds one or more dynamic send processors that resolve the URI for each exchange.
+// If multiple templates are provided, a Multicast is created automatically.
 func (r *Route) ToD(uriTemplates ...string) *Route {
 	if len(uriTemplates) == 0 {
 		return r
@@ -322,11 +322,11 @@ func createToProcessor(context *CamelContext, uri string) Processor {
 
 func createToDProcessor(context *CamelContext, uriTemplate string) Processor {
 	return ProcessorFunc(func(exchange *Exchange) error {
-		// Résolution de l'URI dynamique
+		// Resolve the dynamic URI
 		uri := Interpolate(uriTemplate, exchange)
 
-		// Création de l'endpoint et du producer à chaque fois (pour ToD)
-		// TODO: Optimiser avec un cache de producers si nécessaire
+		// Create the endpoint and producer on each exchange (required for ToD).
+		// TODO: Optimise with a producer cache if needed.
 		endpoint, err := context.CreateEndpoint(uri)
 		if err != nil {
 			return fmt.Errorf("toD dynamic endpoint creation error: %w", err)
@@ -340,9 +340,8 @@ func createToDProcessor(context *CamelContext, uriTemplate string) Processor {
 		if err := producer.Start(exchange.Context); err != nil {
 			return fmt.Errorf("toD producer start error: %w", err)
 		}
-		// On s'assure que le producer est arrêté à la fin (ou on laisse le GC s'en charger si l'endpoint est éphémère ?)
-		// Normalement dans Camel, les producteurs dynamiques sont mis en cache.
-		// Si on ne met pas en cache, on devrait probablement arrêter le producteur après l'envoi.
+		// Ensure the producer is stopped when done (in Camel, dynamic producers are normally cached;
+		// without caching we stop the producer after each send).
 		defer producer.Stop()
 
 		exchange.PropagateOutToIn()

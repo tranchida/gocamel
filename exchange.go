@@ -11,71 +11,71 @@ import (
 
 var globalExchangeID atomic.Uint64
 
-// Constantes pour les propriétés communes
+// Common property constants
 const (
-	// Propriétés de fichier
-	CamelFileName         = "CamelFileName"         // Nom du fichier
-	CamelFilePath         = "CamelFilePath"         // Chemin complet du fichier
-	CamelFileLength       = "CamelFileLength"       // Taille du fichier
-	CamelFileLastModified = "CamelFileLastModified" // Date de dernière modification
-	CamelFileHost         = "CamelFileHost"         // Hôte du système de fichiers
+	// File properties
+	CamelFileName         = "CamelFileName"         // File name
+	CamelFilePath         = "CamelFilePath"         // Full file path
+	CamelFileLength       = "CamelFileLength"       // File size
+	CamelFileLastModified = "CamelFileLastModified" // Last modification date
+	CamelFileHost         = "CamelFileHost"         // Filesystem host
 
-	// Propriétés HTTP
-	CamelHttpMethod       = "CamelHttpMethod"       // Méthode HTTP
-	CamelHttpUrl          = "CamelHttpUrl"          // URL HTTP
-	CamelHttpPath         = "CamelHttpPath"         // Chemin HTTP
-	CamelHttpQuery        = "CamelHttpQuery"        // Paramètres de requête
-	CamelHttpResponseCode = "CamelHttpResponseCode" // Code de réponse HTTP
-	CamelHttpResponseText = "CamelHttpResponseText" // Texte de réponse HTTP
+	// HTTP properties
+	CamelHttpMethod       = "CamelHttpMethod"       // HTTP method
+	CamelHttpUrl          = "CamelHttpUrl"          // HTTP URL
+	CamelHttpPath         = "CamelHttpPath"         // HTTP path
+	CamelHttpQuery        = "CamelHttpQuery"        // Query parameters
+	CamelHttpResponseCode = "CamelHttpResponseCode" // HTTP response code
+	CamelHttpResponseText = "CamelHttpResponseText" // HTTP response text
 
-	// Propriétés de message
-	CamelMessageId         = "CamelMessageId"         // ID unique du message
-	CamelMessageTimestamp  = "CamelMessageTimestamp"  // Horodatage du message
-	CamelMessageExchangeId = "CamelMessageExchangeId" // ID de l'échange
+	// Message properties
+	CamelMessageId         = "CamelMessageId"         // Unique message ID
+	CamelMessageTimestamp  = "CamelMessageTimestamp"  // Message timestamp
+	CamelMessageExchangeId = "CamelMessageExchangeId" // Exchange ID
 
-	// Propriétés de route
-	CamelRouteId          = "CamelRouteId"          // ID de la route
-	CamelRouteGroup       = "CamelRouteGroup"       // Groupe de la route
-	CamelRouteDescription = "CamelRouteDescription" // Description de la route
+	// Route properties
+	CamelRouteId          = "CamelRouteId"          // Route ID
+	CamelRouteGroup       = "CamelRouteGroup"       // Route group
+	CamelRouteDescription = "CamelRouteDescription" // Route description
 
-	// Propriétés d'erreur
-	CamelExceptionCaught = "CamelExceptionCaught" // Exception capturée
-	CamelFailureEndpoint = "CamelFailureEndpoint" // Endpoint en échec
-	CamelFailureRouteId  = "CamelFailureRouteId"  // ID de la route en échec
-	CamelRedeliveryCounter = "CamelRedeliveryCounter" // Compteur de redeliveries
+	// Error properties
+	CamelExceptionCaught = "CamelExceptionCaught" // Caught exception
+	CamelFailureEndpoint = "CamelFailureEndpoint" // Failing endpoint
+	CamelFailureRouteId  = "CamelFailureRouteId"  // ID of the failing route
+	CamelRedeliveryCounter = "CamelRedeliveryCounter" // Redelivery counter
 
-	// Propriétés de performance
-	CamelTimerName      = "CamelTimerName"      // Nom du timer
-	CamelTimerFiredTime = "CamelTimerFiredTime" // Heure de déclenchement du timer
-	CamelTimerPeriod    = "CamelTimerPeriod"    // Période du timer
-	CamelTimerCounter   = "CamelTimerCounter"   // Compteur du timer
+	// Timer properties
+	CamelTimerName      = "CamelTimerName"      // Timer name
+	CamelTimerFiredTime = "CamelTimerFiredTime" // Timer fire time
+	CamelTimerPeriod    = "CamelTimerPeriod"    // Timer period
+	CamelTimerCounter   = "CamelTimerCounter"   // Timer counter
 
-	// Propriétés de contexte
-	CamelContextName    = "CamelContextName"    // Nom du contexte
-	CamelContextId      = "CamelContextId"      // ID du contexte
-	CamelContextVersion = "CamelContextVersion" // Version du contexte
+	// Context properties
+	CamelContextName    = "CamelContextName"    // Context name
+	CamelContextId      = "CamelContextId"      // Context ID
+	CamelContextVersion = "CamelContextVersion" // Context version
 
-	// Propriétés EIP (Enterprise Integration Patterns)
-	CamelSplitIndex        = "CamelSplitIndex"        // Index de la partie courante dans un Split
-	CamelSplitSize         = "CamelSplitSize"         // Nombre total de parties dans un Split
-	CamelSplitComplete     = "CamelSplitComplete"     // Booléen indiquant si c'est la dernière partie
-	CamelAggregatorSize    = "CamelAggregatorSize"    // Nombre de messages agrégés
-	CamelMulticastIndex    = "CamelMulticastIndex"    // Index de la branche courante dans un Multicast
-	CamelMulticastSize     = "CamelMulticastSize"     // Nombre total de branches dans un Multicast
-	CamelMulticastComplete = "CamelMulticastComplete" // Booléen indiquant si c'est la dernière branche
-	CamelRecipientListIndex    = "CamelRecipientListIndex"    // Index du destinataire courant dans une RecipientList
-	CamelRecipientListSize     = "CamelRecipientListSize"     // Nombre total de destinataires dans une RecipientList
-	CamelRecipientListComplete = "CamelRecipientListComplete" // Booléen indiquant si c'est le dernier destinataire
+	// EIP (Enterprise Integration Patterns) properties
+	CamelSplitIndex        = "CamelSplitIndex"        // Index of the current part in a Split
+	CamelSplitSize         = "CamelSplitSize"         // Total number of parts in a Split
+	CamelSplitComplete     = "CamelSplitComplete"     // Boolean indicating whether this is the last part
+	CamelAggregatorSize    = "CamelAggregatorSize"    // Number of aggregated messages
+	CamelMulticastIndex    = "CamelMulticastIndex"    // Index of the current branch in a Multicast
+	CamelMulticastSize     = "CamelMulticastSize"     // Total number of branches in a Multicast
+	CamelMulticastComplete = "CamelMulticastComplete" // Boolean indicating whether this is the last branch
+	CamelRecipientListIndex    = "CamelRecipientListIndex"    // Index of the current recipient in a RecipientList
+	CamelRecipientListSize     = "CamelRecipientListSize"     // Total number of recipients in a RecipientList
+	CamelRecipientListComplete = "CamelRecipientListComplete" // Boolean indicating whether this is the last recipient
 
-	// Propriétés de transaction
-	CamelTransactionId     = "CamelTransactionId"     // ID de transaction
-	CamelTransactionKey    = "CamelTransactionKey"    // Clé de transaction
-	CamelTransactionStatus = "CamelTransactionStatus" // Statut de transaction
+	// Transaction properties
+	CamelTransactionId     = "CamelTransactionId"     // Transaction ID
+	CamelTransactionKey    = "CamelTransactionKey"    // Transaction key
+	CamelTransactionStatus = "CamelTransactionStatus" // Transaction status
 
-	// Propriétés de sécurité
-	CamelAuthenticationScheme = "CamelAuthenticationScheme" // Schéma d'authentification
-	CamelAuthenticationType   = "CamelAuthenticationType"   // Type d'authentification
-	CamelAuthorizationPolicy  = "CamelAuthorizationPolicy"  // Politique d'autorisation
+	// Security properties
+	CamelAuthenticationScheme = "CamelAuthenticationScheme" // Authentication scheme
+	CamelAuthenticationType   = "CamelAuthenticationType"   // Authentication type
+	CamelAuthorizationPolicy  = "CamelAuthorizationPolicy"  // Authorization policy
 )
 
 // Synchronization defines the interface for callbacks triggered when an Exchange is done.
@@ -132,25 +132,25 @@ func (e *Exchange) Done(err error) {
 	}
 }
 
-// GetIn récupère le message d'entrée
+// GetIn returns the input message
 func (e *Exchange) GetIn() *Message {
 	return e.In
 }
 
-// GetOut récupère le message de sortie
+// GetOut returns the output message
 func (e *Exchange) GetOut() *Message {
 	return e.Out
 }
 
-// HasOut retourne true si le message Out a été explicitement défini (corps non nil).
+// HasOut returns true if the Out message has been explicitly set (non-nil body).
 func (e *Exchange) HasOut() bool {
 	return e.Out.GetBody() != nil
 }
 
-// GetResponse retourne le message Out si son corps a été défini,
-// sinon retourne le message In. Correspond au comportement InOut d'Apache Camel :
-// si le processeur ne définit pas de réponse explicite, le message d'entrée
-// est utilisé tel quel comme réponse.
+// GetResponse returns the Out message if its body has been set,
+// otherwise returns the In message. This matches the Apache Camel InOut behavior:
+// if the processor does not set an explicit response, the input message
+// is used as the response as-is.
 func (e *Exchange) GetResponse() *Message {
 	if e.HasOut() {
 		return e.Out
@@ -159,71 +159,71 @@ func (e *Exchange) GetResponse() *Message {
 }
 
 
-// SetBody définit le corps du message d'entrée
+// SetBody sets the body of the input message
 func (e *Exchange) SetBody(body any) {
 	e.In.SetBody(body)
 	e.Modified = time.Now()
 }
 
-// GetBody récupère le corps du message d'entrée
+// GetBody returns the body of the input message
 func (e *Exchange) GetBody() any {
 	return e.In.GetBody()
 }
 
-// GetBodyAsString récupère le corps du message d'entrée sous forme de chaîne
+// GetBodyAsString returns the input message body as a string
 func (e *Exchange) GetBodyAsString() (string, bool) {
 	return e.In.GetBodyAsString()
 }
 
-// GetBodyAsInt récupère le corps du message d'entrée sous forme d'entier
+// GetBodyAsInt returns the input message body as an integer
 func (e *Exchange) GetBodyAsInt() (int, bool) {
 	return e.In.GetBodyAsInt()
 }
 
-// GetBodyAsBool récupère le corps du message d'entrée sous forme de booléen
+// GetBodyAsBool returns the input message body as a boolean
 func (e *Exchange) GetBodyAsBool() (bool, bool) {
 	return e.In.GetBodyAsBool()
 }
 
-// SetHeader définit un en-tête du message d'entrée
+// SetHeader sets a header on the input message
 func (e *Exchange) SetHeader(key string, value any) {
 	e.In.SetHeader(key, value)
 	e.Modified = time.Now()
 }
 
-// GetHeader récupère un en-tête du message d'entrée
+// GetHeader retrieves a header from the input message
 func (e *Exchange) GetHeader(key string) (any, bool) {
 	return e.In.GetHeader(key)
 }
 
-// GetHeaderAsString récupère un en-tête du message d'entrée sous forme de chaîne
+// GetHeaderAsString retrieves a header from the input message as a string
 func (e *Exchange) GetHeaderAsString(key string) (string, bool) {
 	return e.In.GetHeaderAsString(key)
 }
 
-// GetHeaderAsInt récupère un en-tête du message d'entrée sous forme d'entier
+// GetHeaderAsInt retrieves a header from the input message as an integer
 func (e *Exchange) GetHeaderAsInt(key string) (int, bool) {
 	return e.In.GetHeaderAsInt(key)
 }
 
-// GetHeaderAsBool récupère un en-tête du message d'entrée sous forme de booléen
+// GetHeaderAsBool retrieves a header from the input message as a boolean
 func (e *Exchange) GetHeaderAsBool(key string) (bool, bool) {
 	return e.In.GetHeaderAsBool(key)
 }
 
-// SetProperty définit une propriété de l'échange
+// SetProperty sets a property on the exchange
 func (e *Exchange) SetProperty(key string, value any) {
 	e.Properties[key] = value
 	e.Modified = time.Now()
 }
 
-// GetProperty récupère une propriété de l'échange
+// GetProperty retrieves a property from the exchange
 func (e *Exchange) GetProperty(key string) (any, bool) {
 	value, exists := e.Properties[key]
 	return value, exists
 }
 
-// GetPropertyOrDefault récupère une propriété ou une valeur par défaut
+// GetPropertyOrDefault retrieves a property or returns the default value
 func (e *Exchange) GetPropertyOrDefault(key string, defaultValue any) any {
 	if value, exists := e.Properties[key]; exists {
 		return value
@@ -231,26 +231,26 @@ func (e *Exchange) GetPropertyOrDefault(key string, defaultValue any) any {
 	return defaultValue
 }
 
-// RemoveProperty supprime une propriété de l'échange
+// RemoveProperty removes a property from the exchange
 func (e *Exchange) RemoveProperty(key string) {
 	delete(e.Properties, key)
 	e.Modified = time.Now()
 }
 
-// RemoveProperties supprime les propriétés correspondant au pattern fourni,
-// sauf celles qui correspondent aux patterns d'exclusion fournis.
-// Le pattern supporte les jokers Apache Camel '*' (ex: 'Camel*').
+// RemoveProperties removes properties matching the given pattern,
+// except those matching any of the exclusion patterns.
+// The pattern supports Apache Camel wildcards '*' (e.g. 'Camel*').
 func (e *Exchange) RemoveProperties(pattern string, excludePatterns ...string) {
-	// Compilation du pattern principal
+	// Compile the main pattern
 	mainRegex := patternToRegex(pattern)
 
-	// Compilation des patterns d'exclusion
+	// Compile the exclusion patterns
 	var excludeRegexes []*regexp.Regexp
 	for _, p := range excludePatterns {
 		excludeRegexes = append(excludeRegexes, patternToRegex(p))
 	}
 
-	// Filtrage des propriétés
+	// Filter properties
 	for key := range e.Properties {
 		if mainRegex.MatchString(key) {
 			shouldExclude := false
@@ -269,18 +269,18 @@ func (e *Exchange) RemoveProperties(pattern string, excludePatterns ...string) {
 	}
 }
 
-// HasProperty vérifie si une propriété existe
+// HasProperty checks whether a property exists
 func (e *Exchange) HasProperty(key string) bool {
 	_, exists := e.Properties[key]
 	return exists
 }
 
-// GetProperties récupère toutes les propriétés
+// GetProperties retrieves all properties
 func (e *Exchange) GetProperties() map[string]any {
 	return e.Properties
 }
 
-// SetProperties définit plusieurs propriétés
+// SetProperties sets multiple properties
 func (e *Exchange) SetProperties(properties map[string]any) {
 	for key, value := range properties {
 		e.Properties[key] = value
@@ -288,13 +288,13 @@ func (e *Exchange) SetProperties(properties map[string]any) {
 	e.Modified = time.Now()
 }
 
-// ClearProperties supprime toutes les propriétés
+// ClearProperties removes all properties
 func (e *Exchange) ClearProperties() {
 	e.Properties = make(map[string]any)
 	e.Modified = time.Now()
 }
 
-// GetPropertyAsString récupère une propriété sous forme de chaîne
+// GetPropertyAsString retrieves a property as a string
 func (e *Exchange) GetPropertyAsString(key string) (string, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if str, ok := value.(string); ok {
@@ -304,7 +304,7 @@ func (e *Exchange) GetPropertyAsString(key string) (string, bool) {
 	return "", false
 }
 
-// GetPropertyAsInt récupère une propriété sous forme d'entier
+// GetPropertyAsInt retrieves a property as an integer
 func (e *Exchange) GetPropertyAsInt(key string) (int, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if i, ok := value.(int); ok {
@@ -318,7 +318,7 @@ func (e *Exchange) GetPropertyAsInt(key string) (int, bool) {
 	return 0, false
 }
 
-// GetPropertyAsBool récupère une propriété sous forme de booléen
+// GetPropertyAsBool retrieves a property as a boolean
 func (e *Exchange) GetPropertyAsBool(key string) (bool, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if b, ok := value.(bool); ok {
@@ -328,7 +328,7 @@ func (e *Exchange) GetPropertyAsBool(key string) (bool, bool) {
 	return false, false
 }
 
-// GetPropertyAsFloat récupère une propriété sous forme de nombre à virgule flottante
+// GetPropertyAsFloat retrieves a property as a floating-point number
 func (e *Exchange) GetPropertyAsFloat(key string) (float64, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if f, ok := value.(float64); ok {
@@ -338,7 +338,7 @@ func (e *Exchange) GetPropertyAsFloat(key string) (float64, bool) {
 	return 0, false
 }
 
-// GetPropertyAsTime récupère une propriété sous forme de time.Time
+// GetPropertyAsTime retrieves a property as a time.Time
 func (e *Exchange) GetPropertyAsTime(key string) (time.Time, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if t, ok := value.(time.Time); ok {
@@ -348,7 +348,7 @@ func (e *Exchange) GetPropertyAsTime(key string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// GetPropertyAsDuration récupère une propriété sous forme de time.Duration
+// GetPropertyAsDuration retrieves a property as a time.Duration
 func (e *Exchange) GetPropertyAsDuration(key string) (time.Duration, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if d, ok := value.(time.Duration); ok {
@@ -358,7 +358,7 @@ func (e *Exchange) GetPropertyAsDuration(key string) (time.Duration, bool) {
 	return 0, false
 }
 
-// GetPropertyAsMap récupère une propriété sous forme de map
+// GetPropertyAsMap retrieves a property as a map
 func (e *Exchange) GetPropertyAsMap(key string) (map[string]any, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if m, ok := value.(map[string]any); ok {
@@ -368,7 +368,7 @@ func (e *Exchange) GetPropertyAsMap(key string) (map[string]any, bool) {
 	return nil, false
 }
 
-// GetPropertyAsSlice récupère une propriété sous forme de slice
+// GetPropertyAsSlice retrieves a property as a slice
 func (e *Exchange) GetPropertyAsSlice(key string) ([]any, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if s, ok := value.([]any); ok {
@@ -389,13 +389,13 @@ func (e *Exchange) PropagateOutToIn() {
 	}
 }
 
-// Copy crée une copie de l'échange
+// Copy creates a copy of the exchange
 func (e *Exchange) Copy() *Exchange {
 	copy := NewExchange(e.Context)
 	copy.In = e.In.Copy()
 	copy.Out = e.Out.Copy()
 
-	// Copie des propriétés
+	// Copy properties
 	maps.Copy(copy.Properties, e.Properties)
 
 	copy.Created = e.Created

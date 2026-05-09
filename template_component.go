@@ -12,36 +12,36 @@ import (
 	"time"
 )
 
-// Constantes de headers for le composant template
+// Header constants for the template component.
 const (
-	CamelTemplatePath     = "CamelTemplatePath"     // path du file template (override)
-	CamelTemplateEncoding = "CamelTemplateEncoding" // Encodage du template (default: UTF-8)
-	CamelTemplatelocal   = "CamelTemplatelocal"   // local for le template
+	CamelTemplatePath     = "CamelTemplatePath"     // Template file path (override)
+	CamelTemplateEncoding = "CamelTemplateEncoding" // Template encoding (default: UTF-8)
+	CamelTemplatelocal   = "CamelTemplatelocal"   // Locale for the template
 )
 
-// TemplateData regroupe toutes les data availables in un template
+// TemplateData groups all data available within a template.
 type TemplateData struct {
-	// Exchange contient les data de l'échange
+	// Exchange contains the exchange data.
 	Exchange struct {
 		ID         string
 		Created    time.Time
 		Properties map[string]any
 	}
-	// In contient les data du message d'input
+	// In contains the input message data.
 	In struct {
 		Body    any
 		Headers map[string]any
 	}
-	// Headers est un alias for In.Headers (compatibilité Camel)
+	// Headers is an alias for In.Headers (Camel compatibility).
 	Headers map[string]any
-	// Body est un alias for In.Body (compatibilité Camel)
+	// Body is an alias for In.Body (Camel compatibility).
 	Body any
 }
 
 // TemplateComponent represents the template component
 type TemplateComponent struct {
 	mu    sync.RWMutex
-	cache map[string]*template.Template // Cache des templates parsés
+	cache map[string]*template.Template // Cache of parsed templates.
 }
 
 // NewTemplateComponent creates a new TemplateComponent
@@ -51,15 +51,15 @@ func NewTemplateComponent() *TemplateComponent {
 	}
 }
 
-// CreateEndpoint creates a new endpoint template
-// Format de l'URI: template:path/vers/file.tmpl[?contentCache=true&allowTemplateFromHeader=true]
+// CreateEndpoint creates a new template endpoint.
+// URI format: template:path/to/file.tmpl[?contentCache=true&allowTemplateFromHeader=true]
 func (c *TemplateComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	parsedURL, err := ParseURI(uri)
 	if err != nil {
-		return nil, fmt.Errorf("URI template invalid: %w", err)
+		return nil, fmt.Errorf("invalid template URI: %w", err)
 	}
 
-	// Le path can be soit in Opaque (after :) soit in Path (path absolu)
+	// The path can be in Opaque (after :) or in Path (absolute path).
 	// template:path/to/file → Opaque="path/to/file"
 	// template:/absolute/path/to/file → Path="/absolute/path/to/file"
 	var path string
@@ -70,7 +70,7 @@ func (c *TemplateComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	if path == "" {
-		return nil, fmt.Errorf("path de template missing in l'URI: %s", uri)
+		return nil, fmt.Errorf("template path missing in URI: %s", uri)
 	}
 
 	endpoint := &TemplateEndpoint{
@@ -81,28 +81,28 @@ func (c *TemplateComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 	query := parsedURL.Query()
 
-	// Option contentCache: cacher le template en mémoire
+	// Option contentCache: cache the template in memory.
 	if val := query.Get("contentCache"); val != "" {
 		if v, err := parseBool(val); err == nil {
 			endpoint.contentCache = v
 		}
 	}
 
-	// Option allowTemplateFromHeader: permettre de changer le template via header
+	// Option allowTemplateFromHeader: allow changing the template via header.
 	if val := query.Get("allowTemplateFromHeader"); val != "" {
 		if v, err := parseBool(val); err == nil {
 			endpoint.allowTemplateFromHeader = v
 		}
 	}
 
-	// Option encoding: spécifier l'encodage (default UTF-8)
+	// Option encoding: specify the encoding (default UTF-8).
 	if val := query.Get("encoding"); val != "" {
 		endpoint.encoding = val
 	} else {
 		endpoint.encoding = "UTF-8"
 	}
 
-	// Option startDelimiter/endDelimiter: délimiteurs personnalisés
+	// Option startDelimiter/endDelimiter: custom delimiters.
 	if val := query.Get("startDelimiter"); val != "" {
 		endpoint.startDelimiter = val
 	}
@@ -113,7 +113,7 @@ func (c *TemplateComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	return endpoint, nil
 }
 
-// parseBool parse une chaîne en booléen
+// parseBool parses a string as a boolean.
 func parseBool(s string) (bool, error) {
 	switch strings.ToLower(s) {
 	case "true", "1", "yes", "on":
@@ -121,7 +121,7 @@ func parseBool(s string) (bool, error) {
 	case "false", "0", "no", "off":
 		return false, nil
 	}
-	return false, fmt.Errorf("value booléenne invalid: %s", s)
+	return false, fmt.Errorf("invalid boolean value: %s", s)
 }
 
 // TemplateEndpoint represents a template endpoint
@@ -136,52 +136,52 @@ type TemplateEndpoint struct {
 	endDelimiter              string
 }
 
-// URI returns the URI de l'endpoint
+// URI returns the endpoint URI.
 func (e *TemplateEndpoint) URI() string {
 	return e.uri
 }
 
-// CreateProducer crée un producteur template
+// CreateProducer creates a template producer.
 func (e *TemplateEndpoint) CreateProducer() (Producer, error) {
 	return &TemplateProducer{
 		endpoint: e,
 	}, nil
 }
 
-// CreateConsumer n'est pas supported for le composant template
+// CreateConsumer returns an error: the template component does not support consumers.
 func (e *TemplateEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
-	return nil, fmt.Errorf("le composant template ne supporte pas les consommateurs")
+	return nil, fmt.Errorf("the template component does not support consumers")
 }
 
-// TemplateProducer represents a producteur template
+// TemplateProducer represents a template producer.
 type TemplateProducer struct {
 	endpoint     *TemplateEndpoint
-	templateText string // Template chargé en mémoire si contentCache=true
+	templateText string // Template loaded into memory when contentCache=true.
 }
 
-// Start starts the producteur template
+// Start starts the template producer.
 func (p *TemplateProducer) Start(ctx context.Context) error {
-	// Si contentCache est enabled, charger le template en mémoire
+	// If contentCache is enabled, load the template into memory.
 	if p.endpoint.contentCache {
 		content, err := os.ReadFile(p.endpoint.path)
 		if err != nil {
-			return fmt.Errorf("error during la reading du template %s: %w", p.endpoint.path, err)
+			return fmt.Errorf("error reading template %s: %w", p.endpoint.path, err)
 		}
 		p.templateText = string(content)
 	}
 	return nil
 }
 
-// Stop stops the producteur template
+// Stop stops the template producer.
 func (p *TemplateProducer) Stop() error {
-	// Nettoyer le cache en mémoire si nécessaire
+	// Clear the in-memory cache if needed.
 	p.templateText = ""
 	return nil
 }
 
-// Send effectue la transformation du template
+// Send performs the template transformation.
 func (p *TemplateProducer) Send(exchange *Exchange) error {
-	// Déterminer le path du template à utiliser
+	// Determine which template path to use.
 	templatePath := p.endpoint.path
 	if p.endpoint.allowTemplateFromHeader {
 		if v, ok := exchange.GetHeader(CamelTemplatePath); ok && v != "" {
@@ -202,39 +202,39 @@ func (p *TemplateProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Récupérer le contenu du template
+	// Retrieve the template content.
 	var templateContent string
 	var err error
 
 	if p.endpoint.contentCache && !p.endpoint.allowTemplateFromHeader {
-		// Utiliser le template en cache
+		// Use the cached template.
 		templateContent = p.templateText
 	} else {
-		// Charger from le file
+		// Load from file.
 		content, err := os.ReadFile(templatePath)
 		if err != nil {
-			return fmt.Errorf("error during la reading du template %s: %w", templatePath, err)
+			return fmt.Errorf("error reading template %s: %w", templatePath, err)
 		}
 		templateContent = string(content)
 	}
 
-	// Préparer les data for le template
+	// Prepare the template data.
 	data := prepareTemplateData(exchange)
 
-	// Parser et exécuter le template
+	// Parse and execute the template.
 	result, err := p.executeTemplate(templateContent, data, templatePath)
 	if err != nil {
-		return fmt.Errorf("error during l'exécution du template: %w", err)
+		return fmt.Errorf("error executing template: %w", err)
 	}
 
-	// Définir le results in le body du message
+	// Set the result as the message body.
 	exchange.GetIn().SetBody(result)
 	return nil
 }
 
-// executeTemplate parse et executesun template
+// executeTemplate parses and executes a template.
 func (p *TemplateProducer) executeTemplate(content string, data any, name string) (string, error) {
-	// Vérifier le cache si contentCache est enabled
+	// Check the cache if contentCache is enabled.
 	if p.endpoint.contentCache {
 		if tmpl := p.endpoint.component.getCachedTemplate(name); tmpl != nil {
 			var buf bytes.Buffer
@@ -245,17 +245,17 @@ func (p *TemplateProducer) executeTemplate(content string, data any, name string
 		}
 	}
 
-	// Créer les options de parsing
+	// Create the parsing options.
 	var tmpl *template.Template
 	var err error
 
-	// Utiliser le nom de base du file comme nom de template
+	// Use the base filename as the template name.
 	templateName := filepath.Base(name)
 	if templateName == "" {
 		templateName = "template"
 	}
 
-	// Si des délimiteurs personnalisés sont specifieds, les utiliser
+	// If custom delimiters are specified, use them.
 	if p.endpoint.startDelimiter != "" || p.endpoint.endDelimiter != "" {
 		startDelim := p.endpoint.startDelimiter
 		if startDelim == "" {
@@ -272,46 +272,46 @@ func (p *TemplateProducer) executeTemplate(content string, data any, name string
 	}
 
 	if err != nil {
-		return "", fmt.Errorf("error during parsing du template: %w", err)
+		return "", fmt.Errorf("error parsing template: %w", err)
 	}
 
-	// Mettre en cache si enabled
+	// Cache the template if enabled.
 	if p.endpoint.contentCache {
 		p.endpoint.component.cacheTemplate(name, tmpl)
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("error during l'exécution du template: %w", err)
+		return "", fmt.Errorf("error executing template: %w", err)
 	}
 
 	return buf.String(), nil
 }
 
-// getCachedTemplate retrievesun template du cache
+// getCachedTemplate retrieves a template from the cache.
 func (c *TemplateComponent) getCachedTemplate(name string) *template.Template {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.cache[name]
 }
 
-// cacheTemplate stocke un template in le cache
+// cacheTemplate stores a template in the cache.
 func (c *TemplateComponent) cacheTemplate(name string, tmpl *template.Template) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cache[name] = tmpl
 }
 
-// prepareTemplateData prépare les data for le template
+// prepareTemplateData prepares the data available to the template.
 func prepareTemplateData(exchange *Exchange) *TemplateData {
 	data := &TemplateData{}
 
-	// Informations on l'échange
-	data.Exchange.ID = fmt.Sprintf("%p", exchange) // ID unique basé on l'adresse mémoire
+	// Exchange information.
+	data.Exchange.ID = fmt.Sprintf("%p", exchange) // Unique ID based on memory address.
 	data.Exchange.Created = exchange.Created
 	data.Exchange.Properties = exchange.Properties
 
-	// body du message - convertir []byte en string si nécessaire
+	// Message body — convert []byte to string if necessary.
 	body := exchange.GetIn().GetBody()
 	switch v := body.(type) {
 	case []byte:
@@ -324,7 +324,7 @@ func prepareTemplateData(exchange *Exchange) *TemplateData {
 	// Headers
 	data.In.Headers = make(map[string]any)
 	for k, v := range exchange.GetIn().Headers {
-		// Convertir les []byte en string for les headers aussi
+		// Convert []byte to string for headers as well.
 		switch val := v.(type) {
 		case []byte:
 			data.In.Headers[k] = string(val)
@@ -337,10 +337,10 @@ func prepareTemplateData(exchange *Exchange) *TemplateData {
 	return data
 }
 
-// templateFuncs returns thes fonctions availables in les templates
+// templateFuncs returns the functions available in templates.
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		// Fonctions utilitaires
+		// Utility functions.
 		"upper":    strings.ToUpper,
 		"lower":    strings.ToLower,
 		"title":    strings.Title,
@@ -354,11 +354,11 @@ func templateFuncs() template.FuncMap {
 			return strings.ReplaceAll(s, old, new)
 		},
 		"replaceN": strings.Replace,
-		// Fonction for échapper JSON (requirede for l'exemple)
+		// Function for JSON-escaping values.
 		"json": func(v any) template.HTML {
 			switch val := v.(type) {
 			case string:
-				// Échapper les caractères spéciaux JSON
+				// Escape special JSON characters.
 				result := strings.ReplaceAll(val, "\\", "\\\\")
 				result = strings.ReplaceAll(result, "\"", "\\\"")
 				result = strings.ReplaceAll(result, "\n", "\\n")
@@ -369,7 +369,7 @@ func templateFuncs() template.FuncMap {
 				return template.HTML(toString(val))
 			}
 		},
-		// Fonction for marquer du contenu comme sûr (pas d'échappement HTML)
+		// Function for marking content as safe (no HTML escaping).
 		"safeHTML": func(v any) template.HTML {
 			switch val := v.(type) {
 			case string:
@@ -380,7 +380,7 @@ func templateFuncs() template.FuncMap {
 				return template.HTML(fmt.Sprintf("%v", val))
 			}
 		},
-		// Fonctions de date
+		// Date functions.
 		"now": time.Now,
 		"formatDate": func(layout string, t time.Time) string {
 			return t.Format(layout)
@@ -388,7 +388,7 @@ func templateFuncs() template.FuncMap {
 		"formatTime": func(layout string, t time.Time) string {
 			return t.Format(layout)
 		},
-		// Fonctions de type
+		// Type conversion functions.
 		"toString": toString,
 		"toInt": func(v any) int {
 			switch val := v.(type) {
@@ -423,7 +423,7 @@ func templateFuncs() template.FuncMap {
 	}
 }
 
-// toString convertit n'importe quelle value en chaîne
+// toString converts any value to a string.
 func toString(v any) string {
 	return fmt.Sprintf("%v", v)
 }

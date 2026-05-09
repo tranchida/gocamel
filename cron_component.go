@@ -13,39 +13,39 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// En-heads Cron posés on chaque Exchange déclenché.
-// Correspondent aux en-heads du composant Apache Camel Cron.
+// Cron headers set on each triggered Exchange.
+// Match the headers of the Apache Camel Cron component.
 const (
-	CronFireTime          = "fireTime"          // Heure réelle de déclenchement
-	CronScheduledFireTime = "scheduledFireTime"  // Heure planifiée de déclenchement
-	CronNextFireTime      = "nextFireTime"       // Prochain déclenchement planifié
-	CronPreviousFireTime  = "previousFireTime"   // Déclenchement précédent (zero si premier)
-	CronTriggerName       = "triggerName"        // Nom du trigger
-	CronTriggerGroup      = "triggerGroup"       // Groupe du trigger
-	CronRefireCount       = "refireCount"        // Nombre de déclenchements effectués
+	CronFireTime          = "fireTime"          // Actual trigger fire time
+	CronScheduledFireTime = "scheduledFireTime"  // Scheduled trigger fire time
+	CronNextFireTime      = "nextFireTime"       // Next scheduled trigger time
+	CronPreviousFireTime  = "previousFireTime"   // Previous trigger time (zero if first)
+	CronTriggerName       = "triggerName"        // Trigger name
+	CronTriggerGroup      = "triggerGroup"       // Trigger group
+	CronRefireCount       = "refireCount"        // Number of times the trigger has fired
 )
 
-// CronComponent implémente un scheduler cron shared between toutes ses routes,
-// inspiré du composant Apache Camel .
+// CronComponent implements a cron scheduler shared across all its routes,
+// inspired by the Apache Camel Cron component.
 //
-// Tous les CronEndpoint créés from le même CronComponent partagent
-// une seule instance de scheduler (comportement Apache Camel).
+// All CronEndpoints created from the same CronComponent share
+// a single scheduler instance (Apache Camel behavior).
 type CronComponent struct {
 	mu        sync.Mutex
 	scheduler *cron.Cron
 	started   bool
 }
 
-// NewCronComponent crée un CronComponent with un scheduler shared.
-// Le scheduler utilise des expressions cron à 6 champs (secondes incluses),
-// compatibles with le format  Java :
+// NewCronComponent creates a CronComponent with a shared scheduler.
+// The scheduler uses 6-field cron expressions (seconds included),
+// compatible with the Java format:
 //
-//	┌───────────── secondes (0-59)
+//	┌───────────── seconds (0-59)
 //	│ ┌───────────── minutes (0-59)
-//	│ │ ┌───────────── heures (0-23)
-//	│ │ │ ┌───────────── jour du mois (1-31)
-//	│ │ │ │ ┌───────────── mois (1-12)
-//	│ │ │ │ │ ┌───────────── jour de la semaine (0-6, 0=dimanche)
+//	│ │ ┌───────────── hours (0-23)
+//	│ │ │ ┌───────────── day of month (1-31)
+//	│ │ │ │ ┌───────────── month (1-12)
+//	│ │ │ │ │ ┌───────────── day of week (0-6, 0=Sunday)
 //	│ │ │ │ │ │
 //	* * * * * *
 func NewCronComponent() *CronComponent {
@@ -54,7 +54,7 @@ func NewCronComponent() *CronComponent {
 	}
 }
 
-// enoneStarted starts the scheduler shared si ce n'est pas encore fait.
+// enoneStarted starts the shared scheduler if it has not been started yet.
 func (c *CronComponent) enoneStarted() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -64,24 +64,24 @@ func (c *CronComponent) enoneStarted() {
 	}
 }
 
-// CreateEndpoint crée un CronEndpoint à partir d'une URI.
+// CreateEndpoint creates a CronEndpoint from a URI.
 //
-// Formats supporteds :
+// Supported formats:
 //
 //	cron://timerName?cron=0+*+*+*+*+?
 //	cron://groupName/timerName?cron=0+*+*+*+*+?
 //	cron://timerName?trigger.repeatInterval=5000
 //
-// Options URI :
+// URI options:
 //
-//	cron                  Expression cron 6 champs (espaces encodés en "+")
-//	trigger.timeZone      Timezone IANA (ex: Europe/Paris)
-//	trigger.repeatInterval Intervalle en ms for SimpleTrigger (without cron)
-//	trigger.repeatCount   Nombre de déclenchements max (-1 = infini, default)
-//	triggerStartDelay     Délai en ms avant le premier déclenchement (default: 500)
-//	deleteJob             Supprimer le job à l'arrêt (default: true)
-//	pauseJob              Mettre en pause au lieu de supprimer (default: false)
-//	stateful              Empêcher les exécutions concurrentes (default: false)
+//	cron                  6-field cron expression (spaces encoded as "+")
+//	trigger.timeZone      IANA timezone (e.g. Europe/Paris)
+//	trigger.repeatInterval Interval in ms for SimpleTrigger (without cron)
+//	trigger.repeatCount   Max number of triggers (-1 = infinite, default)
+//	triggerStartDelay     Delay in ms before first trigger (default: 500)
+//	deleteJob             Remove the job on stop (default: true)
+//	pauseJob              Pause instead of removing (default: false)
+//	stateful              Prevent concurrent executions (default: false)
 func (c *CronComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -96,12 +96,12 @@ func (c *CronComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		name = path
 	}
 	if name == "" {
-		return nil, errors.New("le nom du trigger cron est required (ex: cron://monTimer)")
+		return nil, errors.New("cron trigger name is required (e.g. cron://myTimer)")
 	}
 
 	q := u.Query()
 
-	// triggerStartDelay en millisecondes (default 500ms)
+	// triggerStartDelay in milliseconds (default 500ms)
 	triggerStartDelay := 500 * time.Millisecond
 	if s := q.Get("triggerStartDelay"); s != "" {
 		if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
@@ -109,7 +109,7 @@ func (c *CronComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 
-	// repeatCount : -1 = infini
+	// repeatCount: -1 = infinite
 	repeatCount := int64(-1)
 	if s := q.Get("trigger.repeatCount"); s != "" {
 		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
@@ -117,7 +117,7 @@ func (c *CronComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 
-	// repeatInterval en millisecondes (SimpleTrigger)
+	// repeatInterval in milliseconds (SimpleTrigger)
 	repeatInterval := int64(0)
 	if s := q.Get("trigger.repeatInterval"); s != "" {
 		if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
@@ -125,7 +125,7 @@ func (c *CronComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 
-	// Les espaces in les expressions cron  sont encodés en "+" in les URI
+	// Spaces in cron expressions are encoded as "+" in URIs
 	cronExpr := strings.ReplaceAll(q.Get("cron"), "+", " ")
 
 	return &CronEndpoint{
@@ -148,30 +148,30 @@ func (c *CronComponent) CreateEndpoint(uri string) (Endpoint, error) {
 // Endpoint
 // ---------------------------------------------------------------------------
 
-// CronEndpoint represents a endpoint  configured.
+// CronEndpoint represents a configured cron endpoint.
 type CronEndpoint struct {
 	uri               string
 	group             string
 	name              string
-	cronExpr          string        // CronTrigger si non vide
-	timezone          string        // IANA timezone (ex: "Europe/Paris")
-	repeatInterval    int64         // SimpleTrigger : intervalle en ms
-	repeatCount       int64         // SimpleTrigger : -1 = infini
-	triggerStartDelay time.Duration // délai avant premier déclenchement
-	deleteJob         bool          // supprimer le job à l'arrêt
-	pauseJob          bool          // mettre en pause au lieu de supprimer
-	stateful          bool          // empêcher les exécutions concurrentes
+	cronExpr          string        // CronTrigger if non-empty
+	timezone          string        // IANA timezone (e.g. "Europe/Paris")
+	repeatInterval    int64         // SimpleTrigger: interval in ms
+	repeatCount       int64         // SimpleTrigger: -1 = infinite
+	triggerStartDelay time.Duration // delay before first trigger
+	deleteJob         bool          // remove job on stop
+	pauseJob          bool          // pause instead of removing
+	stateful          bool          // prevent concurrent executions
 	component         *CronComponent
 }
 
 func (e *CronEndpoint) URI() string { return e.uri }
 
-// CreateProducer returns an error :  ne supporte que les consommateurs.
+// CreateProducer returns an error: the cron component only supports consumers.
 func (e *CronEndpoint) CreateProducer() (Producer, error) {
-	return nil, errors.New("le composant cron ne supporte pas les producteurs")
+	return nil, errors.New("the cron component does not support producers")
 }
 
-// CreateConsumer crée un consommateur .
+// CreateConsumer creates a cron consumer.
 func (e *CronEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &CronConsumer{
 		endpoint:  e,
@@ -183,27 +183,27 @@ func (e *CronEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 // Consumer
 // ---------------------------------------------------------------------------
 
-// CronConsumer déclenche le processor according to l'expression cron ou l'intervalle configured.
+// CronConsumer triggers the processor according to the cron expression or configured interval.
 type CronConsumer struct {
 	endpoint  *CronEndpoint
 	processor Processor
 
-	// CronTrigger : input in le scheduler shared
+	// CronTrigger: entry in the shared scheduler
 	mu      sync.Mutex
 	entryID cron.EntryID
 	added   bool
 
-	// État shared
-	fireCount    atomic.Int64             // compteur de déclenchements (refireCount header)
-	paused       atomic.Bool              // true quand pauseJob=true et Stop() called
-	prevFireTime atomic.Pointer[time.Time] // heure réelle du dernier déclenchement
+	// Shared state
+	fireCount    atomic.Int64             // fire count (refireCount header)
+	paused       atomic.Bool              // true when pauseJob=true and Stop() was called
+	prevFireTime atomic.Pointer[time.Time] // actual time of last trigger
 
-	cancel context.CancelFunc // arrête la goroutine de démarrage ou le ticker SimpleTrigger
+	cancel context.CancelFunc // cancels the startup goroutine or SimpleTrigger ticker
 }
 
-// buildSpec construit l'expression cron for robfig/cron (CronTrigger uniquement).
-// returns an error si ni cron ni repeatInterval n'est configured.
-// Préfixe "TZ=..." addingé si trigger.timeZone est défini.
+// buildSpec builds the cron expression for robfig/cron (CronTrigger only).
+// Returns an error if neither cron nor repeatInterval is configured.
+// Prepends "TZ=..." if trigger.timeZone is set.
 func (c *CronConsumer) buildSpec() (string, error) {
 	ep := c.endpoint
 	switch {
@@ -214,14 +214,14 @@ func (c *CronConsumer) buildSpec() (string, error) {
 		}
 		return spec, nil
 	case ep.repeatInterval > 0:
-		// SimpleTrigger n'utilise pas robfig/cron
-		return "", errors.New("cron: buildSpec() ne s'applique pas au SimpleTrigger")
+		// SimpleTrigger does not use robfig/cron
+		return "", errors.New("cron: buildSpec() does not apply to SimpleTrigger")
 	default:
-		return "", errors.New("cron: cron ou trigger.repeatInterval est required")
+		return "", errors.New("cron: cron or trigger.repeatInterval is required")
 	}
 }
 
-// Start starts the consommateur .
+// Start starts the cron consumer.
 func (c *CronConsumer) Start(ctx context.Context) error {
 	ep := c.endpoint
 	if ep.cronExpr != "" {
@@ -230,10 +230,10 @@ func (c *CronConsumer) Start(ctx context.Context) error {
 	if ep.repeatInterval > 0 {
 		return c.startSimpleTrigger(ctx)
 	}
-	return errors.New("cron: cron ou trigger.repeatInterval est required")
+	return errors.New("cron: cron or trigger.repeatInterval is required")
 }
 
-// startCronTrigger registers job in le scheduler robfig/cron shared.
+// startCronTrigger registers a job in the shared robfig/cron scheduler.
 func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 	spec, err := c.buildSpec()
 	if err != nil {
@@ -310,8 +310,8 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 	return nil
 }
 
-// startSimpleTrigger démarre un ticker Go for les déclenchements à intervalle fixe.
-// Contrairement à robfig/cron, cette approche supporte les intervalles sub-secondes.
+// startSimpleTrigger starts a Go ticker for fixed-interval triggers.
+// Unlike robfig/cron, this approach supports sub-second intervals.
 func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 	ep := c.endpoint
 	interval := time.Duration(ep.repeatInterval) * time.Millisecond
@@ -344,7 +344,7 @@ func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 	return nil
 }
 
-// fireSimpleJob executes processor for un déclenchement SimpleTrigger.
+// fireSimpleJob executes the processor for a SimpleTrigger fire.
 func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 	if c.paused.Load() {
 		return
@@ -352,16 +352,16 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 
 	ep := c.endpoint
 
-	// Gestion du repeatCount
+	// Handle repeatCount
 	n := c.fireCount.Add(1)
 	if ep.repeatCount >= 0 && n > ep.repeatCount {
 		return
 	}
 	if ep.repeatCount >= 0 && n == ep.repeatCount {
-		// Dernier déclenchement authorized : arrêter le ticker après exécution
+		// Last authorized trigger: stop the ticker after execution
 		defer func() {
 			select {
-			case <-gCtx.Done(): // déjà annulé
+			case <-gCtx.Done(): // already cancelled
 			default:
 				c.cancel()
 			}
@@ -392,22 +392,22 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 	c.prevFireTime.Store(&t)
 }
 
-// Stop stops the consommateur according to les options deleteJob / pauseJob.
+// Stop stops the consumer according to the deleteJob / pauseJob options.
 func (c *CronConsumer) Stop() error {
 	ep := c.endpoint
 
 	if ep.pauseJob {
-		// Mettre en pause : le scheduler continue mais les jobs sont des no-ops
+		// Pause: the scheduler continues but jobs become no-ops
 		c.paused.Store(true)
 		return nil
 	}
 
-	// Arrêt complet : annuler la goroutine de démarrage ou le ticker
+	// Full stop: cancel the startup goroutine or the ticker
 	if c.cancel != nil {
 		c.cancel()
 	}
 
-	// for CronTrigger, supprimer l'input du scheduler
+	// For CronTrigger, remove the entry from the scheduler
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.added {

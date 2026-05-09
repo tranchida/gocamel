@@ -10,10 +10,10 @@ import (
 func main() {
 	context := gocamel.NewCamelContext()
 
-	// Enregistrement du composant HTTP
+	// Register the HTTP component.
 	context.AddComponent("http", gocamel.NewHTTPComponent())
 
-	// Création d'une route qui écoute sur le port 8080 et renvoie le message reçu
+	// Create a route that listens on port 8080 and echoes the received message.
 	route, err := context.CreateRouteBuilder().
 		From("http://localhost:8080/echo").
 		SetID("myroute").
@@ -25,7 +25,7 @@ func main() {
 		SetHeader("X-Processed-At", time.Now().Format(time.RFC3339)).
 		Build()
 	if err != nil {
-		fmt.Printf("Erreur création route: %v\n", err)
+		fmt.Printf("Error creating route: %v\n", err)
 		return
 	}
 
@@ -35,9 +35,9 @@ func main() {
 	mgmt := gocamel.NewManagementServer(context)
 	mgmt.Start(":8081")
 
-	fmt.Println("Serveur démarré sur http://localhost:8080/echo")
-	fmt.Println("Appuyez sur Ctrl+C pour arrêter")
+	fmt.Println("Server started on http://localhost:8080/echo")
+	fmt.Println("Press Ctrl+C to stop")
 
-	// Attente indéfinie
+	// Wait indefinitely.
 	select {}
 }

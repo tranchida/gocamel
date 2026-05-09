@@ -15,13 +15,13 @@ import (
 const (
 	CamelMongoDbDatabase    = "CamelMongoDbDatabase"    // Name of the database
 	CamelMongoDbCollection  = "CamelMongoDbCollection"  // Name of the collection
-	CamelMongoDbOperation   = "CamelMongoDbOperation"   // Opération: find, findOne, insert, insertOne, save, update, remove, count
+	CamelMongoDbOperation   = "CamelMongoDbOperation"   // Operation: find, findOne, insert, insertOne, save, update, remove, count
 	CamelMongoDbResultTotal = "CamelMongoDbResultTotal" // Total number of documents
 	CamelMongoDbOid         = "CamelMongoDbOid"         // Document ObjectID
 	CamelMongoDbCriteria    = "CamelMongoDbCriteria"    // Criteria/filter for search operations
 	CamelMongoDbLimit       = "CamelMongoDbLimit"       // Limit for find operations
 	CamelMongoDbSkip        = "CamelMongoDbSkip"        // Number of documents to skip
-	CamelMongoDbSort        = "CamelMongoDbSort"        // Tri des résultats (ex: {"field": 1} ou {"field": -1})
+	CamelMongoDbSort        = "CamelMongoDbSort"        // Sort results (e.g. {"field": 1} or {"field": -1})
 )
 
 // MongoDBConnection represents a shared MongoDB connection.
@@ -82,14 +82,14 @@ func (c *MongoDBComponent) lookup(name string) (*MongoDBConnection, bool) {
 //
 // Options:
 //
-//	database       Nom de la base de données
-//	collection     Nom de la collection
-//	operation      Opération par défaut (find, findOne, insert, insertOne, save, update, remove, count)
-// Name of a registered connection
+//	database       Name of the database
+//	collection     Name of the collection
+//	operation      Default operation (find, findOne, insert, insertOne, save, update, remove, count)
+//	connectionRef  Name of a registered connection
 func (c *MongoDBComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
-		return nil, fmt.Errorf("URI mongodb invalide: %w", err)
+		return nil, fmt.Errorf("invalid mongodb URI: %w", err)
 	}
 
 	name := u.Host
@@ -105,7 +105,7 @@ func (c *MongoDBComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 	conn, ok := c.lookup(name)
 	if !ok {
-		return nil, fmt.Errorf("connection '%s' non trouvée: enregistrez-la via RegisterConnection() ou SetDefaultConnection()", name)
+		return nil, fmt.Errorf("connection '%s' not found: register it via RegisterConnection() or SetDefaultConnection()", name)
 	}
 
 	dbConfig := GetConfigValue(u, "database")
@@ -146,11 +146,11 @@ func (e *MongoDBEndpoint) CreateProducer() (Producer, error) {
 
 // CreateConsumer returns an error: MongoDB component is producer-only.
 func (e *MongoDBEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
-	return nil, fmt.Errorf("le composant mongodb ne supporte pas les consommateurs")
+	return nil, fmt.Errorf("the mongodb component does not support consumers")
 }
 
 // MongoDBProducer executes MongoDB operations.
-// Thread-safe: ne stocke pas d'état mutable lié aux messages.
+// Thread-safe: does not store mutable message-related state.
 type MongoDBProducer struct {
 	endpoint *MongoDBEndpoint
 	client   *mongo.Client
@@ -160,12 +160,12 @@ type MongoDBProducer struct {
 func (p *MongoDBProducer) Start(ctx context.Context) error {
 	p.client = p.endpoint.connection.client
 	if p.client == nil {
-		return fmt.Errorf("aucun client MongoDB disponible pour la connexion '%s'", p.endpoint.connName)
+		return fmt.Errorf("no MongoDB client available for connection '%s'", p.endpoint.connName)
 	}
 	return nil
 }
 
-// Stop arrête le producteur.
+// Stop stops the producer.
 // Note: The MongoDB client is not closed as it is managed by MongoDBConnection.
 func (p *MongoDBProducer) Stop() error {
 	return nil
@@ -194,10 +194,10 @@ func (p *MongoDBProducer) getCollection(exchange *Exchange) (*mongo.Collection, 
 	}
 
 	if dbName == "" {
-		return nil, fmt.Errorf("aucune base de données configurée pour l'opération MongoDB (utilisez 'database' dans l'URI ou le header CamelMongoDbDatabase)")
+		return nil, fmt.Errorf("no database configured for MongoDB operation (use 'database' in the URI or the CamelMongoDbDatabase header)")
 	}
 	if collName == "" {
-		return nil, fmt.Errorf("aucune collection configurée pour l'opération MongoDB (utilisez 'collection' dans l'URI ou le header CamelMongoDbCollection)")
+		return nil, fmt.Errorf("no collection configured for MongoDB operation (use 'collection' in the URI or the CamelMongoDbCollection header)")
 	}
 
 	return p.client.Database(dbName).Collection(collName), nil
@@ -205,7 +205,7 @@ func (p *MongoDBProducer) getCollection(exchange *Exchange) (*mongo.Collection, 
 
 // getOperation returns the operation to execute.
 func (p *MongoDBProducer) getOperation(exchange *Exchange) string {
-	// Priorité au header
+	// Header takes priority
 	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbOperation); ok {
 		if s, ok := v.(string); ok && s != "" {
 			return strings.ToLower(s)
@@ -223,7 +223,7 @@ func (p *MongoDBProducer) Send(exchange *Exchange) error {
 
 	operation := p.getOperation(exchange)
 	if operation == "" {
-		return fmt.Errorf("aucune opération MongoDB configurée (utilisez 'operation' dans l'URI ou le header CamelMongoDbOperation)")
+		return fmt.Errorf("no MongoDB operation configured (use 'operation' in the URI or the CamelMongoDbOperation header)")
 	}
 
 	coll, err := p.getCollection(exchange)
@@ -249,12 +249,12 @@ func (p *MongoDBProducer) Send(exchange *Exchange) error {
 	case "count":
 		return p.execCount(ctx, exchange, coll)
 	default:
-		return fmt.Errorf("opération MongoDB non supportée: %s", operation)
+		return fmt.Errorf("unsupported MongoDB operation: %s", operation)
 	}
 }
 
-// execFind exécute une recherche multiple (find).
-// Supporte limit, skip, sort via headers CamelMongoDbLimit, CamelMongoDbSkip, CamelMongoDbSort.
+// execFind executes a multi-document search (find).
+// Supports limit, skip, and sort via the CamelMongoDbLimit, CamelMongoDbSkip, CamelMongoDbSort headers.
 func (p *MongoDBProducer) execFind(ctx context.Context, exchange *Exchange, coll *mongo.Collection) error {
 	filter, err := p.extractFilter(exchange)
 	if err != nil {
@@ -263,7 +263,7 @@ func (p *MongoDBProducer) execFind(ctx context.Context, exchange *Exchange, coll
 
 	opts := options.Find()
 
-	// Support pour limit via header
+	// Limit support via header
 	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbLimit); ok {
 		switch limit := v.(type) {
 		case int:
@@ -277,7 +277,7 @@ func (p *MongoDBProducer) execFind(ctx context.Context, exchange *Exchange, coll
 		}
 	}
 
-	// Support pour skip via header
+	// Skip support via header
 	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbSkip); ok {
 		switch skip := v.(type) {
 		case int:
@@ -291,7 +291,7 @@ func (p *MongoDBProducer) execFind(ctx context.Context, exchange *Exchange, coll
 		}
 	}
 
-	// Support pour sort via header (map[string]interface{} ou bson.M)
+	// Sort support via header (map[string]interface{} or bson.M)
 	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbSort); ok {
 		switch sort := v.(type) {
 		case map[string]interface{}:
@@ -303,13 +303,13 @@ func (p *MongoDBProducer) execFind(ctx context.Context, exchange *Exchange, coll
 
 	cursor, err := coll.Find(ctx, filter, opts)
 	if err != nil {
-		return fmt.Errorf("erreur lors du find: %w", err)
+		return fmt.Errorf("find error: %w", err)
 	}
 	defer cursor.Close(ctx)
 
 	var results []map[string]interface{}
 	if err := cursor.All(ctx, &results); err != nil {
-		return fmt.Errorf("erreur lors du décodage des résultats: %w", err)
+		return fmt.Errorf("result decoding error: %w", err)
 	}
 
 	exchange.GetOut().SetHeader(CamelMongoDbResultTotal, len(results))
@@ -317,7 +317,7 @@ func (p *MongoDBProducer) execFind(ctx context.Context, exchange *Exchange, coll
 	return nil
 }
 
-// execFindOne exécute une recherche unique (findOne).
+// execFindOne executes a single-document search (findOne).
 func (p *MongoDBProducer) execFindOne(ctx context.Context, exchange *Exchange, coll *mongo.Collection) error {
 	filter, err := p.extractFilter(exchange)
 	if err != nil {
@@ -333,26 +333,26 @@ func (p *MongoDBProducer) execFindOne(ctx context.Context, exchange *Exchange, c
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("erreur lors du findOne: %w", err)
+		return fmt.Errorf("findOne error: %w", err)
 	}
 
 	exchange.GetOut().SetBody(result)
 	return nil
 }
 
-// execInsert exécute un insertMany.
+// execInsert executes an insertMany.
 func (p *MongoDBProducer) execInsert(ctx context.Context, exchange *Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
 	docs, ok := body.([]interface{})
 	if !ok {
-		// Essaye de convertir []map[string]interface{}
+		// Try converting []map[string]interface{}
 		if maps, ok := body.([]map[string]interface{}); ok {
 			docs = make([]interface{}, len(maps))
 			for i, m := range maps {
 				docs[i] = m
 			}
 		} else {
-			return fmt.Errorf("insert: le body doit être []interface{} ou []map[string]interface{}, reçu %T", body)
+			return fmt.Errorf("insert: body must be []interface{} or []map[string]interface{}, got %T", body)
 		}
 	}
 
@@ -364,7 +364,7 @@ func (p *MongoDBProducer) execInsert(ctx context.Context, exchange *Exchange, co
 
 	result, err := coll.InsertMany(ctx, docs)
 	if err != nil {
-		return fmt.Errorf("erreur lors de l'insertMany: %w", err)
+		return fmt.Errorf("insertMany error: %w", err)
 	}
 
 	exchange.GetOut().SetHeader(CamelMongoDbResultTotal, len(result.InsertedIDs))
@@ -372,17 +372,17 @@ func (p *MongoDBProducer) execInsert(ctx context.Context, exchange *Exchange, co
 	return nil
 }
 
-// execInsertOne exécute un insertOne.
+// execInsertOne executes an insertOne.
 func (p *MongoDBProducer) execInsertOne(ctx context.Context, exchange *Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
 	doc, ok := body.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("insertOne: le body doit être map[string]interface{}, reçu %T", body)
+		return fmt.Errorf("insertOne: body must be map[string]interface{}, got %T", body)
 	}
 
 	result, err := coll.InsertOne(ctx, doc)
 	if err != nil {
-		return fmt.Errorf("erreur lors de l'insertOne: %w", err)
+		return fmt.Errorf("insertOne error: %w", err)
 	}
 
 	exchange.GetOut().SetHeader(CamelMongoDbOid, result.InsertedID)
@@ -390,17 +390,17 @@ func (p *MongoDBProducer) execInsertOne(ctx context.Context, exchange *Exchange,
 	return nil
 }
 
-// execSave exécute un replaceOne avec upsert=true (save/upsert).
+// execSave executes a replaceOne with upsert=true (save/upsert).
 // If the document has an _id, use replaceOne with upsert.
 // Otherwise, use insertOne to create a new document.
 func (p *MongoDBProducer) execSave(ctx context.Context, exchange *Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
 	doc, ok := body.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("save: le body doit être map[string]interface{}, reçu %T", body)
+		return fmt.Errorf("save: body must be map[string]interface{}, got %T", body)
 	}
 
-	// Extrait le _id pour le filtre
+	// Extract _id for the filter
 	if id, ok := doc["_id"]; ok && id != nil {
 		filter := bson.M{"_id": id}
 		delete(doc, "_id")
@@ -408,7 +408,7 @@ func (p *MongoDBProducer) execSave(ctx context.Context, exchange *Exchange, coll
 		opts := options.Replace().SetUpsert(true)
 		result, err := coll.ReplaceOne(ctx, filter, doc, opts)
 		if err != nil {
-			return fmt.Errorf("erreur lors du save (replaceOne): %w", err)
+			return fmt.Errorf("save (replaceOne) error: %w", err)
 		}
 
 		exchange.GetOut().SetHeader(CamelMongoDbResultTotal, result.ModifiedCount+result.UpsertedCount)
@@ -422,7 +422,7 @@ func (p *MongoDBProducer) execSave(ctx context.Context, exchange *Exchange, coll
 	// No _id: it is a new document, insert it
 	result, err := coll.InsertOne(ctx, doc)
 	if err != nil {
-		return fmt.Errorf("erreur lors du save (insertOne): %w", err)
+		return fmt.Errorf("save (insertOne) error: %w", err)
 	}
 
 	exchange.GetOut().SetHeader(CamelMongoDbResultTotal, 1)
@@ -431,25 +431,25 @@ func (p *MongoDBProducer) execSave(ctx context.Context, exchange *Exchange, coll
 	return nil
 }
 
-// execUpdate exécute un updateMany.
-// Attend soit:
-// - Un body de type map[string]interface{} avec "filter" et "update"
-// - Un body avec le document "update" et le filtre dans le header CamelMongoDbCriteria
+// execUpdate executes an updateMany.
+// Expects either:
+// - A body of type map[string]interface{} with "filter" and "update" keys
+// - A body with the update document and the filter in the CamelMongoDbCriteria header
 func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
 
-	// Récupère le filtre - priorité au header, sinon dans le body
+	// Get the filter — header takes priority, then body
 	var filter interface{}
 	if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
 		filter = crit
 	}
 
-	// Récupère l'update depuis le body
+	// Get the update from the body
 	var update interface{}
 
 	switch v := body.(type) {
 	case map[string]interface{}:
-		// Vérifie si le body contient "filter" et "update"
+		// Check if body contains "filter" and "update"
 		if rawFilter, exists := v["filter"]; exists {
 			filter = rawFilter
 		}
@@ -461,7 +461,7 @@ func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *Exchange, co
 			update = v
 		}
 	case bson.M:
-		// Même logique pour bson.M
+		// Same logic for bson.M
 		if rawFilter, exists := v["filter"]; exists {
 			filter = rawFilter
 		}
@@ -472,21 +472,21 @@ func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *Exchange, co
 			update = v
 		}
 	default:
-		// Utilise le body tel quel comme update
+		// Use the body as-is for the update
 		update = v
 	}
 
-	// Vérifications
+	// Validation
 	if filter == nil {
 		filter = bson.M{}
 	}
 	if update == nil {
-		return fmt.Errorf("update: aucun document d'update trouvé (utilisez le body ou CamelMongoDbCriteria pour le filtre)")
+		return fmt.Errorf("update: no update document found (use the body or CamelMongoDbCriteria for the filter)")
 	}
 
 	result, err := coll.UpdateMany(ctx, filter, update)
 	if err != nil {
-		return fmt.Errorf("erreur lors de l'updateMany: %w", err)
+		return fmt.Errorf("updateMany error: %w", err)
 	}
 
 	exchange.GetOut().SetHeader(CamelMongoDbResultTotal, result.ModifiedCount)
@@ -494,17 +494,17 @@ func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *Exchange, co
 	return nil
 }
 
-// execRemove exécute un deleteMany.
+// execRemove executes a deleteMany.
 func (p *MongoDBProducer) execRemove(ctx context.Context, exchange *Exchange, coll *mongo.Collection) error {
-	// Sécurité : refuser les filtres avec une erreur explicite au lieu de supprimer tout
+	// Safety: reject invalid filters with an explicit error rather than deleting everything
 	filter, err := p.extractFilter(exchange)
 	if err != nil {
-		return fmt.Errorf("remove: filtre invalide: %w", err)
+		return fmt.Errorf("remove: invalid filter: %w", err)
 	}
 
 	result, err := coll.DeleteMany(ctx, filter)
 	if err != nil {
-		return fmt.Errorf("erreur lors du deleteMany: %w", err)
+		return fmt.Errorf("deleteMany error: %w", err)
 	}
 
 	exchange.GetOut().SetHeader(CamelMongoDbResultTotal, result.DeletedCount)
@@ -512,7 +512,7 @@ func (p *MongoDBProducer) execRemove(ctx context.Context, exchange *Exchange, co
 	return nil
 }
 
-// execCount exécute un countDocuments.
+// execCount executes a countDocuments.
 func (p *MongoDBProducer) execCount(ctx context.Context, exchange *Exchange, coll *mongo.Collection) error {
 	filter, err := p.extractFilter(exchange)
 	if err != nil {
@@ -521,7 +521,7 @@ func (p *MongoDBProducer) execCount(ctx context.Context, exchange *Exchange, col
 
 	count, err := coll.CountDocuments(ctx, filter)
 	if err != nil {
-		return fmt.Errorf("erreur lors du countDocuments: %w", err)
+		return fmt.Errorf("countDocuments error: %w", err)
 	}
 
 	exchange.GetOut().SetHeader(CamelMongoDbResultTotal, count)
@@ -529,12 +529,12 @@ func (p *MongoDBProducer) execCount(ctx context.Context, exchange *Exchange, col
 	return nil
 }
 
-// extractFilter extrait le filtre depuis le body de l'Exchange.
-// Priority au header CamelMongoDbCriteria s'il existe, sinon utilise le body.
-// If the body is nil or empty string, return bson.M{} (all documents).
-// If the body is an invalid JSON string or unsupported type, return an error.
+// extractFilter extracts the filter from the Exchange body.
+// The CamelMongoDbCriteria header takes priority; the body is used as fallback.
+// If the body is nil or an empty string, bson.M{} (all documents) is returned.
+// If the body is an invalid JSON string or an unsupported type, an error is returned.
 func (p *MongoDBProducer) extractFilter(exchange *Exchange) (interface{}, error) {
-	// Priorité au header de critère s'il existe
+	// Criteria header takes priority
 	if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
 		return crit, nil
 	}
@@ -555,19 +555,19 @@ func (p *MongoDBProducer) extractFilter(exchange *Exchange) (interface{}, error)
 		if v == "" {
 			return bson.M{}, nil
 		}
-		// Essaie de parser la string comme JSON BSON
+		// Try parsing the string as BSON JSON
 		var res bson.M
 		if err := bson.UnmarshalExtJSON([]byte(v), true, &res); err != nil {
-			return nil, fmt.Errorf("impossible de parser le filtre JSON: %w", err)
+			return nil, fmt.Errorf("cannot parse JSON filter: %w", err)
 		}
 		return res, nil
 	default:
-		return nil, fmt.Errorf("type de filtre non supporté: %T", v)
+		return nil, fmt.Errorf("unsupported filter type: %T", v)
 	}
 }
 
 // CreateMongoDBConnection creates a new MongoDB connection.
-// Cette fonction doit être appelée par l'utilisateur avant d'utiliser le composant.
+// This function must be called by the user before using the component.
 //
 // Exemple:
 //

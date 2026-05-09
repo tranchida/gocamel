@@ -37,24 +37,24 @@ type OpenAIEndpoint struct {
 	comp *OpenAIComponent
 }
 
-// URI returns the URI de l'endpoint
+// URI returns the endpoint URI.
 func (e *OpenAIEndpoint) URI() string {
 	return e.uri
 }
 
-// CreateProducer crée un producteur OpenAI
+// CreateProducer creates an OpenAI producer.
 func (e *OpenAIEndpoint) CreateProducer() (Producer, error) {
 	return &OpenAIProducer{
 		endpoint: e,
 	}, nil
 }
 
-// CreateConsumer crée un consommateur OpenAI
+// CreateConsumer returns an error: OpenAI component supports Producer mode only.
 func (e *OpenAIEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
-	return nil, fmt.Errorf("le composant OpenAI ne supporte pas le mode Consumer (uniquement Producer)")
+	return nil, fmt.Errorf("the OpenAI component does not support Consumer mode (Producer only)")
 }
 
-// OpenAIProducer represents a producteur OpenAI
+// OpenAIProducer represents an OpenAI producer.
 type OpenAIProducer struct {
 	endpoint *OpenAIEndpoint
 	client   *openai.Client
@@ -87,7 +87,7 @@ func (p *OpenAIProducer) Stop() error {
 
 func (p *OpenAIProducer) Send(exchange *Exchange) error {
 	if p.client == nil {
-		return fmt.Errorf("le producteur OpenAI n'a pas été démarré")
+		return fmt.Errorf("the OpenAI producer has not been started")
 	}
 
 	var prompt string
@@ -114,15 +114,15 @@ func (p *OpenAIProducer) Send(exchange *Exchange) error {
 	)
 
 	if err != nil {
-		return fmt.Errorf("error de requête OpenAI: %w", err)
+		return fmt.Errorf("OpenAI request error: %w", err)
 	}
 
 	if len(resp.Choices) > 0 {
 		exchange.GetOut().SetBody(resp.Choices[0].Message.Content)
-		// Optionnel: copier certains headers de la réponse
+		// Optional: copy certain response headers
 		exchange.GetOut().SetHeader("OpenAIUsageTotalTokens", resp.Usage.TotalTokens)
 	} else {
-		return fmt.Errorf("OpenAI n'a retourné aucune réponse")
+		return fmt.Errorf("OpenAI returned no response")
 	}
 
 	return nil

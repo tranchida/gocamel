@@ -61,14 +61,14 @@ func (e *TelegramEndpoint) getBot() (*tgbotapi.BotAPI, error) {
 	return bot, nil
 }
 
-// CreateProducer crée un producteur Telegram
+// CreateProducer creates a Telegram producer.
 func (e *TelegramEndpoint) CreateProducer() (Producer, error) {
 	return &TelegramProducer{
 		endpoint: e,
 	}, nil
 }
 
-// CreateConsumer crée un consommateur Telegram
+// CreateConsumer creates a Telegram consumer.
 func (e *TelegramEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return &TelegramConsumer{
 		endpoint:  e,
@@ -76,7 +76,7 @@ func (e *TelegramEndpoint) CreateConsumer(processor Processor) (Consumer, error)
 	}, nil
 }
 
-// TelegramProducer represents a producteur Telegram
+// TelegramProducer represents a Telegram producer.
 type TelegramProducer struct {
 	endpoint *TelegramEndpoint
 }
@@ -96,7 +96,7 @@ func (p *TelegramProducer) Send(exchange *Exchange) error {
 	}
 
 	var chatID int64
-	// Essayez de récupérer le chat ID from les headers
+	// Try to retrieve the chat ID from the headers.
 	if val, ok := exchange.GetIn().GetHeader(TelegramChatId); ok {
 		switch v := val.(type) {
 		case int64:
@@ -104,21 +104,21 @@ func (p *TelegramProducer) Send(exchange *Exchange) error {
 		case string:
 			parsed, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
-				return fmt.Errorf("chat ID invalid in le header %s: %w", TelegramChatId, err)
+				return fmt.Errorf("invalid chat ID in header %s: %w", TelegramChatId, err)
 			}
 			chatID = parsed
 		default:
-			return fmt.Errorf("type de %s non supported: %T", TelegramChatId, val)
+			return fmt.Errorf("unsupported type for %s: %T", TelegramChatId, val)
 		}
 	} else {
-		// Sinon, essayez de le récupérer from l'URI
+		// Otherwise, try to retrieve it from the URI.
 		chatIdStr := GetConfigValue(p.endpoint.url, "chatId")
 		if chatIdStr == "" {
-			return fmt.Errorf("chatId missing (required via header %s ou paramètre d'URI)", TelegramChatId)
+			return fmt.Errorf("chatId missing (required via header %s or URI parameter)", TelegramChatId)
 		}
 		parsed, err := strconv.ParseInt(chatIdStr, 10, 64)
 		if err != nil {
-			return fmt.Errorf("chatId invalid in l'URI: %w", err)
+			return fmt.Errorf("invalid chatId in URI: %w", err)
 		}
 		chatID = parsed
 	}

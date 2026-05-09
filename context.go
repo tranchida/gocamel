@@ -17,7 +17,7 @@ type CamelContext struct {
 	routeCounter int
 }
 
-// NewCamelContext crée une nouvelle instance de CamelContext
+// NewCamelContext creates a new CamelContext instance
 func NewCamelContext() *CamelContext {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &CamelContext{
@@ -28,11 +28,11 @@ func NewCamelContext() *CamelContext {
 	}
 }
 
-// AddRoute ajoute une route au contexte
+// AddRoute adds a route to the context
 func (c *CamelContext) AddRoute(route *Route) {
 	for _, r := range c.routes {
 		if r == route {
-			return // La route est déjà dans le contexte
+			return // The route is already in the context
 		}
 	}
 
@@ -41,7 +41,7 @@ func (c *CamelContext) AddRoute(route *Route) {
 			c.routeCounter++
 			newID := fmt.Sprintf("route-%d", c.routeCounter)
 
-			// Vérifier si cet ID est déjà utilisé
+			// Check if this ID is already in use
 			idExists := false
 			for _, r := range c.routes {
 				if r.ID == newID {
@@ -60,14 +60,14 @@ func (c *CamelContext) AddRoute(route *Route) {
 	c.routes = append(c.routes, route)
 }
 
-// AddRoutes ajoute plusieurs routes au contexte
+// AddRoutes adds multiple routes to the context
 func (c *CamelContext) AddRoutes(routes ...*Route) {
 	for _, route := range routes {
 		c.AddRoute(route)
 	}
 }
 
-// GetRoute récupère une route par son ID
+// GetRoute retrieves a route by its ID
 func (c *CamelContext) GetRoute(id string) *Route {
 	for _, route := range c.routes {
 		if route.ID == id {
@@ -77,31 +77,31 @@ func (c *CamelContext) GetRoute(id string) *Route {
 	return nil
 }
 
-// GetRoutes récupère toutes les routes
+// GetRoutes retrieves all routes
 func (c *CamelContext) GetRoutes() []*Route {
 	return c.routes
 }
 
-// Start démarre le contexte et toutes ses routes.
+// Start starts the context and all its routes.
 // If a route fails to start, previously started routes are stopped (rollback).
 func (c *CamelContext) Start() error {
 	c.startLock.Lock()
 	defer c.startLock.Unlock()
 
 	if c.started {
-		return fmt.Errorf("le contexte est déjà démarré")
+		return fmt.Errorf("context is already started")
 	}
 
-	// Démarrage de toutes les routes avec rollback en cas d'échec
+	// Start all routes with rollback on failure
 	for i, route := range c.routes {
 		if err := route.Start(c.ctx); err != nil {
-			// Rollback: arrêter les routes déjà démarrées
+			// Rollback: stop already-started routes
 			for j := i - 1; j >= 0; j-- {
 				if stopErr := c.routes[j].Stop(); stopErr != nil {
 					err = fmt.Errorf("%w; rollback stop error for route %s: %v", err, c.routes[j].ID, stopErr)
 				}
 			}
-			return fmt.Errorf("erreur lors du démarrage de la route %s: %w", route.ID, err)
+			return fmt.Errorf("error starting route %s: %w", route.ID, err)
 		}
 	}
 
@@ -109,7 +109,7 @@ func (c *CamelContext) Start() error {
 	return nil
 }
 
-// Stop arrête le contexte et toutes ses routes.
+// Stop stops the context and all its routes.
 // All routes are stopped even if some fail; errors are collected and returned as a combined error.
 func (c *CamelContext) Stop() error {
 	c.startLock.Lock()
@@ -119,7 +119,7 @@ func (c *CamelContext) Stop() error {
 		return nil
 	}
 
-	// Arrêt de toutes les routes en collectant les erreurs
+	// Stop all routes, collecting errors
 	var errs []error
 	for _, route := range c.routes {
 		if err := route.Stop(); err != nil {
@@ -131,29 +131,29 @@ func (c *CamelContext) Stop() error {
 	c.started = false
 
 	if len(errs) > 0 {
-		return fmt.Errorf("erreurs lors de l'arrêt des routes: %v", errs)
+		return fmt.Errorf("errors stopping routes: %v", errs)
 	}
 	return nil
 }
 
-// IsStarted vérifie si le contexte est démarré (utilise RLock pour la lecture seule).
+// IsStarted checks whether the context is started (uses RLock for read-only access).
 func (c *CamelContext) IsStarted() bool {
 	c.startLock.RLock()
 	defer c.startLock.RUnlock()
 	return c.started
 }
 
-// GetContext récupère le contexte Go sous-jacent
+// GetContext retrieves the underlying Go context
 func (c *CamelContext) GetContext() context.Context {
 	return c.ctx
 }
 
-// GetComponentRegistry récupère le registre des composants
+// GetComponentRegistry retrieves the component registry
 func (c *CamelContext) GetComponentRegistry() *ComponentRegistry {
 	return c.registry
 }
 
-// CreateRoute crée une nouvelle route dans ce contexte
+// CreateRoute creates a new route in this context
 func (c *CamelContext) CreateRoute() *Route {
 	route := NewRoute()
 	route.context = c
@@ -161,22 +161,22 @@ func (c *CamelContext) CreateRoute() *Route {
 	return route
 }
 
-// CreateRouteBuilder crée un nouveau constructeur de route
+// CreateRouteBuilder creates a new route builder
 func (c *CamelContext) CreateRouteBuilder() *RouteBuilder {
 	return NewRouteBuilder(c)
 }
 
-// AddComponent ajoute un composant au registre
+// AddComponent adds a component to the registry
 func (c *CamelContext) AddComponent(name string, component Component) {
 	c.registry.RegisterComponent(name, component)
 }
 
-// GetComponent récupère un composant par son nom
+// GetComponent retrieves a component by name
 func (c *CamelContext) GetComponent(name string) (Component, error) {
 	return c.registry.GetComponent(name)
 }
 
-// RemoveRoute supprime une route du contexte
+// RemoveRoute removes a route from the context
 func (c *CamelContext) RemoveRoute(route *Route) {
 	for i, r := range c.routes {
 		if r == route {
@@ -186,7 +186,7 @@ func (c *CamelContext) RemoveRoute(route *Route) {
 	}
 }
 
-// RemoveRouteByID supprime une route par son ID
+// RemoveRouteByID removes a route by its ID
 func (c *CamelContext) RemoveRouteByID(id string) {
 	for i, route := range c.routes {
 		if route.ID == id {
@@ -196,17 +196,17 @@ func (c *CamelContext) RemoveRouteByID(id string) {
 	}
 }
 
-// RemoveAllRoutes supprime toutes les routes
+// RemoveAllRoutes removes all routes
 func (c *CamelContext) RemoveAllRoutes() {
 	c.routes = make([]*Route, 0)
 }
 
-// GetRouteCount retourne le nombre de routes
+// GetRouteCount returns the number of routes
 func (c *CamelContext) GetRouteCount() int {
 	return len(c.routes)
 }
 
-// GetStartedRouteCount retourne le nombre de routes démarrées
+// GetStartedRouteCount returns the number of started routes
 func (c *CamelContext) GetStartedRouteCount() int {
 	count := 0
 	for _, route := range c.routes {
@@ -217,7 +217,7 @@ func (c *CamelContext) GetStartedRouteCount() int {
 	return count
 }
 
-// CreateEndpoint crée un endpoint à partir d'une URI
+// CreateEndpoint creates an endpoint from a URI
 func (c *CamelContext) CreateEndpoint(uri string) (Endpoint, error) {
 	return c.registry.CreateEndpoint(uri)
 }

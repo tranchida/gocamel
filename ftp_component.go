@@ -34,10 +34,10 @@ func (c *FTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		url:            u,
 		comp:           c,
 		connectTimeout: parseConnectTimeout(u),
-		// passiveMode=true (défaut) : le library jlaffaye/ftp utilise EPSV/PASV.
-		// passiveMode=false : désactive EPSV et tombe sur PASV basique.
+		// passiveMode=true (default): the jlaffaye/ftp library uses EPSV/PASV.
+		// passiveMode=false: disables EPSV and falls back to basic PASV.
 		passiveMode: !strings.EqualFold(GetConfigValue(u, "passiveMode"), "false"),
-		// disconnect=true : se déconnecter après chaque opération.
+		// disconnect=true: disconnect after each operation.
 		// disconnect=false (default): maintain the connection between polls.
 		disconnect: strings.EqualFold(GetConfigValue(u, "disconnect"), "true"),
 	}, nil
@@ -72,7 +72,7 @@ func (e *FTPEndpoint) connect() (*ftp.ServerConn, error) {
 
 	conn, err := ftp.Dial(host, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("erreur de connexion FTP: %w", err)
+		return nil, fmt.Errorf("FTP connection error: %w", err)
 	}
 
 	user := GetConfigValue(e.url, "username")
@@ -81,7 +81,7 @@ func (e *FTPEndpoint) connect() (*ftp.ServerConn, error) {
 	}
 	if err := conn.Login(user, GetConfigValue(e.url, "password")); err != nil {
 		conn.Quit()
-		return nil, fmt.Errorf("erreur d'authentification FTP: %w", err)
+		return nil, fmt.Errorf("FTP authentication error: %w", err)
 	}
 	return conn, nil
 }
@@ -164,13 +164,13 @@ func (p *FTPProducer) Send(exchange *Exchange) error {
 		if name, ok := exchange.GetIn().GetHeader(CamelFileName); ok {
 			path = fmt.Sprintf("%v", name)
 		} else {
-			return fmt.Errorf("aucun chemin ou CamelFileName spécifié pour FTP")
+			return fmt.Errorf("no path or CamelFileName specified for FTP")
 		}
 	} else if strings.HasSuffix(path, "/") {
 		if name, ok := exchange.GetIn().GetHeader(CamelFileName); ok {
 			path = path + fmt.Sprintf("%v", name)
 		} else {
-			return fmt.Errorf("le chemin est un répertoire mais CamelFileName n'est pas spécifié")
+			return fmt.Errorf("path is a directory but CamelFileName is not specified")
 		}
 	}
 
@@ -190,7 +190,7 @@ func (p *FTPProducer) Send(exchange *Exchange) error {
 	case io.Reader:
 		body, err = io.ReadAll(b)
 		if err != nil {
-			return fmt.Errorf("erreur lecture du corps: %w", err)
+			return fmt.Errorf("error reading body: %w", err)
 		}
 	default:
 		return fmt.Errorf("unsupported body type for FTP: %T", exchange.GetIn().GetBody())
@@ -199,14 +199,14 @@ func (p *FTPProducer) Send(exchange *Exchange) error {
 	switch p.fileExist {
 	case FileExistFail:
 		if size, err := conn.FileSize(path); err == nil && size >= 0 {
-			return fmt.Errorf("le fichier existe déjà sur FTP: %s", path)
+			return fmt.Errorf("file already exists on FTP: %s", path)
 		}
 	case FileExistIgnore:
 		if size, err := conn.FileSize(path); err == nil && size >= 0 {
 			return nil
 		}
 	case FileExistAppend:
-		// Télécharger l'existant et concaténer
+		// Download the existing file and concatenate
 		if resp, err := conn.Retr(path); err == nil {
 			existing, _ := io.ReadAll(resp)
 			resp.Close()
@@ -218,7 +218,7 @@ func (p *FTPProducer) Send(exchange *Exchange) error {
 		conn.ChangeDir(dir) // ignore the error if the directory already exists
 	}
 	if err := conn.Stor(filepath.Base(path), bytes.NewReader(body)); err != nil {
-		return fmt.Errorf("erreur lors de l'envoi FTP: %w", err)
+		return fmt.Errorf("error sending FTP file: %w", err)
 	}
 	return nil
 }

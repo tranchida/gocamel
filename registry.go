@@ -25,21 +25,21 @@ type ComponentRegistry struct {
 	mu         sync.RWMutex
 }
 
-// NewComponentRegistry crée une nouvelle instance de ComponentRegistry
+// NewComponentRegistry creates a new ComponentRegistry instance.
 func NewComponentRegistry() *ComponentRegistry {
 	return &ComponentRegistry{
 		components: make(map[string]any),
 	}
 }
 
-// Bind enregistre un objet avec un nom spécifique
+// Bind registers an object under a specific name.
 func (r *ComponentRegistry) Bind(name string, value any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.components[name] = value
 }
 
-// Lookup récupère un objet par son nom
+// Lookup retrieves an object by name.
 func (r *ComponentRegistry) Lookup(name string) (any, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -47,37 +47,37 @@ func (r *ComponentRegistry) Lookup(name string) (any, bool) {
 	return value, exists
 }
 
-// Remove supprime un objet du registre
+// Remove deletes an object from the registry.
 func (r *ComponentRegistry) Remove(name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.components, name)
 }
 
-// RegisterComponent enregistre un composant avec un nom spécifique (rétrocompatibilité)
+// RegisterComponent registers a component under a specific name (backwards compatibility).
 func (r *ComponentRegistry) RegisterComponent(name string, component Component) {
 	r.Bind(name, component)
 }
 
-// GetComponent récupère un composant par son nom (rétrocompatibilité)
+// GetComponent retrieves a component by name (backwards compatibility).
 func (r *ComponentRegistry) GetComponent(name string) (Component, error) {
 	val, exists := r.Lookup(name)
 	if !exists {
-		return nil, fmt.Errorf("composant non trouvé: %s", name)
+		return nil, fmt.Errorf("component not found: %s", name)
 	}
 	component, ok := val.(Component)
 	if !ok {
-		return nil, fmt.Errorf("l'objet trouvé n'est pas un composant: %s", name)
+		return nil, fmt.Errorf("the object found is not a component: %s", name)
 	}
 	return component, nil
 }
 
-// RemoveComponent supprime un composant du registre (rétrocompatibilité)
+// RemoveComponent deletes a component from the registry (backwards compatibility).
 func (r *ComponentRegistry) RemoveComponent(name string) {
 	r.Remove(name)
 }
 
-// HasComponent vérifie si un composant existe
+// HasComponent returns true if a component with the given name exists.
 func (r *ComponentRegistry) HasComponent(name string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -85,7 +85,7 @@ func (r *ComponentRegistry) HasComponent(name string) bool {
 	return exists
 }
 
-// GetComponentNames retourne la liste des noms de composants enregistrés
+// GetComponentNames returns the list of registered component names.
 func (r *ComponentRegistry) GetComponentNames() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -96,31 +96,31 @@ func (r *ComponentRegistry) GetComponentNames() []string {
 	return names
 }
 
-// GetComponentCount retourne le nombre de composants enregistrés
+// GetComponentCount returns the number of registered components.
 func (r *ComponentRegistry) GetComponentCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.components)
 }
 
-// Clear supprime tous les objets du registre
+// Clear removes all objects from the registry.
 func (r *ComponentRegistry) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.components = make(map[string]any)
 }
 
-// CreateEndpoint crée un endpoint à partir d'une URI
+// CreateEndpoint creates an endpoint from a URI.
 func (r *ComponentRegistry) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
-		return nil, fmt.Errorf("URI invalide: %s", uri)
+		return nil, fmt.Errorf("invalid URI: %s", uri)
 	}
 
 	componentName := u.Scheme
 	component, err := r.GetComponent(componentName)
 	if err != nil {
-		return nil, fmt.Errorf("erreur lors de la récupération du composant %s: %v", componentName, err)
+		return nil, fmt.Errorf("error retrieving component %s: %v", componentName, err)
 	}
 
 	return component.CreateEndpoint(uri)

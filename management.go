@@ -7,20 +7,20 @@ import (
 	"strings"
 )
 
-// ManagementServer expose une API REST pour monitorer et contrôler les routes
+// ManagementServer exposes a REST API for monitoring and controlling routes.
 type ManagementServer struct {
 	context *CamelContext
 	server  *http.Server
 }
 
-// NewManagementServer crée une nouvelle instance de ManagementServer
+// NewManagementServer creates a new ManagementServer instance.
 func NewManagementServer(context *CamelContext) *ManagementServer {
 	return &ManagementServer{
 		context: context,
 	}
 }
 
-// RouteInfo représente les informations publiques d'une route pour l'API REST
+// RouteInfo represents the public information about a route for the REST API.
 type RouteInfo struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
@@ -28,14 +28,14 @@ type RouteInfo struct {
 	Started     bool   `json:"started"`
 }
 
-// ContextInfo représente les informations du contexte pour l'API REST
+// ContextInfo represents the context information for the REST API.
 type ContextInfo struct {
 	Started          bool `json:"started"`
 	TotalRoutes      int  `json:"totalRoutes"`
 	StartedRoutes    int  `json:"startedRoutes"`
 }
 
-// Start démarre le serveur REST de management sur l'adresse spécifiée (ex: ":8081")
+// Start starts the management REST server on the given address (e.g. ":8081").
 func (m *ManagementServer) Start(addr string) error {
 	mux := http.NewServeMux()
 
@@ -57,7 +57,7 @@ func (m *ManagementServer) Start(addr string) error {
 	return nil
 }
 
-// Stop arrête le serveur REST de management
+// Stop stops the management REST server.
 func (m *ManagementServer) Stop() error {
 	if m.server != nil {
 		return m.server.Close()
@@ -104,7 +104,7 @@ func (m *ManagementServer) handleRoutes(w http.ResponseWriter, r *http.Request) 
 }
 
 func (m *ManagementServer) handleRouteAction(w http.ResponseWriter, r *http.Request) {
-	// Attend un chemin de la forme /api/routes/{id}/start ou /api/routes/{id}/stop
+	// Expects a path of the form /api/routes/{id}/start or /api/routes/{id}/stop
 	path := strings.TrimPrefix(r.URL.Path, "/api/routes/")
 	parts := strings.Split(path, "/")
 

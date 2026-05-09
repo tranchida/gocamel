@@ -11,13 +11,13 @@ import (
 )
 
 func main() {
-	// Créer le répertoire de templates s'il n'existe pas
+	// Create the templates directory if it does not exist.
 	templateDir := "templates"
 	if err := os.MkdirAll(templateDir, 0755); err != nil {
 		log.Fatal(err)
 	}
 
-	// Créer un template de base pour un email
+	// Create a basic email template.
 	emailTemplate := `Bonjour {{.Headers.name}},
 
 Vous avez reçu le message suivant : {{.Body}}
@@ -32,7 +32,7 @@ Ceci est un message automatique de GoCamel
 		log.Fatal(err)
 	}
 
-	// Créer un template pour un rapport JSON
+	// Create a template for a JSON report.
 	jsonTemplate := `{
   "timestamp": "{{now | formatDate "2006-01-02T15:04:05Z07:00"}}",
   "content": {{.Body | toString | safeHTML}},
@@ -43,14 +43,14 @@ Ceci est un message automatique de GoCamel
 		log.Fatal(err)
 	}
 
-	// Créer le contexte Camel
+	// Create the Camel context.
 	camelCtx := gocamel.NewCamelContext()
 	defer camelCtx.Stop()
 
 	// Enregistrer le composant template
 	camelCtx.AddComponent("template", gocamel.NewTemplateComponent())
 
-	// Démarrer le contexte
+	// Start the context.
 	if err := camelCtx.Start(); err != nil {
 		log.Fatal(err)
 	}

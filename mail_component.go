@@ -21,7 +21,7 @@ import (
 	pop3 "github.com/knadh/go-pop3"
 )
 
-// Protocoles mail supportes
+// Supported mail protocols
 const (
 	ProtocolSMTP  = "smtp"
 	ProtocolSMTPS = "smtps"
@@ -31,9 +31,9 @@ const (
 	ProtocolIMAPS = "imaps"
 )
 
-// En-tetes standards du composant Mail
+// Standard Mail component headers
 const (
-	// En-tetes entrants (consommateur)
+	// Inbound headers (consumer)
 	MailFrom        = "From"
 	MailTo          = "To"
 	MailCC          = "Cc"
@@ -46,16 +46,16 @@ const (
 	MailUID         = "UID"
 	MailReplyTo     = "Reply-To"
 
-	// En-tetes for les pieces jointes
+	// Attachment headers
 	MailAttachmentPrefix = "CamelMailAttachment"
 
-	// En-tetes de controle
+	// Control headers
 	MailDeleteHeader = "CamelMailDelete"
 	MailMoveToHeader = "CamelMailMoveTo"
 	MailCopyToHeader = "CamelMailCopyTo"
 )
 
-// configuration par defaut
+// Default configuration
 const (
 	DefaultSMTPPort          = 25
 	DefaultSMTPSPort         = 465
@@ -67,25 +67,25 @@ const (
 	DefaultContentType       = "text/plain"
 	DefaultConnectionTimeout = 30000 // ms
 	DefaultPollDelay         = 60000 // ms
-	DefaultFetchSize         = -1    // illimite
+	DefaultFetchSize         = -1    // unlimited
 )
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-// MailComponent implemente le composant Mail for GoCamel.
-// Supporte SMTP/SMTPS (sending) et POP3/POP3S/IMAP/IMAPS (reception).
+// MailComponent implements the Mail component for GoCamel.
+// Supports SMTP/SMTPS (sending) and POP3/POP3S/IMAP/IMAPS (receiving).
 type MailComponent struct {
 	mu sync.RWMutex
-	// configuration partagee
+	// shared configuration
 	defaultFrom       string
 	defaultSubject    string
 	connectionTimeout time.Duration
 	debugMode         bool
 }
 
-// NewMailComponent cree un MailComponent with les values par defaut.
+// NewMailComponent creates a MailComponent with default values.
 func NewMailComponent() *MailComponent {
 	return &MailComponent{
 		defaultFrom:       "gocamel@localhost",
@@ -95,47 +95,47 @@ func NewMailComponent() *MailComponent {
 	}
 }
 
-// SetDefaultFrom configure l'expediteur par defaut.
+// SetDefaultFrom sets the default sender address.
 func (c *MailComponent) SetDefaultFrom(from string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.defaultFrom = from
 }
 
-// SetDefaultSubject configure le sujet par defaut.
+// SetDefaultSubject sets the default email subject.
 func (c *MailComponent) SetDefaultSubject(subject string) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	c.defaultSubject = subject
 }
 
-// CreateEndpoint cree un MailEndpoint a partir d'une URI.
+// CreateEndpoint creates a MailEndpoint from a URI.
 //
-// Formats supportes :
+// Supported formats:
 //
 //	smtp://host:port?to=dest@example.com&from=src@example.com
 //	smtps://host:port?username=user&password=pass
 //	imap://host:port?folderName=INBOX&username=user&password=pass
 //	pop3://host:port?delete=true&unseen=true
 //
-// Options communes :
+// Common options:
 //
-//	username, password : Credentials d'authentification
-//	from, to, cc, bcc  : Adresses email (producteur)
-//	subject            : Sujet du message (producteur)
-//	contentType        : text/plain ou text/html (producteur)
-//	folderName         : Dossier a consulter (consommateur, defaut: INBOX)
-//	delete             : Supprimer les messages apres traitement (consommateur)
-//	unseen             : Ne traiter que les messages non lus (consommateur, defaut: true)
-//	moveTo             : Deplacer les messages vers ce dossier apres traitement
-//	copyTo             : Copier les messages vers ce dossier apres traitement
-//	connectionTimeout  : Timeout de connection en ms (defaut: 30000)
-//	pollDelay          : Delai between les polls for les consommateurs (ms, defaut: 60000)
-//	disconnect         : Se deconnecter apres chaque poll (consommateur)
-//	peek               : Marquer les messages comme SEEN uniquement apres traitement reussi
-//	fetchSize          : Nombre max de messages a recuperer par poll (defaut: -1 = illimite)
-//	skipFailedMessage  : Ignorer les messages en error (consommateur)
-//	handleFailedMessage: Gerer les errors via processor (consommateur)
+//	username, password : Authentication credentials
+//	from, to, cc, bcc  : Email addresses (producer)
+//	subject            : Message subject (producer)
+//	contentType        : text/plain or text/html (producer)
+//	folderName         : Folder to check (consumer, default: INBOX)
+//	delete             : Delete messages after processing (consumer)
+//	unseen             : Only process unread messages (consumer, default: true)
+//	moveTo             : Move messages to this folder after processing
+//	copyTo             : Copy messages to this folder after processing
+//	connectionTimeout  : Connection timeout in ms (default: 30000)
+//	pollDelay          : Delay between polls for consumers (ms, default: 60000)
+//	disconnect         : Disconnect after each poll (consumer)
+//	peek               : Mark messages as SEEN only after successful processing
+//	fetchSize          : Max messages to retrieve per poll (default: -1 = unlimited)
+//	skipFailedMessage  : Skip messages that fail (consumer)
+//	handleFailedMessage: Route errors through the processor (consumer)
 func (c *MailComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -150,7 +150,7 @@ func (c *MailComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		return nil, fmt.Errorf("Unsupported mail protocol: %s", scheme)
 	}
 
-	// Host et port
+	// Host and port
 	host := u.Hostname()
 	if host == "" {
 		host = u.Host
@@ -262,7 +262,7 @@ func parseDurationMs(s string, defaultVal time.Duration) time.Duration {
 // Endpoint
 // ---------------------------------------------------------------------------
 
-// MailEndpoint represente un endpoint mail configure.
+// MailEndpoint represents a configured mail endpoint.
 type MailEndpoint struct {
 	uri                 string
 	scheme              string
@@ -296,38 +296,38 @@ type MailEndpoint struct {
 
 func (e *MailEndpoint) URI() string { return e.uri }
 
-// isProducerProtocol retourne true si le protocole est for l'sending (SMTP/SMTPS).
+// isProducerProtocol returns true if the protocol is for sending (SMTP/SMTPS).
 func (e *MailEndpoint) isProducerProtocol() bool {
 	return e.scheme == ProtocolSMTP || e.scheme == ProtocolSMTPS
 }
 
-// isConsumerProtocol retourne true si le protocole est for la reception (POP3/IMAP).
+// isConsumerProtocol returns true if the protocol is for receiving (POP3/IMAP).
 func (e *MailEndpoint) isConsumerProtocol() bool {
 	return e.scheme == ProtocolPOP3 || e.scheme == ProtocolPOP3S ||
 		e.scheme == ProtocolIMAP || e.scheme == ProtocolIMAPS
 }
 
-// isIMAP retourne true si c'est un protocole IMAP/IMAPS
+// isIMAP returns true if the protocol is IMAP/IMAPS.
 func (e *MailEndpoint) isIMAP() bool {
 	return e.scheme == ProtocolIMAP || e.scheme == ProtocolIMAPS
 }
 
-// CreateProducer cree un producteur mail si le protocole le permet.
+// CreateProducer creates a mail producer if the protocol supports it.
 func (e *MailEndpoint) CreateProducer() (Producer, error) {
 	if !e.isProducerProtocol() {
-		return nil, fmt.Errorf("le protocole %s ne supporte pas la production", e.scheme)
+		return nil, fmt.Errorf("protocol %s does not support producing", e.scheme)
 	}
 	return &MailProducer{
 		endpoint: e,
 	}, nil
 }
 
-// CreateConsumer cree un consommateur mail si le protocole le permet.
+// CreateConsumer creates a mail consumer if the protocol supports it.
 func (e *MailEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	if !e.isConsumerProtocol() {
-		return nil, fmt.Errorf("le protocole %s ne supporte pas la consommation", e.scheme)
+		return nil, fmt.Errorf("protocol %s does not support consuming", e.scheme)
 	}
-	// POP3 utilise un consommateur dedie
+	// POP3 uses a dedicated consumer
 	if e.scheme == ProtocolPOP3 || e.scheme == ProtocolPOP3S {
 		return &Pop3Consumer{
 			endpoint:  e,
@@ -335,7 +335,7 @@ func (e *MailEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 			stopChan:  make(chan struct{}),
 		}, nil
 	}
-	// IMAP utilise MailConsumer with support IDLE
+	// IMAP uses MailConsumer with IDLE support
 	return &MailConsumer{
 		endpoint:  e,
 		processor: processor,
@@ -343,12 +343,12 @@ func (e *MailEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	}, nil
 }
 
-// address retourne l'adresse complete host:port.
+// address returns the full host:port address.
 func (e *MailEndpoint) address() string {
 	return fmt.Sprintf("%s:%d", e.host, e.port)
 }
 
-// isSecure retourne true si le protocole utilise SSL/TLS.
+// isSecure returns true if the protocol uses SSL/TLS.
 func (e *MailEndpoint) isSecure() bool {
 	return e.scheme == ProtocolSMTPS || e.scheme == ProtocolPOP3S || e.scheme == ProtocolIMAPS
 }
@@ -357,17 +357,17 @@ func (e *MailEndpoint) isSecure() bool {
 // Producer
 // ---------------------------------------------------------------------------
 
-// MailProducer implemente l'sending d'emails via SMTP/SMTPS.
+// MailProducer implements email sending via SMTP/SMTPS.
 type MailProducer struct {
 	endpoint *MailEndpoint
 }
 
-// Start demarre le producteur mail.
+// Start starts the mail producer.
 func (p *MailProducer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop arrete le producteur mail.
+// Stop stops the mail producer.
 func (p *MailProducer) Stop() error {
 	return nil
 }
@@ -376,7 +376,7 @@ func (p *MailProducer) Stop() error {
 func (p *MailProducer) Send(exchange *Exchange) error {
 	ep := p.endpoint
 
-	// Construction des en-tetes
+	// Build headers
 	from := getMailHeader(exchange, "From", ep.from)
 	to := getMailHeader(exchange, "To", ep.to)
 	cc := getMailHeader(exchange, "Cc", ep.cc)
@@ -384,41 +384,41 @@ func (p *MailProducer) Send(exchange *Exchange) error {
 	subject := getMailHeader(exchange, "Subject", ep.subject)
 	contentType := getMailHeader(exchange, "Content-Type", ep.contentType)
 
-	// validation des adresses requiredes
+	// Validate required addresses
 	if from == "" {
-		return errors.New("l'expediteur (from) est required")
+		return errors.New("sender (from) is required")
 	}
 	if to == "" && cc == "" && bcc == "" {
-		return errors.New("au moins un destinataire (to, cc, bcc) est required")
+		return errors.New("at least one recipient (to, cc, bcc) is required")
 	}
 
-	// Extraction des destinataires
+	// Extract recipients
 	recipients := parseAddresses(to)
 	recipients = append(recipients, parseAddresses(cc)...)
 	recipients = append(recipients, parseAddresses(bcc)...)
 
 	if len(recipients) == 0 {
-		return errors.New("aucun destinataire valid")
+		return errors.New("no valid recipient")
 	}
 
-	// body du message
+	// Message body
 	body := extractBody(exchange)
 
-	// Construction du message MIME
+	// Build MIME message
 	message, err := p.buildMessage(from, to, cc, subject, contentType, body, exchange)
 	if err != nil {
-		return fmt.Errorf("error construction message: %w", err)
+		return fmt.Errorf("error building message: %w", err)
 	}
 
-	// connection et sending
+	// Connect and send
 	return p.sendMail(from, recipients, message)
 }
 
-// buildMessage construit un message MIME.
+// buildMessage builds a MIME message.
 func (p *MailProducer) buildMessage(from, to, cc, subject, contentType string, body []byte, exchange *Exchange) ([]byte, error) {
 	var buf bytes.Buffer
 
-	// En-tetes requireds
+	// Required headers
 	fmt.Fprintf(&buf, "From: %s\r\n", from)
 	if to != "" {
 		fmt.Fprintf(&buf, "To: %s\r\n", to)
@@ -431,22 +431,22 @@ func (p *MailProducer) buildMessage(from, to, cc, subject, contentType string, b
 	fmt.Fprintf(&buf, "Message-Id: <%s@%s>\r\n", generateMessageID(), p.endpoint.host)
 	fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
 
-	// Gestion des pieces jointes
+	// Handle attachments
 	attachments := extractAttachments(exchange)
 
 	if len(attachments) > 0 {
-		// Multipart with pieces jointes
+		// Multipart with attachments
 		boundary := generateBoundary()
 		fmt.Fprintf(&buf, "Content-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", boundary)
 
-		// Partie texte
+		// Text part
 		fmt.Fprintf(&buf, "--%s\r\n", boundary)
 		fmt.Fprintf(&buf, "Content-Type: %s; charset=UTF-8\r\n", contentType)
 		fmt.Fprintf(&buf, "Content-Transfer-Encoding: quoted-printable\r\n\r\n")
 		buf.Write(body)
 		buf.WriteString("\r\n")
 
-		// Pieces jointes
+		// Attachments
 		for name, data := range attachments {
 			fmt.Fprintf(&buf, "--%s\r\n", boundary)
 			fmt.Fprintf(&buf, "Content-Type: application/octet-stream\r\n")
@@ -464,10 +464,10 @@ func (p *MailProducer) buildMessage(from, to, cc, subject, contentType string, b
 			}
 		}
 
-		// Fin du message
+		// End of message
 		fmt.Fprintf(&buf, "--%s--\r\n", boundary)
 	} else {
-		// Message simple without pieces jointes
+		// Simple message without attachments
 		fmt.Fprintf(&buf, "Content-Type: %s; charset=UTF-8\r\n", contentType)
 		fmt.Fprintf(&buf, "Content-Transfer-Encoding: quoted-printable\r\n\r\n")
 		buf.Write(body)
@@ -476,7 +476,7 @@ func (p *MailProducer) buildMessage(from, to, cc, subject, contentType string, b
 	return buf.Bytes(), nil
 }
 
-// sendMail sendinge le message via SMTP/SMTPS with retry et exponential backoff.
+// sendMail sends the message via SMTP/SMTPS with retry and exponential backoff.
 func (p *MailProducer) sendMail(from string, recipients []string, message []byte) error {
 	ep := p.endpoint
 	addr := ep.address()
@@ -486,7 +486,7 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 		auth = smtp.PlainAuth("", ep.username, ep.password, ep.host)
 	}
 
-	// configuration du retry with exponential backoff
+	// Configure retry with exponential backoff
 	maxRetries := 5
 	baseDelay := time.Second
 	maxDelay := 8 * time.Second
@@ -494,7 +494,7 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			// Calcul du delai exponentiel: 1s, 2s, 4s, 8s
+			// Exponential backoff: 1s, 2s, 4s, 8s
 			delay := baseDelay * time.Duration(1<<uint(attempt-1))
 			if delay > maxDelay {
 				delay = maxDelay
@@ -507,7 +507,7 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 
 		err := p.trySendMail(addr, auth, from, recipients, message)
 		if err == nil {
-			// Succès
+			// Success
 			if attempt > 0 && ep.debugMode {
 				logInfo("Mail send succeeded after retries", "attempts", attempt+1)
 			}
@@ -519,87 +519,87 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 			logError("Mail send attempt failed", "attempt", attempt+1, "max", maxRetries, "error", err)
 		}
 
-		// Ne pas retry certaines errors (authentification, adresse invalid...)
+		// Do not retry certain errors (authentication, invalid address, etc.)
 		if isNonRetryableError(err) {
-			return fmt.Errorf("error non recuperable: %w", err)
+			return fmt.Errorf("non-recoverable error: %w", err)
 		}
 	}
 
-	return fmt.Errorf("echec apres %d tentatives: %w", maxRetries, lastErr)
+	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-// trySendMail effectue une tentative d'sending unique.
+// trySendMail performs a single send attempt.
 func (p *MailProducer) trySendMail(addr string, auth smtp.Auth, from string, recipients []string, message []byte) error {
 	ep := p.endpoint
 
 	if ep.scheme == ProtocolSMTPS {
-		// connection TLS native (port 465)
+		// Native TLS connection (port 465)
 		tlsConfig := &tls.Config{
 			ServerName: ep.host,
 		}
 		conn, err := tls.Dial("tcp", addr, tlsConfig)
 		if err != nil {
-			return fmt.Errorf("error connection TLS: %w", err)
+			return fmt.Errorf("TLS connection error: %w", err)
 		}
 		defer conn.Close()
 
 		client, err := smtp.NewClient(conn, ep.host)
 		if err != nil {
-			return fmt.Errorf("error creation client SMTP: %w", err)
+			return fmt.Errorf("SMTP client creation error: %w", err)
 		}
 		defer client.Close()
 
 		if auth != nil {
 			if err := client.Auth(auth); err != nil {
-				return fmt.Errorf("error authentification: %w", err)
+				return fmt.Errorf("authentication error: %w", err)
 			}
 		}
 
 		if err := client.Mail(from); err != nil {
-			return fmt.Errorf("error MAIL FROM: %w", err)
+			return fmt.Errorf("MAIL FROM error: %w", err)
 		}
 
 		for _, rcpt := range recipients {
 			if err := client.Rcpt(rcpt); err != nil {
-				return fmt.Errorf("error RCPT TO %s: %w", rcpt, err)
+				return fmt.Errorf("RCPT TO %s error: %w", rcpt, err)
 			}
 		}
 
 		w, err := client.Data()
 		if err != nil {
-			return fmt.Errorf("error DATA: %w", err)
+			return fmt.Errorf("DATA error: %w", err)
 		}
 
 		if _, err := w.Write(message); err != nil {
-			return fmt.Errorf("error ecriture message: %w", err)
+			return fmt.Errorf("message write error: %w", err)
 		}
 
 		if err := w.Close(); err != nil {
-			return fmt.Errorf("error fermeture DATA: %w", err)
+			return fmt.Errorf("DATA close error: %w", err)
 		}
 
 		return client.Quit()
 	}
 
-	// SMTP standard with STARTTLS si available
+	// Standard SMTP with STARTTLS if available
 	return smtp.SendMail(addr, auth, from, recipients, message)
 }
 
-// isNonRetryableError determine si une error ne devrait pas etre retentee.
+// isNonRetryableError determines whether an error should not be retried.
 func isNonRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
 	errStr := strings.ToLower(err.Error())
-	// errors d'authentification
+	// Authentication errors
 	if strings.Contains(errStr, "auth") || strings.Contains(errStr, "credential") {
 		return true
 	}
-	// errors d'adresse invalid
+	// Invalid address errors
 	if strings.Contains(errStr, "invalid") || strings.Contains(errStr, "bad address") {
 		return true
 	}
-	// errors de syntaxe
+	// Syntax errors
 	if strings.Contains(errStr, "syntax") {
 		return true
 	}
@@ -607,10 +607,10 @@ func isNonRetryableError(err error) bool {
 }
 
 // ---------------------------------------------------------------------------
-// Consumer IMAP complet with go-imap v2
+// Full IMAP consumer using go-imap v2
 // ---------------------------------------------------------------------------
 
-// MailConsumer implemente la reception d'emails via IMAP (with go-imap v2).
+// MailConsumer implements email reception via IMAP (using go-imap v2).
 type MailConsumer struct {
 	endpoint  *MailEndpoint
 	processor Processor
@@ -620,26 +620,26 @@ type MailConsumer struct {
 	mu        sync.Mutex
 }
 
-// Start demarre le consommateur mail.
+// Start starts the mail consumer.
 func (c *MailConsumer) Start(ctx context.Context) error {
 	c.wg.Add(1)
 	go c.run(ctx)
 	return nil
 }
 
-// run execute la boucle de polling ou IDLE according to la configuration.
+// run executes the polling or IDLE loop based on configuration.
 func (c *MailConsumer) run(ctx context.Context) {
 	defer c.wg.Done()
 
 	ep := c.endpoint
 
-	// Si IDLE est active et c'est IMAP, on utilise IDLE
+	// If IDLE is enabled and this is IMAP, use IDLE
 	if ep.useIdle && ep.isIMAP() {
 		if err := c.runWithIdle(ctx); err != nil {
 			if ep.debugMode {
 				logError("Mail IDLE failed, fallback to polling", "error", err)
 			}
-			// Fallback vers polling classique
+			// Fall back to standard polling
 			c.runPolling(ctx)
 		}
 	} else {
@@ -647,7 +647,7 @@ func (c *MailConsumer) run(ctx context.Context) {
 	}
 }
 
-// runPolling execute la boucle de polling classique.
+// runPolling executes the standard polling loop.
 func (c *MailConsumer) runPolling(ctx context.Context) {
 	for {
 		select {
@@ -669,8 +669,8 @@ func (c *MailConsumer) runPolling(ctx context.Context) {
 	}
 }
 
-// runWithIdle utilise IMAP IDLE for les notifications push en temps reel.
-// returns an error si IDLE n'est pas supporte ou echoue.
+// runWithIdle uses IMAP IDLE for real-time push notifications.
+// Returns an error if IDLE is not supported or fails.
 func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 	ep := c.endpoint
 
@@ -678,18 +678,18 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 		logInfo("Mail IMAP IDLE started", "address", ep.address(), "folder", ep.folderName)
 	}
 
-	// connection au serveur
+	// Connect to server
 	ctx, cancel := context.WithTimeout(parentCtx, ep.connectionTimeout)
 	defer cancel()
 
 	if err := c.connect(ctx); err != nil {
-		return fmt.Errorf("error connection for IDLE: %w", err)
+		return fmt.Errorf("connection error for IDLE: %w", err)
 	}
 
-	// Selection du dossier
+	// Select folder
 	if _, err := c.selectFolder(ep.folderName); err != nil {
 		c.disconnect()
-		return fmt.Errorf("error selection dossier for IDLE: %w", err)
+		return fmt.Errorf("folder selection error for IDLE: %w", err)
 	}
 
 	for {
@@ -699,43 +699,43 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 
 		if client == nil {
 			c.disconnect()
-			return errors.New("client deconnecte during IDLE")
+			return errors.New("client disconnected during IDLE")
 		}
 
-		// Demarrer IDLE
+		// Start IDLE
 		idleCmd, err := client.Idle()
 		if err != nil {
 			c.disconnect()
-			return fmt.Errorf("error demarrage IDLE: %w", err)
+			return fmt.Errorf("IDLE start error: %w", err)
 		}
 
 		if ep.debugMode {
 			logDebug("Mail IDLE active, waiting for notifications")
 		}
 
-		// Attendre soit une notification, soit un arret
+		// Wait for either a notification or a stop signal
 		idleDone := make(chan error, 1)
 		go func() {
-			// Wait bloque jusqu'a ce qu'une notification arrive ou IDLE termine
+			// Wait blocks until a notification arrives or IDLE ends
 			err := idleCmd.Wait()
 			idleDone <- err
 		}()
 
 		select {
 		case <-c.stopChan:
-			// Arret demande
+			// Stop requested
 			idleCmd.Close()
-			
+
 			return nil
 
 		case <-parentCtx.Done():
-			// Contexte annule
+			// Context cancelled
 			idleCmd.Close()
-			
+
 			return nil
 
 		case err := <-idleDone:
-			// IDLE s'est termine (notification ou error)
+			// IDLE ended (notification or error)
 			idleCmd.Close()
 
 			if err != nil {
@@ -746,7 +746,7 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 				return err
 			}
 
-			// Notification recue - traiter les messages
+			// Notification received — process new messages
 			if ep.debugMode {
 				logDebug("Mail IDLE detected change, processing")
 			}
@@ -757,18 +757,18 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 				}
 			}
 
-			// Petit delai for eviter boucle trop rapide
+			// Small delay to avoid tight loop
 			time.Sleep(100 * time.Millisecond)
-			// Continue la boucle for redemarrer IDLE
+			// Continue the loop to restart IDLE
 		}
 	}
 }
 
-// processNewMessages recherche et traite les nouveaux messages non lus.
+// processNewMessages searches for and processes unread messages.
 func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 	ep := c.endpoint
 
-	// Rechercher les messages non lus
+	// Search for unread messages
 	var uids []imap.UID
 	var err error
 
@@ -779,7 +779,7 @@ func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 	}
 
 	if err != nil {
-		return fmt.Errorf("error recherche messages: %w", err)
+		return fmt.Errorf("message search error: %w", err)
 	}
 
 	if len(uids) == 0 {
@@ -790,17 +790,17 @@ func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 		logInfo("Mail messages found via IDLE", "count", len(uids))
 	}
 
-	// Limitation fetchSize
+	// Apply fetchSize limit
 	if ep.fetchSize > 0 && len(uids) > ep.fetchSize {
 		uids = uids[:ep.fetchSize]
 	}
 
 	selected, err := c.selectFolder(ep.folderName)
 	if err != nil {
-		return fmt.Errorf("error selection dossier: %w", err)
+		return fmt.Errorf("folder selection error: %w", err)
 	}
 
-	// Traiter chaque message
+	// Process each message
 	for _, uid := range uids {
 		select {
 		case <-c.stopChan:
@@ -824,11 +824,11 @@ func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 	return nil
 }
 
-// poll se connecte au serveur IMAP et recupere les nouveaux messages.
+// poll connects to the IMAP server and fetches new messages.
 func (c *MailConsumer) poll(parentCtx context.Context) {
 	ep := c.endpoint
 
-	// Contexte with timeout for cette operation de poll
+	// Context with timeout for this poll operation
 	ctx, cancel := context.WithTimeout(parentCtx, ep.connectionTimeout)
 	defer cancel()
 
@@ -836,7 +836,7 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 		logInfo("Mail polling", "address", ep.address(), "folder", ep.folderName)
 	}
 
-	// connection au serveur IMAP
+	// Connect to IMAP server
 	if err := c.connect(ctx); err != nil {
 		if !ep.skipFailedMessage {
 			logError("Mail connection error", "error", err)
@@ -844,12 +844,12 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 		return
 	}
 
-	// Deconnection a la fin si demande
+	// Disconnect at the end if configured
 	if ep.disconnect {
 		defer c.disconnect()
 	}
 
-	// Selection du dossier
+	// Select folder
 	selected, err := c.selectFolder(ep.folderName)
 	if err != nil {
 		if !ep.skipFailedMessage {
@@ -858,7 +858,7 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 		return
 	}
 
-	// Recherche des messages non lus si option unseen
+	// Search for unread messages if unseen option is set
 	var uids []imap.UID
 	if ep.unseen {
 		uids, err = c.searchUnseen()
@@ -866,11 +866,11 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 			if ep.debugMode {
 				logError("Mail search error", "error", err)
 			}
-			// Fallback: utiliser Fetch with range
+			// Fallback: use Fetch with range
 			uids = nil
 		}
 	} else {
-		// Sinon chercher tous les messages
+		// Otherwise search all messages
 		uids, err = c.searchAll()
 		if err != nil {
 			if ep.debugMode {
@@ -880,7 +880,7 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 		}
 	}
 
-	// Si pas de resultats, quitter
+	// If no results, return
 	if len(uids) == 0 {
 		if ep.debugMode {
 			logDebug("Mail no new messages")
@@ -892,12 +892,12 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 		logInfo("Mail messages found", "count", len(uids))
 	}
 
-	// Limitation fetchSize
+	// Apply fetchSize limit
 	if ep.fetchSize > 0 && len(uids) > ep.fetchSize {
 		uids = uids[:ep.fetchSize]
 	}
 
-	// Traitement des messages
+	// Process messages
 	for _, uid := range uids {
 		select {
 		case <-c.stopChan:
@@ -923,24 +923,24 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 	}
 }
 
-// connect etablit la connection au serveur IMAP.
+// connect establishes a connection to the IMAP server.
 func (c *MailConsumer) connect(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client != nil {
-		// Deja connecte, verifier si toujours vivant
+		// Already connected — verify it's still alive
 		noopCmd := c.client.Noop()
 		if err := noopCmd.Wait(); err == nil {
 			return nil
 		}
-		// Reconnection necessaire
+		// Reconnection needed
 		c.client = nil
 	}
 
 	ep := c.endpoint
 
-	// Options de connection - TLS config
+	// Connection options — TLS config
 	tlsConfig := &tls.Config{
 		ServerName: ep.host,
 	}
@@ -949,26 +949,26 @@ func (c *MailConsumer) connect(ctx context.Context) error {
 	var err error
 
 	if ep.isSecure() {
-		// IMAPS on TLS natif (port 993)
+		// IMAPS native TLS (port 993)
 		client, err = imapclient.DialTLS(ep.address(), &imapclient.Options{
 			TLSConfig: tlsConfig,
 		})
 	} else {
-		// IMAP with STARTTLS possible (port 143)
+		// IMAP with optional STARTTLS (port 143)
 		client, err = imapclient.DialStartTLS(ep.address(), &imapclient.Options{
 			TLSConfig: tlsConfig,
 		})
 	}
 
 	if err != nil {
-		return fmt.Errorf("error connection IMAP: %w", err)
+		return fmt.Errorf("IMAP connection error: %w", err)
 	}
 
-	// Authentification
+	// Authentication
 	if ep.username != "" && ep.password != "" {
 		if err := client.Login(ep.username, ep.password).Wait(); err != nil {
 			client.Close()
-			return fmt.Errorf("error authentification: %w", err)
+			return fmt.Errorf("authentication error: %w", err)
 		}
 	}
 
@@ -976,7 +976,7 @@ func (c *MailConsumer) connect(ctx context.Context) error {
 	return nil
 }
 
-// disconnect ferme la connection.
+// disconnect closes the connection.
 func (c *MailConsumer) disconnect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -988,26 +988,26 @@ func (c *MailConsumer) disconnect() {
 	}
 }
 
-// selectFolder selectionne un dossier.
+// selectFolder selects a folder.
 func (c *MailConsumer) selectFolder(folderName string) (*imap.SelectData, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client == nil {
-		return nil, errors.New("client non connecte")
+		return nil, errors.New("client not connected")
 	}
 
 	opts := &imap.SelectOptions{}
 	return c.client.Select(folderName, opts).Wait()
 }
 
-// searchUnseen recherche les messages non lus.
+// searchUnseen searches for unread messages.
 func (c *MailConsumer) searchUnseen() ([]imap.UID, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client == nil {
-		return nil, errors.New("client non connecte")
+		return nil, errors.New("client not connected")
 	}
 
 	criteria := &imap.SearchCriteria{
@@ -1022,16 +1022,16 @@ func (c *MailConsumer) searchUnseen() ([]imap.UID, error) {
 	return searchData.AllUIDs(), nil
 }
 
-// searchAll recherche tous les messages.
+// searchAll searches for all messages.
 func (c *MailConsumer) searchAll() ([]imap.UID, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client == nil {
-		return nil, errors.New("client non connecte")
+		return nil, errors.New("client not connected")
 	}
 
-	// Critere vide = tous les messages
+	// Empty criteria = all messages
 	criteria := &imap.SearchCriteria{}
 
 	searchData, err := c.client.UIDSearch(criteria, nil).Wait()
@@ -1042,16 +1042,16 @@ func (c *MailConsumer) searchAll() ([]imap.UID, error) {
 	return searchData.AllUIDs(), nil
 }
 
-// fetchMessage recupere le contenu d'un message.
+// fetchMessage retrieves the content of a message.
 func (c *MailConsumer) fetchMessage(uid imap.UID, options *imap.FetchOptions) (*imapclient.FetchMessageBuffer, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client == nil {
-		return nil, errors.New("client non connecte")
+		return nil, errors.New("client not connected")
 	}
 
-	// Utiliser UID comme sequence set
+	// Use UID as sequence set
 	uidSet := imap.UIDSetNum(uid)
 
 	cmd := c.client.Fetch(uidSet, options)
@@ -1061,49 +1061,49 @@ func (c *MailConsumer) fetchMessage(uid imap.UID, options *imap.FetchOptions) (*
 	}
 
 	if len(messages) == 0 {
-		return nil, fmt.Errorf("message %d non trouve", uid)
+		return nil, fmt.Errorf("message %d not found", uid)
 	}
 
 	return messages[0], nil
 }
 
-// processMessage recupere et traite un message.
+// processMessage fetches and processes a message.
 func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selected *imap.SelectData) error {
 	ep := c.endpoint
 
-	// Recuperation du message with toutes les infos necessaires
+	// Fetch message with all required info
 	fetchOptions := &imap.FetchOptions{
 		UID:         true,
 		Flags:       true,
 		Envelope:    true,
-		BodySection: []*imap.FetchItemBodySection{{}}, // body entier
+		BodySection: []*imap.FetchItemBodySection{{}}, // full body
 	}
 
 	msg, err := c.fetchMessage(uid, fetchOptions)
 	if err != nil {
-		return fmt.Errorf("error recuperation message: %w", err)
+		return fmt.Errorf("message retrieval error: %w", err)
 	}
 
-	// Parsing du message
+	// Parse the message
 	mailMsg, err := c.parseMessage(msg)
 	if err != nil {
-		return fmt.Errorf("error parsing message: %w", err)
+		return fmt.Errorf("message parsing error: %w", err)
 	}
 
-	// Creation de l'exchange
+	// Create exchange
 	exchange := NewExchange(ctx)
 	c.populateExchange(exchange, mailMsg)
 
-	// Marquer comme vu si peek=false
+	// Mark as seen if peek=false
 	if !ep.peek {
 		if err := c.markSeen(uid); err != nil {
 			logError("Mail SEEN marking error", "error", err)
 		}
 	}
 
-	// Traitement par le processor
+	// Process via processor
 	if err := c.processor.Process(exchange); err != nil {
-		// Echec du traitement - rollback si peek=true
+		// Processing failed — rollback if peek=true
 		if ep.peek {
 			if err2 := c.markUnseen(uid); err2 != nil {
 				logError("Mail SEEN rollback error", "error", err2)
@@ -1112,11 +1112,11 @@ func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selecte
 		return err
 	}
 
-	// Post-traitement according to headers modifies par le processor
+	// Post-processing based on headers set by the processor
 	return c.postProcess(uid, exchange)
 }
 
-// parseMessage extrait les donnees d'un message IMAP.
+// parseMessage extracts the data from an IMAP message.
 func (c *MailConsumer) parseMessage(msg *imapclient.FetchMessageBuffer) (*MailMessage, error) {
 	mailMsg := &MailMessage{
 		UID:         uint32(msg.UID),
@@ -1125,7 +1125,7 @@ func (c *MailConsumer) parseMessage(msg *imapclient.FetchMessageBuffer) (*MailMe
 		Date:        time.Now(),
 	}
 
-	// Extraction des infos from l'enveloppe IMAP si available
+	// Extract info from IMAP envelope if available
 	if msg.Envelope != nil {
 		mailMsg.Subject = msg.Envelope.Subject
 		if len(msg.Envelope.From) > 0 {
@@ -1148,7 +1148,7 @@ func (c *MailConsumer) parseMessage(msg *imapclient.FetchMessageBuffer) (*MailMe
 		}
 	}
 
-	// Etat des flags
+	// Flag state
 	for _, flag := range msg.Flags {
 		if flag == imap.FlagSeen {
 			mailMsg.Seen = true
@@ -1158,15 +1158,15 @@ func (c *MailConsumer) parseMessage(msg *imapclient.FetchMessageBuffer) (*MailMe
 		}
 	}
 
-	// Extraction du body from BodySection
+	// Extract body from BodySection
 	if len(msg.BodySection) > 0 {
 		bodyData := msg.BodySection[0].Bytes
 
-		// Parsing with go-message si c'est un message MIME
+		// Parse with go-message if this is a MIME message
 		if len(bodyData) > 0 {
 			mailMsg.Body, mailMsg.BodyHTML, mailMsg.Attachments = c.parseMimeMessage(bodyData)
 			if mailMsg.Body == nil {
-				// Fallback: contenu brut
+				// Fallback: raw content
 				mailMsg.Body = bodyData
 			}
 		}
@@ -1175,33 +1175,33 @@ func (c *MailConsumer) parseMessage(msg *imapclient.FetchMessageBuffer) (*MailMe
 	return mailMsg, nil
 }
 
-// parseMimeMessageResult contient le resultat du parsing MIME.
+// parseMimeMessageResult holds the result of MIME parsing.
 type parseMimeMessageResult struct {
 	bodyText    []byte
 	bodyHTML    []byte
 	attachments map[string][]byte
 }
 
-// parseMimeMessage analyse un message MIME et extrait body + pieces jointes.
-// Version amelioree gerant multipart/alternative et les encodings.
-// Delegue a la fonction commune partagee with POP3.
+// parseMimeMessage parses a MIME message and extracts body and attachments.
+// Improved version handling multipart/alternative and various encodings.
+// Delegates to the common function shared with POP3.
 func (c *MailConsumer) parseMimeMessage(data []byte) ([]byte, []byte, map[string][]byte) {
 	return parseMimeMessageCommon(data)
 }
 
-// parseEntity analyse recursivement une entite MIME.
+// parseEntity recursively parses a MIME entity.
 func (c *MailConsumer) parseEntity(entity *mail.Reader, result *parseMimeMessageResult, parentContentType string) {
-	// Headers du message
+	// Message headers
 	header := entity.Header
 	contentType, _, _ := header.ContentType()
 
 	switch {
 	case strings.HasPrefix(contentType, "multipart/alternative"):
-		// Choisir la meilleure partie available (HTML prefere au texte)
+		// Choose the best available part (HTML preferred over plain text)
 		c.parseMultipartAlternative(entity, result)
 
 	case strings.HasPrefix(contentType, "multipart/"): // multipart/mixed, multipart/related, etc.
-		// Scanner toutes les parties
+		// Scan all parts
 		for {
 			part, err := entity.NextPart()
 			if err == io.EOF {
@@ -1210,21 +1210,21 @@ func (c *MailConsumer) parseEntity(entity *mail.Reader, result *parseMimeMessage
 			if err != nil {
 				break
 			}
-			// Traiter directement la partie
+			// Process the part directly
 			c.handlePart(part, result)
 		}
 
 	case strings.HasPrefix(contentType, "text/"):
-		// Contenu texte simple
+		// Plain text content
 		c.handleTextEntity(entity, result, contentType)
 
 	default:
-		// Autre contenu (binaire, piece jointe...)
+		// Other content (binary, attachment, etc.)
 		c.handleAttachmentEntity(entity, result)
 	}
 }
 
-// parseMultipartAlternative gère multipart/alternative en choisissant le meilleur format.
+// parseMultipartAlternative handles multipart/alternative by choosing the best format.
 func (c *MailConsumer) parseMultipartAlternative(entity *mail.Reader, result *parseMimeMessageResult) {
 	var textPart []byte
 	var htmlPart []byte
@@ -1238,7 +1238,7 @@ func (c *MailConsumer) parseMultipartAlternative(entity *mail.Reader, result *pa
 		break
 	}
 
-		// Utiliser Get for obtenir le Content-Type du header PartHeader
+		// Use Get to obtain the Content-Type from PartHeader
 		contentType := part.Header.Get("Content-Type")
 		partData, err := c.decodePart(part)
 		if err != nil {
@@ -1251,7 +1251,7 @@ func (c *MailConsumer) parseMultipartAlternative(entity *mail.Reader, result *pa
 		case strings.HasPrefix(contentType, "text/html"):
 			htmlPart = partData
 		default:
-			// Autre alternative, la garder si on n'a rien de mieux
+			// Other alternative — keep it if we have nothing better
 			if textPart == nil {
 				textPart = partData
 			}
@@ -1262,21 +1262,21 @@ func (c *MailConsumer) parseMultipartAlternative(entity *mail.Reader, result *pa
 	result.bodyHTML = htmlPart
 }
 
-// handlePart traite une partie multipart (simplifie).
+// handlePart processes a multipart part (simplified).
 func (c *MailConsumer) handlePart(part *mail.Part, result *parseMimeMessageResult) {
-	// PartHeader n'a pas de methode ContentType(), utiliser Get()
+	// PartHeader does not have a ContentType() method — use Get()
 	contentType := part.Header.Get("Content-Type")
 	contentDisp := part.Header.Get("Content-Disposition")
-	
+
 	data, err := c.decodePart(part)
 	if err != nil {
 		return
 	}
 
-	// Verifier si c'est une piece jointe par Content-Disposition
+	// Check if it is an attachment via Content-Disposition
 	isAttachment := strings.Contains(contentDisp, "attachment")
-	
-	// Si c'est du texte et pas une piece jointe
+
+	// If it is text and not an attachment
 	if strings.HasPrefix(contentType, "text/") && !isAttachment {
 		if strings.HasPrefix(contentType, "text/html") {
 			result.bodyHTML = data
@@ -1284,7 +1284,7 @@ func (c *MailConsumer) handlePart(part *mail.Part, result *parseMimeMessageResul
 			result.bodyText = data
 		}
 	} else {
-		// Piece jointe ou autre contenu
+		// Attachment or other content
 		filename := c.extractFilenameFromDisposition(contentDisp, contentType)
 		if filename == "" {
 			filename = "attachment.bin"
@@ -1295,9 +1295,9 @@ func (c *MailConsumer) handlePart(part *mail.Part, result *parseMimeMessageResul
 	}
 }
 
-// handleSimplePart traite une partie simple non-MIME.
+// handleSimplePart processes a simple non-MIME part.
 func (c *MailConsumer) handleSimplePart(part *mail.Part, result *parseMimeMessageResult) {
-	// PartHeader n'a pas de methode ContentType(), utiliser Get()
+	// PartHeader does not have a ContentType() method — use Get()
 	contentType := part.Header.Get("Content-Type")
 	data, err := c.decodePart(part)
 	if err != nil {
@@ -1309,8 +1309,7 @@ func (c *MailConsumer) handleSimplePart(part *mail.Part, result *parseMimeMessag
 			result.bodyText = data
 		}
 	} else {
-		// Probablement une piece jointe
-		// for PartHeader, extraire manuellement le filename
+		// Likely an attachment — extract filename from PartHeader manually
 		contentDisp := part.Header.Get("Content-Disposition")
 		filename := c.extractFilenameFromDisposition(contentDisp, part.Header.Get("Content-Type"))
 		if filename == "" {
@@ -1322,10 +1321,10 @@ func (c *MailConsumer) handleSimplePart(part *mail.Part, result *parseMimeMessag
 	}
 }
 
-// handleTextEntity traite une entite texte.
+// handleTextEntity processes a text entity.
 func (c *MailConsumer) handleTextEntity(entity *mail.Reader, result *parseMimeMessageResult, contentType string) {
-	// Lire le body from l'entite - entity.Reader n'est pas un io.Reader
-	// On doit utiliser NextPart for lire les parties
+	// Read body from entity — entity.Reader is not an io.Reader;
+	// NextPart must be used to read parts.
 	part, err := entity.NextPart()
 	if err != nil {
 		return
@@ -1342,7 +1341,7 @@ func (c *MailConsumer) handleTextEntity(entity *mail.Reader, result *parseMimeMe
 	}
 }
 
-// handleAttachmentEntity traite une entite comme piece jointe.
+// handleAttachmentEntity processes an entity as an attachment.
 func (c *MailConsumer) handleAttachmentEntity(entity *mail.Reader, result *parseMimeMessageResult) {
 	filename := c.extractFilename(entity.Header)
 	if filename == "" {
@@ -1362,13 +1361,13 @@ func (c *MailConsumer) handleAttachmentEntity(entity *mail.Reader, result *parse
 	}
 }
 
-// decodePart decode une partie with encodage (base64, quoted-printable).
+// decodePart decodes a part (base64, quoted-printable).
 func (c *MailConsumer) decodePart(part *mail.Part) ([]byte, error) {
-	// go-message gere deja le decoding via le body du part
+	// go-message already handles decoding via the part body
 	return io.ReadAll(part.Body)
 }
 
-// extractFilenameFromDisposition extrait le filename from Content-Disposition et Content-Type.
+// extractFilenameFromDisposition extracts the filename from Content-Disposition and Content-Type.
 func (c *MailConsumer) extractFilenameFromDisposition(contentDisposition, contentType string) string {
 	if contentDisposition != "" {
 		if strings.Contains(contentDisposition, "filename=") {
@@ -1383,7 +1382,7 @@ func (c *MailConsumer) extractFilenameFromDisposition(contentDisposition, conten
 			}
 		}
 	}
-	// Essayer Content-Type name parameter
+	// Try Content-Type name parameter
 	if strings.Contains(contentType, "name=") {
 		parts := strings.Split(contentType, "name=")
 		if len(parts) > 1 {
@@ -1393,7 +1392,7 @@ func (c *MailConsumer) extractFilenameFromDisposition(contentDisposition, conten
 	return ""
 }
 
-// extractFilename extrait le nom de file des headers.
+// extractFilename extracts the filename from headers.
 func (c *MailConsumer) extractFilename(header mail.Header) string {
 	// Content-Disposition
 	disp, _, _ := header.ContentDisposition()
@@ -1402,7 +1401,7 @@ func (c *MailConsumer) extractFilename(header mail.Header) string {
 			parts := strings.Split(disp, "filename=")
 			if len(parts) > 1 {
 				filename := strings.Trim(parts[1], ` "'`)
-				// Nettoyer les parametres supplementaires
+				// Remove extra parameters
 				if idx := strings.Index(filename, ";"); idx > 0 {
 					filename = filename[:idx]
 					filename = strings.Trim(filename, ` "'`)
@@ -1421,7 +1420,7 @@ func (c *MailConsumer) extractFilename(header mail.Header) string {
 	return ""
 }
 
-// populateExchange remplit l'exchange with les donnees du message.
+// populateExchange populates the exchange with message data.
 func (c *MailConsumer) populateExchange(exchange *Exchange, msg *MailMessage) {
 	exchange.SetBody(msg.Body)
 	exchange.SetHeader(MailFrom, msg.From)
@@ -1435,7 +1434,7 @@ func (c *MailConsumer) populateExchange(exchange *Exchange, msg *MailMessage) {
 	exchange.SetHeader(MailSize, strconv.Itoa(len(msg.Body)))
 	exchange.SetHeader(MailUID, strconv.FormatUint(uint64(msg.UID), 10))
 
-	// Si version HTML existe, l'addinger comme propriete
+	// If an HTML version exists, add it as a property
 	if msg.BodyHTML != nil {
 		exchange.SetProperty("CamelMailBodyHTML", msg.BodyHTML)
 	}
@@ -1446,19 +1445,19 @@ func (c *MailConsumer) populateExchange(exchange *Exchange, msg *MailMessage) {
 		}
 	}
 
-	// Pieces jointes comme headers speciaux
+	// Attachments as special headers
 	for name, data := range msg.Attachments {
 		exchange.SetHeader(MailAttachmentPrefix+"_"+name, data)
 	}
 }
 
-// markSeen marque un message comme lu.
+// markSeen marks a message as read.
 func (c *MailConsumer) markSeen(uid imap.UID) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client == nil {
-		return errors.New("client non connecte")
+		return errors.New("client not connected")
 	}
 
 	uidSet := imap.UIDSetNum(uid)
@@ -1469,19 +1468,19 @@ func (c *MailConsumer) markSeen(uid imap.UID) error {
 	}
 
 	cmd := c.client.Store(uidSet, store, nil)
-	// Attendre que la commande termine en consommant les data
+	// Wait for the command to finish by consuming data
 	_, err := cmd.Collect()
 	cmd.Close()
 	return err
 }
 
-// markUnseen enleve le flag SEEN.
+// markUnseen removes the SEEN flag.
 func (c *MailConsumer) markUnseen(uid imap.UID) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client == nil {
-		return errors.New("client non connecte")
+		return errors.New("client not connected")
 	}
 
 	uidSet := imap.UIDSetNum(uid)
@@ -1497,14 +1496,14 @@ func (c *MailConsumer) markUnseen(uid imap.UID) error {
 	return err
 }
 
-// postProcess applique les actions post-traitement (delete, move, copy).
+// postProcess applies post-processing actions (delete, move, copy).
 func (c *MailConsumer) postProcess(uid imap.UID, exchange *Exchange) error {
 	ep := c.endpoint
 
 	// Delete
 	if ep.delete || c.getBoolHeader(exchange, MailDeleteHeader) {
 		if err := c.deleteMessage(uid); err != nil {
-			return fmt.Errorf("error deletion: %w", err)
+			return fmt.Errorf("deletion error: %w", err)
 		}
 		return nil
 	}
@@ -1512,7 +1511,7 @@ func (c *MailConsumer) postProcess(uid imap.UID, exchange *Exchange) error {
 	// MoveTo
 	if moveTo := c.getStringHeader(exchange, MailMoveToHeader); moveTo != "" {
 		if err := c.moveMessage(uid, moveTo); err != nil {
-			return fmt.Errorf("error deplacement: %w", err)
+			return fmt.Errorf("move error: %w", err)
 		}
 		return nil
 	}
@@ -1520,7 +1519,7 @@ func (c *MailConsumer) postProcess(uid imap.UID, exchange *Exchange) error {
 	// MoveTo from config
 	if ep.moveTo != "" {
 		if err := c.moveMessage(uid, ep.moveTo); err != nil {
-			return fmt.Errorf("error deplacement: %w", err)
+			return fmt.Errorf("move error: %w", err)
 		}
 		return nil
 	}
@@ -1528,32 +1527,32 @@ func (c *MailConsumer) postProcess(uid imap.UID, exchange *Exchange) error {
 	// CopyTo
 	if copyTo := c.getStringHeader(exchange, MailCopyToHeader); copyTo != "" {
 		if err := c.copyMessage(uid, copyTo); err != nil {
-			return fmt.Errorf("error copie: %w", err)
+			return fmt.Errorf("copy error: %w", err)
 		}
 	}
 
 	// CopyTo from config
 	if ep.copyTo != "" {
 		if err := c.copyMessage(uid, ep.copyTo); err != nil {
-			return fmt.Errorf("error copie: %w", err)
+			return fmt.Errorf("copy error: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// deleteMessage supprime un message.
+// deleteMessage deletes a message.
 func (c *MailConsumer) deleteMessage(uid imap.UID) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client == nil {
-		return errors.New("client non connecte")
+		return errors.New("client not connected")
 	}
 
 	uidSet := imap.UIDSetNum(uid)
 
-	// addinger le flag \Deleted
+	// Add the \Deleted flag
 	store := &imap.StoreFlags{
 		Op:     imap.StoreFlagsAdd,
 		Silent: true,
@@ -1567,34 +1566,34 @@ func (c *MailConsumer) deleteMessage(uid imap.UID) error {
 		return err
 	}
 
-	// Expunger (deletion definitive)
+	// Expunge (permanent deletion)
 	expungeCmd := c.client.Expunge()
 	_, err = expungeCmd.Collect()
 	expungeCmd.Close()
 	return err
 }
 
-// moveMessage deplace un message vers un autre dossier.
+// moveMessage moves a message to another folder.
 func (c *MailConsumer) moveMessage(uid imap.UID, folder string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client == nil {
-		return errors.New("client non connecte")
+		return errors.New("client not connected")
 	}
 
 	uidSet := imap.UIDSetNum(uid)
 
-	// Utiliser MOVE si supporte par le serveur, sinon COPY + DELETE
-	// for go-imap v2, on utilise Move qui retourne MoveData
+	// Use MOVE if supported by the server; otherwise fall back to COPY + DELETE.
+	// In go-imap v2, Move returns MoveData.
 	_, err := c.client.Move(uidSet, folder).Wait()
 	if err != nil {
-		// MOVE non supporte, fallback on COPY + DELETE
+		// MOVE not supported — fall back to COPY + DELETE
 		_, err := c.client.Copy(uidSet, folder).Wait()
 		if err != nil {
 			return err
 		}
-		// Marquer comme supprime in le dossier source
+		// Mark as deleted in the source folder
 		store := &imap.StoreFlags{
 			Op:     imap.StoreFlagsAdd,
 			Silent: true,
@@ -1615,13 +1614,13 @@ func (c *MailConsumer) moveMessage(uid imap.UID, folder string) error {
 	return nil
 }
 
-// copyMessage copie un message vers un autre dossier.
+// copyMessage copies a message to another folder.
 func (c *MailConsumer) copyMessage(uid imap.UID, folder string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client == nil {
-		return errors.New("client non connecte")
+		return errors.New("client not connected")
 	}
 
 	uidSet := imap.UIDSetNum(uid)
@@ -1629,7 +1628,7 @@ func (c *MailConsumer) copyMessage(uid imap.UID, folder string) error {
 	return err
 }
 
-// handleFailedMessage permet de traiter une error via le processor.
+// handleFailedMessage allows processing an error via the processor.
 func (c *MailConsumer) handleFailedMessage(ctx context.Context, uid imap.UID, msgErr error) error {
 	exchange := NewExchange(ctx)
 	exchange.SetHeader("CamelMailError", msgErr.Error())
@@ -1638,7 +1637,7 @@ func (c *MailConsumer) handleFailedMessage(ctx context.Context, uid imap.UID, ms
 	return c.processor.Process(exchange)
 }
 
-// getStringHeader recupere une value string d'un header.
+// getStringHeader retrieves a string value from a header.
 func (c *MailConsumer) getStringHeader(exchange *Exchange, header string) string {
 	if v, exists := exchange.GetOut().GetHeader(header); exists {
 		if s, ok := v.(string); ok {
@@ -1653,7 +1652,7 @@ func (c *MailConsumer) getStringHeader(exchange *Exchange, header string) string
 	return ""
 }
 
-// getBoolHeader recupere une value bool d'un header.
+// getBoolHeader retrieves a bool value from a header.
 func (c *MailConsumer) getBoolHeader(exchange *Exchange, header string) bool {
 	if v, exists := exchange.GetOut().GetHeader(header); exists {
 		if b, ok := v.(bool); ok {
@@ -1666,7 +1665,7 @@ func (c *MailConsumer) getBoolHeader(exchange *Exchange, header string) bool {
 	return false
 }
 
-// Stop arrete le consommateur mail.
+// Stop stops the mail consumer.
 func (c *MailConsumer) Stop() error {
 	close(c.stopChan)
 	c.wg.Wait()
@@ -1675,10 +1674,10 @@ func (c *MailConsumer) Stop() error {
 }
 
 // ---------------------------------------------------------------------------
-// Types de donnees
+// Data types
 // ---------------------------------------------------------------------------
 
-// MailMessage represente un message email recu.
+// MailMessage represents a received email message.
 type MailMessage struct {
 	MessageID   string
 	From        string
@@ -1699,7 +1698,7 @@ type MailMessage struct {
 }
 
 // ---------------------------------------------------------------------------
-// Helper functions for le producteur
+// Helper functions for the producer
 // ---------------------------------------------------------------------------
 
 func getMailHeader(exchange *Exchange, header, defaultVal string) string {
@@ -1772,7 +1771,7 @@ func generateBoundary() string {
 // Consumer POP3
 // ---------------------------------------------------------------------------
 
-// Pop3Consumer implemente la reception d'emails via POP3/POP3S.
+// Pop3Consumer implements email reception via POP3/POP3S.
 type Pop3Consumer struct {
 	endpoint  *MailEndpoint
 	processor Processor
@@ -1782,14 +1781,14 @@ type Pop3Consumer struct {
 	mu        sync.Mutex
 }
 
-// Start demarre le consommateur POP3.
+// Start starts the POP3 consumer.
 func (c *Pop3Consumer) Start(ctx context.Context) error {
 	c.wg.Add(1)
 	go c.run(ctx)
 	return nil
 }
 
-// run execute la boucle de polling POP3.
+// run executes the POP3 polling loop.
 func (c *Pop3Consumer) run(ctx context.Context) {
 	defer c.wg.Done()
 
@@ -1813,18 +1812,18 @@ func (c *Pop3Consumer) run(ctx context.Context) {
 	}
 }
 
-// pop3MessageID represente un message in la liste POP3.
+// pop3MessageID represents a message in the POP3 listing.
 type pop3MessageID struct {
 	ID   int
 	Size int
 	UID  string
 }
 
-// poll se connecte au serveur POP3 et recupere les nouveaux messages.
+// poll connects to the POP3 server and retrieves new messages.
 func (c *Pop3Consumer) poll(parentCtx context.Context) {
 	ep := c.endpoint
 
-	// Contexte with timeout for cette operation
+	// Context with timeout for this operation
 	ctx, cancel := context.WithTimeout(parentCtx, ep.connectionTimeout)
 	defer cancel()
 
@@ -1832,7 +1831,7 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 		logInfo("POP3 polling", "address", ep.address())
 	}
 
-	// connection au serveur POP3
+	// Connect to POP3 server
 	if err := c.connect(ctx); err != nil {
 		if !ep.skipFailedMessage {
 			logError("POP3 connection error", "error", err)
@@ -1841,7 +1840,7 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 	}
 	defer c.disconnect()
 
-	// Liste des messages
+	// List messages
 	count, size, err := c.client.Stat()
 	if err != nil {
 		if !ep.skipFailedMessage {
@@ -1861,18 +1860,18 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 		logInfo("POP3 messages found", "count", count, "size", size)
 	}
 
-	// Construire la liste des IDs de messages
+	// Build list of message IDs
 	var msgIDs []int
 	for i := 1; i <= count; i++ {
 		msgIDs = append(msgIDs, i)
 	}
 
-	// Limitation fetchSize
+	// Apply fetchSize limit
 	if ep.fetchSize > 0 && len(msgIDs) > ep.fetchSize {
 		msgIDs = msgIDs[:ep.fetchSize]
 	}
 
-	// Traiter les messages en ordre inverse (plus anciens d'abord)
+	// Process messages in reverse order (oldest first)
 	for i := len(msgIDs) - 1; i >= 0; i-- {
 		select {
 		case <-c.stopChan:
@@ -1899,19 +1898,19 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 	}
 }
 
-// connect etablit la connection au serveur POP3.
+// connect establishes a connection to the POP3 server.
 func (c *Pop3Consumer) connect(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.client != nil {
-		// Deja connecte
+		// Already connected
 		return nil
 	}
 
 	ep := c.endpoint
 
-	// Creer le client POP3
+	// Create POP3 client
 	clientOpt := pop3.Opt{
 		Host: ep.host,
 		Port: ep.port,
@@ -1922,18 +1921,18 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 		clientOpt.TLSEnabled = true
 	}
 
-	// Creer le client et obtenir une connection
+	// Create client and obtain a connection
 	p3 := pop3.New(clientOpt)
 	conn, err := p3.NewConn()
 	if err != nil {
-		return fmt.Errorf("error connection POP3: %w", err)
+		return fmt.Errorf("POP3 connection error: %w", err)
 	}
 
-	// Authentification
+	// Authentication
 	if ep.username != "" && ep.password != "" {
 		if err := conn.Auth(ep.username, ep.password); err != nil {
 			conn.Quit()
-			return fmt.Errorf("error authentification POP3: %w", err)
+			return fmt.Errorf("POP3 authentication error: %w", err)
 		}
 	}
 
@@ -1941,7 +1940,7 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 	return nil
 }
 
-// disconnect ferme la connection POP3.
+// disconnect closes the POP3 connection.
 func (c *Pop3Consumer) disconnect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1952,35 +1951,35 @@ func (c *Pop3Consumer) disconnect() {
 	}
 }
 
-// processMessage recupere et traite un message POP3.
+// processMessage fetches and processes a POP3 message.
 func (c *Pop3Consumer) processMessage(ctx context.Context, msgID int) error {
-	// Telecharger le message complet
+	// Download the full message
 	msgData, err := c.client.Retr(msgID)
 	if err != nil {
-		return fmt.Errorf("error recuperation message: %w", err)
+		return fmt.Errorf("message retrieval error: %w", err)
 	}
 
-	// Parser le message
+	// Parse the message
 	mailMsg, err := c.parsePop3Message(msgData)
 	if err != nil {
-		return fmt.Errorf("error parsing message: %w", err)
+		return fmt.Errorf("message parsing error: %w", err)
 	}
 	mailMsg.UID = uint32(msgID)
 
-	// Creation de l'exchange
+	// Create exchange
 	exchange := NewExchange(ctx)
 	c.populateExchange(exchange, mailMsg)
 
-	// Traitement par le processor
+	// Process via processor
 	if err := c.processor.Process(exchange); err != nil {
 		return err
 	}
 
-	// Post-traitement according to les options
+	// Post-processing based on options
 	return c.postProcess(msgID, exchange)
 }
 
-// parsePop3Message analyse un message POP3 extrait.
+// parsePop3Message parses a retrieved POP3 message.
 func (c *Pop3Consumer) parsePop3Message(msgData *message.Entity) (*MailMessage, error) {
 	mailMsg := &MailMessage{
 		Headers:     make(map[string]string),
@@ -1988,8 +1987,8 @@ func (c *Pop3Consumer) parsePop3Message(msgData *message.Entity) (*MailMessage, 
 		Date:        time.Now(),
 	}
 
-	// Parsing MIME with go-message
-	// Lire le body complet from msgData.Body
+	// Parse MIME with go-message
+	// Read full body from msgData.Body
 	bodyData, err := io.ReadAll(msgData.Body)
 	if err != nil {
 		return nil, fmt.Errorf("error reading body: %w", err)
@@ -2000,19 +1999,19 @@ func (c *Pop3Consumer) parsePop3Message(msgData *message.Entity) (*MailMessage, 
 	mailMsg.BodyHTML = bodyHTML
 	mailMsg.Attachments = attachments
 
-	// Extraction des headers from l'entite message.Header
-	// Utiliser Fields() et iterer manuellement
+	// Extract headers from the message.Header entity
+	// Use Fields() and iterate manually
 	mailMsg.Headers = make(map[string]string)
 	fields := msgData.Header.Fields()
 	for fields.Next() {
 		key := fields.Key()
 		text, err := fields.Text()
 		if err != nil {
-			text = fields.Value() // fallback on value brute
+			text = fields.Value() // fallback to raw value
 		}
 		mailMsg.Headers[key] = text
 
-		// Extraire les champs importants
+		// Extract important fields
 		switch key {
 		case "From":
 			mailMsg.From = text
@@ -2038,12 +2037,12 @@ func (c *Pop3Consumer) parsePop3Message(msgData *message.Entity) (*MailMessage, 
 	return mailMsg, nil
 }
 
-// parseMimeMessage analyse un message MIME for POP3.
+// parseMimeMessage parses a MIME message for POP3.
 func (c *Pop3Consumer) parseMimeMessage(data []byte) ([]byte, []byte, map[string][]byte) {
 	return parseMimeMessageCommon(data)
 }
 
-// populateExchange remplit l'exchange with les donnees du message POP3.
+// populateExchange populates the exchange with POP3 message data.
 func (c *Pop3Consumer) populateExchange(exchange *Exchange, msg *MailMessage) {
 	exchange.SetBody(msg.Body)
 	exchange.SetHeader(MailFrom, msg.From)
@@ -2059,7 +2058,7 @@ func (c *Pop3Consumer) populateExchange(exchange *Exchange, msg *MailMessage) {
 	exchange.SetHeader(MailSize, strconv.Itoa(len(msg.Body)))
 	exchange.SetHeader(MailUID, strconv.FormatUint(uint64(msg.UID), 10))
 
-	// Si version HTML existe, l'addinger comme propriete
+	// If an HTML version exists, add it as a property
 	if msg.BodyHTML != nil {
 		exchange.SetProperty("CamelMailBodyHTML", msg.BodyHTML)
 	}
@@ -2070,20 +2069,20 @@ func (c *Pop3Consumer) populateExchange(exchange *Exchange, msg *MailMessage) {
 		}
 	}
 
-	// Pieces jointes
+	// Attachments
 	for name, data := range msg.Attachments {
 		exchange.SetHeader(MailAttachmentPrefix+"_"+name, data)
 	}
 }
 
-// postProcess applique les actions post-traitement (delete).
+// postProcess applies post-processing actions (delete).
 func (c *Pop3Consumer) postProcess(msgID int, exchange *Exchange) error {
 	ep := c.endpoint
 
 	// Delete
 	if ep.delete || c.getBoolHeader(exchange, MailDeleteHeader) {
 		if err := c.client.Dele(msgID); err != nil {
-			return fmt.Errorf("error deletion message %d: %w", msgID, err)
+			return fmt.Errorf("deletion error for message %d: %w", msgID, err)
 		}
 		return nil
 	}
@@ -2091,7 +2090,7 @@ func (c *Pop3Consumer) postProcess(msgID int, exchange *Exchange) error {
 	return nil
 }
 
-// handleFailedMessage permet de traiter une error via le processor.
+// handleFailedMessage allows processing an error via the processor.
 func (c *Pop3Consumer) handleFailedMessage(ctx context.Context, msgID int, msgErr error) error {
 	exchange := NewExchange(ctx)
 	exchange.SetHeader("CamelMailError", msgErr.Error())
@@ -2100,7 +2099,7 @@ func (c *Pop3Consumer) handleFailedMessage(ctx context.Context, msgID int, msgEr
 	return c.processor.Process(exchange)
 }
 
-// getBoolHeader recupere une value bool d'un header.
+// getBoolHeader retrieves a bool value from a header.
 func (c *Pop3Consumer) getBoolHeader(exchange *Exchange, header string) bool {
 	if v, exists := exchange.GetOut().GetHeader(header); exists {
 		if b, ok := v.(bool); ok {
@@ -2113,7 +2112,7 @@ func (c *Pop3Consumer) getBoolHeader(exchange *Exchange, header string) bool {
 	return false
 }
 
-// Stop arrete le consommateur POP3.
+// Stop stops the POP3 consumer.
 func (c *Pop3Consumer) Stop() error {
 	close(c.stopChan)
 	c.wg.Wait()
@@ -2121,38 +2120,38 @@ func (c *Pop3Consumer) Stop() error {
 	return nil
 }
 
-// parseMimeMessageCommon fonction utilitaire partagee for le parsing MIME.
+// parseMimeMessageCommon is a shared utility function for MIME parsing.
 func parseMimeMessageCommon(data []byte) ([]byte, []byte, map[string][]byte) {
 	result := &parseMimeMessageResult{
 		attachments: make(map[string][]byte),
 	}
 
-	// Essai de parsing comme entite mail
+	// Try parsing as a mail entity
 	entity, err := mail.CreateReader(bytes.NewReader(data))
 	if err != nil {
-		// Pas un MIME valid, retourner comme texte brut
+		// Not valid MIME — return as plain text
 		return data, nil, result.attachments
 	}
 
-	// Analyse recursive des parties
+	// Recursively analyse parts
 	parseEntityCommon(entity, result, "")
 
 	return result.bodyText, result.bodyHTML, result.attachments
 }
 
-// parseEntityCommon fonction utilitaire for parser une entite MIME.
+// parseEntityCommon is a utility function for parsing a MIME entity.
 func parseEntityCommon(entity *mail.Reader, result *parseMimeMessageResult, parentContentType string) {
-	// Headers du message
+	// Message headers
 	header := entity.Header
 	contentType, _, _ := header.ContentType()
 
 	switch {
 	case strings.HasPrefix(contentType, "multipart/alternative"):
-		// Choisir la meilleure partie available (HTML prefere au texte)
+		// Choose the best available part (HTML preferred over plain text)
 		parseMultipartAlternativeCommon(entity, result)
 
 	case strings.HasPrefix(contentType, "multipart/"): // multipart/mixed, multipart/related, etc.
-		// Scanner toutes les parties
+		// Scan all parts
 		for {
 			part, err := entity.NextPart()
 			if err == io.EOF {
@@ -2161,21 +2160,21 @@ func parseEntityCommon(entity *mail.Reader, result *parseMimeMessageResult, pare
 			if err != nil {
 				break
 			}
-			// Traiter directement la partie
+			// Process the part directly
 			handlePartCommon(part, result)
 		}
 
 	case strings.HasPrefix(contentType, "text/"):
-		// Contenu texte simple
+		// Plain text content
 		handleTextEntityCommon(entity, result, contentType)
 
 	default:
-		// Autre contenu (binaire, piece jointe...)
+		// Other content (binary, attachment, etc.)
 		handleAttachmentEntityCommon(entity, result)
 	}
 }
 
-// parseMultipartAlternativeCommon gere multipart/alternative.
+// parseMultipartAlternativeCommon handles multipart/alternative.
 func parseMultipartAlternativeCommon(entity *mail.Reader, result *parseMimeMessageResult) {
 	var textPart []byte
 	var htmlPart []byte
@@ -2189,7 +2188,7 @@ func parseMultipartAlternativeCommon(entity *mail.Reader, result *parseMimeMessa
 			break
 		}
 
-		// Utiliser Get for obtenir le Content-Type du header PartHeader
+		// Use Get to obtain the Content-Type from PartHeader
 		contentType := part.Header.Get("Content-Type")
 		partData, err := decodePartCommon(part)
 		if err != nil {
@@ -2202,7 +2201,7 @@ func parseMultipartAlternativeCommon(entity *mail.Reader, result *parseMimeMessa
 		case strings.HasPrefix(contentType, "text/html"):
 			htmlPart = partData
 		default:
-			// Autre alternative, la garder si on n'a rien de mieux
+			// Other alternative — keep it if we have nothing better
 			if textPart == nil {
 				textPart = partData
 			}
@@ -2213,9 +2212,9 @@ func parseMultipartAlternativeCommon(entity *mail.Reader, result *parseMimeMessa
 	result.bodyHTML = htmlPart
 }
 
-// handlePartCommon traite une partie multipart.
+// handlePartCommon processes a multipart part.
 func handlePartCommon(part *mail.Part, result *parseMimeMessageResult) {
-	// PartHeader n'a pas de methode ContentType(), utiliser Get()
+	// PartHeader does not have a ContentType() method — use Get()
 	contentType := part.Header.Get("Content-Type")
 	contentDisp := part.Header.Get("Content-Disposition")
 
@@ -2224,10 +2223,10 @@ func handlePartCommon(part *mail.Part, result *parseMimeMessageResult) {
 		return
 	}
 
-	// Verifier si c'est une piece jointe par Content-Disposition
+	// Check if it is an attachment via Content-Disposition
 	isAttachment := strings.Contains(contentDisp, "attachment")
 
-	// Si c'est du texte et pas une piece jointe
+	// If it is text and not an attachment
 	if strings.HasPrefix(contentType, "text/") && !isAttachment {
 		if strings.HasPrefix(contentType, "text/html") {
 			result.bodyHTML = data
@@ -2235,7 +2234,7 @@ func handlePartCommon(part *mail.Part, result *parseMimeMessageResult) {
 			result.bodyText = data
 		}
 	} else {
-		// Piece jointe ou autre contenu
+		// Attachment or other content
 		filename := extractFilenameFromDispositionCommon(contentDisp, contentType)
 		if filename == "" {
 			filename = "attachment.bin"
@@ -2246,7 +2245,7 @@ func handlePartCommon(part *mail.Part, result *parseMimeMessageResult) {
 	}
 }
 
-// handleTextEntityCommon traite une entite texte.
+// handleTextEntityCommon processes a text entity.
 func handleTextEntityCommon(entity *mail.Reader, result *parseMimeMessageResult, contentType string) {
 	part, err := entity.NextPart()
 	if err != nil {
@@ -2264,7 +2263,7 @@ func handleTextEntityCommon(entity *mail.Reader, result *parseMimeMessageResult,
 	}
 }
 
-// handleAttachmentEntityCommon traite une entite comme piece jointe.
+// handleAttachmentEntityCommon processes an entity as an attachment.
 func handleAttachmentEntityCommon(entity *mail.Reader, result *parseMimeMessageResult) {
 	filename := extractFilenameCommon(entity.Header)
 	if filename == "" {
@@ -2284,12 +2283,12 @@ func handleAttachmentEntityCommon(entity *mail.Reader, result *parseMimeMessageR
 	}
 }
 
-// decodePartCommon decode une partie.
+// decodePartCommon decodes a part.
 func decodePartCommon(part *mail.Part) ([]byte, error) {
 	return io.ReadAll(part.Body)
 }
 
-// extractFilenameFromDispositionCommon extrait le filename from Content-Disposition et Content-Type.
+// extractFilenameFromDispositionCommon extracts the filename from Content-Disposition and Content-Type.
 func extractFilenameFromDispositionCommon(contentDisposition, contentType string) string {
 	if contentDisposition != "" {
 		if strings.Contains(contentDisposition, "filename=") {
@@ -2304,7 +2303,7 @@ func extractFilenameFromDispositionCommon(contentDisposition, contentType string
 			}
 		}
 	}
-	// Essayer Content-Type name parameter
+	// Try Content-Type name parameter
 	if strings.Contains(contentType, "name=") {
 		parts := strings.Split(contentType, "name=")
 		if len(parts) > 1 {
@@ -2314,7 +2313,7 @@ func extractFilenameFromDispositionCommon(contentDisposition, contentType string
 	return ""
 }
 
-// extractFilenameCommon extrait le nom de file des headers.
+// extractFilenameCommon extracts the filename from headers.
 func extractFilenameCommon(header mail.Header) string {
 	// Content-Disposition
 	disp, _, _ := header.ContentDisposition()
@@ -2323,7 +2322,7 @@ func extractFilenameCommon(header mail.Header) string {
 			parts := strings.Split(disp, "filename=")
 			if len(parts) > 1 {
 				filename := strings.Trim(parts[1], ` "'`)
-				// Nettoyer les parametres supplementaires
+				// Remove extra parameters
 				if idx := strings.Index(filename, ";"); idx > 0 {
 					filename = filename[:idx]
 					filename = strings.Trim(filename, ` "'`)

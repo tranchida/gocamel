@@ -9,8 +9,8 @@ import (
 	"sync"
 )
 
-// En-têtes SQL posés ou consommés sur les Exchange.
-// Correspondent aux en-têtes du composant Apache Camel SQL.
+// SQL headers set or consumed on Exchange objects.
+// These correspond to the headers of the Apache Camel SQL component.
 const (
 	SqlQuery       = "CamelSqlQuery"       // Overrides the query configured in the URI
 	SqlSelect      = "CamelSqlQuery"       // Alias: query override (body can be used as parameters)
@@ -165,7 +165,7 @@ func (e *SQLEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return nil, fmt.Errorf("the sql component does not support consumers")
 }
 
-// SQLProducer exécute la requête configurée sur l'Exchange.
+// SQLProducer executes the configured query on the Exchange.
 type SQLProducer struct {
 	endpoint *SQLEndpoint
 }
@@ -219,7 +219,7 @@ func (p *SQLProducer) Send(exchange *Exchange) error {
 func (p *SQLProducer) sendTx(ctx context.Context, exchange *Exchange, query string, params []any, isSelect bool) error {
 	tx, err := p.endpoint.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("erreur début transaction: %w", err)
+		return fmt.Errorf("transaction begin error: %w", err)
 	}
 
 	var execErr error
@@ -234,28 +234,28 @@ func (p *SQLProducer) sendTx(ctx context.Context, exchange *Exchange, query stri
 		return execErr
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("erreur commit transaction: %w", err)
+		return fmt.Errorf("transaction commit error: %w", err)
 	}
 	return nil
 }
 
-// execBatch exécute la même requête pour chaque jeu de paramètres fourni via le body
-// (attendu sous forme [][]any).
+// execBatch executes the same query for each set of parameters provided via the body
+// (expected as [][]any).
 func (p *SQLProducer) execBatch(ctx context.Context, exchange *Exchange, query string) error {
 	body := exchange.GetIn().GetBody()
 	batch, ok := body.([][]any)
 	if !ok {
-		return fmt.Errorf("mode batch: le body doit être [][]any, reçu %T", body)
+		return fmt.Errorf("batch mode: body must be [][]any, got %T", body)
 	}
 
 	tx, err := p.endpoint.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("erreur début transaction batch: %w", err)
+		return fmt.Errorf("batch transaction begin error: %w", err)
 	}
 	stmt, err := tx.PrepareContext(ctx, query)
 	if err != nil {
 		_ = tx.Rollback()
-		return fmt.Errorf("erreur préparation batch: %w", err)
+		return fmt.Errorf("batch prepare error: %w", err)
 	}
 	defer stmt.Close()
 
@@ -264,7 +264,7 @@ func (p *SQLProducer) execBatch(ctx context.Context, exchange *Exchange, query s
 		result, err := stmt.ExecContext(ctx, params...)
 		if err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("erreur batch ligne %d: %w", i, err)
+			return fmt.Errorf("batch error at row %d: %w", i, err)
 		}
 		if n, err := result.RowsAffected(); err == nil {
 			total += n
@@ -272,7 +272,7 @@ func (p *SQLProducer) execBatch(ctx context.Context, exchange *Exchange, query s
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("erreur commit batch: %w", err)
+		return fmt.Errorf("batch commit error: %w", err)
 	}
 
 	exchange.GetOut().SetHeader(SqlRowCount, total)
@@ -291,13 +291,13 @@ type sqlExecer interface {
 func (p *SQLProducer) execSelect(ctx context.Context, exchange *Exchange, q sqlQuerier, query string, params []any) error {
 	rows, err := q.QueryContext(ctx, query, params...)
 	if err != nil {
-		return fmt.Errorf("erreur lors de l'exécution du SELECT: %w", err)
+		return fmt.Errorf("SELECT execution error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		return fmt.Errorf("erreur récupération colonnes: %w", err)
+		return fmt.Errorf("column retrieval error: %w", err)
 	}
 
 	var results []map[string]any
@@ -308,7 +308,7 @@ func (p *SQLProducer) execSelect(ctx context.Context, exchange *Exchange, q sqlQ
 			pointers[i] = &values[i]
 		}
 		if err := rows.Scan(pointers...); err != nil {
-			return fmt.Errorf("erreur scan ligne: %w", err)
+			return fmt.Errorf("row scan error: %w", err)
 		}
 		row := make(map[string]any, len(cols))
 		for i, c := range cols {
@@ -317,7 +317,7 @@ func (p *SQLProducer) execSelect(ctx context.Context, exchange *Exchange, q sqlQ
 		results = append(results, row)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("erreur itération lignes: %w", err)
+		return fmt.Errorf("row iteration error: %w", err)
 	}
 
 	exchange.GetOut().SetHeader(SqlColumnNames, cols)
@@ -339,7 +339,7 @@ func (p *SQLProducer) execSelect(ctx context.Context, exchange *Exchange, q sqlQ
 func (p *SQLProducer) execWrite(ctx context.Context, exchange *Exchange, e sqlExecer, query string, params []any) error {
 	result, err := e.ExecContext(ctx, query, params...)
 	if err != nil {
-		return fmt.Errorf("erreur lors de l'exécution SQL: %w", err)
+		return fmt.Errorf("SQL execution error: %w", err)
 	}
 	affected, _ := result.RowsAffected()
 	exchange.GetOut().SetHeader(SqlRowCount, affected)
@@ -347,8 +347,8 @@ func (p *SQLProducer) execWrite(ctx context.Context, exchange *Exchange, e sqlEx
 	return nil
 }
 
-// extractSQLParameters récupère les paramètres positionnels depuis l'Exchange.
-// Priorité : header SqlParameters, puis body s'il s'agit d'un []any.
+// extractSQLParameters retrieves positional parameters from the Exchange.
+// Priority: SqlParameters header first, then the body if it is a []any.
 func extractSQLParameters(exchange *Exchange) []any {
 	if v, ok := exchange.GetIn().GetHeader(SqlParameters); ok {
 		if s, ok := v.([]any); ok {
@@ -363,8 +363,8 @@ func extractSQLParameters(exchange *Exchange) []any {
 	return nil
 }
 
-// normalizeSQLValue convertit les []byte (TEXT renvoyé en binaire par certains drivers)
-// en string pour faciliter l'usage côté processeurs.
+// normalizeSQLValue converts []byte (TEXT returned as binary by some drivers)
+// to string for easier use in processors.
 func normalizeSQLValue(v any) any {
 	if b, ok := v.([]byte); ok {
 		return string(b)

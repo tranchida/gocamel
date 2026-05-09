@@ -10,55 +10,55 @@ import (
 )
 
 func main() {
-	// Création d'un répertoire temporaire pour les tests
+	// Create a temporary directory for testing.
 	tempDir, err := os.MkdirTemp("", "gocamel-test-*")
 	if err != nil {
-		fmt.Printf("Erreur lors de la création du répertoire temporaire: %v\n", err)
+		fmt.Printf("Error creating temporary directory: %v\n", err)
 		return
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Création du contexte et enregistrement du composant File
+	// Create the context and register the File component.
 	context := gocamel.NewCamelContext()
 	context.AddComponent("file", gocamel.NewFileComponent())
 
-	// Création d'une route qui surveille le répertoire
+	// Create a route that watches the directory.
 	route, err := context.CreateRouteBuilder().
 		From("file://" + tempDir).
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
-			fmt.Printf("Nouveau fichier détecté:\n")
+			fmt.Printf("New file detected:\n")
 			if fileName, ok := exchange.GetIn().GetHeader("CamelFileName"); ok {
-				fmt.Printf("  Nom: %s\n", fileName)
+				fmt.Printf("  Name: %s\n", fileName)
 			}
 			if filePath, ok := exchange.GetIn().GetHeader("CamelFileAbsolutePath"); ok {
-				fmt.Printf("  Chemin: %s\n", filePath)
+				fmt.Printf("  Path: %s\n", filePath)
 			}
-			fmt.Printf("  Contenu: %s\n", exchange.GetIn().GetBody())
+			fmt.Printf("  Content: %s\n", exchange.GetIn().GetBody())
 			return nil
 		}).
 		Build()
 	if err != nil {
-		fmt.Printf("Erreur création route: %v\n", err)
+		fmt.Printf("Error creating route: %v\n", err)
 		return
 	}
 
-	// Démarrage de la route
+	// Start the route.
 	context.AddRoute(route)
 	context.Start()
 
-	fmt.Printf("Surveillance du répertoire: %s\n", tempDir)
+	fmt.Printf("Watching directory: %s\n", tempDir)
 
-	// Création de quelques fichiers de test
+	// Create a few test files.
 	for i := 1; i <= 3; i++ {
-		content := fmt.Sprintf("Contenu du fichier test %d", i)
+		content := fmt.Sprintf("Content of test file %d", i)
 		filename := filepath.Join(tempDir, fmt.Sprintf("test%d.txt", i))
 		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
-			fmt.Printf("Erreur lors de l'écriture du fichier: %v\n", err)
+			fmt.Printf("Error writing file: %v\n", err)
 			return
 		}
 		time.Sleep(time.Second)
 	}
 
-	// Attente pour voir les résultats
+	// Wait to see the results.
 	time.Sleep(2 * time.Second)
 }

@@ -192,7 +192,7 @@ func TestMailEndpoint_CreateProducer_InvalidProtocol(t *testing.T) {
 
 	_, err := endpoint.CreateProducer()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ne supporte pas la production")
+	assert.Contains(t, err.Error(), "does not support producing")
 }
 
 func TestMailEndpoint_CreateConsumer_InvalidProtocol(t *testing.T) {
@@ -201,7 +201,7 @@ func TestMailEndpoint_CreateConsumer_InvalidProtocol(t *testing.T) {
 
 	_, err := endpoint.CreateConsumer(nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ne supporte pas la consommation")
+	assert.Contains(t, err.Error(), "does not support consuming")
 }
 
 func TestMailProducer_StartStop(t *testing.T) {

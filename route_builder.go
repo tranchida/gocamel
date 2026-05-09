@@ -16,7 +16,7 @@ type RouteBuilder struct {
 	err       error              // accumulated error during DSL construction.
 }
 
-// NewRouteBuilder crée une nouvelle instance de RouteBuilder
+// NewRouteBuilder creates a new RouteBuilder instance.
 func NewRouteBuilder(context *CamelContext) *RouteBuilder {
 	route := context.CreateRoute()
 	return &RouteBuilder{
@@ -26,40 +26,40 @@ func NewRouteBuilder(context *CamelContext) *RouteBuilder {
 	}
 }
 
-// From définit l'endpoint source de la route
+// From sets the source endpoint of the route.
 func (b *RouteBuilder) From(uri string) *RouteBuilder {
 	b.route.From(uri)
 	return b
 }
 
-// Process ajoute un processeur au conteneur actuel
+// Process adds a processor to the current container.
 func (b *RouteBuilder) Process(processor Processor) *RouteBuilder {
 	b.container.AddProcessor(processor)
 	return b
 }
 
-// ProcessRef ajoute un processeur référencé par son nom dans le registre
+// ProcessRef adds a processor looked up by name from the registry.
 func (b *RouteBuilder) ProcessRef(name string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		val, exists := b.context.GetComponentRegistry().Lookup(name)
 		if !exists {
-			return fmt.Errorf("processeur non trouvé dans le registre: %s", name)
+			return fmt.Errorf("processor not found in registry: %s", name)
 		}
 		processor, ok := val.(Processor)
 		if !ok {
-			return fmt.Errorf("l'objet trouvé n'est pas un processeur: %s", name)
+			return fmt.Errorf("the object found is not a processor: %s", name)
 		}
 		return processor.Process(exchange)
 	})
 }
 
-// ProcessFunc ajoute une fonction de traitement au conteneur actuel
+// ProcessFunc adds a processing function to the current container.
 func (b *RouteBuilder) ProcessFunc(f func(*Exchange) error) *RouteBuilder {
 	b.container.AddProcessor(ProcessorFunc(f))
 	return b
 }
 
-// SetBody définit le corps du message de sortie
+// SetBody sets the output message body.
 func (b *RouteBuilder) SetBody(body interface{}) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		exchange.GetOut().SetBody(body)
@@ -67,7 +67,7 @@ func (b *RouteBuilder) SetBody(body interface{}) *RouteBuilder {
 	})
 }
 
-// SetHeader définit un en-tête du message de sortie
+// SetHeader sets a header on the output message.
 func (b *RouteBuilder) SetHeader(key string, value interface{}) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		exchange.GetOut().SetHeader(key, value)
@@ -75,7 +75,7 @@ func (b *RouteBuilder) SetHeader(key string, value interface{}) *RouteBuilder {
 	})
 }
 
-// SetHeaders définit plusieurs en-têtes du message de sortie
+// SetHeaders sets multiple headers on the output message.
 func (b *RouteBuilder) SetHeaders(headers map[string]any) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		exchange.GetOut().SetHeaders(headers)
@@ -83,7 +83,7 @@ func (b *RouteBuilder) SetHeaders(headers map[string]any) *RouteBuilder {
 	})
 }
 
-// SetHeadersFunc définit plusieurs en-têtes via une fonction
+// SetHeadersFunc sets multiple headers via a function.
 func (b *RouteBuilder) SetHeadersFunc(f func(*Exchange) (map[string]any, error)) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		headers, err := f(exchange)
@@ -95,7 +95,7 @@ func (b *RouteBuilder) SetHeadersFunc(f func(*Exchange) (map[string]any, error))
 	})
 }
 
-// SetProperty définit une propriété de l'échange
+// SetProperty sets a property on the exchange.
 func (b *RouteBuilder) SetProperty(key string, value any) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		exchange.SetProperty(key, value)
@@ -103,7 +103,7 @@ func (b *RouteBuilder) SetProperty(key string, value any) *RouteBuilder {
 	})
 }
 
-// SetPropertyFunc définit une propriété via une fonction
+// SetPropertyFunc sets a property on the exchange via a function.
 func (b *RouteBuilder) SetPropertyFunc(key string, f func(*Exchange) (any, error)) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		val, err := f(exchange)
@@ -115,7 +115,7 @@ func (b *RouteBuilder) SetPropertyFunc(key string, f func(*Exchange) (any, error
 	})
 }
 
-// RemoveProperty supprime une propriété de l'échange
+// RemoveProperty removes a property from the exchange.
 func (b *RouteBuilder) RemoveProperty(key string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		exchange.RemoveProperty(key)
@@ -123,8 +123,8 @@ func (b *RouteBuilder) RemoveProperty(key string) *RouteBuilder {
 	})
 }
 
-// RemoveProperties supprime les propriétés correspondant au pattern fourni,
-// sauf celles qui correspondent aux patterns d'exclusion fournis.
+// RemoveProperties removes all properties matching the given pattern,
+// excluding those that match any of the provided exclusion patterns.
 func (b *RouteBuilder) RemoveProperties(pattern string, excludePatterns ...string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		exchange.RemoveProperties(pattern, excludePatterns...)
@@ -132,7 +132,7 @@ func (b *RouteBuilder) RemoveProperties(pattern string, excludePatterns ...strin
 	})
 }
 
-// RemoveHeader supprime un en-tête du message entrant
+// RemoveHeader removes a header from the incoming message.
 func (b *RouteBuilder) RemoveHeader(name string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		exchange.GetIn().RemoveHeader(name)
@@ -140,8 +140,8 @@ func (b *RouteBuilder) RemoveHeader(name string) *RouteBuilder {
 	})
 }
 
-// RemoveHeaders supprime les en-têtes correspondants au pattern fourni,
-// sauf ceux qui correspondent aux patterns d'exclusion fournis.
+// RemoveHeaders removes all headers matching the given pattern,
+// excluding those that match any of the provided exclusion patterns.
 func (b *RouteBuilder) RemoveHeaders(pattern string, excludePatterns ...string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		exchange.GetIn().RemoveHeaders(pattern, excludePatterns...)
@@ -149,38 +149,38 @@ func (b *RouteBuilder) RemoveHeaders(pattern string, excludePatterns ...string) 
 	})
 }
 
-// SetID définit l'ID de la route
+// SetID sets the route ID.
 func (b *RouteBuilder) SetID(id string) *RouteBuilder {
 	b.route.SetID(id)
 	return b
 }
 
-// SetDescription définit la description de la route
+// SetDescription sets the route description.
 func (b *RouteBuilder) SetDescription(description string) *RouteBuilder {
 	b.route.SetDescription(description)
 	return b
 }
 
-// Transacted active le mode transactionnel for la route.
-// In GoCamel, cela garantit que les synchronisations de l'Exchange (comme la consommation du message source)
-// sont exécutées with le statut approprié à la fin de la route.
+// Transacted enables transactional mode for the route.
+// In GoCamel, this ensures that Exchange synchronizations (such as source message acknowledgement)
+// are executed with the appropriate status at the end of the route.
 func (b *RouteBuilder) Transacted() *RouteBuilder {
 	b.route.SetTransacted(true)
 	return b
 }
 
-// Aggregate ajoute un processeur Aggregator au conteneur actuel
+// Aggregate adds an Aggregator processor to the current container.
 func (b *RouteBuilder) Aggregate(aggregator *Aggregator) *RouteBuilder {
 	b.container.AddProcessor(aggregator)
 	return b
 }
 
-// Split commence un bloc Split EIP
+// Split begins a Split EIP block.
 func (b *RouteBuilder) Split(expression func(*Exchange) (any, error)) *SplitDefinition {
 	s := NewSplitter(expression)
 	b.container.AddProcessor(s)
-	
-	// On crée un nouveau RouteBuilder dont le conteneur est le splitter
+
+	// Create a new RouteBuilder whose container is the splitter.
 	return &SplitDefinition{
 		RouteBuilder: &RouteBuilder{
 			context:   b.context,
@@ -201,31 +201,31 @@ type SplitDefinition struct {
 	splitter *Splitter
 }
 
-// AggregationStrategy définit la stratégie d'agrégation pour le splitter
+// AggregationStrategy sets the aggregation strategy for the splitter.
 func (d *SplitDefinition) AggregationStrategy(strategy AggregationStrategy) *SplitDefinition {
 	d.splitter.SetAggregationStrategy(strategy)
 	return d
 }
 
-// Process ajoute un processeur au conteneur actuel et reste dans le contexte du split
+// Process adds a processor to the current container and stays in the split context.
 func (d *SplitDefinition) Process(processor Processor) *SplitDefinition {
 	d.RouteBuilder.Process(processor)
 	return d
 }
 
-// ProcessFunc ajoute une fonction de traitement au conteneur actuel et reste dans le contexte du split
+// ProcessFunc adds a processing function to the current container and stays in the split context.
 func (d *SplitDefinition) ProcessFunc(f func(*Exchange) error) *SplitDefinition {
 	d.RouteBuilder.ProcessFunc(f)
 	return d
 }
 
-// To ajoute un ou plusieurs endpoints de destination au conteneur actuel et reste dans le contexte du split
+// To adds one or more destination endpoints to the current container and stays in the split context.
 func (d *SplitDefinition) To(uris ...string) *SplitDefinition {
 	d.RouteBuilder.To(uris...)
 	return d
 }
 
-// ToD ajoute un ou plusieurs endpoints dynamiques de destination et reste dans le contexte du split
+// ToD adds one or more dynamic destination endpoints and stays in the split context.
 func (d *SplitDefinition) ToD(uriTemplates ...string) *SplitDefinition {
 	d.RouteBuilder.ToD(uriTemplates...)
 	return d
@@ -248,108 +248,108 @@ func (d *SplitDefinition) RecipientList(expression any) *SplitDefinition {
 	return d
 }
 
-// SetBody définit le corps du message de sortie et reste dans le contexte du split
+// SetBody sets the output message body and stays in the split context.
 func (d *SplitDefinition) SetBody(body interface{}) *SplitDefinition {
 	d.RouteBuilder.SetBody(body)
 	return d
 }
 
-// SetHeader définit un en-tête du message de sortie et reste dans le contexte du split
+// SetHeader sets a header on the output message and stays in the split context.
 func (d *SplitDefinition) SetHeader(key string, value interface{}) *SplitDefinition {
 	d.RouteBuilder.SetHeader(key, value)
 	return d
 }
 
-// SetHeaders définit plusieurs en-têtes et reste dans le contexte du split
+// SetHeaders sets multiple headers and stays in the split context.
 func (d *SplitDefinition) SetHeaders(headers map[string]any) *SplitDefinition {
 	d.RouteBuilder.SetHeaders(headers)
 	return d
 }
 
-// SetHeadersFunc définit plusieurs en-têtes via une fonction et reste dans le contexte du split
+// SetHeadersFunc sets multiple headers via a function and stays in the split context.
 func (d *SplitDefinition) SetHeadersFunc(f func(*Exchange) (map[string]any, error)) *SplitDefinition {
 	d.RouteBuilder.SetHeadersFunc(f)
 	return d
 }
 
-// SetProperty définit une propriété de l'échange et reste dans le contexte du split
+// SetProperty sets a property on the exchange and stays in the split context.
 func (d *SplitDefinition) SetProperty(key string, value any) *SplitDefinition {
 	d.RouteBuilder.SetProperty(key, value)
 	return d
 }
 
-// SetPropertyFunc définit une propriété via une fonction et reste dans le contexte du split
+// SetPropertyFunc sets a property via a function and stays in the split context.
 func (d *SplitDefinition) SetPropertyFunc(key string, f func(*Exchange) (any, error)) *SplitDefinition {
 	d.RouteBuilder.SetPropertyFunc(key, f)
 	return d
 }
 
-// RemoveProperty supprime une propriété de l'échange et reste dans le contexte du split
+// RemoveProperty removes a property from the exchange and stays in the split context.
 func (d *SplitDefinition) RemoveProperty(key string) *SplitDefinition {
 	d.RouteBuilder.RemoveProperty(key)
 	return d
 }
 
-// RemoveProperties supprime les propriétés correspondant au pattern fourni et reste dans le contexte du split
+// RemoveProperties removes properties matching the given pattern and stays in the split context.
 func (d *SplitDefinition) RemoveProperties(pattern string, excludePatterns ...string) *SplitDefinition {
 	d.RouteBuilder.RemoveProperties(pattern, excludePatterns...)
 	return d
 }
 
-// RemoveHeader supprime un en-tête du message entrant et reste dans le contexte du split
+// RemoveHeader removes a header from the incoming message and stays in the split context.
 func (d *SplitDefinition) RemoveHeader(name string) *SplitDefinition {
 	d.RouteBuilder.RemoveHeader(name)
 	return d
 }
 
-// RemoveHeaders supprime les en-têtes correspondants au pattern fourni et reste dans le contexte du split
+// RemoveHeaders removes headers matching the given pattern and stays in the split context.
 func (d *SplitDefinition) RemoveHeaders(pattern string, excludePatterns ...string) *SplitDefinition {
 	d.RouteBuilder.RemoveHeaders(pattern, excludePatterns...)
 	return d
 }
 
-// Stop arrête le traitement de la partie actuelle et reste dans le contexte du split
+// Stop halts processing of the current part and stays in the split context.
 func (d *SplitDefinition) Stop() *SplitDefinition {
 	d.RouteBuilder.Stop()
 	return d
 }
 
-// Aggregate ajoute un agrégateur et reste dans le contexte du split
+// Aggregate adds an aggregator and stays in the split context.
 func (d *SplitDefinition) Aggregate(aggregator *Aggregator) *SplitDefinition {
 	d.RouteBuilder.Aggregate(aggregator)
 	return d
 }
 
-// Log ajoute un log et reste dans le contexte du split
+// Log adds a log step and stays in the split context.
 func (d *SplitDefinition) Log(message string) *SplitDefinition {
 	d.RouteBuilder.Log(message)
 	return d
 }
 
-// LogBody ajoute un log du corps et reste dans le contexte du split
+// LogBody adds a body log step and stays in the split context.
 func (d *SplitDefinition) LogBody(message string) *SplitDefinition {
 	d.RouteBuilder.LogBody(message)
 	return d
 }
 
-// LogHeaders ajoute un log des en-têtes et reste dans le contexte du split
+// LogHeaders adds a headers log step and stays in the split context.
 func (d *SplitDefinition) LogHeaders(message string) *SplitDefinition {
 	d.RouteBuilder.LogHeaders(message)
 	return d
 }
 
-// WireTap ajoute un wiretap et reste dans le contexte du split
+// WireTap adds a WireTap step and stays in the split context.
 func (d *SplitDefinition) WireTap(uri string) *SplitDefinition {
 	d.RouteBuilder.WireTap(uri)
 	return d
 }
 
-// End termine le bloc Split et revient au builder parent
+// End terminates the Split block and returns to the parent builder.
 func (d *SplitDefinition) End() *RouteBuilder {
 	return d.parent
 }
 
-// Log ajoute un processeur qui log le message (structuré)
+// Log adds a processor that logs the message (structured).
 func (b *RouteBuilder) Log(message string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		logInfo(message,
@@ -360,7 +360,7 @@ func (b *RouteBuilder) Log(message string) *RouteBuilder {
 	})
 }
 
-// LogBody ajoute un processeur qui log le corps du message (structuré)
+// LogBody adds a processor that logs the message body (structured).
 func (b *RouteBuilder) LogBody(message string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		logInfo(message,
@@ -371,7 +371,7 @@ func (b *RouteBuilder) LogBody(message string) *RouteBuilder {
 	})
 }
 
-// LogHeaders ajoute un processeur qui log les en-têtes du message (structuré)
+// LogHeaders adds a processor that logs the message headers (structured).
 func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		logInfo(message,
@@ -382,7 +382,7 @@ func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
 	})
 }
 
-// LogSimple ajoute un processeur qui log un message évalué via le Simple Language
+// LogSimple adds a processor that logs a message evaluated via the Simple Language.
 func (b *RouteBuilder) LogSimple(expression string) *RouteBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
@@ -404,13 +404,13 @@ func (b *RouteBuilder) LogSimple(expression string) *RouteBuilder {
 	})
 }
 
-// EnableMetrics active la collecte des métriques Prometheus pour la route en cours
+// EnableMetrics enables Prometheus metrics collection for the current route.
 func (b *RouteBuilder) EnableMetrics() *RouteBuilder {
 	b.route.EnableMetrics()
 	return b
 }
 
-// EnableTracing active le traçage OpenTelemetry pour la route en cours
+// EnableTracing enables OpenTelemetry tracing for the current route.
 func (b *RouteBuilder) EnableTracing() *RouteBuilder {
 	b.route.EnableTracing()
 	return b
@@ -447,7 +447,7 @@ func (b *RouteBuilder) DeadLetterChannel(deadLetterURI string, opts ...DeadLette
 	return b
 }
 
-// Build finalise la construction de la route.
+// Build finalizes route construction.
 // Returns the route or nil if an error occurred during DSL construction.
 func (b *RouteBuilder) Build() (*Route, error) {
 	if b.err != nil {
@@ -483,7 +483,7 @@ func (b *RouteBuilder) SimpleSetHeader(headerName string, expression string) *Ro
 	return b
 }
 
-// Stop arrête le traitement de l'échange actuel
+// Stop halts processing of the current exchange.
 func (b *RouteBuilder) Stop() *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		return ErrStopRouting
@@ -531,8 +531,8 @@ func (b *RouteBuilder) Filter(expression any) *RouteBuilder {
 	return b
 }
 
-// To ajoute un ou plusieurs endpoints de destination au conteneur actuel.
-// Si plusieurs URIs sont fournies, un Multicast est créé automatiquement.
+// To adds one or more destination endpoints to the current container.
+// If multiple URIs are provided, a Multicast is created automatically.
 func (b *RouteBuilder) To(uris ...string) *RouteBuilder {
 	if len(uris) == 0 {
 		return b
@@ -549,8 +549,8 @@ func (b *RouteBuilder) To(uris ...string) *RouteBuilder {
 	return b
 }
 
-// ToD ajoute un ou plusieurs endpoints dynamiques de destination au conteneur actuel.
-// Si plusieurs templates sont fournis, un Multicast est créé automatiquement.
+// ToD adds one or more dynamic destination endpoints to the current container.
+// If multiple templates are provided, a Multicast is created automatically.
 func (b *RouteBuilder) ToD(uriTemplates ...string) *RouteBuilder {
 	if len(uriTemplates) == 0 {
 		return b
@@ -644,12 +644,12 @@ func (b *RouteBuilder) Throttle(maxRequests int64, timePeriod time.Duration) *Ro
 	return b
 }
 
-// WireTap ajoute un processeur WireTap qui envoie une copie asynchrone
-// de l'échange vers l'endpoint spécifié sans bloquer la route principale.
-// La copie est indépendante : les modifications sur l'échange tapé n'affectent
-// pas la route principale et vice-versa.
+// WireTap adds a WireTap processor that asynchronously sends a copy of the exchange
+// to the specified endpoint without blocking the main route.
+// The copy is independent: changes to the tapped exchange do not affect
+// the main route and vice-versa.
 //
-// Exemple:
+// Example:
 //
 //	route, err := ctx.CreateRouteBuilder().
 //	    From("direct:start").
@@ -661,7 +661,7 @@ func (b *RouteBuilder) WireTap(uri string) *RouteBuilder {
 	return b
 }
 
-// Multicast commence un bloc Multicast EIP
+// Multicast begins a Multicast EIP block.
 func (b *RouteBuilder) Multicast() *MulticastDefinition {
 	m := NewMulticast()
 	b.container.AddProcessor(m)
@@ -711,7 +711,7 @@ func (b *RouteBuilder) RecipientList(expression any) *RecipientListDefinition {
 
 	switch expr := expression.(type) {
 	case string:
-		// Heuristic: if it contains "${" treat as Simple Language expression
+		// Heuristic: if it contains "${", treat it as a Simple Language expression.
 		if strings.Contains(expr, "${") {
 			rl.SetSimpleExpression(expr)
 		} else {
@@ -743,19 +743,19 @@ type RecipientListDefinition struct {
 	recipientList *RecipientList
 }
 
-// AggregationStrategy définit la stratégie d'agrégation pour la recipient list
+// AggregationStrategy sets the aggregation strategy for the recipient list.
 func (d *RecipientListDefinition) AggregationStrategy(strategy AggregationStrategy) *RecipientListDefinition {
 	d.recipientList.SetAggregationStrategy(strategy)
 	return d
 }
 
-// ParallelProcessing active ou désactive le traitement parallèle
+// ParallelProcessing enables parallel processing for the recipient list.
 func (d *RecipientListDefinition) ParallelProcessing() *RecipientListDefinition {
 	d.recipientList.SetParallelProcessing(true)
 	return d
 }
 
-// End termine le bloc RecipientList et revient au builder parent
+// End terminates the RecipientList block and returns to the parent builder.
 func (d *RecipientListDefinition) End() *RouteBuilder {
 	return d.parent
 }
@@ -769,19 +769,19 @@ type MulticastDefinition struct {
 	multicast *Multicast
 }
 
-// AggregationStrategy définit la stratégie d'agrégation pour le multicast
+// AggregationStrategy sets the aggregation strategy for the multicast.
 func (d *MulticastDefinition) AggregationStrategy(strategy AggregationStrategy) *MulticastDefinition {
 	d.multicast.SetAggregationStrategy(strategy)
 	return d
 }
 
-// ParallelProcessing active ou désactive le traitement parallèle
+// ParallelProcessing enables parallel processing for the multicast.
 func (d *MulticastDefinition) ParallelProcessing() *MulticastDefinition {
 	d.multicast.SetParallelProcessing(true)
 	return d
 }
 
-// Pipeline commence un bloc Pipeline pour grouper des processeurs dans une branche de multicast
+// Pipeline begins a Pipeline block for grouping processors within a multicast branch.
 func (d *MulticastDefinition) Pipeline() *PipelineDefinition {
 	p := NewPipeline()
 	d.multicast.AddProcessor(p)
@@ -796,25 +796,25 @@ func (d *MulticastDefinition) Pipeline() *PipelineDefinition {
 	}
 }
 
-// Process ajoute un processeur au conteneur actuel et reste dans le contexte du multicast
+// Process adds a processor to the current container and stays in the multicast context.
 func (d *MulticastDefinition) Process(processor Processor) *MulticastDefinition {
 	d.RouteBuilder.Process(processor)
 	return d
 }
 
-// ProcessFunc ajoute une fonction de traitement au conteneur actuel et reste dans le contexte du multicast
+// ProcessFunc adds a processing function to the current container and stays in the multicast context.
 func (d *MulticastDefinition) ProcessFunc(f func(*Exchange) error) *MulticastDefinition {
 	d.RouteBuilder.ProcessFunc(f)
 	return d
 }
 
-// To ajoute un ou plusieurs endpoints de destination au conteneur actuel et reste dans le contexte du multicast
+// To adds one or more destination endpoints to the current container and stays in the multicast context.
 func (d *MulticastDefinition) To(uris ...string) *MulticastDefinition {
 	d.RouteBuilder.To(uris...)
 	return d
 }
 
-// ToD ajoute un ou plusieurs endpoints dynamiques de destination et reste dans le contexte du multicast
+// ToD adds one or more dynamic destination endpoints and stays in the multicast context.
 func (d *MulticastDefinition) ToD(uriTemplates ...string) *MulticastDefinition {
 	d.RouteBuilder.ToD(uriTemplates...)
 	return d
@@ -837,25 +837,25 @@ func (d *MulticastDefinition) RecipientList(expression any) *MulticastDefinition
 	return d
 }
 
-// SetBody définit le corps du message de sortie et reste dans le contexte du multicast
+// SetBody sets the output message body and stays in the multicast context.
 func (d *MulticastDefinition) SetBody(body interface{}) *MulticastDefinition {
 	d.RouteBuilder.SetBody(body)
 	return d
 }
 
-// SetHeader définit un en-tête du message de sortie et reste dans le contexte du multicast
+// SetHeader sets a header on the output message and stays in the multicast context.
 func (d *MulticastDefinition) SetHeader(key string, value interface{}) *MulticastDefinition {
 	d.RouteBuilder.SetHeader(key, value)
 	return d
 }
 
-// WireTap ajoute un wiretap et reste dans le contexte du multicast
+// WireTap adds a WireTap step and stays in the multicast context.
 func (d *MulticastDefinition) WireTap(uri string) *MulticastDefinition {
 	d.RouteBuilder.WireTap(uri)
 	return d
 }
 
-// End termine le bloc Multicast et revient au builder parent
+// End terminates the Multicast block and returns to the parent builder.
 func (d *MulticastDefinition) End() *RouteBuilder {
 	return d.parent
 }
@@ -867,25 +867,25 @@ type PipelineDefinition struct {
 	parent *MulticastDefinition
 }
 
-// Process ajoute un processeur au conteneur actuel et reste dans le contexte du pipeline
+// Process adds a processor to the current container and stays in the pipeline context.
 func (d *PipelineDefinition) Process(processor Processor) *PipelineDefinition {
 	d.RouteBuilder.Process(processor)
 	return d
 }
 
-// ProcessFunc ajoute une fonction de traitement au conteneur actuel et reste dans le contexte du pipeline
+// ProcessFunc adds a processing function to the current container and stays in the pipeline context.
 func (d *PipelineDefinition) ProcessFunc(f func(*Exchange) error) *PipelineDefinition {
 	d.RouteBuilder.ProcessFunc(f)
 	return d
 }
 
-// To ajoute un ou plusieurs endpoints de destination au conteneur actuel et reste dans le contexte du pipeline
+// To adds one or more destination endpoints to the current container and stays in the pipeline context.
 func (d *PipelineDefinition) To(uris ...string) *PipelineDefinition {
 	d.RouteBuilder.To(uris...)
 	return d
 }
 
-// ToD ajoute un ou plusieurs endpoints dynamiques de destination et reste dans le contexte du pipeline
+// ToD adds one or more dynamic destination endpoints and stays in the pipeline context.
 func (d *PipelineDefinition) ToD(uriTemplates ...string) *PipelineDefinition {
 	d.RouteBuilder.ToD(uriTemplates...)
 	return d
@@ -908,19 +908,19 @@ func (d *PipelineDefinition) RecipientList(expression any) *PipelineDefinition {
 	return d
 }
 
-// SetBody définit le corps du message de sortie et reste dans le contexte du pipeline
+// SetBody sets the output message body and stays in the pipeline context.
 func (d *PipelineDefinition) SetBody(body interface{}) *PipelineDefinition {
 	d.RouteBuilder.SetBody(body)
 	return d
 }
 
-// WireTap ajoute un wiretap et reste dans le contexte du pipeline
+// WireTap adds a WireTap step and stays in the pipeline context.
 func (d *PipelineDefinition) WireTap(uri string) *PipelineDefinition {
 	d.RouteBuilder.WireTap(uri)
 	return d
 }
 
-// End termine le bloc Pipeline et revient au builder multicast
+// End terminates the Pipeline block and returns to the multicast builder.
 func (d *PipelineDefinition) End() *MulticastDefinition {
 	return d.parent
 }

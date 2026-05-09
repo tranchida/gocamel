@@ -141,27 +141,27 @@ func (e *ExecEndpoint) URI() string {
 	return e.uri
 }
 
-// CreateProducer crée un producteur exec
+// CreateProducer creates an exec producer
 func (e *ExecEndpoint) CreateProducer() (Producer, error) {
 	return &ExecProducer{endpoint: e}, nil
 }
 
-// CreateConsumer n'est pas supported for le composant exec
+// CreateConsumer is not supported for the exec component
 func (e *ExecEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
-	return nil, fmt.Errorf("le composant exec ne supporte pas les consommateurs")
+	return nil, fmt.Errorf("the exec component does not support consumers")
 }
 
-// ExecProducer executesune commande système
+// ExecProducer executes a system command
 type ExecProducer struct {
 	endpoint *ExecEndpoint
 }
 
-// Start starts the producteur exec
+// Start starts the exec producer
 func (p *ExecProducer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops the producteur exec
+// Stop stops the exec producer
 func (p *ExecProducer) Stop() error {
 	return nil
 }
@@ -219,7 +219,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Résolution du timeout (header > URI)
+	// Timeout resolution (header > URI)
 	timeoutMs := p.endpoint.timeoutMs
 	if v, ok := exchange.GetHeader(CamelExecCommandTimeout); ok {
 		switch val := v.(type) {
@@ -232,7 +232,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Construction du contexte with timeout éventuel
+	// Build context with optional timeout
 	ctx := exchange.Context
 	if timeoutMs > 0 {
 		var cancel context.CancelFunc
@@ -246,7 +246,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		cmd.Dir = workingDir
 	}
 
-	// Stdin from le body du message
+	// Stdin from the message body
 	switch body := exchange.GetIn().GetBody().(type) {
 	case []byte:
 		cmd.Stdin = bytes.NewReader(body)
@@ -291,13 +291,13 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 
 	// Only return an error if the command failed AND it is not
 	// just a non-zero exit code (Camel behavior: exitValue is
-	// exposé in le header, l'appelant décide quoi en faire).
+	// exposed in the header; the caller decides what to do with it).
 	if runErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("exec: timeout exceeded for command %q: %w", executable, ctx.Err())
 		}
 		// ExitError = non-zero exit code -> not a fatal error, let
-		// l'appelant inspecter CamelExecExitValue
+		// the caller inspect CamelExecExitValue
 		if _, isExitErr := runErr.(*exec.ExitError); !isExitErr {
 			return fmt.Errorf("exec: error during execution of %q: %w", executable, runErr)
 		}

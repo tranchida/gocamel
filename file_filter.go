@@ -4,9 +4,9 @@ import (
 	"regexp"
 )
 
-// matchFileName vérifie si un nom de fichier correspond aux expressions régulières include et exclude
-// Si include est fourni, le nom de fichier doit correspondre.
-// Si exclude est fourni, le nom de fichier ne doit pas correspondre.
+// matchFileName checks whether a filename matches the include and exclude regular expressions.
+// If include is provided, the filename must match.
+// If exclude is provided, the filename must not match.
 func matchFileName(filename, include, exclude string) bool {
 	if include != "" {
 		matched, err := regexp.MatchString(include, filename)

@@ -13,7 +13,7 @@ const (
 	instrumentationName = "gitlab.com/tranchida/gocamel"
 )
 
-// EnableTracing active le traçage OpenTelemetry pour la route.
+// EnableTracing enables OpenTelemetry tracing for the route.
 func (r *Route) EnableTracing() *Route {
 	r.tracing = true
 	return r

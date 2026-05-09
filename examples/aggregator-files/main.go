@@ -10,11 +10,11 @@ import (
 	"gitlab.com/tranchida/gocamel"
 )
 
-// headerFileName est la clé du header posé par le composant File.
+// headerFileName is the header key set by the File component.
 const headerFileName = "FileName"
 
-// xmlPdfStrategy agrège deux fichiers (XML + PDF) et conserve le contenu XML
-// comme corps de l'échange final.
+// xmlPdfStrategy aggregates two files (XML + PDF) and keeps the XML content
+// as the body of the final exchange.
 type xmlPdfStrategy struct{}
 
 func (s *xmlPdfStrategy) Aggregate(oldExchange, newExchange *gocamel.Exchange) *gocamel.Exchange {
@@ -25,32 +25,32 @@ func (s *xmlPdfStrategy) Aggregate(oldExchange, newExchange *gocamel.Exchange) *
 	oldName, _ := oldExchange.GetIn().GetHeader(headerFileName)
 	newName, _ := newExchange.GetIn().GetHeader(headerFileName)
 
-	// Conserver le corps XML comme corps de l'échange agrégé.
+	// Keep the XML body as the body of the aggregated exchange.
 	if strings.HasSuffix(fmt.Sprint(newName), ".xml") {
 		oldExchange.GetIn().SetBody(newExchange.GetIn().GetBody())
 		oldExchange.GetIn().SetHeader(headerFileName, newName)
 	} else if strings.HasSuffix(fmt.Sprint(oldName), ".xml") {
-		// Le corps est déjà celui du XML — rien à faire.
+		// The body is already the XML one — nothing to do.
 	}
 
 	return oldExchange
 }
 
 func main() {
-	// Répertoire surveillé : répertoire temporaire créé à l'exécution.
+	// Watched directory: temporary directory created at runtime.
 	watchDir, err := os.MkdirTemp("", "gocamel-aggregator-*")
 	if err != nil {
-		fmt.Printf("Erreur création répertoire: %v\n", err)
+		fmt.Printf("Error creating directory: %v\n", err)
 		return
 	}
 	defer os.RemoveAll(watchDir)
 
-	fmt.Printf("Répertoire surveillé : %s\n", watchDir)
+	fmt.Printf("Watched directory: %s\n", watchDir)
 
 	camelCtx := gocamel.NewCamelContext()
 	camelCtx.AddComponent("file", gocamel.NewFileComponent())
 
-	// Corrélation : nom de base sans extension (« file.xml » et « file.pdf » → « file »).
+	// Correlation key: base name without extension (e.g. "file.xml" and "file.pdf" → "file").
 	correlationKey := func(exchange *gocamel.Exchange) string {
 		name, ok := exchange.GetIn().GetHeader(headerFileName)
 		if !ok {
@@ -72,26 +72,26 @@ func main() {
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
 			name, _ := exchange.GetIn().GetHeader(headerFileName)
 			xmlContent := exchange.GetIn().GetBody()
-			fmt.Printf("=== Agrégation complète (fichier XML : %s) ===\n%s\n", name, xmlContent)
+			fmt.Printf("=== Aggregation complete (XML file: %s) ===\n%s\n", name, xmlContent)
 			return nil
 		}).
 		Build()
 	if buildErr != nil {
-		fmt.Printf("Erreur création route: %v\n", buildErr)
+		fmt.Printf("Error creating route: %v\n", buildErr)
 		return
 	}
 
 	camelCtx.AddRoute(route)
 	if err := camelCtx.Start(); err != nil {
-		fmt.Printf("Erreur démarrage contexte: %v\n", err)
+		fmt.Printf("Error starting context: %v\n", err)
 		return
 	}
 	defer camelCtx.Stop()
 
-	// Laisser le watcher s'initialiser avant d'écrire les fichiers.
+	// Let the watcher initialize before writing files.
 	time.Sleep(200 * time.Millisecond)
 
-	// Écriture des deux fichiers déclencheurs.
+	// Write the two trigger files.
 	xmlContent := `<?xml version="1.0" encoding="UTF-8"?>
 <commande>
   <id>42</id>
@@ -102,19 +102,19 @@ func main() {
 	pdfContent := []byte("%PDF-1.4 fake pdf content")
 
 	if err := os.WriteFile(filepath.Join(watchDir, "file.xml"), []byte(xmlContent), 0644); err != nil {
-		fmt.Printf("Erreur écriture file.xml: %v\n", err)
+		fmt.Printf("Error writing file.xml: %v\n", err)
 		return
 	}
-	fmt.Println("file.xml écrit.")
+	fmt.Println("file.xml written.")
 
 	time.Sleep(100 * time.Millisecond)
 
 	if err := os.WriteFile(filepath.Join(watchDir, "file.pdf"), pdfContent, 0644); err != nil {
-		fmt.Printf("Erreur écriture file.pdf: %v\n", err)
+		fmt.Printf("Error writing file.pdf: %v\n", err)
 		return
 	}
-	fmt.Println("file.pdf écrit.")
+	fmt.Println("file.pdf written.")
 
-	// Attendre que l'agrégation se complète et que le log s'affiche.
+	// Wait for the aggregation to complete and the log to appear.
 	time.Sleep(time.Second)
 }

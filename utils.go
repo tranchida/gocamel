@@ -49,13 +49,13 @@ func Interpolate(text string, exchange *Exchange) string {
 			}
 		}
 
-		return "" // Ou retourner le match original si on veut garder ${...} quand non trouvé ? Camel laisse vide ou erreur ?
+		return "" // Return empty string when the placeholder is not found (Camel behaviour).
 	})
 }
 
-// patternToRegex convertit un pattern avec '*' en Regexp
+// patternToRegex converts a pattern with '*' wildcards into a Regexp.
 func patternToRegex(pattern string) *regexp.Regexp {
-	// Échapper les caractères spéciaux de regex, puis remplacer '*' par '.*'
+	// Escape special regex characters, then replace '*' with '.*'.
 	quoted := regexp.QuoteMeta(pattern)
 	regexStr := "^" + strings.ReplaceAll(quoted, "\\*", ".*") + "$"
 	re, _ := regexp.Compile(regexStr)

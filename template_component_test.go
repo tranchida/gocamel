@@ -441,7 +441,7 @@ func TestTemplateEndpoint_CreateConsumer(t *testing.T) {
 		t.Error("CreateConsumer() should return an error")
 	}
 
-	if !strings.Contains(err.Error(), "ne supporte pas les consommateurs") {
+	if !strings.Contains(err.Error(), "does not support consumers") {
 		t.Errorf("Error message should indicate consumers are not supported, got: %v", err)
 	}
 }
