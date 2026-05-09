@@ -99,6 +99,12 @@ builder.From("direct:start").
 | **Template** | Go template processing |
 | **Exec** | System command execution |
 
+## 🧾 Data Formats
+
+| Data Format | Description |
+|-------------|-------------|
+| **RSS** | Marshal/unmarshal RSS XML with `MarshalRSS()` and `UnmarshalRSS()` |
+
 ## 🔒 Security
 
 GoCamel includes built-in security utilities to protect against common vulnerabilities:

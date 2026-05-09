@@ -82,6 +82,19 @@ Accessible via `ctx.GetComponentRegistry()` :
 | `SetBody(any)` | Définir le corps |
 | `SimpleSetBody(expr)` | Corps par expression |
 
+### Data Formats
+
+| Méthode | Description |
+|---------|-------------|
+| `Marshal(df)` | Sérialiser le corps avec un data format |
+| `Unmarshal(df)` | Désérialiser le corps avec un data format |
+| `MarshalRSS()` | Convertir `RSSFeed` en XML RSS |
+| `UnmarshalRSS()` | Convertir XML RSS en `RSSFeed` |
+| `MarshalCSV(opts...)` | Écrire un corps structuré en chaîne CSV |
+| `UnmarshalCSV(opts...)` | Lire un corps CSV en `[][]string` ou `[]map[string]string` avec `CSVUseMaps(true)` |
+
+Options CSV principales : `CSVDelimiter`, `CSVHeader`, `CSVSkipHeaderRecord`, `CSVCaptureHeaderRecord`, `CSVUseMaps`, `CSVTrim`, `CSVIgnoreEmptyLines`.
+
 ### Builder
 
 | Méthode | Description |

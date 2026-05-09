@@ -264,6 +264,28 @@ func (r *Route) SetHeader(key string, value interface{}) *Route {
 	})
 }
 
+// Marshal adds a dataformat marshal step to the route.
+func (r *Route) Marshal(dataFormat DataFormat) *Route {
+	r.AddProcessor(&MarshalProcessor{DataFormat: dataFormat})
+	return r
+}
+
+// Unmarshal adds a dataformat unmarshal step to the route.
+func (r *Route) Unmarshal(dataFormat DataFormat) *Route {
+	r.AddProcessor(&UnmarshalProcessor{DataFormat: dataFormat})
+	return r
+}
+
+// MarshalRSS converts an RSSFeed body to RSS XML.
+func (r *Route) MarshalRSS() *Route {
+	return r.Marshal(NewRSSDataFormat())
+}
+
+// UnmarshalRSS converts RSS XML into an RSSFeed body.
+func (r *Route) UnmarshalRSS() *Route {
+	return r.Unmarshal(NewRSSDataFormat())
+}
+
 // To adds one or more destination endpoints to the route.
 // If multiple URIs are provided, a Multicast is created automatically.
 func (r *Route) To(uris ...string) *Route {

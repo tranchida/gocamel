@@ -99,6 +99,12 @@ builder.From("direct:start").
 | **Template** | Templates Go natifs |
 | **Exec** | Exécution commandes système |
 
+## 🧾 Data Formats
+
+| Data Format | Description |
+|-------------|-------------|
+| **RSS** | Marshal/unmarshal XML RSS avec `MarshalRSS()` et `UnmarshalRSS()` |
+
 ## 🔒 Sécurité
 
 GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre les vulnérabilités courantes :
