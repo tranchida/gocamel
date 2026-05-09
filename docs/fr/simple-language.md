@@ -338,6 +338,17 @@ Utilitaires numériques pour les arrondis et transformations. Utilisables seuls 
 
 ---
 
+## Fonctions Base64 | Base64 Functions
+
+Encodage et décodage de données en Base64.
+
+| Fonction | Description | Exemple |
+|----------|-------------|---------|
+| `${base64:encode:cible}` | Encode la cible en Base64 | `${base64:encode:body}` |
+| `${base64:decode:cible}` | Décode la cible depuis Base64 | `${base64:decode:header.auth}` |
+
+---
+
 ---
 
 *For more examples, see | Pour plus d'exemples, voir: [examples.md](examples.md)*

@@ -188,3 +188,12 @@ Numeric utilities for rounding and transformations. Can be used standalone or in
 | `${sin(val)}`, `${cos(val)}`, `${tan(val)}` | Trigonometric functions | `${sin(0)}` -> `0` |
 
 ---
+
+## Base64 Functions
+
+Encoding and decoding of data using Base64.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `${base64:encode:target}` | Encode target to Base64 | `${base64:encode:body}` |
+| `${base64:decode:target}` | Decode target from Base64 | `${base64:decode:header.auth}` |

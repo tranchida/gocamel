@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"encoding/base64"
 	"fmt"
 	"math"
 	"math/rand"
@@ -75,6 +76,9 @@ var (
 
 	// Matches file:functions
 	fileFunctionRegex = regexp.MustCompile(`^file:([a-zA-Z0-9_\.]+)$`)
+
+	// Matches base64:command:target
+	base64FunctionRegex = regexp.MustCompile(`^base64:(encode|decode):(.+)$`)
 
 	// Matches uuid
 	uuidFunctionRegex = regexp.MustCompile(`^uuid$`)
@@ -344,6 +348,11 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 	// Check for numeric function
 	if numMatch := numericFunctionRegex.FindStringSubmatch(expr); numMatch != nil {
 		return evaluateNumericFunction(numMatch[1], numMatch[2], exchange)
+	}
+
+	// Check for base64 function
+	if b64Match := base64FunctionRegex.FindStringSubmatch(expr); b64Match != nil {
+		return evaluateBase64Function(b64Match[1], b64Match[2], exchange)
 	}
 
 	// Check for random function
@@ -2079,5 +2088,36 @@ func evaluateNumericFunction(fn, arg string, exchange *Exchange) (interface{}, e
 		return math.Tan(num), nil
 	default:
 		return nil, fmt.Errorf("unknown numeric function: %s", fn)
+	}
+}
+
+// evaluateBase64Function evaluates base64 encoding and decoding functions
+func evaluateBase64Function(command, target string, exchange *Exchange) (interface{}, error) {
+	val, err := evaluateVariable(target, exchange)
+	if err != nil {
+		return nil, err
+	}
+
+	var data []byte
+	switch v := val.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		data = []byte(fmt.Sprintf("%v", v))
+	}
+
+	switch command {
+	case "encode":
+		return base64.StdEncoding.EncodeToString(data), nil
+	case "decode":
+		decoded, err := base64.StdEncoding.DecodeString(string(data))
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode error: %w", err)
+		}
+		return string(decoded), nil
+	default:
+		return nil, fmt.Errorf("unknown base64 command: %s", command)
 	}
 }
