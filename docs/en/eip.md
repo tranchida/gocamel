@@ -92,6 +92,8 @@ builder.From("direct:start").
 **Notes:**
 - Uses a fixed-window counter; for smoother behaviour use smaller windows
 - Blocking: the goroutine sleeps until the window allows the exchange through
+- `maxRequests` and `timePeriod` must be greater than zero; invalid values return an error instead of blocking indefinitely
+- If the exchange context is cancelled while waiting for the next window, `Process` returns an error
 
 ---
 
@@ -123,6 +125,7 @@ builder.From("direct:start").
 - Blocking: the goroutine sleeps for the computed duration
 - If the exchange context is cancelled during the sleep, `Process` returns an error
 - Return `0` from `DelayFunc` to skip the delay for a given exchange
+- Passing `nil` to `DelayFunc` fails route construction; `NewDelayerFunc(nil)` remains constructible but returns a processing error instead of panicking
 
 ---
 
@@ -522,4 +525,3 @@ builder.RemoveProperties("processing*")
 | Stop | Control | Stop routing |
 | SetHeader | Headers | Header manipulation |
 | SetProperty | Properties | Exchange properties |
-

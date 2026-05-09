@@ -205,6 +205,8 @@ builder.From("direct:start").
 **Notes :**
 - Utilise un compteur à fenêtre fixe — pour un lissage plus fin, réduire la durée de la fenêtre
 - Bloquant : le goroutine attend que la fenêtre autorise le passage
+- `maxRequests` et `timePeriod` doivent être supérieurs à zéro ; les valeurs invalides retournent une erreur au lieu de bloquer indéfiniment
+- Si le contexte de l'exchange est annulé pendant l'attente de la fenêtre suivante, `Process` retourne une erreur
 
 ---
 
@@ -236,6 +238,7 @@ builder.From("direct:start").
 - Bloquant : le goroutine dort pendant la durée calculée
 - Si le contexte de l'exchange est annulé pendant le sleep, `Process` retourne une erreur
 - Retourner `0` depuis `DelayFunc` pour ignorer le délai pour un exchange donné
+- Passer `nil` à `DelayFunc` fait échouer la construction de la route ; `NewDelayerFunc(nil)` reste constructible mais retourne une erreur de traitement au lieu de paniquer
 
 ---
 

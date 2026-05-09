@@ -8,13 +8,13 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2
 ## [Unreleased]
 
 ### Ajouté
-- **EIP Delay** — `.Delay(duration)` met l'exchange en pause pour une durée fixe ; `.DelayFunc(fn)` calcule la durée par exchange ; tous deux respectent l'annulation du contexte
+- **EIP Delay** — `.Delay(duration)` met l'exchange en pause pour une durée fixe ; `.DelayFunc(fn)` calcule la durée par exchange ; tous deux respectent l'annulation du contexte et échouent proprement si la fonction dynamique est nil
 - **EIP Content Enricher** — `.Enrich(uri, stratégie)` récupère des données depuis un endpoint externe et les fusionne dans l'exchange via une `AggregationStrategy` ; passer `nil` pour remplacer directement le corps
-- **EIP Throttle** — `.Throttle(maxRequests, période)` limite le débit ; les exchanges excédentaires sont retardés (jamais perdus) via un compteur à fenêtre fixe
+- **EIP Throttle** — `.Throttle(maxRequests, période)` limite le débit ; les exchanges excédentaires sont retardés (jamais perdus) via un compteur à fenêtre fixe ; les limites invalides échouent rapidement et les exchanges en attente respectent l'annulation du contexte
 - **EIP Message Filter** — `.Filter(expression)` supprime les exchanges ne correspondant pas à un prédicat Go ou à une expression Simple Language
 - **`Exchange.PropagateOutToIn()`** — helper extrait qui copie le corps et les en-têtes de `Out` vers `In` ; utilisé en interne par `To`, `ToD` et `WireTap`
 - **Améliorations Aggregator** — verrouillage par clé de corrélation via `sync.Map` (remplace le mutex global), `SetCompletionTimeout(d)` et `SetCompletionPredicate(fn)` comme stratégies de complétion
-- **Correction concurrence DeadLetterChannel** — la map `retryAttempts` est désormais protégée par `sync.Mutex` ; l'ID d'exchange utilise le timestamp de création pour éviter la réutilisation de pointeurs après GC
+- **Durcissement DeadLetterChannel** — la relivraison rejoue désormais le processeur en échec avant de poursuivre la route, utilise des IDs d'exchange stables pour le suivi des tentatives, et nettoie l'état de retry après une relivraison réussie sans dépendre des callbacks `Exchange.Done()` des consumers
 - Support transactionnel via **Unit of Work** et **Synchronization**
   - Nouvelle méthode `.Transacted()` dans le DSL RouteBuilder
   - Traitement transactionnel dans les composants `file`, `ftp`, `sftp`, `smb` et `mail` (post-traitement déclenché à la fin de la route)
