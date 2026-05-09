@@ -26,10 +26,23 @@ Expressions are enclosed in `${...}`:
 
 | Function | Description | Example |
 |----------|-------------|---------|
-| `${date:now}` | Current timestamp | `${date:now:yyyy-MM-dd}` |
+| `${date:now:format}` | Current timestamp | `${date:now:2006-01-02}` |
+| `${date:command+offset:format}` | Date with arithmetic | `${date:now+24h:2006-01-02}` |
+| `${date:header.name:format}` | Date from header | `${date:header.birthDate:2006}` |
+| `${date:property.name:format}` | Date from property | `${date:property.expiry:RFC3339}` |
+| `${date:file:format}` | Last modified date of file | `${date:file:2006-01-02}` |
 | `${random(max)}` | Random number | `${random(100)}` |
 | `${uuid}` | UUID generation | `${uuid}` |
 | `${env:VAR}` | Environment variable | `${env:USER}` |
+
+**Arithmetic Offsets:**
+- `s`: Seconds (e.g., `+30s`)
+- `m`: Minutes (e.g., `-5m`)
+- `h`: Hours (e.g., `+12h`)
+- `d`: Days (e.g., `-7d`)
+
+---
+
 
 ## File Language
 

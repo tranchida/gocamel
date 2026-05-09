@@ -60,8 +60,9 @@ var (
 	// Now supports names with hyphens and other characters
 	dotNotationRegex = regexp.MustCompile(`^(body)$|^(header|[a-zA-Z]+)\.([a-zA-Z0-9_\-\.]+)$`)
 
-	// Matches date:now:FORMAT (format may contain colons, e.g. "2006-01-02T15:04:05")
-	dateFunctionRegex = regexp.MustCompile(`^date:now(?::(.+))?$`)
+	// Matches date:command:FORMAT (command can be now, header.xxx, property.xxx, file)
+	// Supports offsets like +24h, -10m
+	dateFunctionRegex = regexp.MustCompile(`^date:([^+\-:]+)([\+\-][0-9]+[a-z]+)?(?::(.+))?$`)
 
 	// Matches random(MAX)
 	randomFunctionRegex = regexp.MustCompile(`^random\((\d+)\)$`)
@@ -327,11 +328,7 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 
 	// Check for date function - check very early since date format looks like subtraction
 	if dateMatch := dateFunctionRegex.FindStringSubmatch(expr); dateMatch != nil {
-		format := dateMatch[1]
-		if format == "" {
-			format = time.RFC3339
-		}
-		return time.Now().Format(format), nil
+		return evaluateDateFunction(dateMatch[1], dateMatch[2], dateMatch[3], exchange)
 	}
 
 	// Check for file function
@@ -1954,6 +1951,103 @@ func evaluateFileFunction(fn string, exchange *Exchange) (interface{}, error) {
 		return modified, nil
 	default:
 		return nil, fmt.Errorf("unknown file function: %s", fn)
+	}
+}
+
+// evaluateDateFunction evaluates advanced date functions
+func evaluateDateFunction(command, offset, format string, exchange *Exchange) (interface{}, error) {
+	var baseDate time.Time
+
+	switch {
+	case command == "now":
+		baseDate = time.Now()
+	case strings.HasPrefix(command, "header."):
+		name := strings.TrimPrefix(command, "header.")
+		val, ok := exchange.GetIn().GetHeader(name)
+		if !ok {
+			return nil, fmt.Errorf("date: header %s not found", name)
+		}
+		baseDate, ok = val.(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("date: header %s is not a time.Time", name)
+		}
+	case strings.HasPrefix(command, "exchangeProperty.") || strings.HasPrefix(command, "property."):
+		name := strings.TrimPrefix(command, "exchangeProperty.")
+		name = strings.TrimPrefix(name, "property.")
+		val, ok := exchange.GetProperty(name)
+		if !ok {
+			return nil, fmt.Errorf("date: property %s not found", name)
+		}
+		baseDate, ok = val.(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("date: property %s is not a time.Time", name)
+		}
+	case command == "file":
+		val, ok := exchange.GetIn().GetHeader(CamelFileLastModified)
+		if !ok {
+			return nil, fmt.Errorf("date: CamelFileLastModified header not found")
+		}
+		baseDate, ok = val.(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("date: CamelFileLastModified is not a time.Time")
+		}
+	default:
+		return nil, fmt.Errorf("unknown date command: %s", command)
+	}
+
+	// Apply offset if provided
+	if offset != "" {
+		var err error
+		baseDate, err = applyDateOffset(baseDate, offset)
+		if err != nil {
+			return nil, fmt.Errorf("date: invalid offset %s: %w", offset, err)
+		}
+	}
+
+	if format == "" {
+		format = time.RFC3339
+	}
+	// Note: In a real implementation we might want to map Java/Camel date formats
+	// to Go date formats (e.g. yyyy-MM-dd -> 2006-01-02).
+	// For now we assume Go time format syntax.
+	return baseDate.Format(format), nil
+}
+
+func applyDateOffset(t time.Time, offset string) (time.Time, error) {
+	if offset == "" {
+		return t, nil
+	}
+
+	sign := 1
+	if offset[0] == '-' {
+		sign = -1
+	}
+	
+	// Remove the sign
+	offset = offset[1:]
+	
+	// Extract unit
+	unit := offset[len(offset)-1:]
+	valueStr := offset[:len(offset)-1]
+	
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return t, err
+	}
+	
+	value *= sign
+	
+	switch unit {
+	case "s":
+		return t.Add(time.Duration(value) * time.Second), nil
+	case "m":
+		return t.Add(time.Duration(value) * time.Minute), nil
+	case "h":
+		return t.Add(time.Duration(value) * time.Hour), nil
+	case "d":
+		return t.AddDate(0, 0, value), nil
+	default:
+		return t, fmt.Errorf("unsupported date offset unit: %s", unit)
 	}
 }
 

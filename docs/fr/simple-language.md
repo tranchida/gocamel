@@ -173,10 +173,22 @@ Les expressions sont entourées de `${}`:
 
 | Fonction | Description | Exemple |
 |----------|-------------|---------|
-| `${date:now}` | Timestamp actuel | `${date:now:yyyy-MM-dd}` |
+| `${date:now:format}` | Horodatage actuel | `${date:now:2006-01-02}` |
+| `${date:command+offset:format}` | Date avec arithmétique | `${date:now+24h:2006-01-02}` |
+| `${date:header.nom:format}` | Date depuis un header | `${date:header.birthDate:2006}` |
+| `${date:property.nom:format}` | Date depuis une propriété | `${date:property.expiry:RFC3339}` |
+| `${date:file:format}` | Date de modif. du fichier | `${date:file:2006-01-02}` |
 | `${random(max)}` | Nombre aléatoire | `${random(100)}` |
 | `${uuid}` | Génération UUID | `${uuid}` |
 | `${env:VAR}` | Variable d'environnement | `${env:USER}` |
+
+**Décalages Arithmétiques :**
+- `s` : Secondes (ex: `+30s`)
+- `m` : Minutes (ex: `-5m`)
+- `h` : Heures (ex: `+12h`)
+- `d` : Jours (ex: `-7d`)
+
+---
 
 ## File Language
 
