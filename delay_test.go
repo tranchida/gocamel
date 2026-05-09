@@ -60,6 +60,30 @@ func TestDelayerFunc_Dynamic(t *testing.T) {
 	assert.GreaterOrEqual(t, time.Since(start), 50*time.Millisecond)
 }
 
+func TestDelayerFunc_NilReturnsError(t *testing.T) {
+	d := NewDelayerFunc(nil)
+	ex := NewExchange(context.Background())
+
+	err := d.Process(ex)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delay function is nil")
+}
+
+func TestRouteBuilder_DelayFuncNilBuildError(t *testing.T) {
+	ctx := NewCamelContext()
+	ctx.AddComponent("direct", NewDirectComponent())
+
+	route, err := ctx.CreateRouteBuilder().
+		From("direct:delayed").
+		DelayFunc(nil).
+		Build()
+
+	assert.Nil(t, route)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DelayFunc")
+}
+
 func TestRouteBuilder_Delay(t *testing.T) {
 	ctx := NewCamelContext()
 	ctx.AddComponent("direct", NewDirectComponent())

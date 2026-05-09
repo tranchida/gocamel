@@ -16,7 +16,7 @@ type mockDLQEndpoint struct {
 	uri      string
 }
 
-func (e *mockDLQEndpoint) URI() string    { return e.uri }
+func (e *mockDLQEndpoint) URI() string { return e.uri }
 func (e *mockDLQEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	return nil, errors.New("mock DLQ: consumer not supported")
 }
@@ -30,7 +30,7 @@ type mockDLQProducer struct {
 }
 
 func (p *mockDLQProducer) Start(ctx context.Context) error { return nil }
-func (p *mockDLQProducer) Stop() error                      { return nil }
+func (p *mockDLQProducer) Stop() error                     { return nil }
 func (p *mockDLQProducer) Send(exchange *Exchange) error {
 	p.endpoint.mu.Lock()
 	p.endpoint.received = append(p.endpoint.received, exchange)
@@ -198,6 +198,78 @@ func TestRouteBuilder_DeadLetterChannelDSL(t *testing.T) {
 	dlq.mu.Lock()
 	assert.Len(t, dlq.received, 1, "failed exchange should be sent to DLQ")
 	dlq.mu.Unlock()
+}
+
+func TestDeadLetterChannel_RedeliveryReplaysFailedProcessorAndContinues(t *testing.T) {
+	comp, dlq := newMockDLQComponent()
+
+	ctx := NewCamelContext()
+	ctx.GetComponentRegistry().RegisterComponent("mockdlq", comp)
+	ctx.AddComponent("direct", NewDirectComponent())
+
+	var attempts int
+	var nextRan bool
+	route, err := ctx.CreateRouteBuilder().
+		From("direct:start").
+		DeadLetterChannel("mockdlq:errors", MaxRedeliveries(1), RedeliveryDelay(0)).
+		ProcessFunc(func(exchange *Exchange) error {
+			attempts++
+			if attempts == 1 {
+				return errors.New("transient failure")
+			}
+			return nil
+		}).
+		ProcessFunc(func(exchange *Exchange) error {
+			nextRan = true
+			return nil
+		}).
+		Build()
+
+	assert.NoError(t, err)
+
+	exchange := NewExchange(context.Background())
+	processErr := route.Process(exchange)
+
+	assert.NoError(t, processErr)
+	assert.Equal(t, 2, attempts, "failed processor should be replayed once")
+	assert.True(t, nextRan, "route should continue after successful redelivery")
+
+	dlq.mu.Lock()
+	assert.Len(t, dlq.received, 0, "successful redelivery should not send to DLQ")
+	dlq.mu.Unlock()
+}
+
+func TestDeadLetterChannel_RetryStateCleanedAfterSuccessfulRouteRedelivery(t *testing.T) {
+	comp, _ := newMockDLQComponent()
+
+	ctx := NewCamelContext()
+	ctx.GetComponentRegistry().RegisterComponent("mockdlq", comp)
+	ctx.AddComponent("direct", NewDirectComponent())
+
+	var attempts int
+	route, err := ctx.CreateRouteBuilder().
+		From("direct:start").
+		DeadLetterChannel("mockdlq:errors", MaxRedeliveries(1), RedeliveryDelay(0)).
+		ProcessFunc(func(exchange *Exchange) error {
+			attempts++
+			if attempts == 1 {
+				return errors.New("transient failure")
+			}
+			return nil
+		}).
+		Build()
+
+	assert.NoError(t, err)
+
+	exchange := NewExchange(context.Background())
+	processErr := route.Process(exchange)
+	assert.NoError(t, processErr)
+
+	dlc, ok := route.GetErrorHandler().(*DeadLetterChannel)
+	assert.True(t, ok)
+	dlc.mu.Lock()
+	assert.Len(t, dlc.retryAttempts, 0, "retry state should be cleaned without requiring Exchange.Done")
+	dlc.mu.Unlock()
 }
 
 func TestGetErrorHandler_ReturnsNilForNewRoute(t *testing.T) {

@@ -50,6 +50,10 @@ func NewDelayerFunc(fn func(*Exchange) (time.Duration, error)) *Delayer {
 // Process implements the Processor interface.
 // It sleeps for the computed duration, respecting context cancellation.
 func (d *Delayer) Process(exchange *Exchange) error {
+	if d.delayFn == nil {
+		return fmt.Errorf("delay: delay function is nil")
+	}
+
 	duration, err := d.delayFn(exchange)
 	if err != nil {
 		return fmt.Errorf("delay: expression error: %w", err)

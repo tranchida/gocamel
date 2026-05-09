@@ -50,6 +50,46 @@ func TestThrottler_WithinLimit_NoDelay(t *testing.T) {
 	assert.Less(t, time.Since(start), 50*time.Millisecond)
 }
 
+func TestThrottler_InvalidMaxRequests(t *testing.T) {
+	throttler := NewThrottler(0, time.Second)
+	ex := NewExchange(context.Background())
+
+	err := throttler.Process(ex)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maxRequests")
+}
+
+func TestThrottler_InvalidTimePeriod(t *testing.T) {
+	throttler := NewThrottler(1, 0)
+	ex := NewExchange(context.Background())
+
+	err := throttler.Process(ex)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timePeriod")
+}
+
+func TestThrottler_ContextCancelledWhileWaiting(t *testing.T) {
+	throttler := NewThrottler(1, time.Second)
+	require.NoError(t, throttler.Process(NewExchange(context.Background())))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ex := NewExchange(ctx)
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	err := throttler.Process(ex)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context cancelled")
+	assert.Less(t, time.Since(start), 500*time.Millisecond)
+}
+
 func TestRouteBuilder_Throttle(t *testing.T) {
 	ctx := NewCamelContext()
 	ctx.AddComponent("direct", NewDirectComponent())

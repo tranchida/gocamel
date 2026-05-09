@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -42,6 +43,13 @@ func NewThrottler(maxRequests int64, timePeriod time.Duration) *Throttler {
 // Process implements the Processor interface.
 // If the rate limit is reached, the call blocks until the current window expires.
 func (t *Throttler) Process(exchange *Exchange) error {
+	if t.maxRequests <= 0 {
+		return fmt.Errorf("throttle: maxRequests must be greater than 0")
+	}
+	if t.timePeriod <= 0 {
+		return fmt.Errorf("throttle: timePeriod must be greater than 0")
+	}
+
 	for {
 		t.mu.Lock()
 		now := time.Now()
@@ -64,8 +72,28 @@ func (t *Throttler) Process(exchange *Exchange) error {
 
 		sleepFor := time.Until(waitUntil)
 		if sleepFor > 0 {
-			time.Sleep(sleepFor)
+			if err := sleepWithContext(exchange, sleepFor); err != nil {
+				return err
+			}
 		}
 		// Loop to recheck (another goroutine may have consumed the reset window).
+	}
+}
+
+func sleepWithContext(exchange *Exchange, d time.Duration) error {
+	ctx := exchange.Context
+	if ctx == nil {
+		time.Sleep(d)
+		return nil
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("throttle: context cancelled: %w", ctx.Err())
 	}
 }

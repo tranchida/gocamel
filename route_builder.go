@@ -421,11 +421,12 @@ func (b *RouteBuilder) EnableTracing() *RouteBuilder {
 // being built. Multiple calls will overwrite previous settings.
 //
 // Example:
-//   route, err := ctx.CreateRouteBuilder().
-//       From("direct:start").
-//       ErrorHandler(NewDeadLetterChannel(ctx, "log:errors", MaxRedeliveries(3))).
-//       ProcessFunc(myProcessor).
-//       Build()
+//
+//	route, err := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    ErrorHandler(NewDeadLetterChannel(ctx, "log:errors", MaxRedeliveries(3))).
+//	    ProcessFunc(myProcessor).
+//	    Build()
 func (b *RouteBuilder) ErrorHandler(handler ErrorHandler) *RouteBuilder {
 	b.route.SetErrorHandler(handler)
 	return b
@@ -433,14 +434,16 @@ func (b *RouteBuilder) ErrorHandler(handler ErrorHandler) *RouteBuilder {
 
 // DeadLetterChannel configures a DeadLetterChannel error handler for this route.
 // This is a convenience method equivalent to:
-//   ErrorHandler(NewDeadLetterChannel(b.context, deadLetterURI, opts...))
+//
+//	ErrorHandler(NewDeadLetterChannel(b.context, deadLetterURI, opts...))
 //
 // Example:
-//   route, err := ctx.CreateRouteBuilder().
-//       From("direct:start").
-//       DeadLetterChannel("file:errors", MaxRedeliveries(3), RedeliveryDelay(2*time.Second)).
-//       ProcessFunc(myProcessor).
-//       Build()
+//
+//	route, err := ctx.CreateRouteBuilder().
+//	    From("direct:start").
+//	    DeadLetterChannel("file:errors", MaxRedeliveries(3), RedeliveryDelay(2*time.Second)).
+//	    ProcessFunc(myProcessor).
+//	    Build()
 func (b *RouteBuilder) DeadLetterChannel(deadLetterURI string, opts ...DeadLetterChannelOption) *RouteBuilder {
 	dlc := NewDeadLetterChannel(b.context, deadLetterURI, opts...)
 	b.route.SetErrorHandler(dlc)
@@ -599,6 +602,10 @@ func (b *RouteBuilder) Delay(d time.Duration) *RouteBuilder {
 //	    To("direct:next").
 //	    Build()
 func (b *RouteBuilder) DelayFunc(fn func(*Exchange) (time.Duration, error)) *RouteBuilder {
+	if fn == nil {
+		b.err = fmt.Errorf("DelayFunc: delay function is nil")
+		return b
+	}
 	b.container.AddProcessor(NewDelayerFunc(fn))
 	return b
 }
@@ -924,4 +931,3 @@ func (d *PipelineDefinition) WireTap(uri string) *PipelineDefinition {
 func (d *PipelineDefinition) End() *MulticastDefinition {
 	return d.parent
 }
-

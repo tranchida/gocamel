@@ -35,20 +35,20 @@ func (f ProcessorFunc) Process(exchange *Exchange) error {
 // Route represents a Camel route: a pipeline of Processors fed by a single Consumer.
 // Routes are built via RouteBuilder (fluent DSL) and managed by CamelContext.
 type Route struct {
-	ID           string     // Unique identifier for this route.
-	Description  string     // Human-readable description of the route purpose.
-	Group        string     // Logical group this route belongs to.
-	Transacted   bool       // Whether the route uses transactional semantics.
+	ID           string // Unique identifier for this route.
+	Description  string // Human-readable description of the route purpose.
+	Group        string // Logical group this route belongs to.
+	Transacted   bool   // Whether the route uses transactional semantics.
 	context      *CamelContext
 	from         Endpoint
 	consumer     Consumer
 	processors   []Processor
 	started      bool
-	startLock    sync.RWMutex                       // Protects started state for concurrent access.
-	err          error                              // Accumulated during construction, surfaced at Start().
-	errorHandler ErrorHandler                        // Error handler for this route (nil means propagate).
-	metrics      bool                               // Whether Prometheus metrics are enabled for this route.
-	tracing      bool                               // Whether OpenTelemetry tracing is enabled for this route.
+	startLock    sync.RWMutex // Protects started state for concurrent access.
+	err          error        // Accumulated during construction, surfaced at Start().
+	errorHandler ErrorHandler // Error handler for this route (nil means propagate).
+	metrics      bool         // Whether Prometheus metrics are enabled for this route.
+	tracing      bool         // Whether OpenTelemetry tracing is enabled for this route.
 }
 
 // NewRoute creates a new Route instance.
@@ -123,19 +123,32 @@ func (r *Route) metricsProcess(exchange *Exchange, next func(*Exchange) error) e
 }
 
 func (r *Route) doProcess(exchange *Exchange) error {
-	for _, processor := range r.processors {
+	for i := 0; i < len(r.processors); {
+		processor := r.processors[i]
 		if err := processor.Process(exchange); err != nil {
 			if errors.Is(err, ErrStopRouting) {
 				return err // StopRouting is a control signal, not a failure
 			}
 			// Delegate to error handler if configured
 			if r.errorHandler != nil {
-				return r.errorHandler.HandleError(exchange, err)
+				if handleErr := r.errorHandler.HandleError(exchange, err); handleErr != nil {
+					return handleErr
+				}
+				// A nil handler result means the failed processor should be retried.
+				continue
 			}
 			return err
 		}
+		r.resetErrorHandlerState(exchange)
+		i++
 	}
 	return nil
+}
+
+func (r *Route) resetErrorHandlerState(exchange *Exchange) {
+	if dlc, ok := r.errorHandler.(*DeadLetterChannel); ok {
+		dlc.ResetRetryState(exchange.ID)
+	}
 }
 
 // Start starts the route.
