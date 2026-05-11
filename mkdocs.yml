@@ -36,7 +36,7 @@ theme:
     - search.suggest
     - search.highlight
     - content.code.copy
-    
+
   icon:
     repo: fontawesome/brands/gitlab
 
@@ -72,14 +72,14 @@ nav:
   - Features: en/features.md
   - Quick Start: en/quickstart.md
   - Documentation:
-    - Concepts: en/concepts.md
-    - Architecture: en/architecture.md
-    - Components: en/components.md
-    - EIP Patterns: en/eip.md
-    - Simple Language: en/simple-language.md
+      - Concepts: en/concepts.md
+      - Architecture: en/architecture.md
+      - Components: en/components.md
+      - EIP Patterns: en/eip.md
+      - Simple Language: en/simple-language.md
   - Guide:
-    - Installation: en/installation.md
-    - Configuration: en/configuration.md
-    - Examples: en/examples.md
+      - Installation: en/installation.md
+      - Configuration: en/configuration.md
+      - Examples: en/examples.md
   - API Reference: en/reference.md
   - Changelog: en/changelog.md

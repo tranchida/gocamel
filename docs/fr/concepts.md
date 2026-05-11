@@ -3,10 +3,12 @@
 ## Message
 
 L'unité fondamentale d'échange contenant:
+
 - **Body**: Le contenu du message (n'importe quel type)
 - **Headers**: Métadonnées clé-valeur (map[string]any)
 
 Les messages fournissent des accesseurs typés pour plus de commodité :
+
 ```go
 body, _ := msg.GetBodyAsString()
 count, _ := msg.GetHeaderAsInt("X-Count")
@@ -15,19 +17,22 @@ count, _ := msg.GetHeaderAsInt("X-Count")
 ## Exchange
 
 Conteneur pour les messages traversant une route:
+
 - **In**: Message d'entrée (du consumer)
 - **Out**: Message de sortie (vers le producer)
 - **Properties**: Métadonnées liées à l'exchange
 - **Context**: Contexte Go pour l'annulation
 
 Les Exchanges relaient également les accesseurs typés vers le message **In** :
+
 ```go
 body, _ := exchange.GetBodyAsString()
 ```
 
 ## Processeur (Processor)
 
-Une interface pour implémenter une logique personnalisée. Vous pouvez utiliser des instances directes, des closures ou des références du registre.
+Une interface pour implémenter une logique personnalisée. Vous pouvez utiliser des instances directes, des closures ou
+des références du registre.
 
 ```go
 type MyProcessor struct {}
@@ -71,6 +76,7 @@ component://path?param=value
 ```
 
 Exemples:
+
 - `file:///tmp/data`
 - `ftp://host:21/incoming`
 - `http://localhost:8080/api`
@@ -78,6 +84,7 @@ Exemples:
 ## Context (CamelContext)
 
 Conteneur d'exécution gérant:
+
 - Cycle de vie des routes (démarrage/arrêt)
 - Registre des composants
 - Résolution des endpoints
@@ -92,16 +99,23 @@ context.Stop()
 
 ## Monitoring (Observabilité)
 
-GoCamel intègre nativement le support pour Prometheus et OpenTelemetry pour vous permettre de surveiller vos pipelines en production.
+GoCamel intègre nativement le support pour Prometheus et OpenTelemetry pour vous permettre de surveiller vos pipelines
+en production.
 
 ### Prometheus (Métriques)
-Vous pouvez exposer des métriques pour chaque route en appelant `.EnableMetrics()` dans le DSL. Les métriques suivantes sont collectées automatiquement :
+
+Vous pouvez exposer des métriques pour chaque route en appelant `.EnableMetrics()` dans le DSL. Les métriques suivantes
+sont collectées automatiquement :
+
 - `gocamel_exchanges_total` : Nombre total de messages (avec labels `route_id` et `status`).
 - `gocamel_exchange_duration_seconds` : Temps de traitement des messages.
 - `gocamel_exchanges_inflight` : Nombre de messages en cours de traitement.
 
 ### OpenTelemetry (Tracing)
-Activez le traçage distribué avec `.EnableTracing()`. GoCamel créera un **Span** pour chaque exécution de route, incluant :
+
+Activez le traçage distribué avec `.EnableTracing()`. GoCamel créera un **Span** pour chaque exécution de route,
+incluant :
+
 - L'ID de la route et de l'échange.
 - La propagation automatique du contexte de trace.
 - L'enregistrement des erreurs si le traitement échoue.
@@ -126,11 +140,14 @@ context.AddComponent("http", gocamel.NewHTTPComponent())
 
 ## Unit of Work & Transactions
 
-GoCamel supporte un modèle transactionnel basé sur le pattern **Unit of Work**. Cela garantit que la source du message (par exemple, un fichier, un email ou un enregistrement de base de données) n'est marquée comme "consommée" qu'une fois que toute la route a été traitée avec succès.
+GoCamel supporte un modèle transactionnel basé sur le pattern **Unit of Work**. Cela garantit que la source du message (
+par exemple, un fichier, un email ou un enregistrement de base de données) n'est marquée comme "consommée" qu'une fois
+que toute la route a été traitée avec succès.
 
 - **Synchronization**: Vous pouvez enregistrer des callbacks (`OnComplete`, `OnFailure`) sur un `Exchange`.
 - **Route Transactionnelle**: Marquez une route comme transactionnelle en utilisant `.Transacted()` dans le DSL.
-- **Composants Transactionnels**: Les composants tels que `file`, `ftp`, `sftp`, `smb` et `mail` supportent ce modèle en retardant la suppression ou le déplacement du fichier source jusqu'à la fin de la route.
+- **Composants Transactionnels**: Les composants tels que `file`, `ftp`, `sftp`, `smb` et `mail` supportent ce modèle en
+  retardant la suppression ou le déplacement du fichier source jusqu'à la fin de la route.
 
 ```go
 context.CreateRouteBuilder().

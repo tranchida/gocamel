@@ -35,7 +35,7 @@ theme:
     - search.suggest
     - search.highlight
     - content.code.copy
-    
+
   icon:
     repo: fontawesome/brands/gitlab
 
@@ -44,7 +44,7 @@ extra:
     - icon: fontawesome/brands/gitlab
       link: https://gitlab.com/tranchida/gocamel
   generator: false
-  
+
 plugins:
   - search
 
@@ -67,19 +67,19 @@ markdown_extensions:
 
 # Navigation - Français
 nav:
-  - Accueil: 
-    - fr/index.md
-    - Fonctionnalités: fr/features.md
-    - Démarrage Rapide: fr/quickstart.md
+  - Accueil:
+      - fr/index.md
+      - Fonctionnalités: fr/features.md
+      - Démarrage Rapide: fr/quickstart.md
   - Documentation:
-    - Concepts: fr/concepts.md
-    - Architecture: fr/architecture.md
-    - Composants: fr/components.md
-    - Patterns EIP: fr/eip.md
-    - Simple Language: fr/simple-language.md
+      - Concepts: fr/concepts.md
+      - Architecture: fr/architecture.md
+      - Composants: fr/components.md
+      - Patterns EIP: fr/eip.md
+      - Simple Language: fr/simple-language.md
   - Guide:
-    - Installation: fr/installation.md
-    - Configuration: fr/configuration.md
-    - Exemples: fr/examples.md
+      - Installation: fr/installation.md
+      - Configuration: fr/configuration.md
+      - Exemples: fr/examples.md
   - Référence API: fr/reference.md
   - Changelog: fr/changelog.md

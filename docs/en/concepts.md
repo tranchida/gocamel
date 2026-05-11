@@ -3,10 +3,12 @@
 ## Message
 
 The fundamental unit of exchange containing:
+
 - **Body**: The message payload (any type)
 - **Headers**: Key-value metadata (map[string]any)
 
 Messages provide typed accessors for convenience:
+
 ```go
 body, _ := msg.GetBodyAsString()
 count, _ := msg.GetHeaderAsInt("X-Count")
@@ -15,12 +17,14 @@ count, _ := msg.GetHeaderAsInt("X-Count")
 ## Exchange
 
 Container for messages passing through a route:
+
 - **In**: Input message (from consumer)
 - **Out**: Output message (to producer)
 - **Properties**: Exchange-scoped metadata
 - **Context**: Go context for cancellation
 
 Exchanges also proxy typed accessors to the **In** message:
+
 ```go
 body, _ := exchange.GetBodyAsString()
 ```
@@ -71,6 +75,7 @@ component://path?param=value
 ```
 
 Examples:
+
 - `file:///tmp/data`
 - `ftp://host:21/incoming`
 - `http://localhost:8080/api`
@@ -78,6 +83,7 @@ Examples:
 ## Context (CamelContext)
 
 The runtime container managing:
+
 - Routes lifecycle (start/stop)
 - Component registry
 - Endpoint resolution
@@ -92,16 +98,23 @@ context.Stop()
 
 ## Monitoring (Observability)
 
-GoCamel includes native support for Prometheus and OpenTelemetry, enabling production-grade monitoring for your integration pipelines.
+GoCamel includes native support for Prometheus and OpenTelemetry, enabling production-grade monitoring for your
+integration pipelines.
 
 ### Prometheus (Metrics)
-Expose metrics for any route by calling `.EnableMetrics()` in the DSL. The following metrics are collected automatically:
+
+Expose metrics for any route by calling `.EnableMetrics()` in the DSL. The following metrics are collected
+automatically:
+
 - `gocamel_exchanges_total`: Total processed exchanges (with `route_id` and `status` labels).
 - `gocamel_exchange_duration_seconds`: Processing time distribution.
 - `gocamel_exchanges_inflight`: Number of exchanges currently in flight.
 
 ### OpenTelemetry (Tracing)
-Enable distributed tracing with `.EnableTracing()`. GoCamel creates an OTel **Span** for each route execution, providing:
+
+Enable distributed tracing with `.EnableTracing()`. GoCamel creates an OTel **Span** for each route execution,
+providing:
+
 - Route and Exchange identifiers in span attributes.
 - Automatic trace context propagation through the pipeline.
 - Error recording on the span if processing fails.
@@ -126,11 +139,14 @@ context.AddComponent("http", gocamel.NewHTTPComponent())
 
 ## Unit of Work & Transactions
 
-GoCamel supports a transactional model based on the **Unit of Work** pattern. This ensures that the message source (e.g., a file, an email, or a database record) is only marked as "consumed" once the entire route has been processed successfully.
+GoCamel supports a transactional model based on the **Unit of Work** pattern. This ensures that the message source (
+e.g., a file, an email, or a database record) is only marked as "consumed" once the entire route has been processed
+successfully.
 
 - **Synchronization**: You can register callbacks (`OnComplete`, `OnFailure`) on an `Exchange`.
 - **Transacted Route**: Mark a route as transactional using `.Transacted()` in the DSL.
-- **Transactional Components**: Components like `file`, `ftp`, `sftp`, `smb`, and `mail` support this model by delaying deletion or movement of the source file until the route completes.
+- **Transactional Components**: Components like `file`, `ftp`, `sftp`, `smb`, and `mail` support this model by delaying
+  deletion or movement of the source file until the route completes.
 
 ```go
 context.CreateRouteBuilder().

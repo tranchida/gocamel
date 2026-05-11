@@ -126,13 +126,13 @@ builder.To("http://api?httpMethod=POST")
 
 ## Environment Variable Mapping
 
-| Component | Variable | Description |
-|-----------|----------|-------------|
-| FTP | `FTP_USERNAME`, `FTP_PASSWORD` | FTP credentials |
-| SFTP | `SFTP_USERNAME`, `SFTP_PASSWORD`, `SFTP_PRIVATE_KEY_FILE` | SSH credentials |
-| Telegram | `TELEGRAM_AUTHORIZATIONTOKEN` | Bot token |
-| OpenAI | `OPENAI_AUTHORIZATIONTOKEN`, `OPENAI_API_KEY` | API keys |
-| Mail | `MAIL_USERNAME`, `MAIL_PASSWORD` | Email credentials |
+| Component | Variable                                                  | Description       |
+|-----------|-----------------------------------------------------------|-------------------|
+| FTP       | `FTP_USERNAME`, `FTP_PASSWORD`                            | FTP credentials   |
+| SFTP      | `SFTP_USERNAME`, `SFTP_PASSWORD`, `SFTP_PRIVATE_KEY_FILE` | SSH credentials   |
+| Telegram  | `TELEGRAM_AUTHORIZATIONTOKEN`                             | Bot token         |
+| OpenAI    | `OPENAI_AUTHORIZATIONTOKEN`, `OPENAI_API_KEY`             | API keys          |
+| Mail      | `MAIL_USERNAME`, `MAIL_PASSWORD`                          | Email credentials |
 
 ## Best Practices
 

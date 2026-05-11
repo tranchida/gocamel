@@ -4,7 +4,8 @@
 
 ---
 
-Welcome to GoCamel, a Go implementation of Apache Camel's Enterprise Integration Patterns. GoCamel provides a powerful DSL for creating integration routes to connect different systems and services.
+Welcome to GoCamel, a Go implementation of Apache Camel's Enterprise Integration Patterns. GoCamel provides a powerful
+DSL for creating integration routes to connect different systems and services.
 
 ## Quick Links
 

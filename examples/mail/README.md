@@ -5,20 +5,21 @@ Le composant Mail supporte l'envoi et la réception d'emails via plusieurs proto
 ## Description
 
 GoCamel Mail est un composant complet pour la gestion des emails via:
+
 - **SMTP/SMTPS** (Producer uniquement): envoi d'emails
 - **IMAP/IMAPS** (Consumer): réception avec support IDLE
 - **POP3/POP3S** (Consumer): réception de messages
 
 ## Protocoles supportés
 
-| Protocole | Port standard | Rôle | Description |
-|-----------|---------------|------|-------------|
-| SMTP | 587 | Producer | Envoi avec STARTTLS |
-| SMTPS | 465 | Producer | Envoi avec TLS natif |
-| IMAP | 143 | Consumer | Réception avec possibilité IDLE |
-| IMAPS | 993 | Consumer | Réception sécurisée avec IDLE |
-| POP3 | 110 | Consumer | Réception simple |
-| POP3S | 995 | Consumer | Réception sécurisée |
+| Protocole | Port standard | Rôle     | Description                     |
+|-----------|---------------|----------|---------------------------------|
+| SMTP      | 587           | Producer | Envoi avec STARTTLS             |
+| SMTPS     | 465           | Producer | Envoi avec TLS natif            |
+| IMAP      | 143           | Consumer | Réception avec possibilité IDLE |
+| IMAPS     | 993           | Consumer | Réception sécurisée avec IDLE   |
+| POP3      | 110           | Consumer | Réception simple                |
+| POP3S     | 995           | Consumer | Réception sécurisée             |
 
 ## Exemples d'URI
 
@@ -56,34 +57,34 @@ GoCamel Mail est un composant complet pour la gestion des emails via:
 
 ### Options communes (Consumer & Producer)
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `username` | string | "" | Nom d'utilisateur pour l'authentification |
-| `password` | string | "" | Mot de passe pour l'authentification |
-| `connectionTimeout` | int | 30000 | Timeout de connexion en ms |
-| `pollDelay` | int | 60000 | Délai entre les polls en ms (Consumer uniquement) |
+| Option              | Type   | Défaut | Description                                       |
+|---------------------|--------|--------|---------------------------------------------------|
+| `username`          | string | ""     | Nom d'utilisateur pour l'authentification         |
+| `password`          | string | ""     | Mot de passe pour l'authentification              |
+| `connectionTimeout` | int    | 30000  | Timeout de connexion en ms                        |
+| `pollDelay`         | int    | 60000  | Délai entre les polls en ms (Consumer uniquement) |
 
 ### Options Producer (envoi)
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `from` | string | "" | Adresse expéditeur |
-| `to` | string | "" | Destinataire(s) principal(aux) |
-| `cc` | string | "" | Destinataire(s) en copie |
-| `bcc` | string | "" | Destinataire(s) en copie cachée |
-| `subject` | string | "" | Sujet du message |
+| Option        | Type   | Défaut       | Description                         |
+|---------------|--------|--------------|-------------------------------------|
+| `from`        | string | ""           | Adresse expéditeur                  |
+| `to`          | string | ""           | Destinataire(s) principal(aux)      |
+| `cc`          | string | ""           | Destinataire(s) en copie            |
+| `bcc`         | string | ""           | Destinataire(s) en copie cachée     |
+| `subject`     | string | ""           | Sujet du message                    |
 | `contentType` | string | "text/plain" | Type MIME (text/plain ou text/html) |
 
 ### Options Consumer (réception)
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `folderName` | string | "INBOX" | Dossier IMAP à consulter |
-| `unseen` | bool | true | Ne traiter que les messages non lus |
-| `delete` | bool | false | Supprimer les messages après traitement |
-| `idle` | bool | false | Activer IMAP IDLE (notifications push) |
-| `fetchSize` | int | -1 | Nombre max de messages par poll (-1 = illimité) |
-| `peek` | bool | true | Marquer comme lu seulement après traitement réussi |
+| Option       | Type   | Défaut  | Description                                        |
+|--------------|--------|---------|----------------------------------------------------|
+| `folderName` | string | "INBOX" | Dossier IMAP à consulter                           |
+| `unseen`     | bool   | true    | Ne traiter que les messages non lus                |
+| `delete`     | bool   | false   | Supprimer les messages après traitement            |
+| `idle`       | bool   | false   | Activer IMAP IDLE (notifications push)             |
+| `fetchSize`  | int    | -1      | Nombre max de messages par poll (-1 = illimité)    |
+| `peek`       | bool   | true    | Marquer comme lu seulement après traitement réussi |
 
 ## Exemple complet
 
@@ -166,38 +167,39 @@ func main() {
 
 ### Headers entrants (Consumer)
 
-| Header | Description |
-|--------|-------------|
-| `From` | Expéditeur du message |
-| `To` | Destinataire(s) principal(aux) |
-| `Cc` | Destinataire(s) en copie |
-| `Subject` | Sujet du message |
-| `Date` | Date du message |
-| `Message-ID` | ID unique du message |
-| `Reply-To` | Adresse de réponse alternative |
-| `Content-Type` | Type MIME du message |
-| `Size` | Taille du corps en octets |
+| Header         | Description                    |
+|----------------|--------------------------------|
+| `From`         | Expéditeur du message          |
+| `To`           | Destinataire(s) principal(aux) |
+| `Cc`           | Destinataire(s) en copie       |
+| `Subject`      | Sujet du message               |
+| `Date`         | Date du message                |
+| `Message-ID`   | ID unique du message           |
+| `Reply-To`     | Adresse de réponse alternative |
+| `Content-Type` | Type MIME du message           |
+| `Size`         | Taille du corps en octets      |
 
 ### Headers pour pièces jointes
 
-| Header | Description |
-|--------|-------------|
-| `CamelMailAttachment_<nom>` | Contenu d'une pièce jointe |
-| `CamelMailBodyHTML` | Version HTML du message (dans les propriétés) |
+| Header                      | Description                                   |
+|-----------------------------|-----------------------------------------------|
+| `CamelMailAttachment_<nom>` | Contenu d'une pièce jointe                    |
+| `CamelMailBodyHTML`         | Version HTML du message (dans les propriétés) |
 
 ### Headers de contrôle (Producer vers Consumer)
 
-| Header | Description |
-|--------|-------------|
+| Header            | Description                            |
+|-------------------|----------------------------------------|
 | `CamelMailDelete` | `true` pour supprimer après traitement |
-| `CamelMailMoveTo` | Déplacer vers ce dossier |
-| `CamelMailCopyTo` | Copier vers ce dossier |
+| `CamelMailMoveTo` | Déplacer vers ce dossier               |
+| `CamelMailCopyTo` | Copier vers ce dossier                 |
 
 ## Fonctionnalités avancées
 
 ### IMAP IDLE
 
-La fonctionnalité IDLE permet de recevoir des notifications en temps réel quand de nouveaux messages arrivent, au lieu de faire du polling périodique.
+La fonctionnalité IDLE permet de recevoir des notifications en temps réel quand de nouveaux messages arrivent, au lieu
+de faire du polling périodique.
 
 ```go
 .From("imaps://imap.gmail.com:993?folderName=INBOX&username=user&password=pass&idle=true")
@@ -208,6 +210,7 @@ Si IDLE échoue (serveur non supporté, erreur réseau), le consommateur bascule
 ### SMTP Retry avec Exponential Backoff
 
 L'envoi SMTP implémente un mécanisme de retry automatique:
+
 - 5 tentatives maximum
 - Délais: 1s, 2s, 4s, 8s (max)
 - Les erreurs d'authentification ou d'adresse invalide ne sont pas retentées
@@ -215,6 +218,7 @@ L'envoi SMTP implémente un mécanisme de retry automatique:
 ### Parsing MIME avancé
 
 Le composant supporte le parsing avancé des messages MIME:
+
 - `multipart/alternative`: Extraction simultanée des versions text/plain et text/html
 - `multipart/mixed`: Support des pièces jointes
 - Encodings automatiques (base64, quoted-printable)

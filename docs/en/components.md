@@ -16,9 +16,9 @@ In-memory synchronous routing between routes in the same context.
 builder.From("direct:start").To("direct:process")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `reuseChannel` | bool | `true` | Reuse the same channel |
+| Option         | Type | Default | Description            |
+|----------------|------|---------|------------------------|
+| `reuseChannel` | bool | `true`  | Reuse the same channel |
 
 ---
 
@@ -30,11 +30,11 @@ Simple periodic triggering.
 builder.From("timer:tick?period=5s")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `period` | Duration | `1s` | Period between triggers |
-| `repeatCount` | int | `0` | Number of repetitions (0=infinite) |
-| `fixedRate` | bool | `false` | Fixed-rate vs fixed-delay mode |
+| Option        | Type     | Default | Description                        |
+|---------------|----------|---------|------------------------------------|
+| `period`      | Duration | `1s`    | Period between triggers            |
+| `repeatCount` | int      | `0`     | Number of repetitions (0=infinite) |
+| `fixedRate`   | bool     | `false` | Fixed-rate vs fixed-delay mode     |
 
 ---
 
@@ -52,15 +52,15 @@ builder.From("file://input?delete=true")
 builder.To("file://output")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `delete` | bool | `false` | Delete after processing |
-| `noop` | bool | `false` | Do not move/delete file |
-| `include` | string | `""` | Include file pattern |
-| `exclude` | string | `""` | Exclude file pattern |
-| `preMove` | string | `""` | Move file before processing |
-| `move` | string | `""` | Move file after processing |
-| `moveFailed` | string | `""` | Move file on failure |
+| Option       | Type   | Default | Description                 |
+|--------------|--------|---------|-----------------------------|
+| `delete`     | bool   | `false` | Delete after processing     |
+| `noop`       | bool   | `false` | Do not move/delete file     |
+| `include`    | string | `""`    | Include file pattern        |
+| `exclude`    | string | `""`    | Exclude file pattern        |
+| `preMove`    | string | `""`    | Move file before processing |
+| `move`       | string | `""`    | Move file after processing  |
+| `moveFailed` | string | `""`    | Move file on failure        |
 
 ---
 
@@ -77,15 +77,16 @@ builder.To("ftp://host:21/outgoing?binary=true")
 ```
 
 **Environment Variables:**
+
 - `FTP_USERNAME` - Username
 - `FTP_PASSWORD` - Password
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `username` | string | `""` | FTP username |
-| `password` | string | `""` | FTP password |
-| `binary` | bool | `true` | Binary transfer mode |
-| `passiveMode` | bool | `true` | Use passive mode |
+| Option        | Type   | Default | Description          |
+|---------------|--------|---------|----------------------|
+| `username`    | string | `""`    | FTP username         |
+| `password`    | string | `""`    | FTP password         |
+| `binary`      | bool   | `true`  | Binary transfer mode |
+| `passiveMode` | bool   | `true`  | Use passive mode     |
 
 ---
 
@@ -98,15 +99,16 @@ builder.From("sftp://host:22/data?username=scott")
 ```
 
 **Authentication Methods:**
+
 - Password: via `password` parameter or `SFTP_PASSWORD` env var
 - Key-based: via `privateKeyFile` parameter or `SFTP_PRIVATE_KEY_FILE`
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `username` | string | `""` | SSH username |
-| `password` | string | `""` | SSH password |
-| `privateKeyFile` | string | `""` | Path to private key |
-| `privateKeyPassphrase` | string | `""` | Private key passphrase |
+| Option                 | Type   | Default | Description            |
+|------------------------|--------|---------|------------------------|
+| `username`             | string | `""`    | SSH username           |
+| `password`             | string | `""`    | SSH password           |
+| `privateKeyFile`       | string | `""`    | Path to private key    |
+| `privateKeyPassphrase` | string | `""`    | Private key passphrase |
 
 ---
 
@@ -118,11 +120,11 @@ Windows/Samba share access.
 builder.From("smb://server/share/folder?username=user")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `username` | string | `""` | Domain username |
-| `password` | string | `""` | Domain password |
-| `share` | string | required | Share name |
+| Option     | Type   | Default  | Description     |
+|------------|--------|----------|-----------------|
+| `username` | string | `""`     | Domain username |
+| `password` | string | `""`     | Domain password |
+| `share`    | string | required | Share name      |
 
 ---
 
@@ -143,10 +145,10 @@ builder.To("http://example.com/webhook")
 builder.To("http://api.example.com/data?httpMethod=POST")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `httpMethod` | string | `GET` | HTTP method for producer |
-| `bridgeEndpoint` | bool | `false` | Bridge consumer endpoint |
+| Option           | Type   | Default | Description              |
+|------------------|--------|---------|--------------------------|
+| `httpMethod`     | string | `GET`   | HTTP method for producer |
+| `bridgeEndpoint` | bool   | `false` | Bridge consumer endpoint |
 
 ---
 
@@ -168,10 +170,11 @@ builder.To("telegram:bots")
 ```
 
 **Environment Variables:**
+
 - `TELEGRAM_AUTHORIZATIONTOKEN` - Bot API token
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
+| Option               | Type   | Default | Description   |
+|----------------------|--------|---------|---------------|
 | `authorizationToken` | string | env var | Bot API token |
 
 ---
@@ -197,12 +200,13 @@ fmt.Println(exchange.GetOut().GetBody()) // AI response
 ```
 
 **Environment Variables:**
+
 - `OPENAI_AUTHORIZATIONTOKEN` or `OPENAI_API_KEY` - API key
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `model` | string | `gpt-3.5-turbo` | Model to use |
-| `authorizationToken` | string | env var | API key |
+| Option               | Type   | Default         | Description  |
+|----------------------|--------|-----------------|--------------|
+| `model`              | string | `gpt-3.5-turbo` | Model to use |
+| `authorizationToken` | string | env var         | API key      |
 
 ---
 
@@ -223,6 +227,7 @@ builder.From("cron://poller?trigger.repeatInterval=5000")
 ```
 
 **Cron Expression Format (6 fields):**
+
 ```
 second minute hour day month dayOfWeek
 0 * * * * *  # Every minute
@@ -230,15 +235,16 @@ second minute hour day month dayOfWeek
 cron=0 0 12 * * *  # Every day at noon
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `cron` | string | `""` | 6-field cron expression |
-| `trigger.repeatInterval` | int | `""` | Interval in ms (simple trigger) |
-| `trigger.repeatCount` | int | `-1` | Max repetitions |
-| `triggerStartDelay` | int | `500` | Initial delay in ms |
-| `stateful` | bool | `false` | Prevent concurrent execution |
+| Option                   | Type   | Default | Description                     |
+|--------------------------|--------|---------|---------------------------------|
+| `cron`                   | string | `""`    | 6-field cron expression         |
+| `trigger.repeatInterval` | int    | `""`    | Interval in ms (simple trigger) |
+| `trigger.repeatCount`    | int    | `-1`    | Max repetitions                 |
+| `triggerStartDelay`      | int    | `500`   | Initial delay in ms             |
+| `stateful`               | bool   | `false` | Prevent concurrent execution    |
 
 **Exchange Headers:**
+
 - `fireTime` - Trigger execution time
 - `nextFireTime` - Next scheduled time
 - `triggerName` - Trigger identifier
@@ -255,13 +261,13 @@ Send emails via SMTP.
 builder.To("smtps://smtp.gmail.com:465?to=recipient@example.com&subject=Hello")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `username` | string | `""` | SMTP username |
-| `password` | string | `""` | SMTP password |
-| `to` | string | `""` | Recipient(s) |
-| `subject` | string | `""` | Email subject |
-| `contentType` | string | `"text/plain"` | MIME type |
+| Option        | Type   | Default        | Description   |
+|---------------|--------|----------------|---------------|
+| `username`    | string | `""`           | SMTP username |
+| `password`    | string | `""`           | SMTP password |
+| `to`          | string | `""`           | Recipient(s)  |
+| `subject`     | string | `""`           | Email subject |
+| `contentType` | string | `"text/plain"` | MIME type     |
 
 ---
 
@@ -273,16 +279,16 @@ Receive emails via IMAP with IDLE support.
 builder.From("imaps://imap.gmail.com:993?folderName=INBOX&idle=true")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `username` | string | `""` | IMAP username |
-| `password` | string | `""` | IMAP password |
-| `folderName` | string | `"INBOX"` | Folder to poll |
-| `unseen` | bool | `true` | Only unread messages |
-| `idle` | bool | `false` | Use IMAP IDLE mode |
-| `delete` | bool | `false` | Delete after processing |
-| `fetchSize` | int | `-1` | Messages per poll |
-| `pollDelay` | int | `60000` | Poll interval (ms) |
+| Option       | Type   | Default   | Description             |
+|--------------|--------|-----------|-------------------------|
+| `username`   | string | `""`      | IMAP username           |
+| `password`   | string | `""`      | IMAP password           |
+| `folderName` | string | `"INBOX"` | Folder to poll          |
+| `unseen`     | bool   | `true`    | Only unread messages    |
+| `idle`       | bool   | `false`   | Use IMAP IDLE mode      |
+| `delete`     | bool   | `false`   | Delete after processing |
+| `fetchSize`  | int    | `-1`      | Messages per poll       |
+| `pollDelay`  | int    | `60000`   | Poll interval (ms)      |
 
 ---
 
@@ -331,34 +337,36 @@ builder.From("direct:insert").
 ```
 
 **URI Format:**
+
 ```
 sql://<datasourceName>?query=<SQL>
 sql://logical?dataSourceRef=<datasourceName>&query=<SQL>
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `query` | string | required | SQL query string |
-| `dataSourceRef` | string | host path | Datasource name |
-| `outputType` | string | `SelectList` | `SelectList` or `SelectOne` |
-| `batch` | bool | `false` | Batch execution mode |
-| `transacted` | bool | `false` | Wrap in transaction |
+| Option          | Type   | Default      | Description                 |
+|-----------------|--------|--------------|-----------------------------|
+| `query`         | string | required     | SQL query string            |
+| `dataSourceRef` | string | host path    | Datasource name             |
+| `outputType`    | string | `SelectList` | `SelectList` or `SelectOne` |
+| `batch`         | bool   | `false`      | Batch execution mode        |
+| `transacted`    | bool   | `false`      | Wrap in transaction         |
 
 **Query Parameters:**
 
 Provide via `CamelSqlParameters` header or body as `[]any`.
 
 **Output Headers:**
+
 - `CamelSqlRowCount` - Rows returned/affected
 - `CamelSqlColumnNames` - Column names (SELECT)
 
 **Result Body:**
 
-| Case | Out.Body Type |
-|------|---------------|
-| `SELECT` + `SelectList` | `[]map[string]any` |
-| `SELECT` + `SelectOne` | `map[string]any` or `nil` |
-| `INSERT/UPDATE/DELETE` | `int64` (affected rows) |
+| Case                    | Out.Body Type             |
+|-------------------------|---------------------------|
+| `SELECT` + `SelectList` | `[]map[string]any`        |
+| `SELECT` + `SelectOne`  | `map[string]any` or `nil` |
+| `INSERT/UPDATE/DELETE`  | `int64` (affected rows)   |
 
 ---
 
@@ -388,28 +396,30 @@ builder.From("direct:call").
 ```
 
 **URI Format:**
+
 ```
 sql-stored://datasourceName?procedure=NAME
 sql-stored://logical?dataSourceRef=dsName&procedure=NAME
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `procedure` | string | required | Stored procedure name |
-| `dataSourceRef` | string | host path | Datasource name |
-| `outputType` | string | `SelectList` | `SelectList` or `SelectOne` |
-| `transacted` | bool | `false` | Execute in transaction |
-| `noop` | bool | `false` | Test mode (no execution) |
+| Option          | Type   | Default      | Description                 |
+|-----------------|--------|--------------|-----------------------------|
+| `procedure`     | string | required     | Stored procedure name       |
+| `dataSourceRef` | string | host path    | Datasource name             |
+| `outputType`    | string | `SelectList` | `SelectList` or `SelectOne` |
+| `transacted`    | bool   | `false`      | Execute in transaction      |
+| `noop`          | bool   | `false`      | Test mode (no execution)    |
 
 **Parameter Directions:**
 
-| Direction | Description |
-|-----------|-------------|
-| `ParamDirectionIn` | Input only |
-| `ParamDirectionOut` | Output only |
+| Direction             | Description           |
+|-----------------------|-----------------------|
+| `ParamDirectionIn`    | Input only            |
+| `ParamDirectionOut`   | Output only           |
 | `ParamDirectionInOut` | Both input and output |
 
 Example:
+
 ```go
 params := []gocamel.StoredProcedureParam{
     {Name: "inParam", Direction: gocamel.ParamDirectionIn, Value: "input"},
@@ -432,31 +442,31 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 
 #### Options
 
-| Option | Type | Required | Description |
-|--------|------|----------|-------------|
-| `database` | string | Yes | Database name |
-| `collection` | string | Yes | Collection name |
-| `operation` | string | Yes | Operation: find, findOne, insert, insertOne, save, update, remove, count |
-| `connectionRef` | string | No | Registered connection reference |
+| Option          | Type   | Required | Description                                                              |
+|-----------------|--------|----------|--------------------------------------------------------------------------|
+| `database`      | string | Yes      | Database name                                                            |
+| `collection`    | string | Yes      | Collection name                                                          |
+| `operation`     | string | Yes      | Operation: find, findOne, insert, insertOne, save, update, remove, count |
+| `connectionRef` | string | No       | Registered connection reference                                          |
 
 #### Input Headers
 
-| Header | Mode | Description |
-|--------|------|-------------|
-| `CamelMongoDbDatabase` | R/W | Database name |
-| `CamelMongoDbCollection` | R/W | Collection name |
-| `CamelMongoDbOperation` | R/W | Operation to execute |
-| `CamelMongoDbCriteria` | Write | Filter/criteria (map[string]any or JSON) |
-| `CamelMongoDbLimit` | Write | Result limit |
-| `CamelMongoDbSkip` | Write | Skip N documents |
-| `CamelMongoDbSort` | Write | Sort order (json: {"field": 1}) |
+| Header                   | Mode  | Description                              |
+|--------------------------|-------|------------------------------------------|
+| `CamelMongoDbDatabase`   | R/W   | Database name                            |
+| `CamelMongoDbCollection` | R/W   | Collection name                          |
+| `CamelMongoDbOperation`  | R/W   | Operation to execute                     |
+| `CamelMongoDbCriteria`   | Write | Filter/criteria (map[string]any or JSON) |
+| `CamelMongoDbLimit`      | Write | Result limit                             |
+| `CamelMongoDbSkip`       | Write | Skip N documents                         |
+| `CamelMongoDbSort`       | Write | Sort order (json: {"field": 1})          |
 
 #### Output Headers
 
-| Header | Description |
-|--------|-------------|
+| Header                    | Description                    |
+|---------------------------|--------------------------------|
 | `CamelMongoDbResultTotal` | Total documents found/affected |
-| `CamelMongoDbOid` | ObjectID of inserted document |
+| `CamelMongoDbOid`         | ObjectID of inserted document  |
 
 #### Example
 
@@ -501,9 +511,9 @@ XML transformation using XSL stylesheets.
 builder.To("xslt:file://transform.xsl")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `transformerFactory` | string | `""` | Custom transformer class |
+| Option               | Type   | Default | Description              |
+|----------------------|--------|---------|--------------------------|
+| `transformerFactory` | string | `""`    | Custom transformer class |
 
 ---
 
@@ -515,8 +525,8 @@ XML Schema validation.
 builder.To("xsd:file://schema.xsd")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
+| Option           | Type   | Default  | Description     |
+|------------------|--------|----------|-----------------|
 | `schemaResource` | string | required | XSD schema path |
 
 ---
@@ -536,12 +546,12 @@ builder.To("template:templates/item.tmpl?contentCache=true")
 builder.To("template:default.tmpl?allowTemplateFromHeader=true")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `contentCache` | bool | `false` | Cache template in memory |
-| `allowTemplateFromHeader` | bool | `false` | Allow `CamelTemplatePath` header override |
-| `startDelimiter` | string | `{{` | Template start delimiter |
-| `endDelimiter` | string | `}}` | Template end delimiter |
+| Option                    | Type   | Default | Description                               |
+|---------------------------|--------|---------|-------------------------------------------|
+| `contentCache`            | bool   | `false` | Cache template in memory                  |
+| `allowTemplateFromHeader` | bool   | `false` | Allow `CamelTemplatePath` header override |
+| `startDelimiter`          | string | `{{`    | Template start delimiter                  |
+| `endDelimiter`            | string | `}}`    | Template end delimiter                    |
 
 **Template Variables:**
 
@@ -574,13 +584,14 @@ Execute system commands.
 builder.To("exec:ls -la")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `args` | string | `""` | Command arguments |
-| `workingDir` | string | `""` | Working directory |
-| `timeout` | int | `0` | Timeout in ms (0=no timeout) |
+| Option       | Type   | Default | Description                  |
+|--------------|--------|---------|------------------------------|
+| `args`       | string | `""`    | Command arguments            |
+| `workingDir` | string | `""`    | Working directory            |
+| `timeout`    | int    | `0`     | Timeout in ms (0=no timeout) |
 
 **Output:**
+
 - `Out.Body` = command stdout
 - Header `CamelExecExitCode` = exit code
 
@@ -612,34 +623,34 @@ builder.From("file://data?delay=10s&delete=true")
 builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `delay` | Duration | varies | Poll interval |
-| `include` | string | `""` | Include pattern |
-| `exclude` | string | `""` | Exclude pattern |
+| Option    | Type     | Default | Description     |
+|-----------|----------|---------|-----------------|
+| `delay`   | Duration | varies  | Poll interval   |
+| `include` | string   | `""`    | Include pattern |
+| `exclude` | string   | `""`    | Exclude pattern |
 
 ---
 
 ## Component Summary Table
 
-| Component | Category | Consumer | Producer | URI Pattern |
-|-----------|----------|----------|----------|-------------|
-| Direct | Core | ✅ | ✅ | `direct:name` |
-| Timer | Core | ✅ | ❌ | `timer:name` |
-| File | File | ✅ | ✅ | `file://path` |
-| FTP | File | ✅ | ✅ | `ftp://host/path` |
-| SFTP | File | ✅ | ✅ | `sftp://host/path` |
-| SMB | File | ✅ | ✅ | `smb://host/share` |
-| HTTP | Network | ✅ | ✅ | `http://host:port/path` |
-| Telegram | Messaging | ✅ | ✅ | `telegram:bots` |
-| OpenAI | AI | ❌ | ✅ | `openai:chat` |
-| Cron | Scheduling | ✅ | ❌ | `cron://group/job` |
-| SMTP | Mail | ❌ | ✅ | `smtp://host:port` |
-| IMAP | Mail | ✅ | ❌ | `imap://host:port` |
-| POP3 | Mail | ✅ | ❌ | `pop3://host:port` |
-| SQL | Database | ❌ | ✅ | `sql://datasource` |
-| SQL-Stored | Database | ❌ | ✅ | `sql-stored://datasource` |
-| XSLT | Transform | ❌ | ✅ | `xslt:template` |
-| XSD | Transform | ❌ | ✅ | `xsd:schema` |
-| Template | Transform | ❌ | ✅ | `template:template` |
-| Exec | Execution | ❌ | ✅ | `exec:command` |
+| Component  | Category   | Consumer | Producer | URI Pattern               |
+|------------|------------|----------|----------|---------------------------|
+| Direct     | Core       | ✅        | ✅        | `direct:name`             |
+| Timer      | Core       | ✅        | ❌        | `timer:name`              |
+| File       | File       | ✅        | ✅        | `file://path`             |
+| FTP        | File       | ✅        | ✅        | `ftp://host/path`         |
+| SFTP       | File       | ✅        | ✅        | `sftp://host/path`        |
+| SMB        | File       | ✅        | ✅        | `smb://host/share`        |
+| HTTP       | Network    | ✅        | ✅        | `http://host:port/path`   |
+| Telegram   | Messaging  | ✅        | ✅        | `telegram:bots`           |
+| OpenAI     | AI         | ❌        | ✅        | `openai:chat`             |
+| Cron       | Scheduling | ✅        | ❌        | `cron://group/job`        |
+| SMTP       | Mail       | ❌        | ✅        | `smtp://host:port`        |
+| IMAP       | Mail       | ✅        | ❌        | `imap://host:port`        |
+| POP3       | Mail       | ✅        | ❌        | `pop3://host:port`        |
+| SQL        | Database   | ❌        | ✅        | `sql://datasource`        |
+| SQL-Stored | Database   | ❌        | ✅        | `sql-stored://datasource` |
+| XSLT       | Transform  | ❌        | ✅        | `xslt:template`           |
+| XSD        | Transform  | ❌        | ✅        | `xsd:schema`              |
+| Template   | Transform  | ❌        | ✅        | `template:template`       |
+| Exec       | Execution  | ❌        | ✅        | `exec:command`            |

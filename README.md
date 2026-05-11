@@ -13,7 +13,8 @@
 
 ---
 
-GoCamel is an enterprise integration library inspired by [Apache Camel](https://camel.apache.org/), written in Go. It provides a powerful DSL for creating integration routes to connect different systems and services.
+GoCamel is an enterprise integration library inspired by [Apache Camel](https://camel.apache.org/), written in Go. It
+provides a powerful DSL for creating integration routes to connect different systems and services.
 
 ## ✨ Features
 
@@ -23,7 +24,8 @@ GoCamel is an enterprise integration library inspired by [Apache Camel](https://
 - 📦 **Registry & Beans** - Register and lookup custom processors and beans by name
 - ⚙️ **Processors** - Custom logic implementation with `Processor` interface and `ProcessRef`
 - ⚖️ **Transactional Routes** - Unit of Work pattern for reliable message processing
-- 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Recipient List, Routing Slip, Wire Tap, Stop, ToD
+- 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Recipient List, Routing Slip, Wire Tap,
+  Stop, ToD
 - 📝 **Simple Language** - Dynamic expressions (`${body}`, `${header.name}`, functions)
 - 🔌 **Multiple Components** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, etc.
 - 🛠️ **REST Management API** - JMX-like monitoring and control
@@ -41,22 +43,22 @@ go get gitlab.com/tranchida/gocamel
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+	"gitlab.com/tranchida/gocamel"
 )
 
 func main() {
-    context := gocamel.NewCamelContext()
-    
-    route := context.CreateRouteBuilder().
-        From("timer:tick?period=5s").
-        SetBody("Hello World").
-        Log("${body}").
-        To("direct:output").
-        Build()
-    
-    context.AddRoute(route)
-    context.Start()
-    select {}
+	context := gocamel.NewCamelContext()
+
+	route := context.CreateRouteBuilder().
+		From("timer:tick?period=5s").
+		SetBody("Hello World").
+		Log("${body}").
+		To("direct:output").
+		Build()
+
+	context.AddRoute(route)
+	context.Start()
+	select {}
 }
 ```
 
@@ -65,45 +67,45 @@ func main() {
 ```go
 // Dynamic expressions
 builder.From("direct:start").
-    SimpleSetBody("Hello ${body} at ${date:now}").
-    SimpleSetHeader("X-Request-ID", "${uuid}").
-    To("direct:output")
+SimpleSetBody("Hello ${body} at ${date:now}").
+SimpleSetHeader("X-Request-ID", "${uuid}").
+To("direct:output")
 
 // Content-based routing
 builder.From("direct:start").
-    Choice().
-        When("${header.priority == 'high'}").
-            To("direct:urgent").
-        When("${body['count'] > 100}").
-            To("direct:large-batch").
-        Otherwise().
-            To("direct:normal").
-    EndChoice()
+Choice().
+When("${header.priority == 'high'}").
+To("direct:urgent").
+When("${body['count'] > 100}").
+To("direct:large-batch").
+Otherwise().
+To("direct:normal").
+EndChoice()
 ```
 
 ## 🔌 Available Components
 
-| Component | Description |
-|-----------|-------------|
-| **HTTP** | HTTP server and client |
-| **File** | Local file system operations |
-| **FTP/SFTP** | File transfer via FTP/SSH |
-| **SMB** | Windows/Samba shares |
-| **Direct** | In-memory synchronous routing |
-| **Timer/Cron** | Scheduled triggers |
-| **Telegram** | Bot integration |
-| **OpenAI** | ChatGPT/GPT-4 API |
-| **Mail** | SMTP/IMAP/POP3 email |
-| **SQL** | Database queries |
-| **XSLT/XSD** | XML transformation/validation |
-| **Template** | Go template processing |
-| **Exec** | System command execution |
+| Component      | Description                   |
+|----------------|-------------------------------|
+| **HTTP**       | HTTP server and client        |
+| **File**       | Local file system operations  |
+| **FTP/SFTP**   | File transfer via FTP/SSH     |
+| **SMB**        | Windows/Samba shares          |
+| **Direct**     | In-memory synchronous routing |
+| **Timer/Cron** | Scheduled triggers            |
+| **Telegram**   | Bot integration               |
+| **OpenAI**     | ChatGPT/GPT-4 API             |
+| **Mail**       | SMTP/IMAP/POP3 email          |
+| **SQL**        | Database queries              |
+| **XSLT/XSD**   | XML transformation/validation |
+| **Template**   | Go template processing        |
+| **Exec**       | System command execution      |
 
 ## 🧾 Data Formats
 
-| Data Format | Description |
-|-------------|-------------|
-| **RSS** | Marshal/unmarshal RSS XML with `MarshalRSS()` and `UnmarshalRSS()` |
+| Data Format | Description                                                        |
+|-------------|--------------------------------------------------------------------|
+| **RSS**     | Marshal/unmarshal RSS XML with `MarshalRSS()` and `UnmarshalRSS()` |
 
 ## 🔒 Security
 
@@ -122,7 +124,7 @@ GoCamel includes built-in security utilities to protect against common vulnerabi
 // Validate a file path
 err := gocamel.ValidatePath("/data/file.txt")
 if err != nil {
-    // Path contains traversal patterns or null bytes
+// Path contains traversal patterns or null bytes
 }
 
 // Ensure path is within specific directory

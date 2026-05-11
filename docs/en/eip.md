@@ -28,6 +28,7 @@ builder.From("direct:start").
 ```
 
 **Syntax:**
+
 - `When(expression)` - Adds a conditional branch
 - `Otherwise()` - Adds a default branch
 - `EndChoice()` - Ends the Choice block
@@ -35,16 +36,16 @@ builder.From("direct:start").
 
 **Expression Operators:**
 
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `==` | Equal | `${header.type} == 'order'` |
-| `!=` | Not equal | `${header.status} != 'error'` |
-| `>` | Greater than | `${header.count} > 10` |
-| `>=` | Greater or equal | `${header.count} >= 10` |
-| `<` | Less than | `${header.price} < 100` |
-| `<=` | Less or equal | `${header.price} <= 100` |
-| `&&` | AND | `a > 5 && b == 'x'` |
-| `\|\|` | OR | `a > 5 \|\| b == 'y'` |
+| Operator | Description      | Example                       |
+|----------|------------------|-------------------------------|
+| `==`     | Equal            | `${header.type} == 'order'`   |
+| `!=`     | Not equal        | `${header.status} != 'error'` |
+| `>`      | Greater than     | `${header.count} > 10`        |
+| `>=`     | Greater or equal | `${header.count} >= 10`       |
+| `<`      | Less than        | `${header.price} < 100`       |
+| `<=`     | Less or equal    | `${header.price} <= 100`      |
+| `&&`     | AND              | `a > 5 && b == 'x'`           |
+| `\|\|`   | OR               | `a > 5 \|\| b == 'y'`         |
 
 ---
 
@@ -73,7 +74,8 @@ builder.From("direct:start").
 
 ### Throttle
 
-Rate-limit exchange processing to at most N messages per time window. Exchanges that exceed the rate are **delayed**, not dropped, until the window resets.
+Rate-limit exchange processing to at most N messages per time window. Exchanges that exceed the rate are **delayed**,
+not dropped, until the window resets.
 
 ```go
 // Max 100 messages per second
@@ -90,9 +92,11 @@ builder.From("direct:start").
 ```
 
 **Notes:**
+
 - Uses a fixed-window counter; for smoother behaviour use smaller windows
 - Blocking: the goroutine sleeps until the window allows the exchange through
-- `maxRequests` and `timePeriod` must be greater than zero; invalid values return an error instead of blocking indefinitely
+- `maxRequests` and `timePeriod` must be greater than zero; invalid values return an error instead of blocking
+  indefinitely
 - If the exchange context is cancelled while waiting for the next window, `Process` returns an error
 
 ---
@@ -122,10 +126,12 @@ builder.From("direct:start").
 ```
 
 **Notes:**
+
 - Blocking: the goroutine sleeps for the computed duration
 - If the exchange context is cancelled during the sleep, `Process` returns an error
 - Return `0` from `DelayFunc` to skip the delay for a given exchange
-- Passing `nil` to `DelayFunc` fails route construction; `NewDelayerFunc(nil)` remains constructible but returns a processing error instead of panicking
+- Passing `nil` to `DelayFunc` fails route construction; `NewDelayerFunc(nil)` remains constructible but returns a
+  processing error instead of panicking
 
 ---
 
@@ -157,6 +163,7 @@ builder.From("direct:start").
 ```
 
 **How it works:**
+
 1. A copy of the current exchange is sent to the enrichment URI
 2. The response is received
 3. `AggregationStrategy.Aggregate(original, response)` merges the two
@@ -178,12 +185,14 @@ builder.From("direct:start").
 ```
 
 **How it works:**
+
 1. Evaluates the expression to get a unique key.
 2. Checks if the key exists in the repository.
 3. If not present, adds the key and proceeds.
 4. If present, stops routing (`ErrStopRouting`).
 
 **Repositories:**
+
 - `NewMemoryIdempotentRepository()`: In-memory store (default).
 - SQL-based repositories can be implemented via the `IdempotentRepository` interface.
 
@@ -210,9 +219,11 @@ builder.From("direct:start").
 ```
 
 **States:**
+
 - **Closed**: Requests pass through. Failures are counted.
 - **Open**: Requests fail immediately or go to fallback.
-- **Half-Open**: After `OpenTimeout`, allows a few requests to test if the service has recovered. If `SuccessThreshold` is reached, it closes. If any fail, it opens again.
+- **Half-Open**: After `OpenTimeout`, allows a few requests to test if the service has recovered. If `SuccessThreshold`
+  is reached, it closes. If any fail, it opens again.
 
 ---
 
@@ -231,6 +242,7 @@ builder.From("direct:start").
 ```
 
 **Strategies:**
+
 - `RoundRobin()`: Circular distribution (default).
 - `Random()`: Random distribution.
 - `Custom(strategy)`: Provide a custom implementation of the `LoadBalancerStrategy` interface.
@@ -252,11 +264,13 @@ builder.To("seda:process")
 ```
 
 **How it works:**
+
 1. The producer sends a **copy** of the exchange to an internal queue.
 2. The producer returns immediately (non-blocking if queue is not full).
 3. One or more consumer workers read from the queue and process the exchange.
 
 **Parameters:**
+
 - `size`: The capacity of the internal queue (default 1000).
 - `concurrentConsumers`: The number of worker goroutines (default 1).
 
@@ -276,10 +290,12 @@ builder.From("direct:start").
 ```
 
 **How it works:**
+
 1. Evaluates the expression to get the sequence number.
 2. If the sequence is the next expected one, it's processed immediately.
 3. If it's a future sequence, it's buffered and sorted.
-4. If a gap persists longer than the `Timeout`, the resequencer skips the missing sequence and continues with the next available one in the buffer.
+4. If a gap persists longer than the `Timeout`, the resequencer skips the missing sequence and continues with the next
+   available one in the buffer.
 
 ---
 
@@ -300,6 +316,7 @@ builder.From("direct:start").
 ```
 
 **Operations:**
+
 - `ClaimCheckPush`: Stores the body and replaces it with a key. If no key is provided, one is generated.
 - `ClaimCheckPop`: Retrieves the data by key, restores the body, and removes it from the repository.
 - `ClaimCheckGet`: Retrieves the data by key and restores the body (keeps it in the repository).
@@ -389,11 +406,11 @@ builder.From("direct:start").
 
 **Exchange Properties during Split:**
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `CamelSplitIndex` | int | Current index (0-based) |
-| `CamelSplitSize` | int | Total number of parts |
-| `CamelSplitComplete` | bool | Last part indicator |
+| Property             | Type | Description             |
+|----------------------|------|-------------------------|
+| `CamelSplitIndex`    | int  | Current index (0-based) |
+| `CamelSplitSize`     | int  | Total number of parts   |
+| `CamelSplitComplete` | bool | Last part indicator     |
 
 ---
 
@@ -445,10 +462,10 @@ func (s *OrderAggregationStrategy) Aggregate(
 
 **Completion Conditions:**
 
-| Method | Description |
-|--------|-------------|
-| `SetCompletionSize(n)` | Complete after n messages |
-| `SetCompletionTimeout(ms)` | Complete after timeout |
+| Method                       | Description                          |
+|------------------------------|--------------------------------------|
+| `SetCompletionSize(n)`       | Complete after n messages            |
+| `SetCompletionTimeout(ms)`   | Complete after timeout               |
 | `SetCompletionPredicate(fn)` | Complete when predicate returns true |
 
 **Storage Options:**
@@ -540,7 +557,8 @@ builder.From("direct:start").
 
 ### Dynamic Router
 
-Route an exchange through a sequence of endpoints resolved dynamically by calling a control function after each step. Routing ends when the function returns an empty string or `nil`.
+Route an exchange through a sequence of endpoints resolved dynamically by calling a control function after each step.
+Routing ends when the function returns an empty string or `nil`.
 
 ```go
 // Using a Go function
@@ -561,6 +579,7 @@ builder.From("direct:start").
 ```
 
 **How it works:**
+
 1. Calls the control function/expression.
 2. If result is non-empty, sends exchange to that URI.
 3. Propagates output to input and repeats from step 1.
@@ -586,11 +605,11 @@ builder.From("direct:start").
 
 **Exchange Properties during Routing Slip:**
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `CamelRoutingSlipIndex` | int | Current step index (0-based) |
-| `CamelRoutingSlipSize` | int | Total number of routing steps |
-| `CamelRoutingSlipComplete` | bool | Last step indicator |
+| Property                   | Type | Description                   |
+|----------------------------|------|-------------------------------|
+| `CamelRoutingSlipIndex`    | int  | Current step index (0-based)  |
+| `CamelRoutingSlipSize`     | int  | Total number of routing steps |
+| `CamelRoutingSlipComplete` | bool | Last step indicator           |
 
 ---
 
@@ -717,37 +736,39 @@ builder.From("direct:start").
 ```
 
 **How it works:**
+
 1. Executes the processors in the `DoTry` block.
 2. If an error occurs, it searches for a matching `DoCatch` block (empty string matches any error).
-3. If a match is found, the error is considered "handled" and routing continues after the `DoTry` block (unless the catch block itself fails).
+3. If a match is found, the error is considered "handled" and routing continues after the `DoTry` block (unless the
+   catch block itself fails).
 4. The `DoFinally` block is **always** executed, regardless of whether an error occurred or was caught.
 
 ---
 
 ## EIP Pattern Summary
 
-| Pattern | Category | Description |
-|---------|----------|-------------|
-| Choice | Routing | Content-based routing |
-| Filter | Routing | Conditional filtering |
-| Idempotent Consumer | Routing | Prevent duplicate messages |
-| Circuit Breaker | Routing | Resilience pattern for failures |
-| Load Balancer | Routing | Load distribution across endpoints |
-| Dynamic Router | Routing | Dynamic decision-based routing |
-| Resequencer | Routing | Reorder messages by sequence |
-| Claim Check | Routing | Store payload and pass reference |
-| Throttle | Routing | Rate limiting |
-| Delay | Routing | Pause before next step |
-| Multicast | Routing | Multiple destinations |
-| Recipient List | Routing | Dynamic recipient routing |
-| Routing Slip | Routing | Dynamic sequential routing |
-| Wire Tap | Routing | Async fire-and-forget copy |
-| Split | Transformation | Message splitting |
-| Aggregate | Transformation | Message aggregation |
-| Content Enricher | Transformation | Enrich with external data |
-| Transform | Transformation | Content transformation |
-| ToD | Endpoint | Dynamic endpoint |
-| Stop | Control | Stop routing |
-| DoTry | Control | Try-Catch-Finally error handling |
-| SetHeader | Headers | Header manipulation |
-| SetProperty | Properties | Exchange properties |
+| Pattern             | Category       | Description                        |
+|---------------------|----------------|------------------------------------|
+| Choice              | Routing        | Content-based routing              |
+| Filter              | Routing        | Conditional filtering              |
+| Idempotent Consumer | Routing        | Prevent duplicate messages         |
+| Circuit Breaker     | Routing        | Resilience pattern for failures    |
+| Load Balancer       | Routing        | Load distribution across endpoints |
+| Dynamic Router      | Routing        | Dynamic decision-based routing     |
+| Resequencer         | Routing        | Reorder messages by sequence       |
+| Claim Check         | Routing        | Store payload and pass reference   |
+| Throttle            | Routing        | Rate limiting                      |
+| Delay               | Routing        | Pause before next step             |
+| Multicast           | Routing        | Multiple destinations              |
+| Recipient List      | Routing        | Dynamic recipient routing          |
+| Routing Slip        | Routing        | Dynamic sequential routing         |
+| Wire Tap            | Routing        | Async fire-and-forget copy         |
+| Split               | Transformation | Message splitting                  |
+| Aggregate           | Transformation | Message aggregation                |
+| Content Enricher    | Transformation | Enrich with external data          |
+| Transform           | Transformation | Content transformation             |
+| ToD                 | Endpoint       | Dynamic endpoint                   |
+| Stop                | Control        | Stop routing                       |
+| DoTry               | Control        | Try-Catch-Finally error handling   |
+| SetHeader           | Headers        | Header manipulation                |
+| SetProperty         | Properties     | Exchange properties                |

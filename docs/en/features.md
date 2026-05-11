@@ -79,39 +79,48 @@ When("${date:now:yyyy-MM-dd}")
 ### Component Ecosystem
 
 #### Core (Built-in)
+
 - **Direct** — In-memory routing
 - **Timer** — Scheduled execution
 
 #### Security
+
 - **Path Validation** — Protection against directory traversal attacks
 - **SQL Injection Prevention** — Input validation for database queries
 - **Input Sanitization** — Null byte and control character removal
 - **Safe Path Operations** — Bounds-checking for file operations
 
 #### File Transfer
+
 - **File** — Local filesystem
 - **FTP/FTPS** — File Transfer Protocol
 - **SFTP** — SSH File Transfer
 - **SMB** — Windows shares
 
 #### Network
+
 - **HTTP** — HTTP server/client
 
 #### Messaging
+
 - **Telegram** — Bot API
 - **Mail** — SMTP/IMAP/POP3
 
 #### AI
+
 - **OpenAI** — GPT models
 
 #### Database
+
 - **SQL** — Query execution
 - **SQL-Stored** — Stored procedures
 
 #### Scheduling
+
 - **Cron** — Cron expressions
 
 #### Transformation
+
 - **XSLT** — XML transformation
 - **XSD** — Schema validation
 - **Template** — Go templates
@@ -119,19 +128,19 @@ When("${date:now:yyyy-MM-dd}")
 
 ### Enterprise Integration Patterns
 
-| Pattern | Description | Status |
-|---------|-------------|--------|
-| Choice | Content-based router | ✅ |
-| Split | Message splitter | ✅ |
-| Aggregate | Message aggregator | ✅ |
-| Multicast | Multiple destinations | ✅ |
-| Filter | Conditional filtering | ✅ |
-| Transform | Message transformation | ✅ |
-| ToD | Dynamic endpoint | ✅ |
-| Stop | Stop routing | ✅ |
-| Pipeline | Sequential branches | ✅ |
-| SetHeader | Header manipulation | ✅ |
-| SetProperty | Property manipulation | ✅ |
+| Pattern     | Description            | Status |
+|-------------|------------------------|--------|
+| Choice      | Content-based router   | ✅      |
+| Split       | Message splitter       | ✅      |
+| Aggregate   | Message aggregator     | ✅      |
+| Multicast   | Multiple destinations  | ✅      |
+| Filter      | Conditional filtering  | ✅      |
+| Transform   | Message transformation | ✅      |
+| ToD         | Dynamic endpoint       | ✅      |
+| Stop        | Stop routing           | ✅      |
+| Pipeline    | Sequential branches    | ✅      |
+| SetHeader   | Header manipulation    | ✅      |
+| SetProperty | Property manipulation  | ✅      |
 
 ### REST Management API
 
@@ -143,6 +152,7 @@ mgmt.Start(":8081")
 ```
 
 **Endpoints:**
+
 - `GET /routes` — List routes
 - `GET /routes/{id}` — Route details
 - `POST /routes/{id}/start` — Start route

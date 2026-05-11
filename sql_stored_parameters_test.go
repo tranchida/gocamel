@@ -1,8 +1,9 @@
 package gocamel
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestStoredProcedureParamDirection_String(t *testing.T) {

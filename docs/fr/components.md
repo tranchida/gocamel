@@ -6,7 +6,8 @@
 
 ## Overview
 
-Complete reference of all available components in GoCamel. Components provide connectivity to external systems and services.
+Complete reference of all available components in GoCamel. Components provide connectivity to external systems and
+services.
 
 ## Core Components
 
@@ -20,9 +21,9 @@ Synchronous in-memory routing between routes in the same context.
 builder.From("direct:start").To("direct:process")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `reuseChannel` | bool | `true` | Reuse the same channel |
+| Option         | Type | Default | Description            |
+|----------------|------|---------|------------------------|
+| `reuseChannel` | bool | `true`  | Reuse the same channel |
 
 ---
 
@@ -34,11 +35,11 @@ Simple periodic triggering.
 builder.From("timer:tick?period=5s")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `period` | Duration | `1s` | Period between triggers |
-| `repeatCount` | int | `0` | Number of repetitions (0=infinite) |
-| `fixedRate` | bool | `false` | Fixed-rate vs fixed-delay mode |
+| Option        | Type     | Default | Description                        |
+|---------------|----------|---------|------------------------------------|
+| `period`      | Duration | `1s`    | Period between triggers            |
+| `repeatCount` | int      | `0`     | Number of repetitions (0=infinite) |
+| `fixedRate`   | bool     | `false` | Fixed-rate vs fixed-delay mode     |
 
 ---
 
@@ -56,12 +57,12 @@ builder.From("file://input?delete=true")
 builder.To("file://output")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `delete` | bool | `false` | Delete after processing |
-| `noop` | bool | `false` | Do not move/delete file |
-| `include` | string | `""` | Include file pattern |
-| `exclude` | string | `""` | Exclude file pattern |
+| Option    | Type   | Default | Description             |
+|-----------|--------|---------|-------------------------|
+| `delete`  | bool   | `false` | Delete after processing |
+| `noop`    | bool   | `false` | Do not move/delete file |
+| `include` | string | `""`    | Include file pattern    |
+| `exclude` | string | `""`    | Exclude file pattern    |
 
 ---
 
@@ -137,8 +138,8 @@ endpoint, _ := ctx.CreateEndpoint("openai:chat?model=gpt-4")
 producer, _ := endpoint.CreateProducer()
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
+| Option  | Type   | Default         | Description         |
+|---------|--------|-----------------|---------------------|
 | `model` | string | `gpt-3.5-turbo` | OpenAI model to use |
 
 ---
@@ -159,13 +160,13 @@ builder.From("cron://group/job?cron=0+*+*+*+*+*")
 builder.From("cron://poller?trigger.repeatInterval=5000")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `cron` | string | — | 6-field cron expression |
-| `trigger.repeatInterval` | int | — | Interval in milliseconds |
-| `trigger.repeatCount` | int | `-1` | Max executions (-1=infinite) |
-| `triggerStartDelay` | int | `500` | Delay before first trigger (ms) |
-| `stateful` | bool | `false` | Prevent concurrent executions |
+| Option                   | Type   | Default | Description                     |
+|--------------------------|--------|---------|---------------------------------|
+| `cron`                   | string | —       | 6-field cron expression         |
+| `trigger.repeatInterval` | int    | —       | Interval in milliseconds        |
+| `trigger.repeatCount`    | int    | `-1`    | Max executions (-1=infinite)    |
+| `triggerStartDelay`      | int    | `500`   | Delay before first trigger (ms) |
+| `stateful`               | bool   | `false` | Prevent concurrent executions   |
 
 ---
 
@@ -186,19 +187,19 @@ builder.From("imaps://imap.gmail.com:993?folderName=INBOX&idle=true")
 builder.From("pop3s://pop.gmail.com:995?username=user&password=pass")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `username` | string | `""` | Authentication credentials |
-| `password` | string | `""` | Authentication credentials |
-| `to` | string | `""` | Recipient(s) (Producer) |
-| `subject` | string | `""` | Email subject (Producer) |
-| `contentType` | string | `"text/plain"` | MIME type (Producer) |
-| `folderName` | string | `"INBOX"` | IMAP folder (Consumer) |
-| `unseen` | bool | `true` | Unread messages only |
-| `idle` | bool | `false` | IMAP IDLE for push notifications |
-| `delete` | bool | `false` | Delete after processing |
-| `fetchSize` | int | `-1` | Max messages per poll |
-| `pollDelay` | int | `60000` | Delay between polls (ms) |
+| Option        | Type   | Default        | Description                      |
+|---------------|--------|----------------|----------------------------------|
+| `username`    | string | `""`           | Authentication credentials       |
+| `password`    | string | `""`           | Authentication credentials       |
+| `to`          | string | `""`           | Recipient(s) (Producer)          |
+| `subject`     | string | `""`           | Email subject (Producer)         |
+| `contentType` | string | `"text/plain"` | MIME type (Producer)             |
+| `folderName`  | string | `"INBOX"`      | IMAP folder (Consumer)           |
+| `unseen`      | bool   | `true`         | Unread messages only             |
+| `idle`        | bool   | `false`        | IMAP IDLE for push notifications |
+| `delete`      | bool   | `false`        | Delete after processing          |
+| `fetchSize`   | int    | `-1`           | Max messages per poll            |
+| `pollDelay`   | int    | `60000`        | Delay between polls (ms)         |
 
 ---
 
@@ -229,12 +230,12 @@ builder.To("template:templates/item.tmpl?contentCache=true")
 builder.To("template:default.tmpl?allowTemplateFromHeader=true")
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `contentCache` | bool | `false` | Cache template in memory |
-| `allowTemplateFromHeader` | bool | `false` | Allow override via `CamelTemplatePath` header |
-| `startDelimiter` | string | `{{` | Start delimiter |
-| `endDelimiter` | string | `}}` | End delimiter |
+| Option                    | Type   | Default | Description                                   |
+|---------------------------|--------|---------|-----------------------------------------------|
+| `contentCache`            | bool   | `false` | Cache template in memory                      |
+| `allowTemplateFromHeader` | bool   | `false` | Allow override via `CamelTemplatePath` header |
+| `startDelimiter`          | string | `{{`    | Start delimiter                               |
+| `endDelimiter`            | string | `}}`    | End delimiter                                 |
 
 **Template Variables:**
 
@@ -320,13 +321,13 @@ sql://<datasourceName>?query=<SQL>
 sql://logical?dataSourceRef=<datasourceName>&query=<SQL>
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `query` | string | required | SQL query with optional `${header.x}`, `${body}`, `${property.x}` |
-| `dataSourceRef` | string | host URI | Registered datasource name |
-| `outputType` | string | `SelectList` | `SelectList` or `SelectOne` |
-| `batch` | bool | `false` | Batch mode: body = `[][]any` |
-| `transacted` | bool | `false` | Wrap in transaction |
+| Option          | Type   | Default      | Description                                                       |
+|-----------------|--------|--------------|-------------------------------------------------------------------|
+| `query`         | string | required     | SQL query with optional `${header.x}`, `${body}`, `${property.x}` |
+| `dataSourceRef` | string | host URI     | Registered datasource name                                        |
+| `outputType`    | string | `SelectList` | `SelectList` or `SelectOne`                                       |
+| `batch`         | bool   | `false`      | Batch mode: body = `[][]any`                                      |
+| `transacted`    | bool   | `false`      | Wrap in transaction                                               |
 
 **Query Parameters:**
 
@@ -334,19 +335,19 @@ Provided via `CamelSqlParameters` header or body as `[]any`.
 
 **Output Headers:**
 
-| Header | Description |
-|--------|-------------|
-| `CamelSqlRowCount` | Rows returned/affected |
+| Header                | Description             |
+|-----------------------|-------------------------|
+| `CamelSqlRowCount`    | Rows returned/affected  |
 | `CamelSqlColumnNames` | Column names for SELECT |
 
 **Result Body:**
 
-| Case | Out.Body Type |
-|------|---------------|
-| `SELECT` + `SelectList` | `[]map[string]any` |
-| `SELECT` + `SelectOne` | `map[string]any` (or `nil`) |
-| `INSERT/UPDATE/DELETE` | `int64` (affected rows) |
-| `batch=true` | `int64` (total affected) |
+| Case                    | Out.Body Type               |
+|-------------------------|-----------------------------|
+| `SELECT` + `SelectList` | `[]map[string]any`          |
+| `SELECT` + `SelectOne`  | `map[string]any` (or `nil`) |
+| `INSERT/UPDATE/DELETE`  | `int64` (affected rows)     |
+| `batch=true`            | `int64` (total affected)    |
 
 ---
 
@@ -382,20 +383,20 @@ sql-stored://datasourceName?procedure=NAME
 sql-stored://logical?dataSourceRef=dsName&procedure=NAME
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `procedure` | string | required | Stored procedure name |
-| `dataSourceRef` | string | host URI | Datasource name |
-| `outputType` | string | `SelectList` | `SelectList` or `SelectOne` |
-| `transacted` | bool | `false` | Execute in transaction |
-| `noop` | bool | `false` | Test mode: do not execute |
+| Option          | Type   | Default      | Description                 |
+|-----------------|--------|--------------|-----------------------------|
+| `procedure`     | string | required     | Stored procedure name       |
+| `dataSourceRef` | string | host URI     | Datasource name             |
+| `outputType`    | string | `SelectList` | `SelectList` or `SelectOne` |
+| `transacted`    | bool   | `false`      | Execute in transaction      |
+| `noop`          | bool   | `false`      | Test mode: do not execute   |
 
 **Parameter Directions:**
 
-| Direction | Description |
-|-----------|-------------|
-| `ParamDirectionIn` | Input only |
-| `ParamDirectionOut` | Output only |
+| Direction             | Description      |
+|-----------------------|------------------|
+| `ParamDirectionIn`    | Input only       |
+| `ParamDirectionOut`   | Output only      |
 | `ParamDirectionInOut` | Input and output |
 
 ---
@@ -412,31 +413,31 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 
 #### Options
 
-| Option | Type | Requis | Description |
-|--------|------|--------|-------------|
-| `database` | string | Oui | Nom de la base de données |
-| `collection` | string | Oui | Nom de la collection |
-| `operation` | string | Oui | Opération: find, findOne, insert, insertOne, save, update, remove, count |
-| `connectionRef` | string | Non | Référence connexion preregistered |
+| Option          | Type   | Requis | Description                                                              |
+|-----------------|--------|--------|--------------------------------------------------------------------------|
+| `database`      | string | Oui    | Nom de la base de données                                                |
+| `collection`    | string | Oui    | Nom de la collection                                                     |
+| `operation`     | string | Oui    | Opération: find, findOne, insert, insertOne, save, update, remove, count |
+| `connectionRef` | string | Non    | Référence connexion preregistered                                        |
 
 #### Headers
 
-| Header | Mode | Description |
-|--------|------|-------------|
-| `CamelMongoDbDatabase` | R/W | Nom base de données |
-| `CamelMongoDbCollection` | R/W | Nom collection |
-| `CamelMongoDbOperation` | R/W | Opération à exécuter |
-| `CamelMongoDbCriteria` | Write | Filtre/critères (map ou JSON string) |
-| `CamelMongoDbLimit` | Write | Limite résultats |
-| `CamelMongoDbSkip` | Write | Sauter N documents |
-| `CamelMongoDbSort` | Write | Tri (json: {"field": 1}) |
+| Header                   | Mode  | Description                          |
+|--------------------------|-------|--------------------------------------|
+| `CamelMongoDbDatabase`   | R/W   | Nom base de données                  |
+| `CamelMongoDbCollection` | R/W   | Nom collection                       |
+| `CamelMongoDbOperation`  | R/W   | Opération à exécuter                 |
+| `CamelMongoDbCriteria`   | Write | Filtre/critères (map ou JSON string) |
+| `CamelMongoDbLimit`      | Write | Limite résultats                     |
+| `CamelMongoDbSkip`       | Write | Sauter N documents                   |
+| `CamelMongoDbSort`       | Write | Tri (json: {"field": 1})             |
 
 #### Headers Sortie
 
-| Header | Description |
-|--------|-------------|
+| Header                    | Description                       |
+|---------------------------|-----------------------------------|
 | `CamelMongoDbResultTotal` | Nombre documents trouvés/affectés |
-| `CamelMongoDbOid` | ObjectID document inséré |
+| `CamelMongoDbOid`         | ObjectID document inséré          |
 
 #### Exemple
 
@@ -499,7 +500,8 @@ builder.To("http://api?httpMethod=POST")
 
 ## Vue d'Ensemble
 
-Référence complète de tous les composants disponibles dans GoCamel. Les composants fournissent la connectivité aux systèmes et services externes.
+Référence complète de tous les composants disponibles dans GoCamel. Les composants fournissent la connectivité aux
+systèmes et services externes.
 
 ## Composants Core
 
@@ -513,8 +515,8 @@ Routage synchrone en mémoire entre routes du même contexte.
 builder.From("direct:start").To("direct:process")
 ```
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
+| Option         | Type | Défaut | Description                |
+|----------------|------|--------|----------------------------|
 | `reuseChannel` | bool | `true` | Réutiliser le même channel |
 
 ---
@@ -527,11 +529,11 @@ Déclenchement périodique simple.
 builder.From("timer:tick?period=5s")
 ```
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `period` | Duration | `1s` | Période entre déclenchements |
-| `repeatCount` | int | `0` | Nombre de répétitions (0=infini) |
-| `fixedRate` | bool | `false` | Mode fixed-rate vs fixed-delay |
+| Option        | Type     | Défaut  | Description                      |
+|---------------|----------|---------|----------------------------------|
+| `period`      | Duration | `1s`    | Période entre déclenchements     |
+| `repeatCount` | int      | `0`     | Nombre de répétitions (0=infini) |
+| `fixedRate`   | bool     | `false` | Mode fixed-rate vs fixed-delay   |
 
 ---
 
@@ -549,12 +551,12 @@ builder.From("file://input?delete=true")
 builder.To("file://output")
 ```
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `delete` | bool | `false` | Supprimer après traitement |
-| `noop` | bool | `false` | Ne pas déplacer/supprimer le fichier |
-| `include` | string | `""` | Pattern fichiers inclus |
-| `exclude` | string | `""` | Pattern fichiers exclus |
+| Option    | Type   | Défaut  | Description                          |
+|-----------|--------|---------|--------------------------------------|
+| `delete`  | bool   | `false` | Supprimer après traitement           |
+| `noop`    | bool   | `false` | Ne pas déplacer/supprimer le fichier |
+| `include` | string | `""`    | Pattern fichiers inclus              |
+| `exclude` | string | `""`    | Pattern fichiers exclus              |
 
 ---
 
@@ -630,8 +632,8 @@ endpoint, _ := ctx.CreateEndpoint("openai:chat?model=gpt-4")
 producer, _ := endpoint.CreateProducer()
 ```
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
+| Option  | Type   | Défaut          | Description              |
+|---------|--------|-----------------|--------------------------|
 | `model` | string | `gpt-3.5-turbo` | Modèle OpenAI à utiliser |
 
 ---
@@ -652,13 +654,13 @@ builder.From("cron://group/job?cron=0+*+*+*+*+*")
 builder.From("cron://poller?trigger.repeatInterval=5000")
 ```
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `cron` | string | — | Expression cron 6 champs |
-| `trigger.repeatInterval` | int | — | Intervalle en millisecondes |
-| `trigger.repeatCount` | int | `-1` | Max exécutions (-1=infini) |
-| `triggerStartDelay` | int | `500` | Délai avant premier déclenchement (ms) |
-| `stateful` | bool | `false` | Empêcher exécutions concurrentes |
+| Option                   | Type   | Défaut  | Description                            |
+|--------------------------|--------|---------|----------------------------------------|
+| `cron`                   | string | —       | Expression cron 6 champs               |
+| `trigger.repeatInterval` | int    | —       | Intervalle en millisecondes            |
+| `trigger.repeatCount`    | int    | `-1`    | Max exécutions (-1=infini)             |
+| `triggerStartDelay`      | int    | `500`   | Délai avant premier déclenchement (ms) |
+| `stateful`               | bool   | `false` | Empêcher exécutions concurrentes       |
 
 ---
 
@@ -679,19 +681,19 @@ builder.From("imaps://imap.gmail.com:993?folderName=INBOX&idle=true")
 builder.From("pop3s://pop.gmail.com:995?username=user&password=pass")
 ```
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `username` | string | `""` | Credentials d'authentification |
-| `password` | string | `""` | Credentials d'authentification |
-| `to` | string | `""` | Destinataire(s) (Producer) |
-| `subject` | string | `""` | Sujet du message (Producer) |
-| `contentType` | string | `"text/plain"` | Type MIME (Producer) |
-| `folderName` | string | `"INBOX"` | Dossier IMAP (Consumer) |
-| `unseen` | bool | `true` | Messages non lus seulement |
-| `idle` | bool | `false` | IMAP IDLE pour notifications push |
-| `delete` | bool | `false` | Supprimer après traitement |
-| `fetchSize` | int | `-1` | Messages max par poll |
-| `pollDelay` | int | `60000` | Délai entre polls (ms) |
+| Option        | Type   | Défaut         | Description                       |
+|---------------|--------|----------------|-----------------------------------|
+| `username`    | string | `""`           | Credentials d'authentification    |
+| `password`    | string | `""`           | Credentials d'authentification    |
+| `to`          | string | `""`           | Destinataire(s) (Producer)        |
+| `subject`     | string | `""`           | Sujet du message (Producer)       |
+| `contentType` | string | `"text/plain"` | Type MIME (Producer)              |
+| `folderName`  | string | `"INBOX"`      | Dossier IMAP (Consumer)           |
+| `unseen`      | bool   | `true`         | Messages non lus seulement        |
+| `idle`        | bool   | `false`        | IMAP IDLE pour notifications push |
+| `delete`      | bool   | `false`        | Supprimer après traitement        |
+| `fetchSize`   | int    | `-1`           | Messages max par poll             |
+| `pollDelay`   | int    | `60000`        | Délai entre polls (ms)            |
 
 ---
 
@@ -722,12 +724,12 @@ builder.To("template:templates/item.tmpl?contentCache=true")
 builder.To("template:default.tmpl?allowTemplateFromHeader=true")
 ```
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `contentCache` | bool | `false` | Cache le template en mémoire |
-| `allowTemplateFromHeader` | bool | `false` | Permet override via header `CamelTemplatePath` |
-| `startDelimiter` | string | `{{` | Délimiteur de début |
-| `endDelimiter` | string | `}}` | Délimiteur de fin |
+| Option                    | Type   | Défaut  | Description                                    |
+|---------------------------|--------|---------|------------------------------------------------|
+| `contentCache`            | bool   | `false` | Cache le template en mémoire                   |
+| `allowTemplateFromHeader` | bool   | `false` | Permet override via header `CamelTemplatePath` |
+| `startDelimiter`          | string | `{{`    | Délimiteur de début                            |
+| `endDelimiter`            | string | `}}`    | Délimiteur de fin                              |
 
 **Variables de Template:**
 
@@ -813,13 +815,13 @@ sql://<datasourceName>?query=<SQL>
 sql://logical?dataSourceRef=<datasourceName>&query=<SQL>
 ```
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `query` | string | obligatoire | Requête SQL avec `${header.x}`, `${body}`, `${property.x}` optionnels |
-| `dataSourceRef` | string | host URI | Nom datasource enregistrée |
-| `outputType` | string | `SelectList` | `SelectList` ou `SelectOne` |
-| `batch` | bool | `false` | Mode batch: body = `[][]any` |
-| `transacted` | bool | `false` | Englober dans une transaction |
+| Option          | Type   | Défaut       | Description                                                           |
+|-----------------|--------|--------------|-----------------------------------------------------------------------|
+| `query`         | string | obligatoire  | Requête SQL avec `${header.x}`, `${body}`, `${property.x}` optionnels |
+| `dataSourceRef` | string | host URI     | Nom datasource enregistrée                                            |
+| `outputType`    | string | `SelectList` | `SelectList` ou `SelectOne`                                           |
+| `batch`         | bool   | `false`      | Mode batch: body = `[][]any`                                          |
+| `transacted`    | bool   | `false`      | Englober dans une transaction                                         |
 
 **Paramètres de Requête:**
 
@@ -827,19 +829,19 @@ Fournis via header `CamelSqlParameters` ou body comme `[]any`.
 
 **Headers de Sortie:**
 
-| Header | Description |
-|--------|-------------|
-| `CamelSqlRowCount` | Lignes retournées/affectées |
+| Header                | Description                   |
+|-----------------------|-------------------------------|
+| `CamelSqlRowCount`    | Lignes retournées/affectées   |
 | `CamelSqlColumnNames` | Noms des colonnes pour SELECT |
 
 **Corps Résultat:**
 
-| Cas | Type Out.Body |
-|-----|---------------|
-| `SELECT` + `SelectList` | `[]map[string]any` |
-| `SELECT` + `SelectOne` | `map[string]any` (ou `nil`) |
-| `INSERT/UPDATE/DELETE` | `int64` (lignes affectées) |
-| `batch=true` | `int64` (total affectées) |
+| Cas                     | Type Out.Body               |
+|-------------------------|-----------------------------|
+| `SELECT` + `SelectList` | `[]map[string]any`          |
+| `SELECT` + `SelectOne`  | `map[string]any` (ou `nil`) |
+| `INSERT/UPDATE/DELETE`  | `int64` (lignes affectées)  |
+| `batch=true`            | `int64` (total affectées)   |
 
 ---
 
@@ -875,20 +877,20 @@ sql-stored://datasourceName?procedure=NAME
 sql-stored://logical?dataSourceRef=dsName&procedure=NAME
 ```
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `procedure` | string | obligatoire | Nom procédure stockée |
-| `dataSourceRef` | string | host URI | Nom datasource |
-| `outputType` | string | `SelectList` | `SelectList` ou `SelectOne` |
-| `transacted` | bool | `false` | Exécuter dans une transaction |
-| `noop` | bool | `false` | Mode test: ne pas exécuter |
+| Option          | Type   | Défaut       | Description                   |
+|-----------------|--------|--------------|-------------------------------|
+| `procedure`     | string | obligatoire  | Nom procédure stockée         |
+| `dataSourceRef` | string | host URI     | Nom datasource                |
+| `outputType`    | string | `SelectList` | `SelectList` ou `SelectOne`   |
+| `transacted`    | bool   | `false`      | Exécuter dans une transaction |
+| `noop`          | bool   | `false`      | Mode test: ne pas exécuter    |
 
 **Direction des Paramètres:**
 
-| Direction | Description |
-|-----------|-------------|
-| `ParamDirectionIn` | Entrée seule |
-| `ParamDirectionOut` | Sortie seule |
+| Direction             | Description      |
+|-----------------------|------------------|
+| `ParamDirectionIn`    | Entrée seule     |
+| `ParamDirectionOut`   | Sortie seule     |
 | `ParamDirectionInOut` | Entrée et sortie |
 
 ---

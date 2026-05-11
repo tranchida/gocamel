@@ -18,6 +18,7 @@ builder.From("direct:start").
 ```
 
 **Propriétés de l'Exchange:**
+
 - `CamelSplitIndex` — Index actuel (0-based)
 - `CamelSplitSize` — Nombre total de parties
 - `CamelSplitComplete` — Dernière partie ?
@@ -39,6 +40,7 @@ builder.From("direct:start").
 ```
 
 **Stratégie personnalisée:**
+
 ```go go
 type MyAggregationStrategy struct{}
 
@@ -72,10 +74,12 @@ builder.From("direct:start").
 ```
 
 **Options:**
+
 - `ParallelProcessing()` — Exécute les branches en parallèle
 - `AggregationStrategy` — Fusionne les résultats
 
 **Propriétés:**
+
 - `CamelMulticastIndex`
 - `CamelMulticastSize`
 - `CamelMulticastComplete`
@@ -120,16 +124,16 @@ builder.From("direct:start").
 
 **Expressions supportées :**
 
-| Expression | Description | Exemple |
-|------------|-------------|---------|
-| `${header.name}` | Valeur d'en-tête | `${header.Content-Type == 'json'}` |
-| `${body}` | Corps du message | `${body == 'active'}` |
-| `${body['key']}` | Accès par clé map | `${body['status'] == 'pending'}` |
-| `${body[0]}` | Accès par index | `${body[0] > 50}` |
-| `${exchangeProperty.prop}` | Propriété Exchange | `${exchangeProperty.userId != ''}` |
-| `${date:now}` | Date/heure actuelle | — |
-| `${random(100)}` | Nombre aléatoire | — |
-| `${uuid}` | UUID unique | — |
+| Expression                 | Description         | Exemple                            |
+|----------------------------|---------------------|------------------------------------|
+| `${header.name}`           | Valeur d'en-tête    | `${header.Content-Type == 'json'}` |
+| `${body}`                  | Corps du message    | `${body == 'active'}`              |
+| `${body['key']}`           | Accès par clé map   | `${body['status'] == 'pending'}`   |
+| `${body[0]}`               | Accès par index     | `${body[0] > 50}`                  |
+| `${exchangeProperty.prop}` | Propriété Exchange  | `${exchangeProperty.userId != ''}` |
+| `${date:now}`              | Date/heure actuelle | —                                  |
+| `${random(100)}`           | Nombre aléatoire    | —                                  |
+| `${uuid}`                  | UUID unique         | —                                  |
 
 **Opérateurs de comparaison :**
 
@@ -157,13 +161,15 @@ When(expression).
 ```
 
 !!! tip "Ordre d'évaluation"
-    Les clauses `When` sont évaluées dans l'ordre. La première condition vraie déclenche son processor, les autres sont ignorées. Si aucune condition ne correspond et qu'`Otherwise` est présent, il est exécuté.
+Les clauses `When` sont évaluées dans l'ordre. La première condition vraie déclenche son processor, les autres sont
+ignorées. Si aucune condition ne correspond et qu'`Otherwise` est présent, il est exécuté.
 
 ---
 
 ## Filter
 
-Filtre les messages selon une condition. Les exchanges qui ne correspondent pas sont silencieusement supprimés (`ErrStopRouting`).
+Filtre les messages selon une condition. Les exchanges qui ne correspondent pas sont silencieusement supprimés (
+`ErrStopRouting`).
 
 ```go
 // Expression Simple Language (comparaison à l'intérieur de ${...})
@@ -186,7 +192,8 @@ builder.From("direct:start").
 
 ## Throttle
 
-Limite le débit de traitement à N messages maximum par fenêtre de temps. Les exchanges excédentaires sont **retardés** (jamais perdus) jusqu'à ce que la fenêtre se réinitialise.
+Limite le débit de traitement à N messages maximum par fenêtre de temps. Les exchanges excédentaires sont **retardés** (
+jamais perdus) jusqu'à ce que la fenêtre se réinitialise.
 
 ```go
 // Maximum 100 messages par seconde
@@ -203,16 +210,19 @@ builder.From("direct:start").
 ```
 
 **Notes :**
+
 - Utilise un compteur à fenêtre fixe — pour un lissage plus fin, réduire la durée de la fenêtre
 - Bloquant : le goroutine attend que la fenêtre autorise le passage
-- `maxRequests` et `timePeriod` doivent être supérieurs à zéro ; les valeurs invalides retournent une erreur au lieu de bloquer indéfiniment
+- `maxRequests` et `timePeriod` doivent être supérieurs à zéro ; les valeurs invalides retournent une erreur au lieu de
+  bloquer indéfiniment
 - Si le contexte de l'exchange est annulé pendant l'attente de la fenêtre suivante, `Process` retourne une erreur
 
 ---
 
 ## Delay
 
-Met le traitement de l'exchange en pause pour une durée fixe ou calculée dynamiquement. Le sleep respecte l'annulation du contexte.
+Met le traitement de l'exchange en pause pour une durée fixe ou calculée dynamiquement. Le sleep respecte l'annulation
+du contexte.
 
 ```go
 // Délai fixe
@@ -235,10 +245,12 @@ builder.From("direct:start").
 ```
 
 **Notes :**
+
 - Bloquant : le goroutine dort pendant la durée calculée
 - Si le contexte de l'exchange est annulé pendant le sleep, `Process` retourne une erreur
 - Retourner `0` depuis `DelayFunc` pour ignorer le délai pour un exchange donné
-- Passer `nil` à `DelayFunc` fait échouer la construction de la route ; `NewDelayerFunc(nil)` reste constructible mais retourne une erreur de traitement au lieu de paniquer
+- Passer `nil` à `DelayFunc` fait échouer la construction de la route ; `NewDelayerFunc(nil)` reste constructible mais
+  retourne une erreur de traitement au lieu de paniquer
 
 ---
 
@@ -270,6 +282,7 @@ builder.From("direct:start").
 ```
 
 **Fonctionnement :**
+
 1. Une copie de l'exchange courant est envoyée à l'URI d'enrichissement
 2. La réponse est récupérée
 3. `AggregationStrategy.Aggregate(original, réponse)` fusionne les deux
@@ -291,12 +304,14 @@ builder.From("direct:start").
 ```
 
 **Fonctionnement :**
+
 1. Évalue l'expression pour obtenir une clé unique.
 2. Vérifie si la clé existe déjà dans le dépôt (repository).
 3. Si elle n'est pas présente, ajoute la clé et continue le traitement.
 4. Si elle est déjà présente, arrête le routage (`ErrStopRouting`).
 
 **Dépôts (Repositories) :**
+
 - `NewMemoryIdempotentRepository()` : Stockage en mémoire vive (par défaut).
 - Des dépôts basés sur SQL peuvent être implémentés via l'interface `IdempotentRepository`.
 
@@ -323,9 +338,11 @@ builder.From("direct:start").
 ```
 
 **États :**
+
 - **Closed (Fermé)** : Les requêtes passent normalement. Les échecs sont comptabilisés.
 - **Open (Ouvert)** : Les requêtes échouent immédiatement ou passent par le fallback.
-- **Half-Open (Semi-ouvert)** : Après le `OpenTimeout`, autorise quelques requêtes pour tester si le service est rétabli. Si le `SuccessThreshold` est atteint, il se referme. En cas d'échec, il s'ouvre à nouveau.
+- **Half-Open (Semi-ouvert)** : Après le `OpenTimeout`, autorise quelques requêtes pour tester si le service est
+  rétabli. Si le `SuccessThreshold` est atteint, il se referme. En cas d'échec, il s'ouvre à nouveau.
 
 ---
 
@@ -344,6 +361,7 @@ builder.From("direct:start").
 ```
 
 **Stratégies :**
+
 - `RoundRobin()` : Distribution circulaire (par défaut).
 - `Random()` : Distribution aléatoire.
 - `Custom(strategy)` : Fournir une implémentation personnalisée de l'interface `LoadBalancerStrategy`.
@@ -352,7 +370,8 @@ builder.From("direct:start").
 
 ## SEDA
 
-Staged Event-Driven Architecture. Découple les producteurs et les consommateurs via une file d'attente interne (Go channel).
+Staged Event-Driven Architecture. Découple les producteurs et les consommateurs via une file d'attente interne (Go
+channel).
 
 ```go
 // Consommateur avec workers concurrents
@@ -365,11 +384,13 @@ builder.To("seda:traitement")
 ```
 
 **Fonctionnement :**
+
 1. Le producteur envoie une **copie** de l'exchange dans une file d'attente interne.
 2. Le producteur rend la main immédiatement (asynchrone).
 3. Un ou plusieurs workers lisent la file et traitent l'exchange de manière indépendante.
 
 **Paramètres :**
+
 - `size` : La capacité de la file d'attente (défaut 1000).
 - `concurrentConsumers` : Le nombre de goroutines esclaves traitant la file (défaut 1).
 
@@ -389,16 +410,19 @@ builder.From("direct:start").
 ```
 
 **Fonctionnement :**
+
 1. Évalue l'expression pour obtenir le numéro de séquence.
 2. Si la séquence est celle attendue, elle est traitée immédiatement.
 3. S'il s'agit d'une séquence future, elle est mise en tampon et triée.
-4. Si un trou (gap) persiste plus longtemps que le `Timeout`, le resequenceur saute la séquence manquante et continue avec la suivante disponible.
+4. Si un trou (gap) persiste plus longtemps que le `Timeout`, le resequenceur saute la séquence manquante et continue
+   avec la suivante disponible.
 
 ---
 
 ## Claim Check
 
-Réduit la taille des messages en stockant le contenu (payload) dans un dépôt externe et en ne faisant circuler qu'une référence (une clé).
+Réduit la taille des messages en stockant le contenu (payload) dans un dépôt externe et en ne faisant circuler qu'une
+référence (une clé).
 
 ```go
 repo := gocamel.NewMemoryClaimCheckRepository()
@@ -413,6 +437,7 @@ builder.From("direct:start").
 ```
 
 **Opérations :**
+
 - `ClaimCheckPush` : Stocke le corps et le remplace par une clé. Si aucune clé n'est fournie, elle est générée.
 - `ClaimCheckPop` : Récupère les données par clé, restaure le corps et les supprime du dépôt.
 - `ClaimCheckGet` : Récupère les données par clé et restaure le corps (les garde dans le dépôt).
@@ -421,7 +446,6 @@ builder.From("direct:start").
 ---
 
 ## Stop
-
 
 Arrête le routage actuel sans erreur.
 
@@ -451,6 +475,7 @@ builder.From("direct:start").
 ```
 
 **Expressions supportées:**
+
 - `${header.<name>}` — Valeur d'en-tête
 - `${property.<name>}` — Valeur de propriété
 - `${body}` — Corps du message
@@ -459,7 +484,8 @@ builder.From("direct:start").
 
 ## Dynamic Router
 
-Route un exchange à travers une séquence d'endpoints résolus dynamiquement en appelant une fonction de contrôle après chaque étape. Le routage s'arrête quand la fonction retourne une chaîne vide ou `nil`.
+Route un exchange à travers une séquence d'endpoints résolus dynamiquement en appelant une fonction de contrôle après
+chaque étape. Le routage s'arrête quand la fonction retourne une chaîne vide ou `nil`.
 
 ```go
 // Utilisation d'une fonction Go
@@ -481,6 +507,7 @@ builder.From("direct:start").
 ```
 
 **Fonctionnement :**
+
 1. Appelle la fonction ou l'expression de contrôle.
 2. Si le résultat n'est pas vide, envoie l'exchange à cet URI.
 3. Propage la sortie vers l'entrée et recommence à l'étape 1.
@@ -506,11 +533,11 @@ builder.From("direct:start").
 
 **Propriétés Exchange pendant Routing Slip :**
 
-| Propriété | Type | Description |
-|-----------|------|-------------|
-| `CamelRoutingSlipIndex` | int | Index de l'étape courante (base 0) |
-| `CamelRoutingSlipSize` | int | Nombre total d'étapes |
-| `CamelRoutingSlipComplete` | bool | Indique la dernière étape |
+| Propriété                  | Type | Description                        |
+|----------------------------|------|------------------------------------|
+| `CamelRoutingSlipIndex`    | int  | Index de l'étape courante (base 0) |
+| `CamelRoutingSlipSize`     | int  | Nombre total d'étapes              |
+| `CamelRoutingSlipComplete` | bool | Indique la dernière étape          |
 
 ---
 
@@ -570,9 +597,11 @@ builder.From("direct:start").
 ```
 
 **Fonctionnement :**
+
 1. Exécute les processeurs du bloc `DoTry`.
 2. Si une erreur survient, recherche un bloc `DoCatch` correspondant (une chaîne vide intercepte tout).
-3. Si une correspondance est trouvée, l'erreur est considérée comme "gérée" et le routage continue après le bloc `DoTry` (sauf si le bloc catch échoue lui-même).
+3. Si une correspondance est trouvée, l'erreur est considérée comme "gérée" et le routage continue après le bloc
+   `DoTry` (sauf si le bloc catch échoue lui-même).
 4. Le bloc `DoFinally` est **toujours** exécuté, qu'il y ait eu une erreur ou non.
 
 ---

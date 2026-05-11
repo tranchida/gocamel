@@ -26,7 +26,7 @@ Welcome to the GoCamel documentation.
 GoCamel includes built-in security utilities (`security.go`) to protect against common vulnerabilities:
 
 - Path traversal protection
-- SQL injection prevention  
+- SQL injection prevention
 - Input sanitization
 - Safe file operations
 

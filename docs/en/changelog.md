@@ -8,27 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Routing Slip EIP** — `.RoutingSlip(expression)` routes an exchange through a dynamic sequence of endpoints; supports comma-separated strings, Simple Language expressions, and Go functions
-- **Delay EIP** — `.Delay(duration)` pauses an exchange for a fixed duration; `.DelayFunc(fn)` computes the delay per exchange; both respect context cancellation and now fail cleanly when the dynamic delay function is nil
-- **Content Enricher EIP** — `.Enrich(uri, strategy)` fetches data from an external endpoint and merges it into the current exchange via an `AggregationStrategy`; pass `nil` to replace the body directly
-- **Throttle EIP** — `.Throttle(maxRequests, timePeriod)` rate-limits exchange processing; excess exchanges are delayed (not dropped) using a fixed-window counter; invalid limits now fail fast and queued exchanges respect context cancellation
-- **Message Filter EIP** — `.Filter(expression)` drops exchanges that do not match a Go predicate or a Simple Language expression
-- **`Exchange.PropagateOutToIn()`** — extracted helper that copies `Out` body and headers into `In`; used internally by `To`, `ToD`, and `WireTap`
-- **Aggregator improvements** — per-correlation-key locking via `sync.Map` (replaces the previous global mutex), `SetCompletionTimeout(d)`, and `SetCompletionPredicate(fn)` completion strategies
-- **`DeadLetterChannel` redelivery hardening** — redelivery now replays the failed processor before continuing the route, uses stable exchange IDs for retry tracking, and cleans retry state after successful redelivery without relying on consumer `Exchange.Done()` callbacks
+
+- **Routing Slip EIP** — `.RoutingSlip(expression)` routes an exchange through a dynamic sequence of endpoints; supports
+  comma-separated strings, Simple Language expressions, and Go functions
+- **Delay EIP** — `.Delay(duration)` pauses an exchange for a fixed duration; `.DelayFunc(fn)` computes the delay per
+  exchange; both respect context cancellation and now fail cleanly when the dynamic delay function is nil
+- **Content Enricher EIP** — `.Enrich(uri, strategy)` fetches data from an external endpoint and merges it into the
+  current exchange via an `AggregationStrategy`; pass `nil` to replace the body directly
+- **Throttle EIP** — `.Throttle(maxRequests, timePeriod)` rate-limits exchange processing; excess exchanges are
+  delayed (not dropped) using a fixed-window counter; invalid limits now fail fast and queued exchanges respect context
+  cancellation
+- **Message Filter EIP** — `.Filter(expression)` drops exchanges that do not match a Go predicate or a Simple Language
+  expression
+- **`Exchange.PropagateOutToIn()`** — extracted helper that copies `Out` body and headers into `In`; used internally by
+  `To`, `ToD`, and `WireTap`
+- **Aggregator improvements** — per-correlation-key locking via `sync.Map` (replaces the previous global mutex),
+  `SetCompletionTimeout(d)`, and `SetCompletionPredicate(fn)` completion strategies
+- **`DeadLetterChannel` redelivery hardening** — redelivery now replays the failed processor before continuing the
+  route, uses stable exchange IDs for retry tracking, and cleans retry state after successful redelivery without relying
+  on consumer `Exchange.Done()` callbacks
 - Transactional support via **Unit of Work** and **Synchronization**
-  - New `.Transacted()` method in RouteBuilder DSL
-  - Transactional processing in `file`, `ftp`, `sftp`, `smb`, and `mail` components (post-processing triggered at the end of the route)
+    - New `.Transacted()` method in RouteBuilder DSL
+    - Transactional processing in `file`, `ftp`, `sftp`, `smb`, and `mail` components (post-processing triggered at the
+      end of the route)
 - Comprehensive English documentation
 - Bilingual documentation structure (EN/FR)
 - MkDocs Material theme support
 - New `security.go` file with security validation utilities
-  - `ValidatePath()` - validates file paths for directory traversal
-  - `ValidatePathInDir()` - ensures paths stay within allowed directories
-  - `IsSafePath()` - checks if a path is safe
-  - `SanitizeInput()` - removes dangerous characters from user input
+    - `ValidatePath()` - validates file paths for directory traversal
+    - `ValidatePathInDir()` - ensures paths stay within allowed directories
+    - `IsSafePath()` - checks if a path is safe
+    - `SanitizeInput()` - removes dangerous characters from user input
 
 ### Security
+
 - Fixed path traversal vulnerabilities in FTP, SFTP, and SMB components
 - Fixed command injection vulnerability in Exec component
 - Fixed SQL injection vulnerabilities in SQL and SQL-Stored components
@@ -36,11 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All components now validate file paths before operations
 
 ### Changed
+
 - **Translations**: All French code comments translated to English (650+ comments)
 
 ## [0.1.0] - 2026-04-19
 
 ### Added
+
 - Initial release of GoCamel
 - Core EIP patterns: Choice, Split, Aggregate, Multicast, Filter, Transform, ToD, Stop
 - Core components: Direct, Timer, File

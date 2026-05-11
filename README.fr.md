@@ -13,7 +13,8 @@
 
 ---
 
-GoCamel est une bibliothèque d'intégration d'entreprise inspirée d'[Apache Camel](https://camel.apache.org/), écrite en Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectant différents systèmes et services.
+GoCamel est une bibliothèque d'intégration d'entreprise inspirée d'[Apache Camel](https://camel.apache.org/), écrite en
+Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectant différents systèmes et services.
 
 ## ✨ Fonctionnalités
 
@@ -27,7 +28,8 @@ GoCamel est une bibliothèque d'intégration d'entreprise inspirée d'[Apache Ca
 - 📝 **Simple Language** - Expressions dynamiques (`${body}`, `${header.name}`, fonctions)
 - 🔌 **Composants Multiples** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, etc.
 - 🛠️ **API REST de Management** - Monitoring et contrôle inspiré de JMX
-- 🔒 **Utilitaires de Sécurité** - Protection contre les traversées de répertoire, prévention des injections SQL, assainissement des entrées
+- 🔒 **Utilitaires de Sécurité** - Protection contre les traversées de répertoire, prévention des injections SQL,
+  assainissement des entrées
 
 ## 📦 Installation
 
@@ -83,27 +85,27 @@ builder.From("direct:start").
 
 ## 🔌 Composants Disponibles
 
-| Composant | Description |
-|-----------|-------------|
-| **HTTP** | Serveur et client HTTP |
-| **File** | Opérations système de fichiers |
-| **FTP/SFTP** | Transfert via FTP/SSH |
-| **SMB** | Partages Windows/Samba |
-| **Direct** | Routage synchrone en mémoire |
-| **Timer/Cron** | Déclencheurs planifiés |
-| **Telegram** | Intégration Bot |
-| **OpenAI** | API ChatGPT/GPT-4 |
-| **Mail** | Email SMTP/IMAP/POP3 |
-| **SQL** | Requêtes base de données |
-| **XSLT/XSD** | Transformation/validation XML |
-| **Template** | Templates Go natifs |
-| **Exec** | Exécution commandes système |
+| Composant      | Description                    |
+|----------------|--------------------------------|
+| **HTTP**       | Serveur et client HTTP         |
+| **File**       | Opérations système de fichiers |
+| **FTP/SFTP**   | Transfert via FTP/SSH          |
+| **SMB**        | Partages Windows/Samba         |
+| **Direct**     | Routage synchrone en mémoire   |
+| **Timer/Cron** | Déclencheurs planifiés         |
+| **Telegram**   | Intégration Bot                |
+| **OpenAI**     | API ChatGPT/GPT-4              |
+| **Mail**       | Email SMTP/IMAP/POP3           |
+| **SQL**        | Requêtes base de données       |
+| **XSLT/XSD**   | Transformation/validation XML  |
+| **Template**   | Templates Go natifs            |
+| **Exec**       | Exécution commandes système    |
 
 ## 🧾 Data Formats
 
-| Data Format | Description |
-|-------------|-------------|
-| **RSS** | Marshal/unmarshal XML RSS avec `MarshalRSS()` et `UnmarshalRSS()` |
+| Data Format | Description                                                       |
+|-------------|-------------------------------------------------------------------|
+| **RSS**     | Marshal/unmarshal XML RSS avec `MarshalRSS()` et `UnmarshalRSS()` |
 
 ## 🔒 Sécurité
 
@@ -111,7 +113,8 @@ GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre
 
 ### Fonctionnalités de Sécurité
 
-- **Protection contre les Traversées de Répertoire** - Prévient les attaques de traversée de répertoire (ex. `../etc/passwd`)
+- **Protection contre les Traversées de Répertoire** - Prévient les attaques de traversée de répertoire (ex.
+  `../etc/passwd`)
 - **Prévention des Injections SQL** - Validation des entrées pour les requêtes SQL
 - **Assainissement des Entrées** - Supprime les octets nuls et caractères de contrôle des entrées utilisateur
 - **Validation des Chemins** - Garantit que les chemins restent dans les répertoires autorisés

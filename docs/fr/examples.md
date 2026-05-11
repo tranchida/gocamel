@@ -207,15 +207,15 @@ To("template:templates/email.tmpl?contentCache=true")
 
 ### Fonctions disponibles dans les templates
 
-| Fonction | Description | Exemple |
-|----------|-------------|---------|
-| `upper` | Majuscules | `{{.Body | upper}}` |
-| `lower` | Minuscules | `{{.Body | lower}}` |
-| `trim` | Supprime espaces | `{{.Body | trim}}` |
-| `now` | Date actuelle | `{{now}}` |
-| `formatDate` | Formate date | `{{now | formatDate "2006-01-02"}}` |
-| `toString` | Convertit en string | `{{.Body | toString}}` |
-| `safeHTML` | HTML non échappé | `{{.Body | safeHTML}}` |
+| Fonction     | Description         | Exemple   |
+|--------------|---------------------|-----------|
+| `upper`      | Majuscules          | `{{.Body  | upper}}` |
+| `lower`      | Minuscules          | `{{.Body  | lower}}` |
+| `trim`       | Supprime espaces    | `{{.Body  | trim}}` |
+| `now`        | Date actuelle       | `{{now}}` |
+| `formatDate` | Formate date        | `{{now    | formatDate "2006-01-02"}}` |
+| `toString`   | Convertit en string | `{{.Body  | toString}}` |
+| `safeHTML`   | HTML non échappé    | `{{.Body  | safeHTML}}` |
 
 ```
 

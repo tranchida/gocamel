@@ -8,16 +8,17 @@
 
 ### Enterprise Integration Patterns (EIP)
 
-GoCamel implements proven integration patterns from the *Enterprise Integration Patterns* book by Gregor Hohpe and Bobby Woolf:
+GoCamel implements proven integration patterns from the *Enterprise Integration Patterns* book by Gregor Hohpe and Bobby
+Woolf:
 
-| Pattern | Description |
-|---------|-------------|
-| **Choice** | Content-based routing with conditions |
-| **Split** | Divide message into parts |
-| **Aggregate** | Combine multiple messages |
-| **Multicast** | Send to multiple destinations |
-| **Stop** | Stop routing without error |
-| **ToD** | Dynamic endpoint URI resolution |
+| Pattern       | Description                           |
+|---------------|---------------------------------------|
+| **Choice**    | Content-based routing with conditions |
+| **Split**     | Divide message into parts             |
+| **Aggregate** | Combine multiple messages             |
+| **Multicast** | Send to multiple destinations         |
+| **Stop**      | Stop routing without error            |
+| **ToD**       | Dynamic endpoint URI resolution       |
 
 ### Security Features
 
@@ -85,16 +86,17 @@ mgmt.Start(":8081")
 
 ### Enterprise Integration Patterns (EIP)
 
-GoCamel implémente les patterns d'intégration éprouvés du livre *Enterprise Integration Patterns* de Gregor Hohpe et Bobby Woolf:
+GoCamel implémente les patterns d'intégration éprouvés du livre *Enterprise Integration Patterns* de Gregor Hohpe et
+Bobby Woolf:
 
-| Pattern | Description |
-|---------|-------------|
-| **Choice** | Routage basé sur le contenu avec conditions |
-| **Split** | Division du message en parties |
-| **Aggregate** | Combinaison de plusieurs messages |
-| **Multicast** | Envoi vers plusieurs destinations |
-| **Stop** | Arrêt du routage sans erreur |
-| **ToD** | Résolution dynamique d'URI d'endpoint |
+| Pattern       | Description                                 |
+|---------------|---------------------------------------------|
+| **Choice**    | Routage basé sur le contenu avec conditions |
+| **Split**     | Division du message en parties              |
+| **Aggregate** | Combinaison de plusieurs messages           |
+| **Multicast** | Envoi vers plusieurs destinations           |
+| **Stop**      | Arrêt du routage sans erreur                |
+| **ToD**       | Résolution dynamique d'URI d'endpoint       |
 
 ### Fonctionnalités de Sécurité
 

@@ -23,7 +23,8 @@ Bienvenue dans la documentation GoCamel.
 
 ## Note de Sécurité
 
-GoCamel inclut des utilitaires de sécurité intégrés (`security.go`) pour se protéger contre les vulnérabilités courantes :
+GoCamel inclut des utilitaires de sécurité intégrés (`security.go`) pour se protéger contre les vulnérabilités
+courantes :
 
 - Protection contre les traversées de répertoire
 - Prévention des injections SQL

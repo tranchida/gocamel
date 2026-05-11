@@ -2,7 +2,8 @@
 
 ## Vue d'ensemble
 
-Le composant `template` permet de transformer le corps d'un message en utilisant les templates Go natifs (`html/template`), inspiré du composant Velocity d'Apache Camel.
+Le composant `template` permet de transformer le corps d'un message en utilisant les templates Go natifs (
+`html/template`), inspiré du composant Velocity d'Apache Camel.
 
 ## URI Format
 
@@ -22,22 +23,22 @@ template:templates/item.tmpl?contentCache=true
 
 ## Options disponibles
 
-| Option | Type | Défaut | Description |
-|--------|------|--------|-------------|
-| `contentCache` | booléen | `false` | Mettre en cache le template en mémoire pour éviter les lectures répétées du fichier |
-| `allowTemplateFromHeader` | booléen | `false` | Permet de changer le template dynamiquement via le header `CamelTemplatePath` |
-| `encoding` | string | `UTF-8` | Encodage du fichier template |
-| `startDelimiter` | string | `{{` | Délimiteur de début pour les expressions Go template |
-| `endDelimiter` | string | `}}` | Délimiteur de fin pour les expressions Go template |
+| Option                    | Type    | Défaut  | Description                                                                         |
+|---------------------------|---------|---------|-------------------------------------------------------------------------------------|
+| `contentCache`            | booléen | `false` | Mettre en cache le template en mémoire pour éviter les lectures répétées du fichier |
+| `allowTemplateFromHeader` | booléen | `false` | Permet de changer le template dynamiquement via le header `CamelTemplatePath`       |
+| `encoding`                | string  | `UTF-8` | Encodage du fichier template                                                        |
+| `startDelimiter`          | string  | `{{`    | Délimiteur de début pour les expressions Go template                                |
+| `endDelimiter`            | string  | `}}`    | Délimiteur de fin pour les expressions Go template                                  |
 
 ## Headers
 
 ### Input
 
-| Header | Description |
-|--------|-------------|
-| `CamelTemplatePath` | (Optionnel) Chemin du template à utiliser si `allowTemplateFromHeader=true` |
-| `CamelTemplateEncoding` | (Optionnel) Encodage du template |
+| Header                  | Description                                                                 |
+|-------------------------|-----------------------------------------------------------------------------|
+| `CamelTemplatePath`     | (Optionnel) Chemin du template à utiliser si `allowTemplateFromHeader=true` |
+| `CamelTemplateEncoding` | (Optionnel) Encodage du template                                            |
 
 ## Structure des données du template
 
@@ -151,17 +152,18 @@ Fichier `templates/response.json.tmpl` :
 
 ## Comparaison avec Apache Camel Velocity
 
-| Fonction | Camel Velocity | GoCamel Template |
-|----------|---------------|------------------|
-| Syntaxe | `${body}` | `{{.Body}}` |
-| Headers | `${header.name}` | `{{.Headers.name}}` |
-| Fonctions intégrées | Oui | Oui (voir liste) |
-| Custom functions | Non | Non |
-| Caching | Oui | Via `contentCache` |
-| Template dynamique | Oui | Via header |
+| Fonction            | Camel Velocity   | GoCamel Template    |
+|---------------------|------------------|---------------------|
+| Syntaxe             | `${body}`        | `{{.Body}}`         |
+| Headers             | `${header.name}` | `{{.Headers.name}}` |
+| Fonctions intégrées | Oui              | Oui (voir liste)    |
+| Custom functions    | Non              | Non                 |
+| Caching             | Oui              | Via `contentCache`  |
+| Template dynamique  | Oui              | Via header          |
 
 ## Notes
 
-- Le composant utilise `html/template` de Go, donc le contenu est automatiquement échappé en HTML sauf si marqué avec `safeHTML`
+- Le composant utilise `html/template` de Go, donc le contenu est automatiquement échappé en HTML sauf si marqué avec
+  `safeHTML`
 - Le corps est toujours converti en `string` avant d'être passé au template
 - Les `[]byte` sont automatiquement convertis en `string` pour éviter l'affichage de représentations mémoire

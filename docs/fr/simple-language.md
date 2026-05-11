@@ -10,7 +10,8 @@
 
 ## Overview
 
-Simple Language is a dynamic expression language inspired by Apache Camel. It allows you to embed expression placeholders in strings, enabling dynamic routing, message transformation, and conditional processing.
+Simple Language is a dynamic expression language inspired by Apache Camel. It allows you to embed expression
+placeholders in strings, enabling dynamic routing, message transformation, and conditional processing.
 
 ## Syntax
 
@@ -24,36 +25,37 @@ Expressions are enclosed in `${}`:
 
 ## Built-in Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `${body}` | Message body | `${body}` |
-| `${header.name}` | Header value | `${header.Content-Type}` |
+| Variable                   | Description       | Example                             |
+|----------------------------|-------------------|-------------------------------------|
+| `${body}`                  | Message body      | `${body}`                           |
+| `${header.name}`           | Header value      | `${header.Content-Type}`            |
 | `${exchangeProperty.name}` | Exchange property | `${exchangeProperty.correlationId}` |
 
 ## Built-in Functions
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `${date:now}` | Current timestamp | `${date:now:yyyy-MM-dd}` |
-| `${random(max)}` | Random number | `${random(100)}` |
-| `${uuid}` | UUID generation | `${uuid}` |
-| `${env:VAR}` | Environment variable | `${env:USER}` |
+| Function         | Description          | Example                  |
+|------------------|----------------------|--------------------------|
+| `${date:now}`    | Current timestamp    | `${date:now:yyyy-MM-dd}` |
+| `${random(max)}` | Random number        | `${random(100)}`         |
+| `${uuid}`        | UUID generation      | `${uuid}`                |
+| `${env:VAR}`     | Environment variable | `${env:USER}`            |
 
 ## File Language
 
-The File Language is an extension of the Simple Language dedicated to file-related operations. It provides functions to extract parts of the filename, path, size, etc.
+The File Language is an extension of the Simple Language dedicated to file-related operations. It provides functions to
+extract parts of the filename, path, size, etc.
 
-| Function | Description |
-|----------|-------------|
-| `${file:name}` | The name of the file (including path) |
-| `${file:name.noext}` | The name of the file but without the extension |
-| `${file:name.ext}` | The file extension |
-| `${file:ext}` | Alias for `${file:name.ext}` |
-| `${file:onlyname}` | The name of the file (without path) |
+| Function                 | Description                                               |
+|--------------------------|-----------------------------------------------------------|
+| `${file:name}`           | The name of the file (including path)                     |
+| `${file:name.noext}`     | The name of the file but without the extension            |
+| `${file:name.ext}`       | The file extension                                        |
+| `${file:ext}`            | Alias for `${file:name.ext}`                              |
+| `${file:onlyname}`       | The name of the file (without path)                       |
 | `${file:onlyname.noext}` | The name of the file (without path) and without extension |
-| `${file:path}` | The full path of the file |
-| `${file:size}` | The length (size) of the file |
-| `${file:modified}` | The last modified date of the file (RFC3339 format) |
+| `${file:path}`           | The full path of the file                                 |
+| `${file:size}`           | The length (size) of the file                             |
+| `${file:modified}`       | The last modified date of the file (RFC3339 format)       |
 
 ## Operators
 
@@ -149,7 +151,9 @@ builder.From("direct:start").
 
 ## Vue d'Ensemble
 
-Simple Language est un langage d'expressions dynamiques inspiré d'Apache Camel. Il vous permet d'insérer des placeholders d'expressions dans des chaînes, permettant le routage dynamique, la transformation de messages et le traitement conditionnel.
+Simple Language est un langage d'expressions dynamiques inspiré d'Apache Camel. Il vous permet d'insérer des
+placeholders d'expressions dans des chaînes, permettant le routage dynamique, la transformation de messages et le
+traitement conditionnel.
 
 ## Syntaxe
 
@@ -163,26 +167,27 @@ Les expressions sont entourées de `${}`:
 
 ## Variables Intégrées
 
-| Variable | Description | Exemple |
-|----------|-------------|---------|
-| `${body}` | Corps du message | `${body}` |
-| `${header.name}` | Valeur d'en-tête | `${header.Content-Type}` |
+| Variable                   | Description         | Exemple                             |
+|----------------------------|---------------------|-------------------------------------|
+| `${body}`                  | Corps du message    | `${body}`                           |
+| `${header.name}`           | Valeur d'en-tête    | `${header.Content-Type}`            |
 | `${exchangeProperty.name}` | Propriété d'échange | `${exchangeProperty.correlationId}` |
 
 ## Fonctions Intégrées
 
-| Fonction | Description | Exemple |
-|----------|-------------|---------|
-| `${date:now:format}` | Horodatage actuel | `${date:now:2006-01-02}` |
-| `${date:command+offset:format}` | Date avec arithmétique | `${date:now+24h:2006-01-02}` |
-| `${date:header.nom:format}` | Date depuis un header | `${date:header.birthDate:2006}` |
-| `${date:property.nom:format}` | Date depuis une propriété | `${date:property.expiry:RFC3339}` |
-| `${date:file:format}` | Date de modif. du fichier | `${date:file:2006-01-02}` |
-| `${random(max)}` | Nombre aléatoire | `${random(100)}` |
-| `${uuid}` | Génération UUID | `${uuid}` |
-| `${env:VAR}` | Variable d'environnement | `${env:USER}` |
+| Fonction                        | Description               | Exemple                           |
+|---------------------------------|---------------------------|-----------------------------------|
+| `${date:now:format}`            | Horodatage actuel         | `${date:now:2006-01-02}`          |
+| `${date:command+offset:format}` | Date avec arithmétique    | `${date:now+24h:2006-01-02}`      |
+| `${date:header.nom:format}`     | Date depuis un header     | `${date:header.birthDate:2006}`   |
+| `${date:property.nom:format}`   | Date depuis une propriété | `${date:property.expiry:RFC3339}` |
+| `${date:file:format}`           | Date de modif. du fichier | `${date:file:2006-01-02}`         |
+| `${random(max)}`                | Nombre aléatoire          | `${random(100)}`                  |
+| `${uuid}`                       | Génération UUID           | `${uuid}`                         |
+| `${env:VAR}`                    | Variable d'environnement  | `${env:USER}`                     |
 
 **Décalages Arithmétiques :**
+
 - `s` : Secondes (ex: `+30s`)
 - `m` : Minutes (ex: `-5m`)
 - `h` : Heures (ex: `+12h`)
@@ -192,19 +197,20 @@ Les expressions sont entourées de `${}`:
 
 ## File Language
 
-File Language est une extension de Simple Language dédiée aux opérations liées aux fichiers. Elle fournit des fonctions pour extraire des parties du nom de fichier, du chemin, de la taille, etc.
+File Language est une extension de Simple Language dédiée aux opérations liées aux fichiers. Elle fournit des fonctions
+pour extraire des parties du nom de fichier, du chemin, de la taille, etc.
 
-| Fonction | Description |
-|----------|-------------|
-| `${file:name}` | Le nom du fichier (incluant le chemin) |
-| `${file:name.noext}` | Le nom du fichier mais sans l'extension |
-| `${file:name.ext}` | L'extension du fichier |
-| `${file:ext}` | Alias pour `${file:name.ext}` |
-| `${file:onlyname}` | Le nom du fichier (sans le chemin) |
-| `${file:onlyname.noext}` | Le nom du fichier (sans le chemin) et sans l'extension |
-| `${file:path}` | Le chemin complet du fichier |
-| `${file:size}` | La longueur (taille) du fichier |
-| `${file:modified}` | La date de dernière modification du fichier (format RFC3339) |
+| Fonction                 | Description                                                  |
+|--------------------------|--------------------------------------------------------------|
+| `${file:name}`           | Le nom du fichier (incluant le chemin)                       |
+| `${file:name.noext}`     | Le nom du fichier mais sans l'extension                      |
+| `${file:name.ext}`       | L'extension du fichier                                       |
+| `${file:ext}`            | Alias pour `${file:name.ext}`                                |
+| `${file:onlyname}`       | Le nom du fichier (sans le chemin)                           |
+| `${file:onlyname.noext}` | Le nom du fichier (sans le chemin) et sans l'extension       |
+| `${file:path}`           | Le chemin complet du fichier                                 |
+| `${file:size}`           | La longueur (taille) du fichier                              |
+| `${file:modified}`       | La date de dernière modification du fichier (format RFC3339) |
 
 ## Opérateurs
 
@@ -315,26 +321,27 @@ ${header.name.trim()}
 
 ### Fonctions Mathématiques | Math Functions
 
-Opérations mathématiques via la fonction `math(...)`. Supporte les opérateurs de base (+, -, *, /, %) et les parenthèses.
+Opérations mathématiques via la fonction `math(...)`. Supporte les opérateurs de base (+, -, *, /, %) et les
+parenthèses.
 
-| Fonction | Description | Exemple |
-|----------|-------------|---------|
-| `${math(body * 2)}` | Multiplie le corps par 2 | `20` |
-| `${math(header.val + 10)}` | Ajoute 10 au header | `15` |
-| `${math((body + 2) * 3)}` | Expression complexe | `36` |
+| Fonction                   | Description              | Exemple |
+|----------------------------|--------------------------|---------|
+| `${math(body * 2)}`        | Multiplie le corps par 2 | `20`    |
+| `${math(header.val + 10)}` | Ajoute 10 au header      | `15`    |
+| `${math((body + 2) * 3)}`  | Expression complexe      | `36`    |
 
 ### Fonctions Numériques | Numeric Functions
 
 Utilitaires numériques pour les arrondis et transformations. Utilisables seuls ou dans `math()`.
 
-| Fonction | Description | Exemple |
-|----------|-------------|---------|
-| `${round(val)}` | Arrondi à l'entier le plus proche | `${round(5.6)}` -> `6` |
-| `${floor(val)}` | Arrondi vers le bas | `${floor(5.6)}` -> `5` |
-| `${ceil(val)}` | Arrondi vers le haut | `${ceil(5.1)}` -> `6` |
-| `${abs(val)}` | Valeur absolue | `${abs(-10)}` -> `10` |
-| `${sqrt(val)}` | Racine carrée | `${sqrt(16)}` -> `4` |
-| `${sin(val)}`, `${cos(val)}`, `${tan(val)}` | Fonctions trigonométriques | `${sin(0)}` -> `0` |
+| Fonction                                    | Description                       | Exemple                |
+|---------------------------------------------|-----------------------------------|------------------------|
+| `${round(val)}`                             | Arrondi à l'entier le plus proche | `${round(5.6)}` -> `6` |
+| `${floor(val)}`                             | Arrondi vers le bas               | `${floor(5.6)}` -> `5` |
+| `${ceil(val)}`                              | Arrondi vers le haut              | `${ceil(5.1)}` -> `6`  |
+| `${abs(val)}`                               | Valeur absolue                    | `${abs(-10)}` -> `10`  |
+| `${sqrt(val)}`                              | Racine carrée                     | `${sqrt(16)}` -> `4`   |
+| `${sin(val)}`, `${cos(val)}`, `${tan(val)}` | Fonctions trigonométriques        | `${sin(0)}` -> `0`     |
 
 ---
 
@@ -342,9 +349,9 @@ Utilitaires numériques pour les arrondis et transformations. Utilisables seuls 
 
 Encodage et décodage de données en Base64.
 
-| Fonction | Description | Exemple |
-|----------|-------------|---------|
-| `${base64:encode:cible}` | Encode la cible en Base64 | `${base64:encode:body}` |
+| Fonction                 | Description                   | Exemple                        |
+|--------------------------|-------------------------------|--------------------------------|
+| `${base64:encode:cible}` | Encode la cible en Base64     | `${base64:encode:body}`        |
 | `${base64:decode:cible}` | Décode la cible depuis Base64 | `${base64:decode:header.auth}` |
 
 ---
