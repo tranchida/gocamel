@@ -26,7 +26,15 @@ type Aggregator struct {
 
 	// keyLocks provides per-correlation-key mutual exclusion to avoid serialising
 	// unrelated keys while still preventing races within a single key.
-	keyLocks sync.Map // map[string]*sync.Mutex
+	keyLocks sync.Map // map[string]*keyState
+}
+
+// keyState holds the per-key mutex and a generation counter.
+// gen is incremented each time a new group starts; timeout goroutines compare
+// against it to avoid expiring a group that was replaced by a newer one.
+type keyState struct {
+	mu  sync.Mutex
+	gen uint64
 }
 
 // NewAggregator creates a new Aggregator processor.
@@ -63,10 +71,10 @@ func (a *Aggregator) SetCompletionPredicate(pred func(*Exchange) bool) *Aggregat
 	return a
 }
 
-// lockForKey returns the per-key mutex, creating it on first use.
-func (a *Aggregator) lockForKey(key string) *sync.Mutex {
-	mu, _ := a.keyLocks.LoadOrStore(key, &sync.Mutex{})
-	return mu.(*sync.Mutex)
+// lockForKey returns the per-key state, creating it on first use.
+func (a *Aggregator) lockForKey(key string) *keyState {
+	st, _ := a.keyLocks.LoadOrStore(key, &keyState{})
+	return st.(*keyState)
 }
 
 // Process handles the arrival of a new exchange.
@@ -81,18 +89,18 @@ func (a *Aggregator) Process(exchange *Exchange) error {
 		return fmt.Errorf("correlation key evaluated to empty string")
 	}
 
-	mu := a.lockForKey(key)
-	mu.Lock()
-	defer mu.Unlock()
+	st := a.lockForKey(key)
+	st.mu.Lock()
+	defer st.mu.Unlock()
 
-	isFirstMessage, err := a.processLocked(ctx, key, exchange)
+	isFirstMessage, err := a.processLocked(ctx, key, exchange, st)
 	if err != nil {
 		return err
 	}
 
 	// Start the timeout goroutine on the first message for this key.
 	if isFirstMessage && a.CompletionTimeout > 0 {
-		go a.runTimeout(key, exchange.Context)
+		go a.runTimeout(key, exchange.Context, st.gen)
 	}
 
 	return nil
@@ -100,13 +108,16 @@ func (a *Aggregator) Process(exchange *Exchange) error {
 
 // processLocked performs aggregation while the per-key lock is held.
 // Returns (isFirstMessage, error).
-func (a *Aggregator) processLocked(ctx context.Context, key string, exchange *Exchange) (bool, error) {
+func (a *Aggregator) processLocked(ctx context.Context, key string, exchange *Exchange, st *keyState) (bool, error) {
 	oldExchange, err := a.AggregationRepository.Get(ctx, key)
 	if err != nil {
 		return false, fmt.Errorf("failed to get exchange from repository: %w", err)
 	}
 
 	isFirst := oldExchange == nil
+	if isFirst {
+		st.gen++ // new group started; invalidates any pending timeout for the previous group
+	}
 
 	aggregatedExchange := a.AggregationStrategy.Aggregate(oldExchange, exchange)
 
@@ -154,7 +165,9 @@ func (a *Aggregator) emitLocked(ctx context.Context, key string, aggregated, cur
 }
 
 // runTimeout waits for CompletionTimeout then forces completion of the group if still pending.
-func (a *Aggregator) runTimeout(key string, ctx context.Context) {
+// gen is matched against st.gen to ensure we only expire the group we were started for;
+// if a newer group has started with the same key in the meantime, we bail out.
+func (a *Aggregator) runTimeout(key string, ctx context.Context, gen uint64) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -165,22 +178,27 @@ func (a *Aggregator) runTimeout(key string, ctx context.Context) {
 		return
 	}
 
-	mu := a.lockForKey(key)
-	mu.Lock()
-	defer mu.Unlock()
+	st := a.lockForKey(key)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if st.gen != gen {
+		return // a newer group has started for this key; leave it alone
+	}
 
 	stored, err := a.AggregationRepository.Get(ctx, key)
 	if err != nil || stored == nil {
 		return // already completed or repo error
 	}
 
-	// Force-complete by removing from repository; the stored exchange is discarded
-	// (it cannot be injected back into the route from here without a route reference).
-	// To forward it, wire a separate timeout route via CompletionPredicate + a timer.
 	if err := a.AggregationRepository.Remove(ctx, key); err != nil {
 		logWarn("Aggregator timeout: failed to remove key", "key", key, "error", err)
 		return
 	}
 	a.keyLocks.Delete(key)
-	logInfo("Aggregator timeout: group expired and removed", "key", key)
+	logWarn("Aggregator timeout: group expired and dropped",
+		"key", key,
+		"exchange_id", stored.ID,
+		"size", stored.GetPropertyOrDefault(CamelAggregatorSize, 0),
+	)
 }

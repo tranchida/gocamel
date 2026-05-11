@@ -8,20 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/fsnotify/fsnotify"
 )
 
 // FileComponent represents the File component
-type FileComponent struct {
-	watchers map[string]*fsnotify.Watcher
-}
+type FileComponent struct{}
 
 // NewFileComponent creates a new FileComponent
 func NewFileComponent() *FileComponent {
-	return &FileComponent{
-		watchers: make(map[string]*fsnotify.Watcher),
-	}
+	return &FileComponent{}
 }
 
 // CreateEndpoint creates a new endpoint File
@@ -46,27 +43,21 @@ func (c *FileComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		return nil, fmt.Errorf("file path missing in URI: %s", uri)
 	}
 
-	// Security: validate path for directory traversal
-	if strings.Contains(path, "..") {
-		return nil, fmt.Errorf("path contains traversal sequence: %s", path)
-	}
-
-	// Clean the path
-	cleanPath := filepath.Clean(path)
-	if strings.Contains(cleanPath, "..") {
-		return nil, fmt.Errorf("path contains traversal sequence after cleaning: %s", path)
-	}
-
-	// Check for null bytes
+	// Reject null bytes before cleaning
 	if strings.Contains(path, "\x00") {
 		return nil, fmt.Errorf("path contains null byte")
+	}
+
+	// Clean the path and reject any remaining traversal sequences
+	cleanPath := filepath.Clean(path)
+	if strings.Contains(cleanPath, "..") {
+		return nil, fmt.Errorf("path contains traversal sequence: %s", path)
 	}
 
 	return &FileEndpoint{
 		uri:  uri,
 		url:  u,
 		path: cleanPath,
-		comp: c,
 	}, nil
 }
 
@@ -75,7 +66,6 @@ type FileEndpoint struct {
 	uri  string
 	url  *url.URL
 	path string
-	comp *FileComponent
 }
 
 // URI returns the endpoint URI
@@ -97,7 +87,6 @@ func (e *FileEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 		path:      e.path,
 		url:       e.url,
 		processor: processor,
-		comp:      e.comp,
 	}, nil
 }
 
@@ -118,32 +107,12 @@ func (p *FileProducer) Stop() error {
 }
 
 // Send writes the exchange content to a file according to the fileExist option.
+// FileExistFail and FileExistIgnore use O_EXCL for an atomic existence check,
+// avoiding the TOCTOU race that a separate os.Stat + os.OpenFile would introduce.
 func (p *FileProducer) Send(exchange *Exchange) error {
 	if err := os.MkdirAll(filepath.Dir(p.path), 0755); err != nil {
 		return fmt.Errorf("error creating directory: %v", err)
 	}
-
-	switch p.fileExist {
-	case FileExistFail:
-		if _, err := os.Stat(p.path); err == nil {
-			return fmt.Errorf("file already exists: %s", p.path)
-		}
-	case FileExistIgnore:
-		if _, err := os.Stat(p.path); err == nil {
-			return nil
-		}
-	}
-
-	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	if p.fileExist == FileExistAppend {
-		flags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
-	}
-
-	file, err := os.OpenFile(p.path, flags, 0644)
-	if err != nil {
-		return fmt.Errorf("error opening file: %v", err)
-	}
-	defer file.Close()
 
 	var content []byte
 	switch body := exchange.GetIn().GetBody().(type) {
@@ -154,6 +123,26 @@ func (p *FileProducer) Send(exchange *Exchange) error {
 	default:
 		return fmt.Errorf("unsupported body type: %T", exchange.GetIn().GetBody())
 	}
+
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	switch p.fileExist {
+	case FileExistFail, FileExistIgnore:
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	case FileExistAppend:
+		flags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	}
+
+	file, err := os.OpenFile(p.path, flags, 0644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			if p.fileExist == FileExistIgnore {
+				return nil
+			}
+			return fmt.Errorf("file already exists: %s", p.path)
+		}
+		return fmt.Errorf("error opening file: %v", err)
+	}
+	defer file.Close()
 
 	if _, err := file.Write(content); err != nil {
 		return fmt.Errorf("error writing to file: %v", err)
@@ -166,9 +155,9 @@ type FileConsumer struct {
 	path      string
 	url       *url.URL
 	processor Processor
-	comp      *FileComponent
 	watcher   *fsnotify.Watcher
 	stopChan  chan struct{}
+	wg        sync.WaitGroup
 }
 
 // Start starts the File consumer
@@ -247,7 +236,9 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 		})
 	}
 
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		for {
 			select {
 			case event, ok := <-watcher.Events:
@@ -346,11 +337,13 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops the File consumer
+// Stop stops the File consumer and waits for the watcher goroutine to exit.
 func (c *FileConsumer) Stop() error {
 	if c.watcher != nil {
 		close(c.stopChan)
-		return c.watcher.Close()
+		err := c.watcher.Close()
+		c.wg.Wait()
+		return err
 	}
 	return nil
 }

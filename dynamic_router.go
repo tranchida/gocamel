@@ -5,21 +5,25 @@ import (
 	"log/slog"
 )
 
+const dynamicRouterMaxIterations = 1000
+
 // DynamicRouter implements the Dynamic Router EIP.
 // It routes the exchange through a sequence of endpoints resolved dynamically
 // by calling a control function after each step. Routing ends when the
 // control function returns an empty string or nil.
 type DynamicRouter struct {
-	context    *CamelContext
-	controlFn  func(*Exchange) (string, error)
-	expression string
+	context       *CamelContext
+	controlFn     func(*Exchange) (string, error)
+	expression    string
+	maxIterations int
 }
 
 // NewDynamicRouter creates a new DynamicRouter instance.
 func NewDynamicRouter(context *CamelContext, controlFn func(*Exchange) (string, error)) *DynamicRouter {
 	return &DynamicRouter{
-		context:   context,
-		controlFn: controlFn,
+		context:       context,
+		controlFn:     controlFn,
+		maxIterations: dynamicRouterMaxIterations,
 	}
 }
 
@@ -31,7 +35,12 @@ func (p *DynamicRouter) SetSimpleExpression(expression string) *DynamicRouter {
 
 // Process executes the dynamic router logic.
 func (p *DynamicRouter) Process(exchange *Exchange) error {
-	for {
+	limit := p.maxIterations
+	if limit <= 0 {
+		limit = dynamicRouterMaxIterations
+	}
+
+	for i := 0; i < limit; i++ {
 		uri, err := p.resolveNextURI(exchange)
 		if err != nil {
 			return fmt.Errorf("dynamic router: error resolving next URI: %w", err)
@@ -39,13 +48,15 @@ func (p *DynamicRouter) Process(exchange *Exchange) error {
 
 		if uri == "" {
 			slog.Debug("dynamic router: no more endpoints, routing ends")
-			break
+			return nil
 		}
 
 		slog.Debug("dynamic router: sending to next endpoint", "uri", uri)
-		processor := newLazyProducer(p.context, uri)
-		if err := processor.Process(exchange); err != nil {
-			return fmt.Errorf("dynamic router: error sending to %s: %w", uri, err)
+		producer := newLazyProducer(p.context, uri)
+		processErr := producer.Process(exchange)
+		producer.Stop()
+		if processErr != nil {
+			return fmt.Errorf("dynamic router: error sending to %s: %w", uri, processErr)
 		}
 
 		// Prepare exchange for next step
@@ -53,7 +64,7 @@ func (p *DynamicRouter) Process(exchange *Exchange) error {
 		exchange.Out = NewMessage()
 	}
 
-	return nil
+	return fmt.Errorf("dynamic router: exceeded maximum of %d iterations", limit)
 }
 
 func (p *DynamicRouter) resolveNextURI(exchange *Exchange) (string, error) {
@@ -75,8 +86,9 @@ func (p *DynamicRouter) resolveNextURI(exchange *Exchange) (string, error) {
 // NewSimpleDynamicRouter creates a new DynamicRouter using a Simple Language expression.
 func NewSimpleDynamicRouter(context *CamelContext, expression string) *DynamicRouter {
 	return &DynamicRouter{
-		context:    context,
-		expression: expression,
+		context:       context,
+		expression:    expression,
+		maxIterations: dynamicRouterMaxIterations,
 	}
 }
 

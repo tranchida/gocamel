@@ -55,7 +55,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		partExchange.SetProperty(CamelSplitSize, 1)
 		partExchange.SetProperty(CamelSplitComplete, true)
 
-		if err := s.processPart(partExchange, parts, 0, 1); err != nil {
+		if err := s.processPart(partExchange); err != nil {
 			if !errors.Is(err, ErrStopRouting) {
 				return err
 			}
@@ -91,7 +91,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		partExchange.SetProperty(CamelSplitSize, length)
 		partExchange.SetProperty(CamelSplitComplete, i == length-1)
 
-		if err := s.processPart(partExchange, part, i, length); err != nil {
+		if err := s.processPart(partExchange); err != nil {
 			if !errors.Is(err, ErrStopRouting) {
 				return err
 			}
@@ -113,7 +113,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 	return nil
 }
 
-func (s *Splitter) processPart(exchange *Exchange, part any, index, size int) error {
+func (s *Splitter) processPart(exchange *Exchange) error {
 	for _, p := range s.processors {
 		if err := p.Process(exchange); err != nil {
 			return err

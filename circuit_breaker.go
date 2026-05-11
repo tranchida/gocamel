@@ -72,32 +72,37 @@ func (cb *CircuitBreaker) SetOpenTimeout(timeout time.Duration) {
 // Process implements the Processor interface.
 func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 	cb.mu.Lock()
-
 	// Check if we should transition from Open to Half-Open
 	if cb.state == StateOpen && time.Since(cb.lastOpenTime) > cb.openTimeout {
 		cb.state = StateHalfOpen
 		cb.successCount = 0
 	}
-
 	state := cb.state
 	cb.mu.Unlock()
 
 	if state == StateOpen {
-		return cb.handleFallback(exchange, ErrCircuitOpen)
+		cb.mu.RLock()
+		fb := cb.fallbackProcessor
+		cb.mu.RUnlock()
+		return cb.doFallback(exchange, ErrCircuitOpen, fb)
 	}
 
 	// Try to execute the main processor
 	err := cb.processor.Process(exchange)
 
 	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
+	var fb Processor
 	if err != nil {
 		cb.onFailure()
-		return cb.handleFallback(exchange, err)
+		fb = cb.fallbackProcessor
+	} else {
+		cb.onSuccess()
 	}
+	cb.mu.Unlock()
 
-	cb.onSuccess()
+	if err != nil {
+		return cb.doFallback(exchange, err, fb)
+	}
 	return nil
 }
 
@@ -135,12 +140,13 @@ func (cb *CircuitBreaker) closeCircuit() {
 	cb.successCount = 0
 }
 
-func (cb *CircuitBreaker) handleFallback(exchange *Exchange, err error) error {
-	if cb.fallbackProcessor != nil {
-		// If there's a fallback, we process it and don't return the error
-		// We might want to store the error in a property
+// doFallback calls the fallback processor if set, otherwise returns err.
+// Must be called without holding cb.mu to avoid deadlocks if the fallback
+// re-enters the circuit breaker.
+func (cb *CircuitBreaker) doFallback(exchange *Exchange, err error, fb Processor) error {
+	if fb != nil {
 		exchange.SetProperty("CamelCircuitBreakerError", err)
-		return cb.fallbackProcessor.Process(exchange)
+		return fb.Process(exchange)
 	}
 	return err
 }

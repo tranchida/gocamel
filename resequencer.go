@@ -18,6 +18,7 @@ type Resequencer struct {
 	mu         sync.Mutex
 	processor  Processor
 	timer      *time.Timer
+	timerGen   uint64 // incremented each time a new timer is created; guards against stale callbacks
 }
 
 type resequencerEntry struct {
@@ -98,13 +99,20 @@ func (r *Resequencer) updateTimer() {
 	}
 
 	if len(r.buffer) > 0 && r.buffer[0].seq > r.nextSeq {
-		r.timer = time.AfterFunc(r.timeout, r.onTimeout)
+		r.timerGen++
+		gen := r.timerGen
+		r.timer = time.AfterFunc(r.timeout, func() { r.onTimeout(gen) })
 	}
 }
 
-func (r *Resequencer) onTimeout() {
+func (r *Resequencer) onTimeout(gen uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// A newer timer was created since this callback was scheduled; ignore.
+	if gen != r.timerGen {
+		return
+	}
 
 	if len(r.buffer) > 0 && r.buffer[0].seq > r.nextSeq {
 		logWarn("resequencer: timeout reached", "expected", r.nextSeq, "skipping to", r.buffer[0].seq)

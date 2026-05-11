@@ -62,13 +62,14 @@ func (p *LoadBalancerProcessor) AddProcessor(processor Processor) {
 func (p *LoadBalancerProcessor) Process(exchange *Exchange) error {
 	p.mu.RLock()
 	processors := p.processors
+	strategy := p.strategy
 	p.mu.RUnlock()
 
 	if len(processors) == 0 {
 		return fmt.Errorf("load balancer: no processors available")
 	}
 
-	selected := p.strategy.Select(processors)
+	selected := strategy.Select(processors)
 	if selected == nil {
 		return fmt.Errorf("load balancer: strategy failed to select a processor")
 	}
@@ -84,19 +85,25 @@ type LoadBalancerDefinition struct {
 
 // RoundRobin sets the strategy to Round Robin.
 func (d *LoadBalancerDefinition) RoundRobin() *LoadBalancerDefinition {
+	d.loadBalancer.mu.Lock()
 	d.loadBalancer.strategy = &RoundRobinStrategy{}
+	d.loadBalancer.mu.Unlock()
 	return d
 }
 
 // Random sets the strategy to Random.
 func (d *LoadBalancerDefinition) Random() *LoadBalancerDefinition {
+	d.loadBalancer.mu.Lock()
 	d.loadBalancer.strategy = &RandomStrategy{}
+	d.loadBalancer.mu.Unlock()
 	return d
 }
 
 // Custom sets a custom load balancing strategy.
 func (d *LoadBalancerDefinition) Custom(strategy LoadBalancerStrategy) *LoadBalancerDefinition {
+	d.loadBalancer.mu.Lock()
 	d.loadBalancer.strategy = strategy
+	d.loadBalancer.mu.Unlock()
 	return d
 }
 
