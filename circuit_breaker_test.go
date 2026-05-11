@@ -20,21 +20,21 @@ func TestCircuitBreaker_Basic(t *testing.T) {
 	_, err := ctx.CreateRouteBuilder().
 		From("direct:start").
 		CircuitBreaker().
-			FailureThreshold(2).
-			OpenTimeout(100 * time.Millisecond).
-			ProcessFunc(func(e *Exchange) error {
-				mainCalled++
-				if shouldFail {
-					return errors.New("boom")
-				}
-				return nil
-			}).
-			OnFallback().
-				ProcessFunc(func(e *Exchange) error {
-					fallbackCalled++
-					return nil
-				}).
-			End().
+		FailureThreshold(2).
+		OpenTimeout(100 * time.Millisecond).
+		ProcessFunc(func(e *Exchange) error {
+			mainCalled++
+			if shouldFail {
+				return errors.New("boom")
+			}
+			return nil
+		}).
+		OnFallback().
+		ProcessFunc(func(e *Exchange) error {
+			fallbackCalled++
+			return nil
+		}).
+		End().
 		End().
 		Build()
 	require.NoError(t, err)
@@ -91,7 +91,7 @@ func TestCircuitBreaker_HalfOpenFailure(t *testing.T) {
 	cb := NewCircuitBreaker()
 	cb.SetFailureThreshold(1)
 	cb.SetOpenTimeout(50 * time.Millisecond)
-	
+
 	pipeline := NewPipeline()
 	pipeline.AddProcessor(ProcessorFunc(func(e *Exchange) error {
 		mainCalled++
@@ -113,7 +113,7 @@ func TestCircuitBreaker_HalfOpenFailure(t *testing.T) {
 
 	// 2. Wait for Half-Open
 	time.Sleep(60 * time.Millisecond)
-	
+
 	// 3. Fail in Half-Open -> should open again immediately
 	err = cb.Process(ex)
 	assert.Error(t, err)

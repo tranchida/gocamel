@@ -16,7 +16,7 @@ import (
 const (
 	CamelTemplatePath     = "CamelTemplatePath"     // Template file path (override)
 	CamelTemplateEncoding = "CamelTemplateEncoding" // Template encoding (default: UTF-8)
-	CamelTemplatelocal   = "CamelTemplatelocal"   // Locale for the template
+	CamelTemplatelocal    = "CamelTemplatelocal"    // Locale for the template
 )
 
 // TemplateData groups all data available within a template.
@@ -126,14 +126,14 @@ func parseBool(s string) (bool, error) {
 
 // TemplateEndpoint represents a template endpoint
 type TemplateEndpoint struct {
-	uri                       string
-	path                      string
-	component                 *TemplateComponent
-	contentCache              bool
-	allowTemplateFromHeader   bool
-	encoding                  string
-	startDelimiter            string
-	endDelimiter              string
+	uri                     string
+	path                    string
+	component               *TemplateComponent
+	contentCache            bool
+	allowTemplateFromHeader bool
+	encoding                string
+	startDelimiter          string
+	endDelimiter            string
 }
 
 // URI returns the endpoint URI.
@@ -341,13 +341,13 @@ func prepareTemplateData(exchange *Exchange) *TemplateData {
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
 		// Utility functions.
-		"upper":    strings.ToUpper,
-		"lower":    strings.ToLower,
-		"title":    strings.Title,
-		"trim":     strings.TrimSpace,
-		"join":     strings.Join,
-		"split":    strings.Split,
-		"contains": strings.Contains,
+		"upper":     strings.ToUpper,
+		"lower":     strings.ToLower,
+		"title":     strings.Title,
+		"trim":      strings.TrimSpace,
+		"join":      strings.Join,
+		"split":     strings.Split,
+		"contains":  strings.Contains,
 		"hasPrefix": strings.HasPrefix,
 		"hasSuffix": strings.HasSuffix,
 		"replace": func(old, new, s string) string {

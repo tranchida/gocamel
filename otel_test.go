@@ -47,7 +47,7 @@ func TestRoute_EnableTracing(t *testing.T) {
 	spans := exporter.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "route:route-1", spans[0].Name)
-	
+
 	// Check attributes
 	attrs := spans[0].Attributes
 	foundRouteID := false

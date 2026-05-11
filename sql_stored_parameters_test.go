@@ -1,8 +1,8 @@
 package gocamel
 
 import (
-	"testing"
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
 func TestStoredProcedureParamDirection_String(t *testing.T) {
@@ -18,7 +18,7 @@ func TestStoredProcedureParam_Creation(t *testing.T) {
 		Value:     42,
 		SQLType:   "INT",
 	}
-	
+
 	assert.Equal(t, "userId", param.Name)
 	assert.Equal(t, ParamDirectionIn, param.Direction)
 	assert.Equal(t, 42, param.Value)

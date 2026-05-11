@@ -10,8 +10,8 @@ import (
 
 // SQLAggregationRepository is a SQL-based implementation of AggregationRepository.
 type SQLAggregationRepository struct {
-	db             *sql.DB
-	tableName      string
+	db        *sql.DB
+	tableName string
 	// UseDollarParam uses dollar parameters (true for PostgreSQL $1, $2; false for MySQL/SQLite ?, ?)
 	UseDollarParam bool
 }

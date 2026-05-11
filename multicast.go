@@ -57,7 +57,7 @@ func (m *Multicast) processSequential(exchange *Exchange) error {
 	for i, p := range m.processors {
 		// For each branch, create a copy of the original exchange
 		branchExchange := exchange.Copy()
-		
+
 		// Can add multicast-specific properties
 		branchExchange.SetProperty(CamelMulticastIndex, i)
 		branchExchange.SetProperty(CamelMulticastSize, len(m.processors))
@@ -102,7 +102,7 @@ func (m *Multicast) processParallel(exchange *Exchange) error {
 			branchExchange.SetProperty(CamelMulticastComplete, index == len(m.processors)-1)
 
 			err := processor.Process(branchExchange)
-			
+
 			mu.Lock()
 			defer mu.Unlock()
 

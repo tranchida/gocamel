@@ -125,7 +125,7 @@ var (
 	isOperatorRegex = regexp.MustCompile(`^(.+?)\s+is\s+'?(\w+)'?$`)
 
 	// Math operations (+, -, *, /, %)
-	mathAddRegex    = regexp.MustCompile(`^(.+?)\s*\+\s*(.+)$`)
+	mathAddRegex      = regexp.MustCompile(`^(.+?)\s*\+\s*(.+)$`)
 	mathSubtractRegex = regexp.MustCompile(`^(.+?)\s*-\s*(.+)$`)
 	mathMultiplyRegex = regexp.MustCompile(`^(.+?)\s*\*\s*(.+)$`)
 	mathDivideRegex   = regexp.MustCompile(`^(.+?)\s*/\s*(.+)$`)
@@ -1794,7 +1794,7 @@ func compareValues(left interface{}, op string, right interface{}) (bool, error)
 		case "==":
 			return false, nil // left != nil
 		case "!=":
-			return true, nil  // left != nil
+			return true, nil // left != nil
 		default:
 			// Any comparison with nil is false
 			return false, nil
@@ -2031,21 +2031,21 @@ func applyDateOffset(t time.Time, offset string) (time.Time, error) {
 	if offset[0] == '-' {
 		sign = -1
 	}
-	
+
 	// Remove the sign
 	offset = offset[1:]
-	
+
 	// Extract unit
 	unit := offset[len(offset)-1:]
 	valueStr := offset[:len(offset)-1]
-	
+
 	value, err := strconv.Atoi(valueStr)
 	if err != nil {
 		return t, err
 	}
-	
+
 	value *= sign
-	
+
 	switch unit {
 	case "s":
 		return t.Add(time.Duration(value) * time.Second), nil

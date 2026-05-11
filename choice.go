@@ -6,8 +6,8 @@ import (
 
 // ChoiceProcessor implements Content-Based Router pattern with When/Otherwise
 type ChoiceProcessor struct {
-	whens      []*WhenClause
-	otherwise  Processor
+	whens     []*WhenClause
+	otherwise Processor
 }
 
 // WhenClause represents a single when condition with its associated processor

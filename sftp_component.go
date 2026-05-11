@@ -339,11 +339,11 @@ func (c *SFTPConsumer) releaseClients(sshClient *ssh.Client, sftpClient *sftp.Cl
 }
 
 type sftpSynchronization struct {
-	client   *sftp.Client
-	path     string
-	noop     bool
-	delete   bool
-	move     string
+	client     *sftp.Client
+	path       string
+	noop       bool
+	delete     bool
+	move       string
 	moveFailed string
 }
 

@@ -360,11 +360,11 @@ func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile 
 }
 
 type smbSynchronization struct {
-	share    *smb2.Share
-	path     string
-	noop     bool
-	delete   bool
-	move     string
+	share      *smb2.Share
+	path       string
+	noop       bool
+	delete     bool
+	move       string
 	moveFailed string
 }
 

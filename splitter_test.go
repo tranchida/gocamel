@@ -40,20 +40,20 @@ func TestSplit_SimpleSlice(t *testing.T) {
 	route, err := builder.Build()
 	assert.NoError(t, err)
 	// No need to add manually as CreateRoute does it via NewRouteBuilder
-	
+
 	// We don't start the whole context for a processor unit test if possible,
 	// but here we use the complete route.
 	// direct:start requires a consumer.
-	
+
 	exchange := NewExchange(ctx)
 	exchange.GetIn().SetBody("a,b,c")
-	
+
 	err = route.Process(exchange)
 	assert.NoError(t, err)
-	
+
 	assert.Equal(t, []string{"a", "b", "c"}, processedItems)
 	assert.Equal(t, "a,b,c", exchange.GetIn().GetBody(), "Original body must be preserved")
-	
+
 	val, ok := exchange.GetIn().GetHeader("AfterSplit")
 	assert.True(t, ok)
 	assert.True(t, val.(bool))
@@ -81,13 +81,13 @@ func TestSplit_WithAggregation(t *testing.T) {
 
 	route, err := builder.Build()
 	assert.NoError(t, err)
-	
+
 	exchange := NewExchange(ctx)
 	exchange.GetIn().SetBody("initial")
-	
+
 	err = route.Process(exchange)
 	assert.NoError(t, err)
-	
+
 	// StringConcatStrategy concatenates with commas.
 	// Since this is the first call, oldExchange is nil, so the first item remains "item-1".
 	// Then "item-1" + "," + "item-2" = "item-1,item-2", etc.
@@ -113,7 +113,7 @@ func TestSplit_Properties(t *testing.T) {
 			idx, _ := e.GetPropertyAsInt("CamelSplitIndex")
 			size, _ := e.GetPropertyAsInt("CamelSplitSize")
 			complete, _ := e.GetPropertyAsBool("CamelSplitComplete")
-			
+
 			mu.Lock()
 			indices = append(indices, idx)
 			sizes = append(sizes, size)
@@ -125,11 +125,11 @@ func TestSplit_Properties(t *testing.T) {
 
 	route, err := builder.Build()
 	assert.NoError(t, err)
-	
+
 	exchange := NewExchange(ctx)
 	err = route.Process(exchange)
 	assert.NoError(t, err)
-	
+
 	assert.Equal(t, []int{0, 1, 2}, indices)
 	assert.Equal(t, []int{3, 3, 3}, sizes)
 	assert.Equal(t, []bool{false, false, true}, completes)
@@ -159,10 +159,10 @@ func TestSplit_SingleItem(t *testing.T) {
 
 	route, err := builder.Build()
 	assert.NoError(t, err)
-	
+
 	exchange := NewExchange(ctx)
 	err = route.Process(exchange)
 	assert.NoError(t, err)
-	
+
 	assert.Equal(t, []string{"single"}, processedItems)
 }

@@ -20,7 +20,7 @@ func TestSimpleLanguage_Base64Functions(t *testing.T) {
 		// Encoding
 		{"${base64:encode:body}", "SGVsbG8gV29ybGQ="},
 		{"${base64:encode:header.myHeader}", "R29DYW1lbA=="},
-		
+
 		// Decoding
 		{"${base64:decode:'SGVsbG8gV29ybGQ='}", "Hello World"},
 		{"${base64:decode:'R29DYW1lbA=='}", "GoCamel"},
@@ -30,7 +30,7 @@ func TestSimpleLanguage_Base64Functions(t *testing.T) {
 		t.Run(tt.expression, func(t *testing.T) {
 			result, err := ParseSimpleTemplate(tt.expression)
 			require.NoError(t, err)
-			
+
 			val, err := result.EvaluateAsString(ex)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, val)
@@ -54,7 +54,7 @@ func TestSimpleLanguage_Base64Complex(t *testing.T) {
 		t.Run(tt.expression, func(t *testing.T) {
 			result, err := ParseSimpleTemplate(tt.expression)
 			require.NoError(t, err)
-			
+
 			val, err := result.EvaluateAsString(ex)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, val)

@@ -33,7 +33,7 @@ func (p *MyCustomProcessor) Process(exchange *gocamel.Exchange) error {
 
 	// 2. Accessing headers with typed helper
 	requestID, _ := exchange.GetHeaderAsString("X-Request-ID")
-	
+
 	log.Printf("[MyCustomProcessor] Processing message %s: %s", requestID, body)
 
 	// 3. Modifying the message (Message Translator pattern)
@@ -42,7 +42,7 @@ func (p *MyCustomProcessor) Process(exchange *gocamel.Exchange) error {
 
 	// 4. Setting headers
 	exchange.GetIn().SetHeader("X-Processed-By", "MyCustomProcessor")
-	
+
 	return nil
 }
 
@@ -104,7 +104,7 @@ func main() {
 	endBuilder := ctx.CreateRouteBuilder()
 	endBuilder.From("direct:end").
 		LogSimple("Final result received: ${body} (Type: ${header.OrderType})")
-	
+
 	endBuilderroute, err := endBuilder.Build()
 	if err != nil {
 		log.Fatal(err)

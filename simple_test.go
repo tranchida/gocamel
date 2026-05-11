@@ -534,8 +534,8 @@ func TestMapAccessWithBracketNotation(t *testing.T) {
 	ctx := NewCamelContext()
 	ex := NewExchange(ctx.GetContext())
 	ex.GetIn().SetBody(map[string]interface{}{
-		"name":    "John",
-		"email":   "john@example.com",
+		"name":  "John",
+		"email": "john@example.com",
 		"address": map[string]interface{}{
 			"city":    "New York",
 			"country": "USA",
@@ -596,9 +596,9 @@ func TestMapAccessWithSpacesAndSpecialChars(t *testing.T) {
 	ctx := NewCamelContext()
 	ex := NewExchange(ctx.GetContext())
 	ex.GetIn().SetBody(map[string]interface{}{
-		"key with spaces": "value with spaces",
+		"key with spaces":  "value with spaces",
 		"special-chars!@#": "special value",
-		"":                  "empty key value",
+		"":                 "empty key value",
 	})
 
 	tests := []struct {
@@ -773,11 +773,11 @@ func TestNestedAccessMixedNotation(t *testing.T) {
 	ex.GetIn().SetBody(map[string]interface{}{
 		"users": []interface{}{
 			map[string]interface{}{
-				"name": "Alice",
+				"name":  "Alice",
 				"email": "alice@example.com",
 			},
 			map[string]interface{}{
-				"name": "Bob",
+				"name":  "Bob",
 				"email": "bob@example.com",
 			},
 		},
@@ -1040,29 +1040,29 @@ func TestChoiceProcessorNumericComparisons(t *testing.T) {
 		}))
 
 	tests := []struct {
-		name      string
-		count     int
-		wantBody  string
+		name     string
+		count    int
+		wantBody string
 	}{
 		{
-			name:      "high count",
-			count:     150,
-			wantBody:  "High count",
+			name:     "high count",
+			count:    150,
+			wantBody: "High count",
 		},
 		{
-			name:      "medium count",
-			count:     75,
-			wantBody:  "Medium count",
+			name:     "medium count",
+			count:    75,
+			wantBody: "Medium count",
 		},
 		{
-			name:      "low count",
-			count:     25,
-			wantBody:  "Low count",
+			name:     "low count",
+			count:    25,
+			wantBody: "Low count",
 		},
 		{
-			name:      "zero count",
-			count:     0,
-			wantBody:  "No count",
+			name:     "zero count",
+			count:    0,
+			wantBody: "No count",
 		},
 	}
 
@@ -1370,8 +1370,8 @@ func TestChoiceEvaluateAsBoolWithDifferentTypes(t *testing.T) {
 		name       string
 		expression string
 		body       interface{}
-		headers   map[string]interface{}
-		want      bool
+		headers    map[string]interface{}
+		want       bool
 	}{
 		{
 			name:       "string true",

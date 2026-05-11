@@ -72,7 +72,7 @@ func (cb *CircuitBreaker) SetOpenTimeout(timeout time.Duration) {
 // Process implements the Processor interface.
 func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 	cb.mu.Lock()
-	
+
 	// Check if we should transition from Open to Half-Open
 	if cb.state == StateOpen && time.Since(cb.lastOpenTime) > cb.openTimeout {
 		cb.state = StateHalfOpen
@@ -222,11 +222,11 @@ func (d *FallbackDefinition) End() *CircuitBreakerDefinition {
 // CircuitBreaker starts a Circuit Breaker EIP block.
 func (b *RouteBuilder) CircuitBreaker() *CircuitBreakerDefinition {
 	cb := NewCircuitBreaker()
-	
+
 	// We need a pipeline to hold the processors that are protected by the circuit breaker
 	p := NewPipeline()
 	cb.SetProcessor(p)
-	
+
 	b.container.AddProcessor(cb)
 
 	return &CircuitBreakerDefinition{

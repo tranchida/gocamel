@@ -18,7 +18,7 @@ func TestSedaComponent_Basic(t *testing.T) {
 
 	var mu sync.Mutex
 	var received []string
-	
+
 	_, err := ctx.CreateRouteBuilder().
 		From("seda:async?concurrentConsumers=2").
 		ProcessFunc(func(e *Exchange) error {
@@ -36,10 +36,10 @@ func TestSedaComponent_Basic(t *testing.T) {
 
 	p, err := ctx.CreateEndpoint("seda:async")
 	require.NoError(t, err)
-	
+
 	prod, err := p.CreateProducer()
 	require.NoError(t, err)
-	
+
 	err = prod.Start(context.Background())
 	require.NoError(t, err)
 
@@ -49,18 +49,18 @@ func TestSedaComponent_Basic(t *testing.T) {
 		err := prod.Send(ex)
 		require.NoError(t, err)
 	}
-	
+
 	// Wait for processing as it's async
 	require.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(received) == 10
 	}, 2*time.Second, 100*time.Millisecond)
-	
+
 	mu.Lock()
 	assert.Len(t, received, 10)
 	mu.Unlock()
-	
+
 	err = prod.Stop()
 	require.NoError(t, err)
 }
@@ -73,21 +73,21 @@ func TestSedaComponent_QueueFull(t *testing.T) {
 	// Small queue size, no consumer to drain it
 	p, err := ctx.CreateEndpoint("seda:full?size=2")
 	require.NoError(t, err)
-	
+
 	prod, err := p.CreateProducer()
 	require.NoError(t, err)
 
 	// Filling the queue
 	ex1 := NewExchange(context.Background())
 	require.NoError(t, prod.Send(ex1))
-	
+
 	ex2 := NewExchange(context.Background())
 	require.NoError(t, prod.Send(ex2))
 
 	// Third one should block, test with timeout context
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	
+
 	ex3 := NewExchange(ctxTimeout)
 	err = prod.Send(ex3)
 	assert.Error(t, err)

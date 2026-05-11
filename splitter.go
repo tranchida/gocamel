@@ -46,7 +46,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 
 	// Determine how to iterate over 'parts'
 	v := reflect.ValueOf(parts)
-	
+
 	// If it's not a slice or array, treat it as a single element
 	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
 		partExchange := exchange.Copy()
@@ -81,11 +81,11 @@ func (s *Splitter) Process(exchange *Exchange) error {
 	var aggregatedExchange *Exchange
 	for i := 0; i < length; i++ {
 		part := v.Index(i).Interface()
-		
+
 		// For each part, create a copy of the original exchange
 		partExchange := exchange.Copy()
 		partExchange.In.SetBody(part)
-		
+
 		// Can add split-specific properties (index, total, etc.)
 		partExchange.SetProperty(CamelSplitIndex, i)
 		partExchange.SetProperty(CamelSplitSize, length)

@@ -173,34 +173,34 @@ func (c *MailComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	q := u.Query()
 
 	return &MailEndpoint{
-		uri:               uri,
-		scheme:            scheme,
-		host:              host,
-		port:              portNum,
-		username:          q.Get("username"),
-		password:          q.Get("password"),
-		from:              getFirstNotEmpty(q.Get("from"), c.defaultFrom),
-		to:                q.Get("to"),
-		cc:                q.Get("cc"),
-		bcc:               q.Get("bcc"),
-		subject:           getFirstNotEmpty(q.Get("subject"), c.defaultSubject),
-		contentType:       getFirstNotEmpty(q.Get("contentType"), DefaultContentType),
-		folderName:        getFirstNotEmpty(q.Get("folderName"), DefaultFolderName),
-		delete:            q.Get("delete") == "true",
-		unseen:            q.Get("unseen") != "false", // defaut: true
-		moveTo:            q.Get("moveTo"),
-		copyTo:            q.Get("copyTo"),
-		disconnect:        q.Get("disconnect") == "true",
-		peek:              q.Get("peek") != "false", // defaut: true
-		closeFolder:       q.Get("closeFolder") != "false", // defaut: true
-		useIdle:           q.Get("idle") == "true",
-		connectionTimeout: parseDurationMs(q.Get("connectionTimeout"), c.connectionTimeout),
-		pollDelay:         parseDurationMs(q.Get("pollDelay"), DefaultPollDelay),
-		fetchSize:         parseInt(q.Get("fetchSize"), DefaultFetchSize),
-		skipFailedMessage: q.Get("skipFailedMessage") == "true",
+		uri:                 uri,
+		scheme:              scheme,
+		host:                host,
+		port:                portNum,
+		username:            q.Get("username"),
+		password:            q.Get("password"),
+		from:                getFirstNotEmpty(q.Get("from"), c.defaultFrom),
+		to:                  q.Get("to"),
+		cc:                  q.Get("cc"),
+		bcc:                 q.Get("bcc"),
+		subject:             getFirstNotEmpty(q.Get("subject"), c.defaultSubject),
+		contentType:         getFirstNotEmpty(q.Get("contentType"), DefaultContentType),
+		folderName:          getFirstNotEmpty(q.Get("folderName"), DefaultFolderName),
+		delete:              q.Get("delete") == "true",
+		unseen:              q.Get("unseen") != "false", // defaut: true
+		moveTo:              q.Get("moveTo"),
+		copyTo:              q.Get("copyTo"),
+		disconnect:          q.Get("disconnect") == "true",
+		peek:                q.Get("peek") != "false",        // defaut: true
+		closeFolder:         q.Get("closeFolder") != "false", // defaut: true
+		useIdle:             q.Get("idle") == "true",
+		connectionTimeout:   parseDurationMs(q.Get("connectionTimeout"), c.connectionTimeout),
+		pollDelay:           parseDurationMs(q.Get("pollDelay"), DefaultPollDelay),
+		fetchSize:           parseInt(q.Get("fetchSize"), DefaultFetchSize),
+		skipFailedMessage:   q.Get("skipFailedMessage") == "true",
 		handleFailedMessage: q.Get("handleFailedMessage") == "true",
-		debugMode:         q.Get("debugMode") == "true",
-		component:         c,
+		debugMode:           q.Get("debugMode") == "true",
+		component:           c,
 	}, nil
 }
 
@@ -1235,8 +1235,8 @@ func (c *MailConsumer) parseMultipartAlternative(entity *mail.Reader, result *pa
 			break
 		}
 		if err != nil {
-		break
-	}
+			break
+		}
 
 		// Use Get to obtain the Content-Type from PartHeader
 		contentType := part.Header.Get("Content-Type")
@@ -1285,7 +1285,7 @@ func (c *MailConsumer) handlePart(part *mail.Part, result *parseMimeMessageResul
 		}
 	} else {
 		// Attachment or other content
-		filename := c.extractFilenameFromDisposition(contentDisp, contentType)
+		filename := extractFilenameFromDispositionCommon(contentDisp, contentType)
 		if filename == "" {
 			filename = "attachment.bin"
 		}
@@ -1311,7 +1311,7 @@ func (c *MailConsumer) handleSimplePart(part *mail.Part, result *parseMimeMessag
 	} else {
 		// Likely an attachment — extract filename from PartHeader manually
 		contentDisp := part.Header.Get("Content-Disposition")
-		filename := c.extractFilenameFromDisposition(contentDisp, part.Header.Get("Content-Type"))
+		filename := extractFilenameFromDispositionCommon(contentDisp, part.Header.Get("Content-Type"))
 		if filename == "" {
 			filename = "attachment.bin"
 		}
@@ -1343,7 +1343,7 @@ func (c *MailConsumer) handleTextEntity(entity *mail.Reader, result *parseMimeMe
 
 // handleAttachmentEntity processes an entity as an attachment.
 func (c *MailConsumer) handleAttachmentEntity(entity *mail.Reader, result *parseMimeMessageResult) {
-	filename := c.extractFilename(entity.Header)
+	filename := extractFilenameCommon(entity.Header)
 	if filename == "" {
 		filename = "attachment.bin"
 	}
@@ -1365,59 +1365,6 @@ func (c *MailConsumer) handleAttachmentEntity(entity *mail.Reader, result *parse
 func (c *MailConsumer) decodePart(part *mail.Part) ([]byte, error) {
 	// go-message already handles decoding via the part body
 	return io.ReadAll(part.Body)
-}
-
-// extractFilenameFromDisposition extracts the filename from Content-Disposition and Content-Type.
-func (c *MailConsumer) extractFilenameFromDisposition(contentDisposition, contentType string) string {
-	if contentDisposition != "" {
-		if strings.Contains(contentDisposition, "filename=") {
-			parts := strings.Split(contentDisposition, "filename=")
-			if len(parts) > 1 {
-				filename := strings.Trim(parts[1], ` "'`)
-				if idx := strings.Index(filename, ";"); idx > 0 {
-					filename = filename[:idx]
-					filename = strings.Trim(filename, ` "'`)
-				}
-				return filename
-			}
-		}
-	}
-	// Try Content-Type name parameter
-	if strings.Contains(contentType, "name=") {
-		parts := strings.Split(contentType, "name=")
-		if len(parts) > 1 {
-			return strings.Trim(parts[1], ` "'`)
-		}
-	}
-	return ""
-}
-
-// extractFilename extracts the filename from headers.
-func (c *MailConsumer) extractFilename(header mail.Header) string {
-	// Content-Disposition
-	disp, _, _ := header.ContentDisposition()
-	if disp != "" {
-		if strings.Contains(disp, "filename=") {
-			parts := strings.Split(disp, "filename=")
-			if len(parts) > 1 {
-				filename := strings.Trim(parts[1], ` "'`)
-				// Remove extra parameters
-				if idx := strings.Index(filename, ";"); idx > 0 {
-					filename = filename[:idx]
-					filename = strings.Trim(filename, ` "'`)
-				}
-				return filename
-			}
-		}
-	}
-
-	// Content-Type name parameter
-	_, params, _ := header.ContentType()
-	if name, ok := params["name"]; ok && name != "" {
-		return name
-	}
-
-	return ""
 }
 
 // populateExchange populates the exchange with message data.

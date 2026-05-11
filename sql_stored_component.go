@@ -43,10 +43,12 @@ func (e *SQLStoredEndpoint) CreateConsumer(processor Processor) (Consumer, error
 // before building a route, then references the datasource by name in the URI.
 //
 // URI Format:
+//
 //	sql-stored://datasourceName?procedure=sp_name
 //	sql-stored://logical?dataSourceRef=datasourceName&procedure=sp_name
 //
 // Options:
+//
 //	procedure      Name of the stored procedure to call (required)
 //	dataSourceRef  Name of a registered datasource (otherwise uses the host from URI)
 //	outputType     SelectList (default) or SelectOne
@@ -94,13 +96,16 @@ func (c *SQLStoredComponent) lookup(name string) (*sql.DB, bool) {
 // CreateEndpoint creates a SQLStoredEndpoint from a URI.
 //
 // Format:
+//
 //	sql-stored://datasourceName?procedure=NAME
 //	sql-stored://logical?dataSourceRef=datasourceName&procedure=NAME
 //
 // Required option:
+//
 //	procedure      Name of the stored procedure to call
 //
 // Optional options:
+//
 //	dataSourceRef  Reference to a datasource name (overrides URI host)
 //	outputType     SelectList (default) or SelectOne
 //	transacted     true to wrap procedure call in transaction (default: false)
@@ -198,8 +203,8 @@ func (p *SQLStoredProducer) Send(exchange *Exchange) error {
 	// If noop mode: set body with procedure info and return
 	if p.endpoint.noop {
 		result := map[string]any{
-			"procedure":     procedure,
-			"parametersIn":  params,
+			"procedure":    procedure,
+			"parametersIn": params,
 		}
 		exchange.GetOut().SetBody(result)
 		return nil

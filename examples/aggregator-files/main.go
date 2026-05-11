@@ -67,7 +67,7 @@ func main() {
 	).SetCompletionSize(2)
 
 	route, buildErr := camelCtx.CreateRouteBuilder().
-		From("file://"+watchDir+"?include=\\.(xml|pdf)$").
+		From("file://" + watchDir + "?include=\\.(xml|pdf)$").
 		Aggregate(aggregator).
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
 			name, _ := exchange.GetIn().GetHeader(headerFileName)

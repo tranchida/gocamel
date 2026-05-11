@@ -13,12 +13,12 @@ func TestLoadBalancer_RoundRobin(t *testing.T) {
 	ctx.AddComponent("direct", NewDirectComponent())
 
 	var callsA, callsB int
-	
+
 	_, err := ctx.CreateRouteBuilder().
 		From("direct:start").
 		LoadBalance().RoundRobin().
-			To("direct:a").
-			To("direct:b").
+		To("direct:a").
+		To("direct:b").
 		End().
 		Build()
 	require.NoError(t, err)
@@ -67,12 +67,12 @@ func TestLoadBalancer_Random(t *testing.T) {
 	ctx.AddComponent("direct", NewDirectComponent())
 
 	var callsA, callsB int
-	
+
 	_, err := ctx.CreateRouteBuilder().
 		From("direct:start").
 		LoadBalance().Random().
-			To("direct:a").
-			To("direct:b").
+		To("direct:a").
+		To("direct:b").
 		End().
 		Build()
 	require.NoError(t, err)

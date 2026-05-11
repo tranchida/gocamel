@@ -83,7 +83,7 @@ func (r *Resequencer) drain() error {
 		entry := r.buffer[0]
 		r.buffer = r.buffer[1:]
 		r.nextSeq++
-		
+
 		if err := r.processor.Process(entry.exchange); err != nil {
 			return err
 		}

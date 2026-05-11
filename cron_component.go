@@ -17,12 +17,12 @@ import (
 // Match the headers of the Apache Camel Cron component.
 const (
 	CronFireTime          = "fireTime"          // Actual trigger fire time
-	CronScheduledFireTime = "scheduledFireTime"  // Scheduled trigger fire time
-	CronNextFireTime      = "nextFireTime"       // Next scheduled trigger time
-	CronPreviousFireTime  = "previousFireTime"   // Previous trigger time (zero if first)
-	CronTriggerName       = "triggerName"        // Trigger name
-	CronTriggerGroup      = "triggerGroup"       // Trigger group
-	CronRefireCount       = "refireCount"        // Number of times the trigger has fired
+	CronScheduledFireTime = "scheduledFireTime" // Scheduled trigger fire time
+	CronNextFireTime      = "nextFireTime"      // Next scheduled trigger time
+	CronPreviousFireTime  = "previousFireTime"  // Previous trigger time (zero if first)
+	CronTriggerName       = "triggerName"       // Trigger name
+	CronTriggerGroup      = "triggerGroup"      // Trigger group
+	CronRefireCount       = "refireCount"       // Number of times the trigger has fired
 )
 
 // CronComponent implements a cron scheduler shared across all its routes,
@@ -194,8 +194,8 @@ type CronConsumer struct {
 	added   bool
 
 	// Shared state
-	fireCount    atomic.Int64             // fire count (refireCount header)
-	paused       atomic.Bool              // true when pauseJob=true and Stop() was called
+	fireCount    atomic.Int64              // fire count (refireCount header)
+	paused       atomic.Bool               // true when pauseJob=true and Stop() was called
 	prevFireTime atomic.Pointer[time.Time] // actual time of last trigger
 
 	cancel context.CancelFunc // cancels the startup goroutine or SimpleTrigger ticker

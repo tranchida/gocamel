@@ -11,7 +11,7 @@ import "fmt"
 //   - A Go function: func(*Exchange) (bool, error)
 //   - A Simple Language expression string (e.g. "${header.type} == 'order'")
 type MessageFilter struct {
-	predicate  func(*Exchange) (bool, error)
+	predicate func(*Exchange) (bool, error)
 }
 
 // NewMessageFilter creates a MessageFilter with the given Go predicate function.

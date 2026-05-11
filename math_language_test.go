@@ -34,7 +34,7 @@ func TestSimpleLanguage_MathFunctions(t *testing.T) {
 		t.Run(tt.expression, func(t *testing.T) {
 			result, err := ParseSimpleTemplate(tt.expression)
 			require.NoError(t, err)
-			
+
 			val, err := result.EvaluateAsString(ex)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, val)
@@ -60,7 +60,7 @@ func TestSimpleLanguage_NumericFunctionsStandalone(t *testing.T) {
 		t.Run(tt.expression, func(t *testing.T) {
 			result, err := ParseSimpleTemplate(tt.expression)
 			require.NoError(t, err)
-			
+
 			val, err := result.EvaluateAsString(ex)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, val)
@@ -80,7 +80,7 @@ func TestSimpleLanguage_MathComplex(t *testing.T) {
 	// left = (body + 2), right = 3
 	// evaluateVariable("(body + 2)") -> body + 2
 	// ... result 12 * 3 = 36
-	
+
 	tests := []struct {
 		expression string
 		expected   string
@@ -93,7 +93,7 @@ func TestSimpleLanguage_MathComplex(t *testing.T) {
 		t.Run(tt.expression, func(t *testing.T) {
 			result, err := ParseSimpleTemplate(tt.expression)
 			require.NoError(t, err)
-			
+
 			val, err := result.EvaluateAsString(ex)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, val)

@@ -79,8 +79,8 @@ func TestWireTap_DeepCopy(t *testing.T) {
 
 	var (
 		mainAfterBody any
-		tapModified  any
-		mu           sync.Mutex
+		tapModified   any
+		mu            sync.Mutex
 	)
 
 	// Tap route: receives the copy and modifies it
@@ -412,7 +412,7 @@ func TestWireTap_ChainedInSplit(t *testing.T) {
 		Split(func(e *Exchange) (any, error) {
 			return []string{"a", "b", "c"}, nil
 		}).
-			WireTap("direct:split-tap").
+		WireTap("direct:split-tap").
 		End().
 		Build()
 	assert.NoError(t, err)

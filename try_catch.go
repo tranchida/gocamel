@@ -68,7 +68,7 @@ func (p *TryProcessor) Process(exchange *Exchange) error {
 				break
 			}
 		}
-		
+
 		if !caught {
 			finalErr = tryErr
 		}
@@ -211,10 +211,10 @@ func (d *FinallyDefinition) End() *RouteBuilder {
 // DoTry starts a Do-Try-Catch-Finally EIP block.
 func (b *RouteBuilder) DoTry() *TryDefinition {
 	tp := NewTryProcessor()
-	
+
 	p := NewPipeline()
 	tp.SetTryBlock(p)
-	
+
 	b.container.AddProcessor(tp)
 
 	return &TryDefinition{

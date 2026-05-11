@@ -13,13 +13,13 @@ func TestDynamicRouter_Basic(t *testing.T) {
 	ctx.AddComponent("direct", NewDirectComponent())
 
 	var steps []string
-	
+
 	// Control function: decides next step based on a counter in exchange property
 	controlFn := func(e *Exchange) (string, error) {
 		val, _ := e.GetProperty("step_count")
 		count, _ := val.(int)
 		e.SetProperty("step_count", count+1)
-		
+
 		switch count {
 		case 0:
 			return "direct:step1", nil
@@ -72,7 +72,7 @@ func TestDynamicRouter_Simple(t *testing.T) {
 	ctx.AddComponent("direct", NewDirectComponent())
 
 	var received string
-	
+
 	// Use Simple expression to resolve next URI from a header
 	// The header "next" is updated in each step.
 	_, err := ctx.CreateRouteBuilder().
@@ -105,7 +105,7 @@ func TestDynamicRouter_Simple(t *testing.T) {
 
 	ex := NewExchange(context.Background())
 	ex.GetIn().SetHeader("next", "direct:step1")
-	
+
 	p, _ := ctx.CreateEndpoint("direct:start")
 	prod, _ := p.CreateProducer()
 	prod.Start(context.Background())

@@ -106,10 +106,10 @@ func (e *FTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 
 // FTPProducer represents an FTP producer
 type FTPProducer struct {
-	endpoint   *FTPEndpoint
-	fileExist  FileExistBehavior
-	mu         sync.Mutex
-	conn       *ftp.ServerConn // persistent connection (disconnect=false)
+	endpoint  *FTPEndpoint
+	fileExist FileExistBehavior
+	mu        sync.Mutex
+	conn      *ftp.ServerConn // persistent connection (disconnect=false)
 }
 
 func (p *FTPProducer) Start(ctx context.Context) error { return nil }
@@ -250,7 +250,7 @@ func (c *FTPConsumer) Start(ctx context.Context) error {
 	return nil
 }
 
-func (c *FTPConsumer) poll(ctx context.Context, ) {
+func (c *FTPConsumer) poll(ctx context.Context) {
 	ticker := time.NewTicker(c.opts.Delay)
 	defer ticker.Stop()
 	c.doPoll(ctx)
@@ -290,11 +290,11 @@ func (c *FTPConsumer) releaseConn(conn *ftp.ServerConn) {
 }
 
 type ftpSynchronization struct {
-	conn     *ftp.ServerConn
-	path     string
-	noop     bool
-	delete   bool
-	move     string
+	conn       *ftp.ServerConn
+	path       string
+	noop       bool
+	delete     bool
+	move       string
 	moveFailed string
 }
 

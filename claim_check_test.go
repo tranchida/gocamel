@@ -37,7 +37,7 @@ func TestClaimCheck_Memory(t *testing.T) {
 
 	ex := NewExchange(context.Background())
 	ex.In.SetBody("large original body")
-	
+
 	p, _ := ctx.CreateEndpoint("direct:start")
 	prod, _ := p.CreateProducer()
 	prod.Start(context.Background())
@@ -45,7 +45,7 @@ func TestClaimCheck_Memory(t *testing.T) {
 	prod.Stop()
 
 	assert.Equal(t, "large original body", receivedBody)
-	
+
 	// Verify it was removed from repo (Pop)
 	data, _ := repo.Get(context.Background(), "myKey")
 	assert.Nil(t, data)
@@ -75,7 +75,7 @@ func TestClaimCheck_AutoKey(t *testing.T) {
 
 	ex := NewExchange(context.Background())
 	ex.In.SetBody("auto-key-body")
-	
+
 	p, _ := ctx.CreateEndpoint("direct:start")
 	prod, _ := p.CreateProducer()
 	prod.Start(context.Background())

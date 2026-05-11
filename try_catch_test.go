@@ -18,20 +18,20 @@ func TestTryCatchFinally_Success(t *testing.T) {
 	_, err := ctx.CreateRouteBuilder().
 		From("direct:start").
 		DoTry().
-			ProcessFunc(func(e *Exchange) error {
-				tryCalled = true
-				return nil
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			tryCalled = true
+			return nil
+		}).
 		DoCatch("").
-			ProcessFunc(func(e *Exchange) error {
-				catchCalled = true
-				return nil
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			catchCalled = true
+			return nil
+		}).
 		DoFinally().
-			ProcessFunc(func(e *Exchange) error {
-				finallyCalled = true
-				return nil
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			finallyCalled = true
+			return nil
+		}).
 		End().
 		Build()
 	require.NoError(t, err)
@@ -61,22 +61,22 @@ func TestTryCatchFinally_Catch(t *testing.T) {
 	_, err := ctx.CreateRouteBuilder().
 		From("direct:start").
 		DoTry().
-			ProcessFunc(func(e *Exchange) error {
-				tryCalled = true
-				return errors.New("boom")
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			tryCalled = true
+			return errors.New("boom")
+		}).
 		DoCatch("").
-			ProcessFunc(func(e *Exchange) error {
-				catchCalled = true
-				val, _ := e.GetProperty(CamelExceptionCaught)
-				caughtError = val.(error)
-				return nil
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			catchCalled = true
+			val, _ := e.GetProperty(CamelExceptionCaught)
+			caughtError = val.(error)
+			return nil
+		}).
 		DoFinally().
-			ProcessFunc(func(e *Exchange) error {
-				finallyCalled = true
-				return nil
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			finallyCalled = true
+			return nil
+		}).
 		End().
 		Build()
 	require.NoError(t, err)
@@ -110,27 +110,27 @@ func TestTryCatchFinally_Nested(t *testing.T) {
 	_, err := ctx.CreateRouteBuilder().
 		From("direct:start").
 		DoTry().
-			ProcessFunc(func(e *Exchange) error {
-				// Inner try block
-				inner := NewTryProcessor()
-				inner.SetTryBlock(ProcessorFunc(func(ex *Exchange) error {
-					return errors.New("inner")
-				}))
-				inner.SetFinallyBlock(ProcessorFunc(func(ex *Exchange) error {
-					finally1 = true
-					return nil
-				}))
-				return inner.Process(e)
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			// Inner try block
+			inner := NewTryProcessor()
+			inner.SetTryBlock(ProcessorFunc(func(ex *Exchange) error {
+				return errors.New("inner")
+			}))
+			inner.SetFinallyBlock(ProcessorFunc(func(ex *Exchange) error {
+				finally1 = true
+				return nil
+			}))
+			return inner.Process(e)
+		}).
 		DoCatch("inner").
-			ProcessFunc(func(e *Exchange) error {
-				return nil
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			return nil
+		}).
 		DoFinally().
-			ProcessFunc(func(e *Exchange) error {
-				finally2 = true
-				return nil
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			finally2 = true
+			return nil
+		}).
 		End().
 		Build()
 	require.NoError(t, err)

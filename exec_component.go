@@ -175,7 +175,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 			executable = s
 		}
 	}
-	
+
 	// Security: validate executable path
 	if err := validateExecPath(executable); err != nil {
 		return fmt.Errorf("exec: invalid executable: %w", err)
@@ -191,7 +191,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 			args = strings.Fields(val)
 		}
 	}
-	
+
 	// Security: validate arguments
 	if err := validateExecArgs(args); err != nil {
 		return fmt.Errorf("exec: invalid arguments: %w", err)

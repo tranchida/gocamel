@@ -149,7 +149,7 @@ func (m *Message) RemoveHeaders(pattern string, excludePatterns ...string) {
 					break
 				}
 			}
-			
+
 			if !shouldExclude {
 				delete(m.Headers, key)
 			}

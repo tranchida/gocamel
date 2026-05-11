@@ -52,17 +52,17 @@ func TestTemplateComponent_CreateEndpointWithOptions(t *testing.T) {
 	comp := NewTemplateComponent()
 
 	tests := []struct {
-		name                string
-		uri                 string
+		name                 string
+		uri                  string
 		expectedContentCache bool
-		expectedAllowHeader bool
-		expectedEncoding    string
+		expectedAllowHeader  bool
+		expectedEncoding     string
 	}{
 		{
-			name:                "with contentCache",
-			uri:                 "template:templates/hello.tmpl?contentCache=true",
+			name:                 "with contentCache",
+			uri:                  "template:templates/hello.tmpl?contentCache=true",
 			expectedContentCache: true,
-			expectedEncoding:    "UTF-8",
+			expectedEncoding:     "UTF-8",
 		},
 		{
 			name:                "with allowTemplateFromHeader",
@@ -71,16 +71,16 @@ func TestTemplateComponent_CreateEndpointWithOptions(t *testing.T) {
 			expectedEncoding:    "UTF-8",
 		},
 		{
-			name:                "with custom encoding",
-			uri:                 "template:templates/hello.tmpl?encoding=ISO-8859-1",
-			expectedEncoding:    "ISO-8859-1",
+			name:             "with custom encoding",
+			uri:              "template:templates/hello.tmpl?encoding=ISO-8859-1",
+			expectedEncoding: "ISO-8859-1",
 		},
 		{
-			name:                "with all parameters",
-			uri:                 "template:templates/hello.tmpl?contentCache=true&allowTemplateFromHeader=true&startDelimiter={{&endDelimiter=}}",
+			name:                 "with all parameters",
+			uri:                  "template:templates/hello.tmpl?contentCache=true&allowTemplateFromHeader=true&startDelimiter={{&endDelimiter=}}",
 			expectedContentCache: true,
-			expectedAllowHeader: true,
-			expectedEncoding:    "UTF-8",
+			expectedAllowHeader:  true,
+			expectedEncoding:     "UTF-8",
 		},
 	}
 

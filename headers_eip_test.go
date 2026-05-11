@@ -59,7 +59,7 @@ func TestRemoveHeadersExclusion(t *testing.T) {
 	route, err := NewRouteBuilder(ctx).
 		From("direct:exclusion").
 		RemoveHeaders("Camel*", "CamelHttp*").
-	    Build()
+		Build()
 
 	assert.NoError(t, err)
 	exchange := NewExchange(context.Background())
@@ -84,10 +84,10 @@ func TestSetHeaders(t *testing.T) {
 		"Header2": 123,
 	}
 
-route, err := NewRouteBuilder(ctx).
-	From("direct:setheaders").
-	SetHeaders(headers).
-	Build()
+	route, err := NewRouteBuilder(ctx).
+		From("direct:setheaders").
+		SetHeaders(headers).
+		Build()
 
 	assert.NoError(t, err)
 	exchange := NewExchange(context.Background())

@@ -5,8 +5,8 @@ type StoredProcedureParamDirection int
 
 const (
 	ParamDirectionIn    StoredProcedureParamDirection = iota // IN parameter
-	ParamDirectionOut                                          // OUT parameter  
-	ParamDirectionInOut                                        // INOUT parameter
+	ParamDirectionOut                                        // OUT parameter
+	ParamDirectionInOut                                      // INOUT parameter
 )
 
 // StoredProcedureParam represents a stored procedure parameter

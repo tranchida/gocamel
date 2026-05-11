@@ -386,41 +386,39 @@ func TestParseMimeMessageWithAttachment(t *testing.T) {
 }
 
 // TestExtractFilenameFromDisposition tests filename extraction.
-	func TestExtractFilenameFromDisposition(t *testing.T) {
-		consumer := &MailConsumer{}
+func TestExtractFilenameFromDisposition(t *testing.T) {
+	// Test Content-Disposition with filename
+	filename := extractFilenameFromDispositionCommon(`attachment; filename="test.pdf"`, "")
+	assert.Equal(t, "test.pdf", filename)
 
-		// Test Content-Disposition with filename
-		filename := consumer.extractFilenameFromDisposition(`attachment; filename="test.pdf"`, "")
-		assert.Equal(t, "test.pdf", filename)
+	// Test with single quotes
+	filename = extractFilenameFromDispositionCommon(`attachment; filename='test.pdf'`, "")
+	assert.Equal(t, "test.pdf", filename)
 
-		// Test with single quotes
-		filename = consumer.extractFilenameFromDisposition(`attachment; filename='test.pdf'`, "")
-		assert.Equal(t, "test.pdf", filename)
+	// Test without quotes
+	filename = extractFilenameFromDispositionCommon(`attachment; filename=test.pdf`, "")
+	assert.Equal(t, "test.pdf", filename)
 
-		// Test without quotes
-		filename = consumer.extractFilenameFromDisposition(`attachment; filename=test.pdf`, "")
-		assert.Equal(t, "test.pdf", filename)
+	// Test from Content-Type
+	filename = extractFilenameFromDispositionCommon("", `application/pdf; name="doc.pdf"`)
+	assert.Equal(t, "doc.pdf", filename)
 
-		// Test from Content-Type
-		filename = consumer.extractFilenameFromDisposition("", `application/pdf; name="doc.pdf"`)
-		assert.Equal(t, "doc.pdf", filename)
+	// Empty test
+	filename = extractFilenameFromDispositionCommon("", "")
+	assert.Equal(t, "", filename)
+}
 
-		// Empty test
-		filename = consumer.extractFilenameFromDisposition("", "")
-		assert.Equal(t, "", filename)
+// TestReplyTo tests Reply-To extraction from the envelope.
+func TestReplyTo(t *testing.T) {
+	msg := &MailMessage{
+		From:    "sender@example.com",
+		ReplyTo: "reply@example.com",
+		To:      []string{"recipient@example.com"},
+		Subject: "Test Reply-To",
 	}
 
-	// TestReplyTo tests Reply-To extraction from the envelope.
-	func TestReplyTo(t *testing.T) {
-		msg := &MailMessage{
-			From:    "sender@example.com",
-			ReplyTo: "reply@example.com",
-			To:      []string{"recipient@example.com"},
-			Subject: "Test Reply-To",
-		}
-
-		assert.Equal(t, "reply@example.com", msg.ReplyTo)
-	}
+	assert.Equal(t, "reply@example.com", msg.ReplyTo)
+}
 
 // TestPop3Endpoint_CreateEndpoint tests POP3 endpoint creation.
 func TestPop3Endpoint_CreateEndpoint_ValidPOP3(t *testing.T) {

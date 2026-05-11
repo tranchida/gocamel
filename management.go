@@ -30,9 +30,9 @@ type RouteInfo struct {
 
 // ContextInfo represents the context information for the REST API.
 type ContextInfo struct {
-	Started          bool `json:"started"`
-	TotalRoutes      int  `json:"totalRoutes"`
-	StartedRoutes    int  `json:"startedRoutes"`
+	Started       bool `json:"started"`
+	TotalRoutes   int  `json:"totalRoutes"`
+	StartedRoutes int  `json:"startedRoutes"`
 }
 
 // Start starts the management REST server on the given address (e.g. ":8081").

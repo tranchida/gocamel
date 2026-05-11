@@ -11,14 +11,14 @@ func TestTimerComponent_CreateEndpoint(t *testing.T) {
 	component := NewTimerComponent()
 
 	tests := []struct {
-		name        string
-		uri         string
-		wantErr     bool
-		wantName    string
-		wantPeriod  int64
-		wantDelay   int64
-		wantRepeat  int64
-		wantFixed   bool
+		name       string
+		uri        string
+		wantErr    bool
+		wantName   string
+		wantPeriod int64
+		wantDelay  int64
+		wantRepeat int64
+		wantFixed  bool
 	}{
 		{
 			name:       "Basic timer",
