@@ -30,6 +30,9 @@ func NewCamelContext() *CamelContext {
 
 // AddRoute adds a route to the context
 func (c *CamelContext) AddRoute(route *Route) {
+	c.startLock.Lock()
+	defer c.startLock.Unlock()
+
 	for _, r := range c.routes {
 		if r == route {
 			return // The route is already in the context
@@ -69,6 +72,9 @@ func (c *CamelContext) AddRoutes(routes ...*Route) {
 
 // GetRoute retrieves a route by its ID
 func (c *CamelContext) GetRoute(id string) *Route {
+	c.startLock.RLock()
+	defer c.startLock.RUnlock()
+
 	for _, route := range c.routes {
 		if route.ID == id {
 			return route
@@ -79,7 +85,12 @@ func (c *CamelContext) GetRoute(id string) *Route {
 
 // GetRoutes retrieves all routes
 func (c *CamelContext) GetRoutes() []*Route {
-	return c.routes
+	c.startLock.RLock()
+	defer c.startLock.RUnlock()
+
+	out := make([]*Route, len(c.routes))
+	copy(out, c.routes)
+	return out
 }
 
 // Start starts the context and all its routes.
@@ -178,6 +189,9 @@ func (c *CamelContext) GetComponent(name string) (Component, error) {
 
 // RemoveRoute removes a route from the context
 func (c *CamelContext) RemoveRoute(route *Route) {
+	c.startLock.Lock()
+	defer c.startLock.Unlock()
+
 	for i, r := range c.routes {
 		if r == route {
 			c.routes = append(c.routes[:i], c.routes[i+1:]...)
@@ -188,6 +202,9 @@ func (c *CamelContext) RemoveRoute(route *Route) {
 
 // RemoveRouteByID removes a route by its ID
 func (c *CamelContext) RemoveRouteByID(id string) {
+	c.startLock.Lock()
+	defer c.startLock.Unlock()
+
 	for i, route := range c.routes {
 		if route.ID == id {
 			c.routes = append(c.routes[:i], c.routes[i+1:]...)
@@ -198,18 +215,29 @@ func (c *CamelContext) RemoveRouteByID(id string) {
 
 // RemoveAllRoutes removes all routes
 func (c *CamelContext) RemoveAllRoutes() {
+	c.startLock.Lock()
+	defer c.startLock.Unlock()
+
 	c.routes = make([]*Route, 0)
 }
 
 // GetRouteCount returns the number of routes
 func (c *CamelContext) GetRouteCount() int {
+	c.startLock.RLock()
+	defer c.startLock.RUnlock()
+
 	return len(c.routes)
 }
 
 // GetStartedRouteCount returns the number of started routes
 func (c *CamelContext) GetStartedRouteCount() int {
+	c.startLock.RLock()
+	routes := make([]*Route, len(c.routes))
+	copy(routes, c.routes)
+	c.startLock.RUnlock()
+
 	count := 0
-	for _, route := range c.routes {
+	for _, route := range routes {
 		if route.IsStarted() {
 			count++
 		}

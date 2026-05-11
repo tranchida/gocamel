@@ -43,7 +43,7 @@ func (p *DynamicRouter) Process(exchange *Exchange) error {
 		}
 
 		slog.Debug("dynamic router: sending to next endpoint", "uri", uri)
-		processor := createToProcessor(p.context, uri)
+		processor := newLazyProducer(p.context, uri)
 		if err := processor.Process(exchange); err != nil {
 			return fmt.Errorf("dynamic router: error sending to %s: %w", uri, err)
 		}

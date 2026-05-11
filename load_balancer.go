@@ -103,7 +103,7 @@ func (d *LoadBalancerDefinition) Custom(strategy LoadBalancerStrategy) *LoadBala
 // To adds one or more destination endpoints to the load balancer.
 func (d *LoadBalancerDefinition) To(uris ...string) *LoadBalancerDefinition {
 	for _, uri := range uris {
-		d.loadBalancer.AddProcessor(createToProcessor(d.parent.context, uri))
+		d.loadBalancer.AddProcessor(newLazyProducer(d.parent.context, uri))
 	}
 	return d
 }

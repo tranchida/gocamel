@@ -622,11 +622,15 @@ func (b *RouteBuilder) To(uris ...string) *RouteBuilder {
 		return b
 	}
 	if len(uris) == 1 {
-		b.container.AddProcessor(createToProcessor(b.context, uris[0]))
+		lp := newLazyProducer(b.context, uris[0])
+		b.route.lazyProducers = append(b.route.lazyProducers, lp)
+		b.container.AddProcessor(lp)
 	} else {
 		m := NewMulticast()
 		for _, uri := range uris {
-			m.AddProcessor(createToProcessor(b.context, uri))
+			lp := newLazyProducer(b.context, uri)
+			b.route.lazyProducers = append(b.route.lazyProducers, lp)
+			m.AddProcessor(lp)
 		}
 		b.container.AddProcessor(m)
 	}

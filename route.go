@@ -35,30 +35,85 @@ func (f ProcessorFunc) Process(exchange *Exchange) error {
 // Route represents a Camel route: a pipeline of Processors fed by a single Consumer.
 // Routes are built via RouteBuilder (fluent DSL) and managed by CamelContext.
 type Route struct {
-	ID           string // Unique identifier for this route.
-	Description  string // Human-readable description of the route purpose.
-	Group        string // Logical group this route belongs to.
-	Transacted   bool   // Whether the route uses transactional semantics.
-	context      *CamelContext
-	from         Endpoint
-	consumer     Consumer
-	processors   []Processor
-	started      bool
-	startLock    sync.RWMutex // Protects started state for concurrent access.
-	err          error        // Accumulated during construction, surfaced at Start().
-	errorHandler ErrorHandler // Error handler for this route (nil means propagate).
-	metrics      bool         // Whether Prometheus metrics are enabled for this route.
-	tracing      bool         // Whether OpenTelemetry tracing is enabled for this route.
+	ID            string // Unique identifier for this route.
+	Description   string // Human-readable description of the route purpose.
+	Group         string // Logical group this route belongs to.
+	Transacted    bool   // Whether the route uses transactional semantics.
+	context       *CamelContext
+	from          Endpoint
+	consumer      Consumer
+	processors    []Processor
+	lazyProducers []*lazyProducer // static To() producers; stopped at Route.Stop().
+	started       bool
+	startLock     sync.RWMutex // Protects started state for concurrent access.
+	err           error        // Accumulated during construction, surfaced at Start().
+	errorHandler  ErrorHandler // Error handler for this route (nil means propagate).
+	metrics       bool         // Whether Prometheus metrics are enabled for this route.
+	tracing       bool         // Whether OpenTelemetry tracing is enabled for this route.
 }
 
-// NewRoute creates a new Route instance.
+// lazyProducer is a Processor that initialises its underlying Producer on first
+// use (via sync.Once) and exposes Stop() for cleanup when the route stops.
+type lazyProducer struct {
+	context *CamelContext
+	uri     string
+	once    sync.Once
+	mu      sync.Mutex
+	p       Producer
+	initErr error
+}
+
+func newLazyProducer(ctx *CamelContext, uri string) *lazyProducer {
+	return &lazyProducer{context: ctx, uri: uri}
+}
+
+func (lp *lazyProducer) Process(exchange *Exchange) error {
+	lp.once.Do(func() {
+		endpoint, err := lp.context.CreateEndpoint(lp.uri)
+		if err != nil {
+			lp.initErr = err
+			return
+		}
+		p, err := endpoint.CreateProducer()
+		if err != nil {
+			lp.initErr = err
+			return
+		}
+		if err := p.Start(exchange.Context); err != nil {
+			lp.initErr = err
+			return
+		}
+		lp.mu.Lock()
+		lp.p = p
+		lp.mu.Unlock()
+	})
+	if lp.initErr != nil {
+		return lp.initErr
+	}
+	exchange.PropagateOutToIn()
+	lp.mu.Lock()
+	prod := lp.p
+	lp.mu.Unlock()
+	return prod.Send(exchange)
+}
+
+func (lp *lazyProducer) Stop() error {
+	lp.mu.Lock()
+	prod := lp.p
+	lp.mu.Unlock()
+	if prod != nil {
+		return prod.Stop()
+	}
+	return nil
+}
+
 func NewRoute() *Route {
 	return &Route{
-		processors: make([]Processor, 0),
+		processors:    make([]Processor, 0),
+		lazyProducers: make([]*lazyProducer, 0),
 	}
 }
 
-// SetTransacted sets whether the route uses transactional semantics.
 func (r *Route) SetTransacted(transacted bool) *Route {
 	r.Transacted = transacted
 	return r
@@ -76,12 +131,10 @@ func (r *Route) From(uri string) *Route {
 	return r
 }
 
-// AddProcessor adds a processor to the route.
 func (r *Route) AddProcessor(processor Processor) {
 	r.processors = append(r.processors, processor)
 }
 
-// ProcessFunc adds a processing function to the route.
 func (r *Route) ProcessFunc(f func(*Exchange) error) *Route {
 	r.AddProcessor(ProcessorFunc(f))
 	return r
@@ -146,8 +199,8 @@ func (r *Route) doProcess(exchange *Exchange) error {
 }
 
 func (r *Route) resetErrorHandlerState(exchange *Exchange) {
-	if dlc, ok := r.errorHandler.(*DeadLetterChannel); ok {
-		dlc.ResetRetryState(exchange.ID)
+	if rr, ok := r.errorHandler.(RetryResettable); ok {
+		rr.ResetRetryState(exchange.ID)
 	}
 }
 
@@ -197,41 +250,41 @@ func (r *Route) Stop() error {
 		}
 	}
 
+	for _, lp := range r.lazyProducers {
+		if err := lp.Stop(); err != nil {
+			return fmt.Errorf("error stopping producer for %s: %v", lp.uri, err)
+		}
+	}
+
 	r.started = false
 	return nil
 }
 
-// IsStarted returns true if the route is started (uses RLock).
 func (r *Route) IsStarted() bool {
 	r.startLock.RLock()
 	defer r.startLock.RUnlock()
 	return r.started
 }
 
-// SetID sets the route ID.
 func (r *Route) SetID(id string) *Route {
 	r.ID = id
 	return r
 }
 
-// SetDescription sets the route description.
 func (r *Route) SetDescription(description string) *Route {
 	r.Description = description
 	return r
 }
 
-// SetGroup sets the route group.
 func (r *Route) SetGroup(group string) *Route {
 	r.Group = group
 	return r
 }
 
-// GetContext returns the CamelContext associated with the route.
 func (r *Route) GetContext() *CamelContext {
 	return r.context
 }
 
-// SetErrorHandler configures the error handler for this route.
 func (r *Route) SetErrorHandler(handler ErrorHandler) *Route {
 	r.errorHandler = handler
 	return r
@@ -242,13 +295,11 @@ func (r *Route) GetErrorHandler() ErrorHandler {
 	return r.errorHandler
 }
 
-// EnableMetrics enables Prometheus metrics collection for this route.
 func (r *Route) EnableMetrics() *Route {
 	r.metrics = true
 	return r
 }
 
-// SetBody sets the output message body.
 func (r *Route) SetBody(body interface{}) *Route {
 	return r.ProcessFunc(func(exchange *Exchange) error {
 		exchange.GetOut().SetBody(body)
@@ -256,7 +307,6 @@ func (r *Route) SetBody(body interface{}) *Route {
 	})
 }
 
-// SetHeader sets a header on the output message.
 func (r *Route) SetHeader(key string, value interface{}) *Route {
 	return r.ProcessFunc(func(exchange *Exchange) error {
 		exchange.GetOut().SetHeader(key, value)
@@ -264,24 +314,20 @@ func (r *Route) SetHeader(key string, value interface{}) *Route {
 	})
 }
 
-// Marshal adds a dataformat marshal step to the route.
 func (r *Route) Marshal(dataFormat DataFormat) *Route {
 	r.AddProcessor(&MarshalProcessor{DataFormat: dataFormat})
 	return r
 }
 
-// Unmarshal adds a dataformat unmarshal step to the route.
 func (r *Route) Unmarshal(dataFormat DataFormat) *Route {
 	r.AddProcessor(&UnmarshalProcessor{DataFormat: dataFormat})
 	return r
 }
 
-// MarshalRSS converts an RSSFeed body to RSS XML.
 func (r *Route) MarshalRSS() *Route {
 	return r.Marshal(NewRSSDataFormat())
 }
 
-// UnmarshalRSS converts RSS XML into an RSSFeed body.
 func (r *Route) UnmarshalRSS() *Route {
 	return r.Unmarshal(NewRSSDataFormat())
 }
@@ -293,11 +339,15 @@ func (r *Route) To(uris ...string) *Route {
 		return r
 	}
 	if len(uris) == 1 {
-		r.AddProcessor(createToProcessor(r.context, uris[0]))
+		lp := newLazyProducer(r.context, uris[0])
+		r.lazyProducers = append(r.lazyProducers, lp)
+		r.AddProcessor(lp)
 	} else {
 		m := NewMulticast()
 		for _, uri := range uris {
-			m.AddProcessor(createToProcessor(r.context, uri))
+			lp := newLazyProducer(r.context, uri)
+			r.lazyProducers = append(r.lazyProducers, lp)
+			m.AddProcessor(lp)
 		}
 		r.AddProcessor(m)
 	}
@@ -320,39 +370,6 @@ func (r *Route) ToD(uriTemplates ...string) *Route {
 		r.AddProcessor(m)
 	}
 	return r
-}
-
-func createToProcessor(context *CamelContext, uri string) Processor {
-	var (
-		once     sync.Once
-		producer Producer
-		initErr  error
-	)
-	return ProcessorFunc(func(exchange *Exchange) error {
-		once.Do(func() {
-			endpoint, err := context.CreateEndpoint(uri)
-			if err != nil {
-				initErr = err
-				return
-			}
-			p, err := endpoint.CreateProducer()
-			if err != nil {
-				initErr = err
-				return
-			}
-			if err := p.Start(exchange.Context); err != nil {
-				initErr = err
-				return
-			}
-			producer = p
-		})
-		if initErr != nil {
-			return initErr
-		}
-
-		exchange.PropagateOutToIn()
-		return producer.Send(exchange)
-	})
 }
 
 func createToDProcessor(context *CamelContext, uriTemplate string) Processor {

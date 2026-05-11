@@ -210,10 +210,9 @@ func (cb *ChoiceBuilder) SimpleSetHeader(headerName string, expression string) *
 
 // To sends the exchange to an endpoint for the current When clause
 func (cb *ChoiceBuilder) To(uri string) *ChoiceBuilder {
-	return cb.Process(ProcessorFunc(func(exchange *Exchange) error {
-		exchange.SetProperty("CamelToEndpoint", uri)
-		return nil
-	}))
+	lp := newLazyProducer(cb.routeBuilder.context, uri)
+	cb.routeBuilder.route.lazyProducers = append(cb.routeBuilder.route.lazyProducers, lp)
+	return cb.Process(lp)
 }
 
 // Log logs a message for the current When clause
@@ -320,10 +319,9 @@ func (ob *OtherwiseBuilder) SimpleSetHeader(headerName string, expression string
 
 // To sends the exchange to an endpoint for the Otherwise clause
 func (ob *OtherwiseBuilder) To(uri string) *OtherwiseBuilder {
-	return ob.Process(ProcessorFunc(func(exchange *Exchange) error {
-		exchange.SetProperty("CamelToEndpoint", uri)
-		return nil
-	}))
+	lp := newLazyProducer(ob.choiceBuilder.routeBuilder.context, uri)
+	ob.choiceBuilder.routeBuilder.route.lazyProducers = append(ob.choiceBuilder.routeBuilder.route.lazyProducers, lp)
+	return ob.Process(lp)
 }
 
 // Log logs a message for the Otherwise clause

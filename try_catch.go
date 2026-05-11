@@ -1,7 +1,7 @@
 package gocamel
 
 import (
-	"fmt"
+	"strings"
 )
 
 // TryProcessor implements the Do-Try-Catch-Finally EIP pattern.
@@ -55,9 +55,7 @@ func (p *TryProcessor) Process(exchange *Exchange) error {
 	if tryErr != nil {
 		caught := false
 		for _, clause := range p.catchClauses {
-			// Basic matching: empty pattern matches all, otherwise check message
-			if clause.ErrorPattern == "" || (tryErr.Error() != "" && fmt.Sprintf("%v", tryErr) != "") {
-				// In a real implementation we might check if ErrorPattern is a substring
+			if clause.ErrorPattern == "" || strings.Contains(tryErr.Error(), clause.ErrorPattern) {
 				exchange.SetProperty(CamelExceptionCaught, tryErr)
 				if err := clause.Processor.Process(exchange); err != nil {
 					finalErr = err

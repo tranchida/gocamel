@@ -18,6 +18,13 @@ type ErrorHandler interface {
 	HandleError(exchange *Exchange, err error) error
 }
 
+// RetryResettable is implemented by error handlers that maintain per-exchange
+// retry state. Route calls ResetRetryState after each successful step so that
+// the counter is cleared for the next message.
+type RetryResettable interface {
+	ResetRetryState(exchangeID string)
+}
+
 // NoErrorHandler is the default error handler: errors are propagated immediately
 // without any redelivery or dead-letter routing.
 type NoErrorHandler struct{}

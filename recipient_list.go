@@ -164,7 +164,7 @@ func (r *RecipientList) processSequential(exchange *Exchange, uris []string) err
 		recipientExchange.SetProperty(CamelRecipientListComplete, i == len(uris)-1)
 
 		// Create a producer processor for this URI
-		processor := createToProcessor(r.context, uri)
+		processor := newLazyProducer(r.context, uri)
 
 		if err := processor.Process(recipientExchange); err != nil {
 			if !errors.Is(err, ErrStopRouting) {
@@ -203,7 +203,7 @@ func (r *RecipientList) processParallel(exchange *Exchange, uris []string) error
 			recipientExchange.SetProperty(CamelRecipientListSize, len(uris))
 			recipientExchange.SetProperty(CamelRecipientListComplete, index == len(uris)-1)
 
-			processor := createToProcessor(r.context, uri)
+			processor := newLazyProducer(r.context, uri)
 
 			err := processor.Process(recipientExchange)
 

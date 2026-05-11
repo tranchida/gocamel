@@ -94,7 +94,7 @@ func (r *RoutingSlip) Process(exchange *Exchange) error {
 		exchange.SetProperty(CamelRoutingSlipSize, len(uris))
 		exchange.SetProperty(CamelRoutingSlipComplete, i == len(uris)-1)
 
-		processor := createToProcessor(r.context, uri)
+		processor := newLazyProducer(r.context, uri)
 		if err := processor.Process(exchange); err != nil {
 			if errors.Is(err, ErrStopRouting) {
 				return err

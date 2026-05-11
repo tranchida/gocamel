@@ -102,7 +102,6 @@ type Exchange struct {
 	synchronizations []Synchronization
 }
 
-// NewExchange creates a new Exchange instance
 func NewExchange(ctx context.Context) *Exchange {
 	now := time.Now()
 	return &Exchange{
@@ -135,12 +134,10 @@ func (e *Exchange) Done(err error) {
 	}
 }
 
-// GetIn returns the input message
 func (e *Exchange) GetIn() *Message {
 	return e.In
 }
 
-// GetOut returns the output message
 func (e *Exchange) GetOut() *Message {
 	return e.Out
 }
@@ -161,71 +158,58 @@ func (e *Exchange) GetResponse() *Message {
 	return e.In
 }
 
-// SetBody sets the body of the input message
 func (e *Exchange) SetBody(body any) {
 	e.In.SetBody(body)
 	e.Modified = time.Now()
 }
 
-// GetBody returns the body of the input message
 func (e *Exchange) GetBody() any {
 	return e.In.GetBody()
 }
 
-// GetBodyAsString returns the input message body as a string
 func (e *Exchange) GetBodyAsString() (string, bool) {
 	return e.In.GetBodyAsString()
 }
 
-// GetBodyAsInt returns the input message body as an integer
 func (e *Exchange) GetBodyAsInt() (int, bool) {
 	return e.In.GetBodyAsInt()
 }
 
-// GetBodyAsBool returns the input message body as a boolean
 func (e *Exchange) GetBodyAsBool() (bool, bool) {
 	return e.In.GetBodyAsBool()
 }
 
-// SetHeader sets a header on the input message
 func (e *Exchange) SetHeader(key string, value any) {
 	e.In.SetHeader(key, value)
 	e.Modified = time.Now()
 }
 
-// GetHeader retrieves a header from the input message
 func (e *Exchange) GetHeader(key string) (any, bool) {
 	return e.In.GetHeader(key)
 }
 
-// GetHeaderAsString retrieves a header from the input message as a string
 func (e *Exchange) GetHeaderAsString(key string) (string, bool) {
 	return e.In.GetHeaderAsString(key)
 }
 
-// GetHeaderAsInt retrieves a header from the input message as an integer
 func (e *Exchange) GetHeaderAsInt(key string) (int, bool) {
 	return e.In.GetHeaderAsInt(key)
 }
 
-// GetHeaderAsBool retrieves a header from the input message as a boolean
 func (e *Exchange) GetHeaderAsBool(key string) (bool, bool) {
 	return e.In.GetHeaderAsBool(key)
 }
 
-// SetProperty sets a property on the exchange
 func (e *Exchange) SetProperty(key string, value any) {
 	e.Properties[key] = value
 	e.Modified = time.Now()
 }
 
-// GetProperty retrieves a property from the exchange
 func (e *Exchange) GetProperty(key string) (any, bool) {
 	value, exists := e.Properties[key]
 	return value, exists
 }
 
-// GetPropertyOrDefault retrieves a property or returns the default value
 func (e *Exchange) GetPropertyOrDefault(key string, defaultValue any) any {
 	if value, exists := e.Properties[key]; exists {
 		return value
@@ -233,7 +217,6 @@ func (e *Exchange) GetPropertyOrDefault(key string, defaultValue any) any {
 	return defaultValue
 }
 
-// RemoveProperty removes a property from the exchange
 func (e *Exchange) RemoveProperty(key string) {
 	delete(e.Properties, key)
 	e.Modified = time.Now()
@@ -243,16 +226,13 @@ func (e *Exchange) RemoveProperty(key string) {
 // except those matching any of the exclusion patterns.
 // The pattern supports Apache Camel wildcards '*' (e.g. 'Camel*').
 func (e *Exchange) RemoveProperties(pattern string, excludePatterns ...string) {
-	// Compile the main pattern
 	mainRegex := patternToRegex(pattern)
 
-	// Compile the exclusion patterns
 	var excludeRegexes []*regexp.Regexp
 	for _, p := range excludePatterns {
 		excludeRegexes = append(excludeRegexes, patternToRegex(p))
 	}
 
-	// Filter properties
 	for key := range e.Properties {
 		if mainRegex.MatchString(key) {
 			shouldExclude := false
@@ -271,18 +251,15 @@ func (e *Exchange) RemoveProperties(pattern string, excludePatterns ...string) {
 	}
 }
 
-// HasProperty checks whether a property exists
 func (e *Exchange) HasProperty(key string) bool {
 	_, exists := e.Properties[key]
 	return exists
 }
 
-// GetProperties retrieves all properties
 func (e *Exchange) GetProperties() map[string]any {
 	return e.Properties
 }
 
-// SetProperties sets multiple properties
 func (e *Exchange) SetProperties(properties map[string]any) {
 	for key, value := range properties {
 		e.Properties[key] = value
@@ -290,13 +267,11 @@ func (e *Exchange) SetProperties(properties map[string]any) {
 	e.Modified = time.Now()
 }
 
-// ClearProperties removes all properties
 func (e *Exchange) ClearProperties() {
 	e.Properties = make(map[string]any)
 	e.Modified = time.Now()
 }
 
-// GetPropertyAsString retrieves a property as a string
 func (e *Exchange) GetPropertyAsString(key string) (string, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if str, ok := value.(string); ok {
@@ -306,7 +281,6 @@ func (e *Exchange) GetPropertyAsString(key string) (string, bool) {
 	return "", false
 }
 
-// GetPropertyAsInt retrieves a property as an integer
 func (e *Exchange) GetPropertyAsInt(key string) (int, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if i, ok := value.(int); ok {
@@ -320,7 +294,6 @@ func (e *Exchange) GetPropertyAsInt(key string) (int, bool) {
 	return 0, false
 }
 
-// GetPropertyAsBool retrieves a property as a boolean
 func (e *Exchange) GetPropertyAsBool(key string) (bool, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if b, ok := value.(bool); ok {
@@ -330,7 +303,6 @@ func (e *Exchange) GetPropertyAsBool(key string) (bool, bool) {
 	return false, false
 }
 
-// GetPropertyAsFloat retrieves a property as a floating-point number
 func (e *Exchange) GetPropertyAsFloat(key string) (float64, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if f, ok := value.(float64); ok {
@@ -340,7 +312,6 @@ func (e *Exchange) GetPropertyAsFloat(key string) (float64, bool) {
 	return 0, false
 }
 
-// GetPropertyAsTime retrieves a property as a time.Time
 func (e *Exchange) GetPropertyAsTime(key string) (time.Time, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if t, ok := value.(time.Time); ok {
@@ -350,7 +321,6 @@ func (e *Exchange) GetPropertyAsTime(key string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// GetPropertyAsDuration retrieves a property as a time.Duration
 func (e *Exchange) GetPropertyAsDuration(key string) (time.Duration, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if d, ok := value.(time.Duration); ok {
@@ -360,7 +330,6 @@ func (e *Exchange) GetPropertyAsDuration(key string) (time.Duration, bool) {
 	return 0, false
 }
 
-// GetPropertyAsMap retrieves a property as a map
 func (e *Exchange) GetPropertyAsMap(key string) (map[string]any, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if m, ok := value.(map[string]any); ok {
@@ -370,7 +339,6 @@ func (e *Exchange) GetPropertyAsMap(key string) (map[string]any, bool) {
 	return nil, false
 }
 
-// GetPropertyAsSlice retrieves a property as a slice
 func (e *Exchange) GetPropertyAsSlice(key string) ([]any, bool) {
 	if value, exists := e.Properties[key]; exists {
 		if s, ok := value.([]any); ok {
@@ -391,13 +359,10 @@ func (e *Exchange) PropagateOutToIn() {
 	}
 }
 
-// Copy creates a copy of the exchange
 func (e *Exchange) Copy() *Exchange {
 	copy := NewExchange(e.Context)
 	copy.In = e.In.Copy()
 	copy.Out = e.Out.Copy()
-
-	// Copy properties
 	maps.Copy(copy.Properties, e.Properties)
 
 	copy.Created = e.Created
