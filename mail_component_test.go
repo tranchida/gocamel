@@ -314,8 +314,7 @@ Content-Type: text/plain; charset=utf-8
 
 This is a simple test message.`
 
-	consumer := &MailConsumer{}
-	bodyText, bodyHTML, attachments := consumer.parseMimeMessage([]byte(msg))
+	bodyText, bodyHTML, attachments := parseMimeMessageCommon([]byte(msg))
 
 	require.NotNil(t, bodyText)
 	assert.Contains(t, string(bodyText), "This is a simple test message")
@@ -344,8 +343,7 @@ Content-Type: text/html; charset=utf-8
 
 ------=_Part_test_123456--`, boundary)
 
-	consumer := &MailConsumer{}
-	bodyText, bodyHTML, attachments := consumer.parseMimeMessage([]byte(msg))
+	bodyText, bodyHTML, attachments := parseMimeMessageCommon([]byte(msg))
 
 	assert.NotNil(t, bodyText)
 	assert.Contains(t, string(bodyText), "plain text version")
@@ -374,8 +372,7 @@ func TestParseMimeMessageWithAttachment(t *testing.T) {
 		"%PDF-1.4 fake pdf content\r\n" +
 		"--boundary123--"
 
-	consumer := &MailConsumer{}
-	bodyText, bodyHTML, attachments := consumer.parseMimeMessage([]byte(msg))
+	bodyText, bodyHTML, attachments := parseMimeMessageCommon([]byte(msg))
 
 	assert.NotNil(t, bodyText)
 	assert.Contains(t, string(bodyText), "See attached file")
