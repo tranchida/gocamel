@@ -6,6 +6,20 @@ GoCamel supports multiple configuration strategies for credentials, endpoints, a
 
 ## Credential Sources
 
+`gocamel.GetConfigValue(url, key)` is the single entry point that every
+component uses to resolve a configuration value. It checks four sources in
+the following order — the first non-empty result wins:
+
+1. **Exact-name environment variable.** The key is used verbatim.
+   Example: `GetConfigValue(_, "OPENAI_API_KEY")` reads
+   `os.Getenv("OPENAI_API_KEY")`.
+2. **Scheme-prefixed environment variable.** Built by uppercasing
+   `scheme + "_" + key`. For an `ftp://` URI and key `password`, the lookup
+   is `os.Getenv("FTP_PASSWORD")`.
+3. **URI query parameter.** Example: `ftp://host?password=secret`.
+4. **URI userinfo**, for the well-known keys `username`/`user` and
+   `password`/`pass` only. Example: `ftp://user:pass@host`.
+
 ### Environment Variables (Recommended)
 
 Set sensitive data via environment variables:
@@ -17,23 +31,36 @@ export TELEGRAM_AUTHORIZATIONTOKEN="bot-token"
 export OPENAI_API_KEY="api-key"
 ```
 
-Access in routes:
+Routes then reference the option directly — the env var is picked up
+automatically:
 
 ```go
-builder.From("ftp://host?username=${env:FTP_USERNAME}")
+builder.From("ftp://host?username=myuser")  // FTP_PASSWORD comes from env
 ```
 
 ### Query Parameters
 
-Pass credentials as URI parameters:
+Pass options as URI query parameters:
 
 ```go
 builder.From("ftp://host?username=admin&password=secret")
 ```
 
-**Security Note:** Avoid hardcoding passwords. Use env vars.
+!!! danger "Credentials in URI queries are flagged at runtime"
+    URI strings routinely leak into connection-error logs, audit trails,
+    crash reports and proxy access logs. When `GetConfigValue` resolves a
+    credential-like key (`password`, `pass`, `secret`, `token`, `apikey`,
+    `api_key`, `accesskey`, `access_key`, `clientsecret`, `privatekey`) from
+    a query parameter, it emits a `WARN` log recommending env vars. The
+    warning carries only the scheme and the key name — never the value — and
+    is deduped per `(scheme, key)` pairing so a polling consumer cannot flood
+    the logs.
 
-### Direct in URI
+    Use environment variables in production. The userinfo form
+    (`user:pass@host`) is treated as the conventional URI way of carrying
+    credentials and is **not** warned about — you opted into it explicitly.
+
+### Direct in URI (userinfo form)
 
 ```go
 builder.From("ftp://user:pass@host:21/path")

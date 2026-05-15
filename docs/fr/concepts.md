@@ -29,6 +29,16 @@ Les Exchanges relaient également les accesseurs typés vers le message **In** :
 body, _ := exchange.GetBodyAsString()
 ```
 
+!!! warning "Thread-safety"
+    `Exchange` **n'est pas** sûr en utilisation concurrente. Les messages
+    `In`/`Out` et la map `Properties` n'ont aucun verrouillage interne. Les
+    EIPs qui font du fan-out vers plusieurs goroutines (`Multicast`,
+    `Splitter`, `RecipientList` en mode parallèle) appellent
+    `exchange.Copy()` une fois par branche **dans la goroutine appelante**
+    avant de lancer les workers — l'exchange parent est alors read-only le
+    temps du fan-out et redevient mutable une fois `wg.Wait()` retourné. Si
+    vous écrivez un EIP personnalisé qui fan-out, suivez le même schéma.
+
 ## Processeur (Processor)
 
 Une interface pour implémenter une logique personnalisée. Vous pouvez utiliser des instances directes, des closures ou
@@ -95,6 +105,64 @@ context := gocamel.NewCamelContext()
 context.AddRoute(route)
 context.Start()
 context.Stop()
+```
+
+### Arrêt propre (Graceful Shutdown)
+
+`Stop()` n'a pas de délai limite : si le `Stop()` d'un consumer bloque (par
+exemple un shutdown HTTP qui attend une connexion keep-alive inactive),
+`context.Stop()` bloque avec lui. En production, préférez
+`GracefulStop(timeout)` qui annule d'abord le contexte parent (pour que les
+consumers qui observent `ctx.Done()` sortent immédiatement de leur boucle de
+travail), puis attend jusqu'à `timeout` que toutes les routes terminent leur
+arrêt. Les routes encore actives à l'échéance sont abandonnées et l'appel
+retourne une erreur décrivant la situation.
+
+```go
+// Borne l'arrêt à 30 secondes.
+if err := context.GracefulStop(30 * time.Second); err != nil {
+    log.Printf("arrêt incomplet : %v", err)
+}
+```
+
+## Validation des routes
+
+`Route.Validate() error` parcourt le pipeline au moment du build et signale
+les problèmes qui n'apparaîtraient sinon qu'au premier message correspondant :
+
+- l'erreur de construction accumulée par `From()` (ex. un scheme de composant
+  inconnu),
+- l'absence d'endpoint source,
+- les erreurs de validation des processors implémentant l'interface
+  `Validator` (notamment `ChoiceProcessor`, dont les expressions Simple des
+  clauses `When` sont re-parsées pour faire remonter les erreurs de syntaxe).
+
+`Start()` **n'appelle pas** `Validate()` automatiquement — c'est un opt-in
+destiné aux tests et à la CI pour échouer tôt sur des routes mal formées :
+
+```go
+route, err := context.CreateRouteBuilder().
+    From("direct:start").
+    Choice().
+        When("${header.priority == 'high'}").To("direct:urgent").
+        Otherwise().To("direct:normal").
+    EndChoice().
+    Build()
+if err != nil {
+    log.Fatal(err)
+}
+if err := route.Validate(); err != nil {
+    log.Fatalf("route invalide : %v", err) // attraperait ici une expression When malformée
+}
+```
+
+Les processors personnalisés peuvent se brancher sur le même mécanisme en
+implémentant l'interface `Validator` :
+
+```go
+type Validator interface {
+    Validate() error
+}
 ```
 
 ## Monitoring (Observabilité)

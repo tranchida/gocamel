@@ -150,6 +150,43 @@ builder.To("http://api.example.com/data?httpMethod=POST")
 | `httpMethod`     | string | `GET`   | HTTP method for producer |
 | `bridgeEndpoint` | bool   | `false` | Bridge consumer endpoint |
 
+#### Authentication, TLS, rate limiting (consumer middleware)
+
+The HTTP consumer ships with **no authentication**. Expose it to an untrusted
+network only behind a middleware that enforces the security model you need
+(token check, mTLS, OAuth, IP allowlist, rate limit, ...). Install the
+middleware on the `HTTPComponent` before the route starts:
+
+```go
+http := gocamel.NewHTTPComponent()
+http.SetMiddleware(func(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.Header.Get("Authorization") != "Bearer "+os.Getenv("API_TOKEN") {
+            http.Error(w, "unauthorized", http.StatusUnauthorized)
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+})
+ctx.AddComponent("http", http)
+```
+
+The middleware wraps every handler installed by an `http://` consumer in this
+context.
+
+#### Outbound header sanitisation
+
+Both the HTTP producer (`To`) and the consumer response path reject header
+names and values containing `\r` or `\n` (CRLF) to prevent HTTP response
+splitting (CWE-113). An exchange that tries to set such a header gets an
+error back from `Send()`.
+
+#### Shutdown
+
+The consumer goroutine is tracked by an internal `WaitGroup` and `Stop()`
+waits for `http.Server.Shutdown` to complete (bounded by a 30-second
+internal deadline) before returning. `Stop()` is idempotent.
+
 ---
 
 ## Messaging Components

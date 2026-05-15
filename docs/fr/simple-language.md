@@ -356,6 +356,29 @@ Encodage et décodage de données en Base64.
 
 ---
 
+## Limite de taille des entrées
+
+`gocamel.MaxSimpleInputBytes` est une variable de package (par défaut **1
+MiB**) qui borne le coût des dizaines de regex compilées du Simple Language.
+Elle protège contre des attaques de type ReDoS via des bodies ou headers
+contrôlés par un attaquant :
+
+- `ParseSimpleTemplate` rejette les expressions plus grandes que la limite
+  et retourne une erreur.
+- `gocamel.Interpolate` retourne l'entrée inchangée si elle dépasse la
+  limite, avec un log `WARN`.
+
+Si vos routes interpolent légitimement de gros templates, augmentez la
+valeur explicitement au démarrage :
+
+```go
+import "gitlab.com/tranchida/gocamel"
+
+func init() {
+    gocamel.MaxSimpleInputBytes = 8 << 20 // 8 MiB
+}
+```
+
 ---
 
 *For more examples, see | Pour plus d'exemples, voir: [examples.md](examples.md)*

@@ -100,15 +100,53 @@ builder.From("smb://server/share/folder")
 
 ### HTTP
 
-HTTP server and client.
+Serveur et client HTTP.
 
 ```go
-// Consumer (server)
+// Consumer (serveur)
 builder.From("http://localhost:8080/api")
 
 // Producer (client)
 builder.To("http://example.com/webhook")
 ```
+
+#### Authentification, TLS, rate limiting (middleware consumer)
+
+Le consumer HTTP ne fournit **aucune authentification par défaut**. Ne
+l'exposez sur un réseau non fiable qu'à travers un middleware qui applique
+le modèle de sécurité dont vous avez besoin (vérification de token, mTLS,
+OAuth, allowlist d'IP, rate limit, ...). Installez le middleware sur
+`HTTPComponent` avant le démarrage de la route :
+
+```go
+http := gocamel.NewHTTPComponent()
+http.SetMiddleware(func(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.Header.Get("Authorization") != "Bearer "+os.Getenv("API_TOKEN") {
+            http.Error(w, "unauthorized", http.StatusUnauthorized)
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+})
+ctx.AddComponent("http", http)
+```
+
+Le middleware enveloppe chaque handler installé par un consumer `http://`
+dans ce contexte.
+
+#### Sanitisation des headers sortants
+
+Le producer HTTP (`To`) et le chemin de réponse du consumer rejettent les
+noms et valeurs de header contenant `\r` ou `\n` (CRLF) pour empêcher le
+HTTP response splitting (CWE-113). Un exchange qui tente de positionner un
+tel header reçoit une erreur de `Send()`.
+
+#### Arrêt
+
+La goroutine du consumer est suivie par un `WaitGroup` interne et `Stop()`
+attend que `http.Server.Shutdown` se termine (borné par un délai interne de
+30 secondes) avant de retourner. `Stop()` est idempotent.
 
 ---
 

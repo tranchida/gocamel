@@ -199,3 +199,28 @@ Encoding and decoding of data using Base64.
 |---------------------------|---------------------------|--------------------------------|
 | `${base64:encode:target}` | Encode target to Base64   | `${base64:encode:body}`        |
 | `${base64:decode:target}` | Decode target from Base64 | `${base64:decode:header.auth}` |
+
+---
+
+## Input Size Limit
+
+`gocamel.MaxSimpleInputBytes` is a package-level variable (default **1 MiB**)
+that bounds the cost of the dozens of compiled regex patterns the Simple
+Language uses. It guards against ReDoS-style denial of service from
+attacker-controlled bodies or headers:
+
+- `ParseSimpleTemplate` rejects expressions larger than the limit and returns
+  an error.
+- `gocamel.Interpolate` returns the input unchanged when it exceeds the
+  limit, with a `WARN` log.
+
+If your routes legitimately interpolate large templates, raise the value
+deliberately at startup:
+
+```go
+import "gitlab.com/tranchida/gocamel"
+
+func init() {
+    gocamel.MaxSimpleInputBytes = 8 << 20 // 8 MiB
+}
+```

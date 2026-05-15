@@ -29,6 +29,15 @@ Exchanges also proxy typed accessors to the **In** message:
 body, _ := exchange.GetBodyAsString()
 ```
 
+!!! warning "Thread-safety"
+    `Exchange` is **not** safe for concurrent use. The `In`/`Out` messages and
+    the `Properties` map have no internal locking. EIPs that fan out to
+    multiple goroutines (`Multicast`, `Splitter`, `RecipientList` in parallel
+    mode) call `exchange.Copy()` once per branch in the caller goroutine
+    before launching workers — the parent exchange is then read-only for the
+    duration of the fan-out and becomes writable again after `wg.Wait()`
+    returns. If you write a custom EIP that fans out, follow the same pattern.
+
 ## Processor
 
 An interface for implementing custom logic. You can use direct instances, closures, or references from the registry.
@@ -94,6 +103,63 @@ context := gocamel.NewCamelContext()
 context.AddRoute(route)
 context.Start()
 context.Stop()
+```
+
+### Graceful Shutdown
+
+`Stop()` has no deadline: if a consumer's `Stop()` blocks (for example an HTTP
+shutdown waiting on an idle keep-alive), `context.Stop()` blocks with it. For
+production use prefer `GracefulStop(timeout)`, which cancels the parent
+context first (so consumers observing `ctx.Done()` unwind their work loops
+immediately) and then waits up to `timeout` for every route to finish
+stopping. Routes still running after the deadline are abandoned and the call
+returns an error describing the situation.
+
+```go
+// Bound shutdown to 30 seconds.
+if err := context.GracefulStop(30 * time.Second); err != nil {
+    log.Printf("graceful stop incomplete: %v", err)
+}
+```
+
+## Route Validation
+
+`Route.Validate() error` walks the pipeline at build time and reports problems
+that would otherwise surface only on the first matching message:
+
+- the accumulated construction error from `From()` (e.g. an unknown component
+  scheme),
+- the absence of a source endpoint,
+- validation errors from any processor implementing the `Validator` interface
+  (notably `ChoiceProcessor`, whose When-clause Simple expressions are
+  re-parsed to surface syntax errors).
+
+`Start()` does **not** call `Validate()` automatically — opt in from tests or
+CI to fail fast on broken routes:
+
+```go
+route, err := context.CreateRouteBuilder().
+    From("direct:start").
+    Choice().
+        When("${header.priority == 'high'}").To("direct:urgent").
+        Otherwise().To("direct:normal").
+    EndChoice().
+    Build()
+if err != nil {
+    log.Fatal(err)
+}
+if err := route.Validate(); err != nil {
+    log.Fatalf("invalid route: %v", err) // would catch a malformed When expression here
+}
+```
+
+Custom processors can plug into the same mechanism by implementing the
+`Validator` interface:
+
+```go
+type Validator interface {
+    Validate() error
+}
 ```
 
 ## Monitoring (Observability)
