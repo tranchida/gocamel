@@ -67,19 +67,47 @@ func (f *RSSDataFormat) Marshal(_ *Exchange, body any) (any, error) {
 }
 
 // Unmarshal converts RSS XML into an RSSFeed.
+//
+// Security: DOCTYPE declarations are rejected to prevent denial-of-service
+// attacks via recursive entity expansion (CWE-776, "Billion Laughs"). Go's
+// encoding/xml does not resolve external entities so classic XXE is not
+// reachable, but a malicious feed can still ship internal entity references
+// that explode the in-memory representation.
 func (f *RSSDataFormat) Unmarshal(_ *Exchange, body any) (any, error) {
 	data, err := bodyToBytes(body)
 	if err != nil {
 		return nil, fmt.Errorf("rss unmarshal expects XML string, []byte, or io.Reader: %w", err)
 	}
+
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder.Strict = true
+
 	var feed RSSFeed
-	if err := xml.Unmarshal(data, &feed); err != nil {
-		return nil, fmt.Errorf("rss unmarshal failed: %w", err)
+	for {
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("rss unmarshal failed: %w", err)
+		}
+		switch t := tok.(type) {
+		case xml.Directive:
+			// Reject any <!DOCTYPE ...> declaration.
+			if bytes.HasPrefix(bytes.TrimSpace(t), []byte("DOCTYPE")) {
+				return nil, fmt.Errorf("rss unmarshal: DOCTYPE declarations are not allowed")
+			}
+		case xml.StartElement:
+			if t.Name.Local != "rss" {
+				return nil, fmt.Errorf("rss unmarshal expected <rss> root element, got <%s>", t.Name.Local)
+			}
+			if err := decoder.DecodeElement(&feed, &t); err != nil {
+				return nil, fmt.Errorf("rss unmarshal failed: %w", err)
+			}
+			return &feed, nil
+		}
 	}
-	if feed.XMLName.Local != "rss" {
-		return nil, fmt.Errorf("rss unmarshal expected <rss> root element, got <%s>", feed.XMLName.Local)
-	}
-	return &feed, nil
+	return nil, fmt.Errorf("rss unmarshal: no <rss> root element found")
 }
 
 func coerceRSSFeed(body any) (*RSSFeed, error) {

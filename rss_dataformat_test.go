@@ -85,5 +85,21 @@ func TestRSSDataFormat_UnmarshalRejectsNonRSSRoot(t *testing.T) {
 	df := NewRSSDataFormat()
 	_, err := df.Unmarshal(nil, `<feed><title>Atom</title></feed>`)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rss unmarshal failed")
+	assert.Contains(t, err.Error(), "expected <rss> root element")
+}
+
+// TestRSSDataFormat_UnmarshalRejectsDOCTYPE verifies that DOCTYPE declarations
+// are refused. Allowing them would expose the consumer to recursive internal
+// entity expansion attacks (Billion Laughs / CWE-776).
+func TestRSSDataFormat_UnmarshalRejectsDOCTYPE(t *testing.T) {
+	df := NewRSSDataFormat()
+	payload := `<?xml version="1.0"?>
+<!DOCTYPE lolz [
+  <!ENTITY lol "lol">
+  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;">
+]>
+<rss version="2.0"><channel><title>&lol2;</title></channel></rss>`
+	_, err := df.Unmarshal(nil, payload)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DOCTYPE")
 }

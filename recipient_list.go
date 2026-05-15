@@ -163,12 +163,18 @@ func (r *RecipientList) processSequential(exchange *Exchange, uris []string) err
 		recipientExchange.SetProperty(CamelRecipientListSize, len(uris))
 		recipientExchange.SetProperty(CamelRecipientListComplete, i == len(uris)-1)
 
-		// Create a producer processor for this URI
+		// Create a producer processor for this URI. The producer is stopped
+		// after sending to avoid leaking resources — recipient lists routinely
+		// fan out to dozens of URIs that may each open a connection.
 		processor := newLazyProducer(r.context, uri)
+		processErr := processor.Process(recipientExchange)
+		if stopErr := processor.Stop(); stopErr != nil {
+			logError("recipient list: producer stop error", "uri", uri, "error", stopErr)
+		}
 
-		if err := processor.Process(recipientExchange); err != nil {
-			if !errors.Is(err, ErrStopRouting) {
-				return fmt.Errorf("recipient list error sending to %s: %w", uri, err)
+		if processErr != nil {
+			if !errors.Is(processErr, ErrStopRouting) {
+				return fmt.Errorf("recipient list error sending to %s: %w", uri, processErr)
 			}
 			// In case of Stop EIP, ignore the error and continue to the next recipient
 		}
@@ -193,17 +199,30 @@ func (r *RecipientList) processParallel(exchange *Exchange, uris []string) error
 	var aggregatedExchange *Exchange
 	var firstErr error
 
+	// Copy and configure each branch exchange in the caller goroutine BEFORE
+	// spawning workers (see Multicast.processParallel for rationale).
+	branches := make([]*Exchange, len(uris))
+	for i := range uris {
+		recipientExchange := exchange.Copy()
+		recipientExchange.SetProperty(CamelRecipientListIndex, i)
+		recipientExchange.SetProperty(CamelRecipientListSize, len(uris))
+		recipientExchange.SetProperty(CamelRecipientListComplete, i == len(uris)-1)
+		branches[i] = recipientExchange
+	}
+
 	for i, uri := range uris {
 		wg.Add(1)
-		go func(index int, uri string) {
+		go func(index int, uri string, recipientExchange *Exchange) {
 			defer wg.Done()
 
-			recipientExchange := exchange.Copy()
-			recipientExchange.SetProperty(CamelRecipientListIndex, index)
-			recipientExchange.SetProperty(CamelRecipientListSize, len(uris))
-			recipientExchange.SetProperty(CamelRecipientListComplete, index == len(uris)-1)
-
 			processor := newLazyProducer(r.context, uri)
+			// Stop the per-call producer after sending — mirrors the fix
+			// applied to dynamic_router to avoid leaking producer resources.
+			defer func() {
+				if stopErr := processor.Stop(); stopErr != nil {
+					logError("recipient list: producer stop error", "uri", uri, "error", stopErr)
+				}
+			}()
 
 			err := processor.Process(recipientExchange)
 
@@ -220,7 +239,7 @@ func (r *RecipientList) processParallel(exchange *Exchange, uris []string) error
 			if r.AggregationStrategy != nil {
 				aggregatedExchange = r.AggregationStrategy.Aggregate(aggregatedExchange, recipientExchange)
 			}
-		}(i, uri)
+		}(i, uri, branches[i])
 	}
 
 	wg.Wait()

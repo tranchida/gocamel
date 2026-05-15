@@ -91,15 +91,24 @@ func (m *Multicast) processParallel(exchange *Exchange) error {
 	var aggregatedExchange *Exchange
 	var firstErr error
 
+	// Copy and configure each branch exchange in the caller goroutine BEFORE
+	// spawning workers. Doing the Copy inside each goroutine would cause N
+	// concurrent reads of the parent exchange maps (Properties, Headers),
+	// which is safe in Go but trips the race detector under load and couples
+	// the branches to the parent's lifetime in subtle ways.
+	branches := make([]*Exchange, len(m.processors))
+	for i := range m.processors {
+		branchExchange := exchange.Copy()
+		branchExchange.SetProperty(CamelMulticastIndex, i)
+		branchExchange.SetProperty(CamelMulticastSize, len(m.processors))
+		branchExchange.SetProperty(CamelMulticastComplete, i == len(m.processors)-1)
+		branches[i] = branchExchange
+	}
+
 	for i, p := range m.processors {
 		wg.Add(1)
-		go func(index int, processor Processor) {
+		go func(index int, processor Processor, branchExchange *Exchange) {
 			defer wg.Done()
-
-			branchExchange := exchange.Copy()
-			branchExchange.SetProperty(CamelMulticastIndex, index)
-			branchExchange.SetProperty(CamelMulticastSize, len(m.processors))
-			branchExchange.SetProperty(CamelMulticastComplete, index == len(m.processors)-1)
 
 			err := processor.Process(branchExchange)
 
@@ -116,7 +125,7 @@ func (m *Multicast) processParallel(exchange *Exchange) error {
 			if m.AggregationStrategy != nil {
 				aggregatedExchange = m.AggregationStrategy.Aggregate(aggregatedExchange, branchExchange)
 			}
-		}(i, p)
+		}(i, p, branches[i])
 	}
 
 	wg.Wait()

@@ -192,9 +192,12 @@ func (p *SQLProducer) Send(exchange *Exchange) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	query = Interpolate(query, exchange)
 
-	// Security: validate the interpolated query against SQL injection
+	// SECURITY: the query is intentionally NOT interpolated with Exchange data.
+	// Interpolating ${header.X} into the SQL string would defeat parameterised
+	// queries and enable SQL injection. Bind dynamic values via the
+	// CamelSqlParameters header (positional '?' placeholders) or via the body
+	// when it is a []any. The query string is treated as trusted configuration.
 	if err := validateSQLQuery(query); err != nil {
 		return fmt.Errorf("sql: query validation failed: %w", err)
 	}

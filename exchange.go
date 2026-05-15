@@ -89,7 +89,15 @@ type Synchronization interface {
 	OnFailure(exchange *Exchange)
 }
 
-// Exchange represents the exchange context of a message in a route
+// Exchange represents the exchange context of a message in a route.
+//
+// Thread-safety: Exchange is NOT safe for concurrent use. The In/Out Message
+// objects and the Properties map have no internal synchronization. Components
+// and EIPs that fan out to multiple goroutines (Multicast, Splitter,
+// RecipientList) MUST call Copy() once per branch in the parent goroutine
+// before launching workers. The parent Exchange is read-only for the duration
+// of the fan-out and only becomes writable again after wg.Wait() returns and
+// the aggregation strategy publishes its result back.
 type Exchange struct {
 	ID               string
 	Context          context.Context

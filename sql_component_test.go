@@ -250,7 +250,11 @@ func TestSQLProducer_HeaderOverridesQuery(t *testing.T) {
 	assert.Equal(t, "Alice", results[0]["name"])
 }
 
-func TestSQLProducer_InterpolateHeader(t *testing.T) {
+// TestSQLProducer_DoesNotInterpolateQuery verifies that ${...} placeholders in
+// a SQL query are NOT substituted with Exchange data. Interpolating headers or
+// body into the raw query string would defeat parameterised queries and enable
+// SQL injection. Dynamic values must be bound via the SqlParameters header.
+func TestSQLProducer_DoesNotInterpolateQuery(t *testing.T) {
 	db := newTestSQLDB(t)
 	comp := NewSQLComponent()
 	comp.RegisterDataSource("testdb", db)
@@ -266,12 +270,9 @@ func TestSQLProducer_InterpolateHeader(t *testing.T) {
 	exchange.GetIn().SetHeader("table", "users")
 	exchange.GetIn().SetHeader(SqlParameters, []any{1})
 
-	require.NoError(t, producer.Send(exchange))
-
-	results, ok := exchange.GetOut().GetBody().([]map[string]any)
-	require.True(t, ok)
-	require.Len(t, results, 1)
-	assert.Equal(t, "Alice", results[0]["name"])
+	err = producer.Send(exchange)
+	require.Error(t, err, "query with ${header.table} must NOT be interpolated; the driver should reject the literal $ token")
+	assert.Contains(t, err.Error(), "$", "the literal ${header.table} should be passed to the driver as-is")
 }
 
 func TestSQLComponent_DefaultDataSource(t *testing.T) {

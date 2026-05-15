@@ -615,6 +615,7 @@ type MailConsumer struct {
 	endpoint  *MailEndpoint
 	processor Processor
 	stopChan  chan struct{}
+	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	client    *imapclient.Client
 	mu        sync.Mutex
@@ -1612,9 +1613,11 @@ func (c *MailConsumer) getBoolHeader(exchange *Exchange, header string) bool {
 	return false
 }
 
-// Stop stops the mail consumer.
+// Stop stops the mail consumer. Safe to call multiple times: the stop channel
+// is closed at most once via sync.Once to prevent a "close of closed channel"
+// panic when Stop() is invoked more than once (e.g. during CamelContext rollback).
 func (c *MailConsumer) Stop() error {
-	close(c.stopChan)
+	c.stopOnce.Do(func() { close(c.stopChan) })
 	c.wg.Wait()
 	c.disconnect()
 	return nil
@@ -1723,6 +1726,7 @@ type Pop3Consumer struct {
 	endpoint  *MailEndpoint
 	processor Processor
 	stopChan  chan struct{}
+	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	client    *pop3.Conn
 	mu        sync.Mutex
@@ -2059,9 +2063,11 @@ func (c *Pop3Consumer) getBoolHeader(exchange *Exchange, header string) bool {
 	return false
 }
 
-// Stop stops the POP3 consumer.
+// Stop stops the POP3 consumer. Safe to call multiple times: the stop channel
+// is closed at most once via sync.Once to prevent a "close of closed channel"
+// panic when Stop() is invoked more than once (e.g. during CamelContext rollback).
 func (c *Pop3Consumer) Stop() error {
-	close(c.stopChan)
+	c.stopOnce.Do(func() { close(c.stopChan) })
 	c.wg.Wait()
 	c.disconnect()
 	return nil
