@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // CamelContext represents the main application context
@@ -122,6 +123,10 @@ func (c *CamelContext) Start() error {
 
 // Stop stops the context and all its routes.
 // All routes are stopped even if some fail; errors are collected and returned as a combined error.
+//
+// Stop has no deadline: if a consumer's Stop() blocks (e.g. an HTTP shutdown
+// waiting on an idle keep-alive), Stop() blocks with it. Use GracefulStop
+// to bound the total shutdown time.
 func (c *CamelContext) Stop() error {
 	c.startLock.Lock()
 	defer c.startLock.Unlock()
@@ -130,7 +135,6 @@ func (c *CamelContext) Stop() error {
 		return nil
 	}
 
-	// Stop all routes, collecting errors
 	var errs []error
 	for _, route := range c.routes {
 		if err := route.Stop(); err != nil {
@@ -146,6 +150,52 @@ func (c *CamelContext) Stop() error {
 	}
 	return nil
 }
+
+// GracefulStop is like Stop but bounded by timeout. It cancels the context
+// before stopping routes so consumers observing ctx.Done() unwind their work
+// loops as early as possible, then waits up to timeout for every route to
+// finish stopping. Routes still running after the deadline are abandoned and
+// an error is returned so the caller can decide whether to escalate (e.g. log
+// and exit).
+func (c *CamelContext) GracefulStop(timeout time.Duration) error {
+	c.startLock.Lock()
+	defer c.startLock.Unlock()
+
+	if !c.started {
+		return nil
+	}
+
+	// Cancel the parent context first so consumers using ctx.Done()
+	// short-circuit their work loops immediately.
+	c.cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		var errs []error
+		for _, route := range c.routes {
+			if err := route.Stop(); err != nil {
+				errs = append(errs, fmt.Errorf("route %s: %w", route.ID, err))
+			}
+		}
+		if len(errs) > 0 {
+			done <- fmt.Errorf("errors stopping routes: %v", errs)
+			return
+		}
+		done <- nil
+	}()
+
+	select {
+	case err := <-done:
+		c.started = false
+		return err
+	case <-time.After(timeout):
+		// We mark the context as stopped to prevent re-entry, but the
+		// background goroutine keeps running until the slow route(s) yield.
+		c.started = false
+		return fmt.Errorf("graceful stop timed out after %s; one or more routes are still shutting down", timeout)
+	}
+}
+
 
 // IsStarted checks whether the context is started (uses RLock for read-only access).
 func (c *CamelContext) IsStarted() bool {

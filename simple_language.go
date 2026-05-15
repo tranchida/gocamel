@@ -141,8 +141,16 @@ func ParseSimpleExpression(expression string) (Expression, error) {
 	return template, nil
 }
 
-// ParseSimpleTemplate parses a simple expression template
+// ParseSimpleTemplate parses a simple expression template.
+//
+// SECURITY: expressions larger than MaxSimpleInputBytes are rejected.
+// This caps the cost of regex evaluation by the dozens of compiled patterns
+// used by the simple language and prevents denial-of-service through
+// crafted templates.
 func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
+	if len(expression) > MaxSimpleInputBytes {
+		return nil, fmt.Errorf("simple template exceeds MaxSimpleInputBytes (%d > %d)", len(expression), MaxSimpleInputBytes)
+	}
 	template := &SimpleTemplate{
 		expression: expression,
 		parts:      make([]templatePart, 0),

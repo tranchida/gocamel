@@ -7,6 +7,15 @@ import (
 	"strings"
 )
 
+// MaxSimpleInputBytes caps the size of input strings passed to Interpolate
+// and to the Simple Language parser. Inputs above this size are left
+// unchanged by Interpolate (and rejected by Simple Language parsing) to
+// bound the cost of regex evaluation and prevent ReDoS-style denial of
+// service via crafted Exchange bodies or headers. The default of 1 MiB is
+// far above any reasonable interpolation use case; raise it deliberately if
+// your routes legitimately interpolate large templates.
+var MaxSimpleInputBytes = 1 << 20
+
 // ParseURI parses an endpoint URI into a *url.URL.
 // Returns an error if the URI is malformed.
 func ParseURI(uri string) (*url.URL, error) {
@@ -17,13 +26,23 @@ func ParseURI(uri string) (*url.URL, error) {
 	return u, nil
 }
 
+var interpolateRegex = regexp.MustCompile(`\${(header|property|body)(?:\.([^}]+))?}`)
+
 // Interpolate replaces ${header.name}, ${property.name} and ${body} placeholders
 // in a string with values from the Exchange. Used by ToD (To Dynamic) for
 // runtime URI resolution.
+//
+// SECURITY: inputs larger than MaxSimpleInputBytes are returned unchanged.
+// This caps the worst-case cost of the substitution regex and prevents an
+// attacker-controlled Exchange body from triggering pathological backtracking.
 func Interpolate(text string, exchange *Exchange) string {
-	re := regexp.MustCompile(`\${(header|property|body)(?:\.([^}]+))?}`)
-	return re.ReplaceAllStringFunc(text, func(match string) string {
-		submatches := re.FindStringSubmatch(match)
+	if len(text) > MaxSimpleInputBytes {
+		logError("Interpolate: input exceeds MaxSimpleInputBytes; returning unchanged",
+			"size", len(text), "limit", MaxSimpleInputBytes)
+		return text
+	}
+	return interpolateRegex.ReplaceAllStringFunc(text, func(match string) string {
+		submatches := interpolateRegex.FindStringSubmatch(match)
 		if len(submatches) < 2 {
 			return match
 		}

@@ -57,6 +57,13 @@ func (e *SFTPEndpoint) URI() string {
 
 func (e *SFTPEndpoint) getHostKeyCallback(u *url.URL) (ssh.HostKeyCallback, error) {
 	if strings.EqualFold(GetConfigValue(u, "strictHostKeyChecking"), "false") {
+		// SECURITY: this disables SSH host key verification entirely and
+		// exposes the connection to active man-in-the-middle attacks. We
+		// log a loud warning on every connect so the choice is visible
+		// in operational logs, not buried in a URI parameter.
+		logError("SFTP host key verification DISABLED (strictHostKeyChecking=false). "+
+			"Connection is vulnerable to MITM — do not use against untrusted networks.",
+			"host", u.Host)
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
 	knownHostsFile := GetConfigValue(u, "knownHostsFile")

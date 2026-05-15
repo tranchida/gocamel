@@ -59,6 +59,23 @@ func (cp *ChoiceProcessor) OtherwiseFunc(f func(*Exchange) error) *ChoiceProcess
 	return cp.Otherwise(ProcessorFunc(f))
 }
 
+// Validate pre-parses every When-clause expression so a malformed Simple
+// template is reported at build time (typically from Route.Validate) instead
+// of at the first matching message. Returns the first parse failure.
+func (cp *ChoiceProcessor) Validate() error {
+	for i, when := range cp.whens {
+		if when.template != nil {
+			continue
+		}
+		template, err := ParseSimpleTemplate(when.Expression)
+		if err != nil {
+			return fmt.Errorf("choice when[%d] %q: %w", i, when.Expression, err)
+		}
+		when.template = template
+	}
+	return nil
+}
+
 // Process implements the Processor interface
 func (cp *ChoiceProcessor) Process(exchange *Exchange) error {
 	// Evaluate When clauses in order

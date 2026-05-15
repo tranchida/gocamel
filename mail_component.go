@@ -104,8 +104,8 @@ func (c *MailComponent) SetDefaultFrom(from string) {
 
 // SetDefaultSubject sets the default email subject.
 func (c *MailComponent) SetDefaultSubject(subject string) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.defaultSubject = subject
 }
 
@@ -581,7 +581,13 @@ func (p *MailProducer) trySendMail(addr string, auth smtp.Auth, from string, rec
 		return client.Quit()
 	}
 
-	// Standard SMTP with STARTTLS if available
+	// Standard SMTP with STARTTLS if available.
+	// SECURITY: smtp.SendMail attempts STARTTLS but silently falls back to
+	// cleartext if the server does not advertise it. Credentials and the
+	// message body may travel unencrypted. Use ProtocolSMTPS or a server that
+	// requires STARTTLS to guarantee encryption.
+	logError("SMTP cleartext: STARTTLS is opportunistic — credentials may travel unencrypted. "+
+		"Use smtps:// for guaranteed TLS.", "host", ep.host, "port", ep.port)
 	return smtp.SendMail(addr, auth, from, recipients, message)
 }
 
@@ -714,9 +720,16 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 			logDebug("Mail IDLE active, waiting for notifications")
 		}
 
-		// Wait for either a notification or a stop signal
+		// Wait for either a notification or a stop signal.
+		// The inner goroutine is tracked by idleWG so we can guarantee it
+		// has fully unwound before returning from the iteration — otherwise
+		// a future imap client whose Wait() ignored Close() would leak a
+		// goroutine per IDLE cycle.
 		idleDone := make(chan error, 1)
+		var idleWG sync.WaitGroup
+		idleWG.Add(1)
 		go func() {
+			defer idleWG.Done()
 			// Wait blocks until a notification arrives or IDLE ends
 			err := idleCmd.Wait()
 			idleDone <- err
@@ -726,18 +739,21 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 		case <-c.stopChan:
 			// Stop requested
 			idleCmd.Close()
+			idleWG.Wait()
 
 			return nil
 
 		case <-parentCtx.Done():
 			// Context cancelled
 			idleCmd.Close()
+			idleWG.Wait()
 
 			return nil
 
 		case err := <-idleDone:
 			// IDLE ended (notification or error)
 			idleCmd.Close()
+			idleWG.Wait()
 
 			if err != nil {
 				if ep.debugMode {
@@ -1870,6 +1886,11 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 	// TLS for POP3S
 	if ep.isSecure() {
 		clientOpt.TLSEnabled = true
+	} else {
+		// SECURITY: POP3 without TLS transmits the password and every fetched
+		// message in cleartext. Use pop3s:// to enable TLS.
+		logError("POP3 cleartext: password and messages travel unencrypted. "+
+			"Use pop3s:// for TLS.", "host", ep.host, "port", ep.port)
 	}
 
 	// Create client and obtain a connection

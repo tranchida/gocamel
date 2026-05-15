@@ -18,6 +18,15 @@ type Processor interface {
 	Process(exchange *Exchange) error
 }
 
+// Validator is an optional interface that processors can implement to support
+// build-time validation. Route.Validate() walks the pipeline and aggregates
+// validation errors so misconfigured Simple expressions, endpoint URIs, or
+// other late-resolving bugs surface before Start() instead of on the first
+// matching message.
+type Validator interface {
+	Validate() error
+}
+
 // ProcessorContainer defines the interface for objects that can hold processors.
 // This enables nesting of EIPs such as the Splitter.
 type ProcessorContainer interface {
@@ -202,6 +211,36 @@ func (r *Route) resetErrorHandlerState(exchange *Exchange) {
 	if rr, ok := r.errorHandler.(RetryResettable); ok {
 		rr.ResetRetryState(exchange.ID)
 	}
+}
+
+// Validate reports problems with the route detected at build time:
+//   - the accumulated construction error from From() (e.g. an unknown
+//     component scheme),
+//   - the absence of a source endpoint,
+//   - validation errors from any processor implementing the Validator
+//     interface (e.g. Choice when-clause expressions that fail to parse).
+//
+// Call Validate before Start in tests or CI to fail fast on broken routes.
+// Start does NOT call Validate automatically — that would change the timing
+// of existing error reporting and could turn previously latent issues into
+// startup failures.
+func (r *Route) Validate() error {
+	if r.err != nil {
+		return r.err
+	}
+	if r.from == nil {
+		return fmt.Errorf("no source endpoint defined")
+	}
+	for i, p := range r.processors {
+		v, ok := p.(Validator)
+		if !ok {
+			continue
+		}
+		if err := v.Validate(); err != nil {
+			return fmt.Errorf("processor[%d]: %w", i, err)
+		}
+	}
+	return nil
 }
 
 // Start starts the route.
