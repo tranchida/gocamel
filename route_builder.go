@@ -61,92 +61,64 @@ func (b *RouteBuilder) ProcessFunc(f func(*Exchange) error) *RouteBuilder {
 
 // SetBody sets the output message body.
 func (b *RouteBuilder) SetBody(body interface{}) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		exchange.GetOut().SetBody(body)
-		return nil
-	})
+	b.container.AddProcessor(setBodyProcessor(body))
+	return b
 }
 
 // SetHeader sets a header on the output message.
 func (b *RouteBuilder) SetHeader(key string, value interface{}) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		exchange.GetOut().SetHeader(key, value)
-		return nil
-	})
+	b.container.AddProcessor(setHeaderProcessor(key, value))
+	return b
 }
 
 // SetHeaders sets multiple headers on the output message.
 func (b *RouteBuilder) SetHeaders(headers map[string]any) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		exchange.GetOut().SetHeaders(headers)
-		return nil
-	})
+	b.container.AddProcessor(setHeadersProcessor(headers))
+	return b
 }
 
 // SetHeadersFunc sets multiple headers via a function.
 func (b *RouteBuilder) SetHeadersFunc(f func(*Exchange) (map[string]any, error)) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		headers, err := f(exchange)
-		if err != nil {
-			return err
-		}
-		exchange.GetOut().SetHeaders(headers)
-		return nil
-	})
+	b.container.AddProcessor(setHeadersFuncProcessor(f))
+	return b
 }
 
 // SetProperty sets a property on the exchange.
 func (b *RouteBuilder) SetProperty(key string, value any) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		exchange.SetProperty(key, value)
-		return nil
-	})
+	b.container.AddProcessor(setPropertyProcessor(key, value))
+	return b
 }
 
 // SetPropertyFunc sets a property on the exchange via a function.
 func (b *RouteBuilder) SetPropertyFunc(key string, f func(*Exchange) (any, error)) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		val, err := f(exchange)
-		if err != nil {
-			return err
-		}
-		exchange.SetProperty(key, val)
-		return nil
-	})
+	b.container.AddProcessor(setPropertyFuncProcessor(key, f))
+	return b
 }
 
 // RemoveProperty removes a property from the exchange.
 func (b *RouteBuilder) RemoveProperty(key string) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		exchange.RemoveProperty(key)
-		return nil
-	})
+	b.container.AddProcessor(removePropertyProcessor(key))
+	return b
 }
 
 // RemoveProperties removes all properties matching the given pattern,
 // excluding those that match any of the provided exclusion patterns.
 func (b *RouteBuilder) RemoveProperties(pattern string, excludePatterns ...string) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		exchange.RemoveProperties(pattern, excludePatterns...)
-		return nil
-	})
+	b.container.AddProcessor(removePropertiesProcessor(pattern, excludePatterns))
+	return b
 }
 
 // RemoveHeader removes a header from the incoming message.
 func (b *RouteBuilder) RemoveHeader(name string) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		exchange.GetIn().RemoveHeader(name)
-		return nil
-	})
+	b.container.AddProcessor(removeHeaderProcessor(name))
+	return b
 }
 
 // RemoveHeaders removes all headers matching the given pattern,
 // excluding those that match any of the provided exclusion patterns.
 func (b *RouteBuilder) RemoveHeaders(pattern string, excludePatterns ...string) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		exchange.GetIn().RemoveHeaders(pattern, excludePatterns...)
-		return nil
-	})
+	b.container.AddProcessor(removeHeadersProcessor(pattern, excludePatterns))
+	return b
 }
 
 // SetID sets the route ID.
@@ -175,241 +147,22 @@ func (b *RouteBuilder) Aggregate(aggregator *Aggregator) *RouteBuilder {
 	return b
 }
 
-// Split begins a Split EIP block.
-func (b *RouteBuilder) Split(expression func(*Exchange) (any, error)) *SplitDefinition {
-	s := NewSplitter(expression)
-	b.container.AddProcessor(s)
-
-	// Create a new RouteBuilder whose container is the splitter.
-	return &SplitDefinition{
-		RouteBuilder: &RouteBuilder{
-			context:   b.context,
-			route:     b.route,
-			container: s,
-		},
-		parent:   b,
-		splitter: s,
-	}
-}
-
-// SplitDefinition is a fluent sub-DSL for configuring the Split EIP.
-// It wraps an inner RouteBuilder whose container is the Splitter,
-// allowing .Process(), .To(), etc. on each split part before calling .End().
-type SplitDefinition struct {
-	*RouteBuilder
-	parent   *RouteBuilder
-	splitter *Splitter
-}
-
-// AggregationStrategy sets the aggregation strategy for the splitter.
-func (d *SplitDefinition) AggregationStrategy(strategy AggregationStrategy) *SplitDefinition {
-	d.splitter.SetAggregationStrategy(strategy)
-	return d
-}
-
-// Process adds a processor to the current container and stays in the split context.
-func (d *SplitDefinition) Process(processor Processor) *SplitDefinition {
-	d.RouteBuilder.Process(processor)
-	return d
-}
-
-// ProcessFunc adds a processing function to the current container and stays in the split context.
-func (d *SplitDefinition) ProcessFunc(f func(*Exchange) error) *SplitDefinition {
-	d.RouteBuilder.ProcessFunc(f)
-	return d
-}
-
-// To adds one or more destination endpoints to the current container and stays in the split context.
-func (d *SplitDefinition) To(uris ...string) *SplitDefinition {
-	d.RouteBuilder.To(uris...)
-	return d
-}
-
-// ToD adds one or more dynamic destination endpoints and stays in the split context.
-func (d *SplitDefinition) ToD(uriTemplates ...string) *SplitDefinition {
-	d.RouteBuilder.ToD(uriTemplates...)
-	return d
-}
-
-// RecipientList adds a Recipient List EIP that sends each split part to dynamic recipients.
-func (d *SplitDefinition) RecipientList(expression any) *SplitDefinition {
-	rl := NewRecipientList(d.context)
-	switch expr := expression.(type) {
-	case string:
-		if strings.Contains(expr, "${") {
-			rl.SetSimpleExpression(expr)
-		} else {
-			rl.SetStaticURIs(expr)
-		}
-	case func(*Exchange) ([]string, error):
-		rl.SetURIFunc(expr)
-	}
-	d.container.AddProcessor(rl)
-	return d
-}
-
-// RoutingSlip routes each split part through a dynamically resolved sequence of endpoints.
-func (d *SplitDefinition) RoutingSlip(expression any) *SplitDefinition {
-	d.RouteBuilder.RoutingSlip(expression)
-	return d
-}
-
-// SetBody sets the output message body and stays in the split context.
-func (d *SplitDefinition) SetBody(body interface{}) *SplitDefinition {
-	d.RouteBuilder.SetBody(body)
-	return d
-}
-
-// SetHeader sets a header on the output message and stays in the split context.
-func (d *SplitDefinition) SetHeader(key string, value interface{}) *SplitDefinition {
-	d.RouteBuilder.SetHeader(key, value)
-	return d
-}
-
-// Marshal adds a dataformat marshal step and stays in the split context.
-func (d *SplitDefinition) Marshal(dataFormat DataFormat) *SplitDefinition {
-	d.RouteBuilder.Marshal(dataFormat)
-	return d
-}
-
-// Unmarshal adds a dataformat unmarshal step and stays in the split context.
-func (d *SplitDefinition) Unmarshal(dataFormat DataFormat) *SplitDefinition {
-	d.RouteBuilder.Unmarshal(dataFormat)
-	return d
-}
-
-// MarshalRSS converts an RSSFeed body to RSS XML and stays in the split context.
-func (d *SplitDefinition) MarshalRSS() *SplitDefinition {
-	d.RouteBuilder.MarshalRSS()
-	return d
-}
-
-// UnmarshalRSS converts RSS XML into an RSSFeed body and stays in the split context.
-func (d *SplitDefinition) UnmarshalRSS() *SplitDefinition {
-	d.RouteBuilder.UnmarshalRSS()
-	return d
-}
-
-// SetHeaders sets multiple headers and stays in the split context.
-func (d *SplitDefinition) SetHeaders(headers map[string]any) *SplitDefinition {
-	d.RouteBuilder.SetHeaders(headers)
-	return d
-}
-
-// SetHeadersFunc sets multiple headers via a function and stays in the split context.
-func (d *SplitDefinition) SetHeadersFunc(f func(*Exchange) (map[string]any, error)) *SplitDefinition {
-	d.RouteBuilder.SetHeadersFunc(f)
-	return d
-}
-
-// SetProperty sets a property on the exchange and stays in the split context.
-func (d *SplitDefinition) SetProperty(key string, value any) *SplitDefinition {
-	d.RouteBuilder.SetProperty(key, value)
-	return d
-}
-
-// SetPropertyFunc sets a property via a function and stays in the split context.
-func (d *SplitDefinition) SetPropertyFunc(key string, f func(*Exchange) (any, error)) *SplitDefinition {
-	d.RouteBuilder.SetPropertyFunc(key, f)
-	return d
-}
-
-// RemoveProperty removes a property from the exchange and stays in the split context.
-func (d *SplitDefinition) RemoveProperty(key string) *SplitDefinition {
-	d.RouteBuilder.RemoveProperty(key)
-	return d
-}
-
-// RemoveProperties removes properties matching the given pattern and stays in the split context.
-func (d *SplitDefinition) RemoveProperties(pattern string, excludePatterns ...string) *SplitDefinition {
-	d.RouteBuilder.RemoveProperties(pattern, excludePatterns...)
-	return d
-}
-
-// RemoveHeader removes a header from the incoming message and stays in the split context.
-func (d *SplitDefinition) RemoveHeader(name string) *SplitDefinition {
-	d.RouteBuilder.RemoveHeader(name)
-	return d
-}
-
-// RemoveHeaders removes headers matching the given pattern and stays in the split context.
-func (d *SplitDefinition) RemoveHeaders(pattern string, excludePatterns ...string) *SplitDefinition {
-	d.RouteBuilder.RemoveHeaders(pattern, excludePatterns...)
-	return d
-}
-
-// Stop halts processing of the current part and stays in the split context.
-func (d *SplitDefinition) Stop() *SplitDefinition {
-	d.RouteBuilder.Stop()
-	return d
-}
-
-// Aggregate adds an aggregator and stays in the split context.
-func (d *SplitDefinition) Aggregate(aggregator *Aggregator) *SplitDefinition {
-	d.RouteBuilder.Aggregate(aggregator)
-	return d
-}
-
-// Log adds a log step and stays in the split context.
-func (d *SplitDefinition) Log(message string) *SplitDefinition {
-	d.RouteBuilder.Log(message)
-	return d
-}
-
-// LogBody adds a body log step and stays in the split context.
-func (d *SplitDefinition) LogBody(message string) *SplitDefinition {
-	d.RouteBuilder.LogBody(message)
-	return d
-}
-
-// LogHeaders adds a headers log step and stays in the split context.
-func (d *SplitDefinition) LogHeaders(message string) *SplitDefinition {
-	d.RouteBuilder.LogHeaders(message)
-	return d
-}
-
-// WireTap adds a WireTap step and stays in the split context.
-func (d *SplitDefinition) WireTap(uri string) *SplitDefinition {
-	d.RouteBuilder.WireTap(uri)
-	return d
-}
-
-// End terminates the Split block and returns to the parent builder.
-func (d *SplitDefinition) End() *RouteBuilder {
-	return d.parent
-}
-
 // Log adds a processor that logs the message (structured).
 func (b *RouteBuilder) Log(message string) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		logInfo(message,
-			"exchange_id", fmt.Sprintf("%p", exchange),
-			"route_id", b.route.ID,
-		)
-		return nil
-	})
+	b.container.AddProcessor(logProcessor(message, b.route.ID))
+	return b
 }
 
 // LogBody adds a processor that logs the message body (structured).
 func (b *RouteBuilder) LogBody(message string) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		logInfo(message,
-			"body", exchange.GetIn().GetBody(),
-			"route_id", b.route.ID,
-		)
-		return nil
-	})
+	b.container.AddProcessor(logBodyProcessor(message, b.route.ID))
+	return b
 }
 
 // LogHeaders adds a processor that logs the message headers (structured).
 func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		logInfo(message,
-			"headers", exchange.GetIn().GetHeaders(),
-			"route_id", b.route.ID,
-		)
-		return nil
-	})
+	b.container.AddProcessor(logHeadersProcessor(message, b.route.ID))
+	return b
 }
 
 // LogSimple adds a processor that logs a message evaluated via the Simple Language.
@@ -540,9 +293,8 @@ func (b *RouteBuilder) UnmarshalRSS() *RouteBuilder {
 
 // Stop halts processing of the current exchange.
 func (b *RouteBuilder) Stop() *RouteBuilder {
-	return b.ProcessFunc(func(exchange *Exchange) error {
-		return ErrStopRouting
-	})
+	b.container.AddProcessor(stopProcessor())
+	return b
 }
 
 // Filter adds a Message Filter EIP step. The expression can be:
@@ -753,80 +505,6 @@ func (b *RouteBuilder) WireTap(uri string) *RouteBuilder {
 	return b
 }
 
-// Multicast begins a Multicast EIP block.
-func (b *RouteBuilder) Multicast() *MulticastDefinition {
-	m := NewMulticast()
-	b.container.AddProcessor(m)
-
-	return &MulticastDefinition{
-		RouteBuilder: &RouteBuilder{
-			context:   b.context,
-			route:     b.route,
-			container: m,
-		},
-		parent:    b,
-		multicast: m,
-	}
-}
-
-// RecipientList adds a Recipient List EIP processor that sends the exchange
-// to a list of recipients resolved dynamically at runtime.
-//
-// The expression can be:
-//   - A string of comma-separated URIs (e.g. "direct:a,direct:b")
-//   - A Simple Language expression (e.g. "${header.recipients}")
-//   - A Go function returning []string
-//
-// Example:
-//
-//	// Static comma-separated list
-//	route, _ := ctx.CreateRouteBuilder().
-//	    From("direct:start").
-//	    RecipientList("direct:a,direct:b").
-//	    Build()
-//
-//	// Simple Language expression
-//	route, _ := ctx.CreateRouteBuilder().
-//	    From("direct:start").
-//	    RecipientList("${header.recipientList}").
-//	    Build()
-//
-//	// Go function
-//	route, _ := ctx.CreateRouteBuilder().
-//	    From("direct:start").
-//	    RecipientList(func(e *Exchange) ([]string, error) {
-//	        return []string{"direct:a", "direct:b"}, nil
-//	    }).
-//	    Build()
-func (b *RouteBuilder) RecipientList(expression any) *RecipientListDefinition {
-	rl := NewRecipientList(b.context)
-
-	switch expr := expression.(type) {
-	case string:
-		// Heuristic: if it contains "${", treat it as a Simple Language expression.
-		if strings.Contains(expr, "${") {
-			rl.SetSimpleExpression(expr)
-		} else {
-			rl.SetStaticURIs(expr)
-		}
-	case func(*Exchange) ([]string, error):
-		rl.SetURIFunc(expr)
-	default:
-		b.err = fmt.Errorf("unsupported RecipientList expression type: %T", expression)
-		return &RecipientListDefinition{
-			parent:        b,
-			recipientList: rl,
-		}
-	}
-
-	b.container.AddProcessor(rl)
-
-	return &RecipientListDefinition{
-		parent:        b,
-		recipientList: rl,
-	}
-}
-
 // RoutingSlip adds a Routing Slip EIP processor that sends the exchange through
 // a sequence of endpoints resolved dynamically at runtime.
 //
@@ -858,252 +536,3 @@ func (b *RouteBuilder) RoutingSlip(expression any) *RouteBuilder {
 	return b
 }
 
-// RecipientListDefinition is a fluent sub-DSL for configuring the Recipient List EIP.
-// Supports .ParallelProcessing(), .AggregationStrategy(), and .End() to return
-// to the parent builder.
-type RecipientListDefinition struct {
-	parent        *RouteBuilder
-	recipientList *RecipientList
-}
-
-// AggregationStrategy sets the aggregation strategy for the recipient list.
-func (d *RecipientListDefinition) AggregationStrategy(strategy AggregationStrategy) *RecipientListDefinition {
-	d.recipientList.SetAggregationStrategy(strategy)
-	return d
-}
-
-// ParallelProcessing enables parallel processing for the recipient list.
-func (d *RecipientListDefinition) ParallelProcessing() *RecipientListDefinition {
-	d.recipientList.SetParallelProcessing(true)
-	return d
-}
-
-// End terminates the RecipientList block and returns to the parent builder.
-func (d *RecipientListDefinition) End() *RouteBuilder {
-	return d.parent
-}
-
-// MulticastDefinition is a fluent sub-DSL for configuring the Multicast EIP.
-// Supports .ParallelProcessing(), .AggregationStrategy(), .Pipeline() for
-// grouping processors, and .End() to return to the parent builder.
-type MulticastDefinition struct {
-	*RouteBuilder
-	parent    *RouteBuilder
-	multicast *Multicast
-}
-
-// AggregationStrategy sets the aggregation strategy for the multicast.
-func (d *MulticastDefinition) AggregationStrategy(strategy AggregationStrategy) *MulticastDefinition {
-	d.multicast.SetAggregationStrategy(strategy)
-	return d
-}
-
-// ParallelProcessing enables parallel processing for the multicast.
-func (d *MulticastDefinition) ParallelProcessing() *MulticastDefinition {
-	d.multicast.SetParallelProcessing(true)
-	return d
-}
-
-// Pipeline begins a Pipeline block for grouping processors within a multicast branch.
-func (d *MulticastDefinition) Pipeline() *PipelineDefinition {
-	p := NewPipeline()
-	d.multicast.AddProcessor(p)
-
-	return &PipelineDefinition{
-		RouteBuilder: &RouteBuilder{
-			context:   d.context,
-			route:     d.route,
-			container: p,
-		},
-		parent: d,
-	}
-}
-
-// Process adds a processor to the current container and stays in the multicast context.
-func (d *MulticastDefinition) Process(processor Processor) *MulticastDefinition {
-	d.RouteBuilder.Process(processor)
-	return d
-}
-
-// ProcessFunc adds a processing function to the current container and stays in the multicast context.
-func (d *MulticastDefinition) ProcessFunc(f func(*Exchange) error) *MulticastDefinition {
-	d.RouteBuilder.ProcessFunc(f)
-	return d
-}
-
-// To adds one or more destination endpoints to the current container and stays in the multicast context.
-func (d *MulticastDefinition) To(uris ...string) *MulticastDefinition {
-	d.RouteBuilder.To(uris...)
-	return d
-}
-
-// ToD adds one or more dynamic destination endpoints and stays in the multicast context.
-func (d *MulticastDefinition) ToD(uriTemplates ...string) *MulticastDefinition {
-	d.RouteBuilder.ToD(uriTemplates...)
-	return d
-}
-
-// RecipientList sends to dynamically resolved recipients within this multicast branch.
-func (d *MulticastDefinition) RecipientList(expression any) *MulticastDefinition {
-	rl := NewRecipientList(d.context)
-	switch expr := expression.(type) {
-	case string:
-		if strings.Contains(expr, "${") {
-			rl.SetSimpleExpression(expr)
-		} else {
-			rl.SetStaticURIs(expr)
-		}
-	case func(*Exchange) ([]string, error):
-		rl.SetURIFunc(expr)
-	}
-	d.container.AddProcessor(rl)
-	return d
-}
-
-// RoutingSlip routes within this multicast branch through a dynamic endpoint sequence.
-func (d *MulticastDefinition) RoutingSlip(expression any) *MulticastDefinition {
-	d.RouteBuilder.RoutingSlip(expression)
-	return d
-}
-
-// SetBody sets the output message body and stays in the multicast context.
-func (d *MulticastDefinition) SetBody(body interface{}) *MulticastDefinition {
-	d.RouteBuilder.SetBody(body)
-	return d
-}
-
-// SetHeader sets a header on the output message and stays in the multicast context.
-func (d *MulticastDefinition) SetHeader(key string, value interface{}) *MulticastDefinition {
-	d.RouteBuilder.SetHeader(key, value)
-	return d
-}
-
-// Marshal adds a dataformat marshal step and stays in the multicast context.
-func (d *MulticastDefinition) Marshal(dataFormat DataFormat) *MulticastDefinition {
-	d.RouteBuilder.Marshal(dataFormat)
-	return d
-}
-
-// Unmarshal adds a dataformat unmarshal step and stays in the multicast context.
-func (d *MulticastDefinition) Unmarshal(dataFormat DataFormat) *MulticastDefinition {
-	d.RouteBuilder.Unmarshal(dataFormat)
-	return d
-}
-
-// MarshalRSS converts an RSSFeed body to RSS XML and stays in the multicast context.
-func (d *MulticastDefinition) MarshalRSS() *MulticastDefinition {
-	d.RouteBuilder.MarshalRSS()
-	return d
-}
-
-// UnmarshalRSS converts RSS XML into an RSSFeed body and stays in the multicast context.
-func (d *MulticastDefinition) UnmarshalRSS() *MulticastDefinition {
-	d.RouteBuilder.UnmarshalRSS()
-	return d
-}
-
-// WireTap adds a WireTap step and stays in the multicast context.
-func (d *MulticastDefinition) WireTap(uri string) *MulticastDefinition {
-	d.RouteBuilder.WireTap(uri)
-	return d
-}
-
-// End terminates the Multicast block and returns to the parent builder.
-func (d *MulticastDefinition) End() *RouteBuilder {
-	return d.parent
-}
-
-// PipelineDefinition is a fluent sub-DSL for grouping processors inside a
-// multicast branch. Call .End() to return to the MulticastDefinition.
-type PipelineDefinition struct {
-	*RouteBuilder
-	parent *MulticastDefinition
-}
-
-// Process adds a processor to the current container and stays in the pipeline context.
-func (d *PipelineDefinition) Process(processor Processor) *PipelineDefinition {
-	d.RouteBuilder.Process(processor)
-	return d
-}
-
-// ProcessFunc adds a processing function to the current container and stays in the pipeline context.
-func (d *PipelineDefinition) ProcessFunc(f func(*Exchange) error) *PipelineDefinition {
-	d.RouteBuilder.ProcessFunc(f)
-	return d
-}
-
-// To adds one or more destination endpoints to the current container and stays in the pipeline context.
-func (d *PipelineDefinition) To(uris ...string) *PipelineDefinition {
-	d.RouteBuilder.To(uris...)
-	return d
-}
-
-// ToD adds one or more dynamic destination endpoints and stays in the pipeline context.
-func (d *PipelineDefinition) ToD(uriTemplates ...string) *PipelineDefinition {
-	d.RouteBuilder.ToD(uriTemplates...)
-	return d
-}
-
-// RecipientList sends to dynamically resolved recipients within this pipeline branch.
-func (d *PipelineDefinition) RecipientList(expression any) *PipelineDefinition {
-	rl := NewRecipientList(d.context)
-	switch expr := expression.(type) {
-	case string:
-		if strings.Contains(expr, "${") {
-			rl.SetSimpleExpression(expr)
-		} else {
-			rl.SetStaticURIs(expr)
-		}
-	case func(*Exchange) ([]string, error):
-		rl.SetURIFunc(expr)
-	}
-	d.container.AddProcessor(rl)
-	return d
-}
-
-// RoutingSlip routes within this pipeline branch through a dynamic endpoint sequence.
-func (d *PipelineDefinition) RoutingSlip(expression any) *PipelineDefinition {
-	d.RouteBuilder.RoutingSlip(expression)
-	return d
-}
-
-// SetBody sets the output message body and stays in the pipeline context.
-func (d *PipelineDefinition) SetBody(body interface{}) *PipelineDefinition {
-	d.RouteBuilder.SetBody(body)
-	return d
-}
-
-// Marshal adds a dataformat marshal step and stays in the pipeline context.
-func (d *PipelineDefinition) Marshal(dataFormat DataFormat) *PipelineDefinition {
-	d.RouteBuilder.Marshal(dataFormat)
-	return d
-}
-
-// Unmarshal adds a dataformat unmarshal step and stays in the pipeline context.
-func (d *PipelineDefinition) Unmarshal(dataFormat DataFormat) *PipelineDefinition {
-	d.RouteBuilder.Unmarshal(dataFormat)
-	return d
-}
-
-// MarshalRSS converts an RSSFeed body to RSS XML and stays in the pipeline context.
-func (d *PipelineDefinition) MarshalRSS() *PipelineDefinition {
-	d.RouteBuilder.MarshalRSS()
-	return d
-}
-
-// UnmarshalRSS converts RSS XML into an RSSFeed body and stays in the pipeline context.
-func (d *PipelineDefinition) UnmarshalRSS() *PipelineDefinition {
-	d.RouteBuilder.UnmarshalRSS()
-	return d
-}
-
-// WireTap adds a WireTap step and stays in the pipeline context.
-func (d *PipelineDefinition) WireTap(uri string) *PipelineDefinition {
-	d.RouteBuilder.WireTap(uri)
-	return d
-}
-
-// End terminates the Pipeline block and returns to the multicast builder.
-func (d *PipelineDefinition) End() *MulticastDefinition {
-	return d.parent
-}

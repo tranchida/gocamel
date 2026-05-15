@@ -340,17 +340,13 @@ func (r *Route) EnableMetrics() *Route {
 }
 
 func (r *Route) SetBody(body interface{}) *Route {
-	return r.ProcessFunc(func(exchange *Exchange) error {
-		exchange.GetOut().SetBody(body)
-		return nil
-	})
+	r.AddProcessor(setBodyProcessor(body))
+	return r
 }
 
 func (r *Route) SetHeader(key string, value interface{}) *Route {
-	return r.ProcessFunc(func(exchange *Exchange) error {
-		exchange.GetOut().SetHeader(key, value)
-		return nil
-	})
+	r.AddProcessor(setHeaderProcessor(key, value))
+	return r
 }
 
 func (r *Route) Marshal(dataFormat DataFormat) *Route {

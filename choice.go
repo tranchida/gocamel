@@ -188,18 +188,12 @@ func (cb *ChoiceBuilder) ProcessFunc(f func(*Exchange) error) *ChoiceBuilder {
 
 // SetBody sets the body for the current When clause
 func (cb *ChoiceBuilder) SetBody(body interface{}) *ChoiceBuilder {
-	return cb.Process(ProcessorFunc(func(exchange *Exchange) error {
-		exchange.GetOut().SetBody(body)
-		return nil
-	}))
+	return cb.Process(setBodyProcessor(body))
 }
 
 // SetHeader sets a header for the current When clause
 func (cb *ChoiceBuilder) SetHeader(key string, value interface{}) *ChoiceBuilder {
-	return cb.Process(ProcessorFunc(func(exchange *Exchange) error {
-		exchange.GetOut().SetHeader(key, value)
-		return nil
-	}))
+	return cb.Process(setHeaderProcessor(key, value))
 }
 
 // SimpleSetBody sets the body using a Simple expression for the current When clause
@@ -297,18 +291,12 @@ func (ob *OtherwiseBuilder) ProcessFunc(f func(*Exchange) error) *OtherwiseBuild
 
 // SetBody sets the body for the Otherwise clause
 func (ob *OtherwiseBuilder) SetBody(body interface{}) *OtherwiseBuilder {
-	return ob.Process(ProcessorFunc(func(exchange *Exchange) error {
-		exchange.GetOut().SetBody(body)
-		return nil
-	}))
+	return ob.Process(setBodyProcessor(body))
 }
 
 // SetHeader sets a header for the Otherwise clause
 func (ob *OtherwiseBuilder) SetHeader(key string, value interface{}) *OtherwiseBuilder {
-	return ob.Process(ProcessorFunc(func(exchange *Exchange) error {
-		exchange.GetOut().SetHeader(key, value)
-		return nil
-	}))
+	return ob.Process(setHeaderProcessor(key, value))
 }
 
 // SimpleSetBody sets the body using a Simple expression for the Otherwise clause
