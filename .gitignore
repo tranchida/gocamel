@@ -1,0 +1,15 @@
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go binaries and testing
+*.test
+*.out
+bin/
+
+# Agent/Local caches
+.claude/
+.junie/
+.gitnexus/
