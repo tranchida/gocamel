@@ -44,11 +44,53 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		return nil
 	}
 
-	// Determine how to iterate over 'parts'
-	v := reflect.ValueOf(parts)
+	// Fast path: check for common slice types to avoid reflection overhead
+	var splitParts []any
+	isList := true
 
-	// If it's not a slice or array, treat it as a single element
-	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+	switch p := parts.(type) {
+	case []any:
+		splitParts = p
+	case []string:
+		splitParts = make([]any, len(p))
+		for i, item := range p {
+			splitParts[i] = item
+		}
+	case []int:
+		splitParts = make([]any, len(p))
+		for i, item := range p {
+			splitParts[i] = item
+		}
+	case []byte:
+		splitParts = make([]any, len(p))
+		for i, item := range p {
+			splitParts[i] = item
+		}
+	case []int64:
+		splitParts = make([]any, len(p))
+		for i, item := range p {
+			splitParts[i] = item
+		}
+	case []float64:
+		splitParts = make([]any, len(p))
+		for i, item := range p {
+			splitParts[i] = item
+		}
+	default:
+		// Fallback to reflection
+		v := reflect.ValueOf(parts)
+		if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+			isList = false
+		} else {
+			length := v.Len()
+			splitParts = make([]any, length)
+			for i := 0; i < length; i++ {
+				splitParts[i] = v.Index(i).Interface()
+			}
+		}
+	}
+
+	if !isList {
 		partExchange := exchange.Copy()
 		partExchange.In.SetBody(parts)
 		partExchange.SetProperty(CamelSplitIndex, 0)
@@ -73,14 +115,14 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		return nil
 	}
 
-	length := v.Len()
+	length := len(splitParts)
 	if length == 0 {
 		return nil
 	}
 
 	var aggregatedExchange *Exchange
 	for i := 0; i < length; i++ {
-		part := v.Index(i).Interface()
+		part := splitParts[i]
 
 		// For each part, create a copy of the original exchange
 		partExchange := exchange.Copy()

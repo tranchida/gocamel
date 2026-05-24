@@ -54,8 +54,8 @@ func NewCronComponent() *CronComponent {
 	}
 }
 
-// enoneStarted starts the shared scheduler if it has not been started yet.
-func (c *CronComponent) enoneStarted() {
+// ensureStarted starts the shared scheduler if it has not been started yet.
+func (c *CronComponent) ensureStarted() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.started {
@@ -304,7 +304,7 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 		c.added = true
 		c.mu.Unlock()
 
-		ep.component.enoneStarted()
+		ep.component.ensureStarted()
 	}()
 
 	return nil

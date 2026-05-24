@@ -295,6 +295,14 @@ func (r *Route) Stop() error {
 		}
 	}
 
+	for _, p := range r.processors {
+		if stoppable, ok := p.(interface{ Stop() error }); ok {
+			if err := stoppable.Stop(); err != nil {
+				return err
+			}
+		}
+	}
+
 	r.started = false
 	return nil
 }
@@ -407,31 +415,75 @@ func (r *Route) ToD(uriTemplates ...string) *Route {
 	return r
 }
 
+type toDProcessor struct {
+	context     *CamelContext
+	uriTemplate string
+	mu          sync.RWMutex
+	cache       map[string]Producer
+}
+
 func createToDProcessor(context *CamelContext, uriTemplate string) Processor {
-	return ProcessorFunc(func(exchange *Exchange) error {
-		// Resolve the dynamic URI
-		uri := Interpolate(uriTemplate, exchange)
+	return &toDProcessor{
+		context:     context,
+		uriTemplate: uriTemplate,
+		cache:       make(map[string]Producer),
+	}
+}
 
-		// Create the endpoint and producer on each exchange (required for ToD).
-		// TODO: Optimise with a producer cache if needed.
-		endpoint, err := context.CreateEndpoint(uri)
-		if err != nil {
-			return fmt.Errorf("toD dynamic endpoint creation error: %w", err)
+func (t *toDProcessor) Process(exchange *Exchange) error {
+	// Resolve the dynamic URI
+	uri := Interpolate(t.uriTemplate, exchange)
+
+	t.mu.RLock()
+	producer, ok := t.cache[uri]
+	t.mu.RUnlock()
+
+	if !ok {
+		t.mu.Lock()
+		// Double-checked locking
+		producer, ok = t.cache[uri]
+		if !ok {
+			endpoint, err := t.context.CreateEndpoint(uri)
+			if err != nil {
+				t.mu.Unlock()
+				return fmt.Errorf("toD dynamic endpoint creation error: %w", err)
+			}
+
+			prod, err := endpoint.CreateProducer()
+			if err != nil {
+				t.mu.Unlock()
+				return fmt.Errorf("toD producer creation error: %w", err)
+			}
+
+			if err := prod.Start(exchange.Context); err != nil {
+				t.mu.Unlock()
+				return fmt.Errorf("toD producer start error: %w", err)
+			}
+
+			producer = prod
+			t.cache[uri] = producer
 		}
+		t.mu.Unlock()
+	}
 
-		producer, err := endpoint.CreateProducer()
-		if err != nil {
-			return fmt.Errorf("toD producer creation error: %w", err)
+	exchange.PropagateOutToIn()
+	return producer.Send(exchange)
+}
+
+func (t *toDProcessor) Stop() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	var errs []error
+	for _, producer := range t.cache {
+		if err := producer.Stop(); err != nil {
+			errs = append(errs, err)
 		}
+	}
+	t.cache = make(map[string]Producer) // clear cache
 
-		if err := producer.Start(exchange.Context); err != nil {
-			return fmt.Errorf("toD producer start error: %w", err)
-		}
-		// Ensure the producer is stopped when done (in Camel, dynamic producers are normally cached;
-		// without caching we stop the producer after each send).
-		defer producer.Stop()
-
-		exchange.PropagateOutToIn()
-		return producer.Send(exchange)
-	})
+	if len(errs) > 0 {
+		return fmt.Errorf("errors stopping dynamic producers: %v", errs)
+	}
+	return nil
 }

@@ -12,9 +12,10 @@ type CamelContext struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	routes       []*Route
+	routesLock   sync.RWMutex // Protects routes slice and routeCounter
 	registry     *ComponentRegistry
 	started      bool
-	startLock    sync.RWMutex
+	startLock    sync.RWMutex // Protects started lifecycle state
 	routeCounter int
 }
 
@@ -31,8 +32,8 @@ func NewCamelContext() *CamelContext {
 
 // AddRoute adds a route to the context
 func (c *CamelContext) AddRoute(route *Route) {
-	c.startLock.Lock()
-	defer c.startLock.Unlock()
+	c.routesLock.Lock()
+	defer c.routesLock.Unlock()
 
 	for _, r := range c.routes {
 		if r == route {
@@ -73,8 +74,8 @@ func (c *CamelContext) AddRoutes(routes ...*Route) {
 
 // GetRoute retrieves a route by its ID
 func (c *CamelContext) GetRoute(id string) *Route {
-	c.startLock.RLock()
-	defer c.startLock.RUnlock()
+	c.routesLock.RLock()
+	defer c.routesLock.RUnlock()
 
 	for _, route := range c.routes {
 		if route.ID == id {
@@ -86,8 +87,8 @@ func (c *CamelContext) GetRoute(id string) *Route {
 
 // GetRoutes retrieves all routes
 func (c *CamelContext) GetRoutes() []*Route {
-	c.startLock.RLock()
-	defer c.startLock.RUnlock()
+	c.routesLock.RLock()
+	defer c.routesLock.RUnlock()
 
 	out := make([]*Route, len(c.routes))
 	copy(out, c.routes)
@@ -104,13 +105,18 @@ func (c *CamelContext) Start() error {
 		return fmt.Errorf("context is already started")
 	}
 
+	c.routesLock.RLock()
+	routes := make([]*Route, len(c.routes))
+	copy(routes, c.routes)
+	c.routesLock.RUnlock()
+
 	// Start all routes with rollback on failure
-	for i, route := range c.routes {
+	for i, route := range routes {
 		if err := route.Start(c.ctx); err != nil {
 			// Rollback: stop already-started routes
 			for j := i - 1; j >= 0; j-- {
-				if stopErr := c.routes[j].Stop(); stopErr != nil {
-					err = fmt.Errorf("%w; rollback stop error for route %s: %v", err, c.routes[j].ID, stopErr)
+				if stopErr := routes[j].Stop(); stopErr != nil {
+					err = fmt.Errorf("%w; rollback stop error for route %s: %v", err, routes[j].ID, stopErr)
 				}
 			}
 			return fmt.Errorf("error starting route %s: %w", route.ID, err)
@@ -135,8 +141,13 @@ func (c *CamelContext) Stop() error {
 		return nil
 	}
 
+	c.routesLock.RLock()
+	routes := make([]*Route, len(c.routes))
+	copy(routes, c.routes)
+	c.routesLock.RUnlock()
+
 	var errs []error
-	for _, route := range c.routes {
+	for _, route := range routes {
 		if err := route.Stop(); err != nil {
 			errs = append(errs, fmt.Errorf("route %s: %w", route.ID, err))
 		}
@@ -169,10 +180,15 @@ func (c *CamelContext) GracefulStop(timeout time.Duration) error {
 	// short-circuit their work loops immediately.
 	c.cancel()
 
+	c.routesLock.RLock()
+	routes := make([]*Route, len(c.routes))
+	copy(routes, c.routes)
+	c.routesLock.RUnlock()
+
 	done := make(chan error, 1)
 	go func() {
 		var errs []error
-		for _, route := range c.routes {
+		for _, route := range routes {
 			if err := route.Stop(); err != nil {
 				errs = append(errs, fmt.Errorf("route %s: %w", route.ID, err))
 			}
@@ -195,7 +211,6 @@ func (c *CamelContext) GracefulStop(timeout time.Duration) error {
 		return fmt.Errorf("graceful stop timed out after %s; one or more routes are still shutting down", timeout)
 	}
 }
-
 
 // IsStarted checks whether the context is started (uses RLock for read-only access).
 func (c *CamelContext) IsStarted() bool {
@@ -239,8 +254,8 @@ func (c *CamelContext) GetComponent(name string) (Component, error) {
 
 // RemoveRoute removes a route from the context
 func (c *CamelContext) RemoveRoute(route *Route) {
-	c.startLock.Lock()
-	defer c.startLock.Unlock()
+	c.routesLock.Lock()
+	defer c.routesLock.Unlock()
 
 	for i, r := range c.routes {
 		if r == route {
@@ -252,8 +267,8 @@ func (c *CamelContext) RemoveRoute(route *Route) {
 
 // RemoveRouteByID removes a route by its ID
 func (c *CamelContext) RemoveRouteByID(id string) {
-	c.startLock.Lock()
-	defer c.startLock.Unlock()
+	c.routesLock.Lock()
+	defer c.routesLock.Unlock()
 
 	for i, route := range c.routes {
 		if route.ID == id {
@@ -265,26 +280,26 @@ func (c *CamelContext) RemoveRouteByID(id string) {
 
 // RemoveAllRoutes removes all routes
 func (c *CamelContext) RemoveAllRoutes() {
-	c.startLock.Lock()
-	defer c.startLock.Unlock()
+	c.routesLock.Lock()
+	defer c.routesLock.Unlock()
 
 	c.routes = make([]*Route, 0)
 }
 
 // GetRouteCount returns the number of routes
 func (c *CamelContext) GetRouteCount() int {
-	c.startLock.RLock()
-	defer c.startLock.RUnlock()
+	c.routesLock.RLock()
+	defer c.routesLock.RUnlock()
 
 	return len(c.routes)
 }
 
 // GetStartedRouteCount returns the number of started routes
 func (c *CamelContext) GetStartedRouteCount() int {
-	c.startLock.RLock()
+	c.routesLock.RLock()
 	routes := make([]*Route, len(c.routes))
 	copy(routes, c.routes)
-	c.startLock.RUnlock()
+	c.routesLock.RUnlock()
 
 	count := 0
 	for _, route := range routes {
