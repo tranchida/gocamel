@@ -25,9 +25,9 @@ provides a powerful DSL for creating integration routes to connect different sys
 - ⚙️ **Processors** - Custom logic implementation with `Processor` interface and `ProcessRef`
 - ⚖️ **Transactional Routes** - Unit of Work pattern for reliable message processing
 - 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Recipient List, Routing Slip, Wire Tap,
-  Stop, ToD
+  Stop, ToD, Loop, Saga, Transform, Message History
 - 📝 **Simple Language** - Dynamic expressions (`${body}`, `${header.name}`, functions)
-- 🔌 **Multiple Components** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, etc.
+- 🔌 **Multiple Components** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, Redis, NATS, Go Channel (chan), etc.
 - 🛠️ **REST Management API** - JMX-like monitoring and control
 - 🔒 **Security Utilities** - Path traversal protection, SQL injection prevention, input sanitization
 
@@ -92,6 +92,9 @@ EndChoice()
 | **FTP/SFTP**   | File transfer via FTP/SSH     |
 | **SMB**        | Windows/Samba shares          |
 | **Direct**     | In-memory synchronous routing |
+| **NATS**       | Asynchronous event messaging  |
+| **Redis**      | Commands & Pub/Sub messaging  |
+| **Go Channel** | Native Go channel integration |
 | **Timer/Cron** | Scheduled triggers            |
 | **Telegram**   | Bot integration               |
 | **OpenAI**     | ChatGPT/GPT-4 API             |

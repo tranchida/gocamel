@@ -163,6 +163,122 @@ builder.From("telegram:bots").Log("${body}")
 
 ---
 
+### NATS
+
+Asynchronous event-driven messaging with NATS. High performance publisher and subscriber with Go NATS client.
+
+```go
+ctx.AddComponent("nats", gocamel.NewNATSComponent())
+
+// Consumer: reactive asynchronous subscription
+builder.From("nats://orders?servers=nats://localhost:4222").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        // NATS payload is received as a byte slice
+        payload := e.GetIn().GetBody().([]byte)
+        fmt.Printf("Received order: %s\n", string(payload))
+        return nil
+    })
+
+// Producer: publish to subject
+builder.To("nats://orders?servers=nats://localhost:4222")
+
+// Dynamically override subject in header
+exchange.In.SetHeader(gocamel.CamelNATSSubject, "urgent-orders")
+```
+
+> [!WARNING]
+> When writing URIs, always use double slashes (e.g. `nats://orders`) instead of `nats:orders`, otherwise `url.Parse` treats it as an Opaque URI, which contaminates the subject string with query parameters.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `servers` | string | `nats://127.0.0.1:4222` | NATS server addresses (comma-separated) |
+| `subject` | string | parsed from path | NATS subject to subscribe/publish to |
+
+**Exchange Headers:**
+
+- `CamelNATSSubject` - Subject of the received message or target subject for publishing.
+
+---
+
+### Redis
+
+Send commands (SET, GET, DEL, PUBLISH) or subscribe to Redis Pub/Sub channels.
+
+```go
+ctx.AddComponent("redis", gocamel.NewRedisComponent())
+
+// Consumer: Subscribe to Pub/Sub channel
+builder.From("redis://localhost:6379?subscribe=true&channel=mychannel").
+    Log("Received Pub/Sub message: ${body}")
+
+// Producer: Execute commands
+builder.To("redis://localhost:6379?command=SET&key=mykey")
+```
+
+**Supported Commands:**
+
+- `SET`: Saves the exchange body as the value of `key`.
+- `GET`: Retrieves the value of `key` and writes it to `Out.Body`.
+- `DEL`: Deletes `key` and writes the number of affected keys to `Out.Body`.
+- `PUBLISH`: Publishes the exchange body to the specified channel/key.
+
+**Exchange Headers (Override URI parameters):**
+
+- `CamelRedisCommand` - The Redis command to execute (e.g. `"GET"`).
+- `CamelRedisKey` - The target Redis key.
+- `CamelRedisChannel` - Target Pub/Sub channel for publish or source channel for subscribe.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `command` | string | `SET` | Redis command for producer |
+| `key` | string | `""` | Redis key to operate on |
+| `channel` | string | `""` | Redis Pub/Sub channel |
+| `subscribe` | bool | `false` | If true, acts as a Pub/Sub consumer |
+
+---
+
+### Redis Idempotent Repository
+
+The Redis Idempotent Repository provides a distributed implementation of the `IdempotentRepository` interface, allowing multiple GoCamel instances in a cluster to coordinate and avoid processing duplicate messages.
+
+```go
+import (
+    "time"
+    "github.com/redis/go-redis/v9"
+)
+
+rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+// Key prefix "idempotent:" with 24-hour expiration TTL
+repo := gocamel.NewRedisIdempotentRepository(rdb, "idempotent:", 24*time.Hour)
+
+builder.From("direct:start").
+    IdempotentConsumer("${header.MessageId}", repo).
+    To("direct:process")
+```
+
+---
+
+### Go Channel
+
+A native, ultra-fast intra-process integration component utilizing native Go channels. It enables decoupling route segments asynchronously inside the same process.
+
+```go
+ctx.AddComponent("chan", gocamel.NewChanComponent())
+
+// Consumer: processes exchanges asynchronously from channel
+builder.From("chan:orders?bufferSize=500").
+    To("direct:process-order")
+
+// Producer: writes a copy of the exchange to the channel asynchronously
+builder.To("chan:orders")
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `bufferSize` | int | `100` | Capacity of the internal buffered channel |
+
+---
+
 ## AI/LLM Components
 
 ### OpenAI
@@ -654,6 +770,122 @@ Intégration Bot Telegram pour recevoir/envoyer des messages.
 ctx.AddComponent("telegram", gocamel.NewTelegramComponent())
 builder.From("telegram:bots").Log("${body}")
 ```
+
+---
+
+### NATS
+
+Messagerie asynchrone événementielle avec NATS. Éditeur et abonné haute performance avec le client Go NATS.
+
+```go
+ctx.AddComponent("nats", gocamel.NewNATSComponent())
+
+// Consumer: abonnement asynchrone réactif
+builder.From("nats://orders?servers=nats://localhost:4222").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        // Le payload NATS est reçu sous forme de slice d'octets ([]byte)
+        payload := e.GetIn().GetBody().([]byte)
+        fmt.Printf("Commande reçue: %s\n", string(payload))
+        return nil
+    })
+
+// Producer: publication sur un sujet (subject)
+builder.To("nats://orders?servers=nats://localhost:4222")
+
+// Surcharger dynamiquement le sujet dans un header
+exchange.In.SetHeader(gocamel.CamelNATSSubject, "urgent-orders")
+```
+
+> [!WARNING]
+> Lors de l'écriture des URIs, utilisez toujours des doubles slashes (ex: `nats://orders`) plutôt que `nats:orders`, sinon `url.Parse` traite l'URI comme opaque, ce qui contamine le nom du sujet avec les paramètres de requête.
+
+| Option | Type | Défaut | Description |
+|---|---|---|---|
+| `servers` | string | `nats://127.0.0.1:4222` | Adresses des serveurs NATS (séparées par des virgules) |
+| `subject` | string | extrait du chemin | Sujet NATS auquel s'abonner / publier |
+
+**Headers Exchange :**
+
+- `CamelNATSSubject` - Sujet du message reçu ou sujet cible pour la publication.
+
+---
+
+### Redis
+
+Envoi de commandes (SET, GET, DEL, PUBLISH) ou abonnement à des canaux Pub/Sub Redis.
+
+```go
+ctx.AddComponent("redis", gocamel.NewRedisComponent())
+
+// Consumer: S'abonner à un canal Pub/Sub
+builder.From("redis://localhost:6379?subscribe=true&channel=mychannel").
+    Log("Message Pub/Sub reçu: ${body}")
+
+// Producer: Exécuter des commandes
+builder.To("redis://localhost:6379?command=SET&key=mykey")
+```
+
+**Commandes supportées :**
+
+- `SET`: Enregistre le corps du message comme valeur de `key`.
+- `GET`: Récupère la valeur de `key` et l'écrit dans `Out.Body`.
+- `DEL`: Supprime la clé `key` et écrit le nombre de clés supprimées dans `Out.Body`.
+- `PUBLISH`: Publique le corps de l'exchange sur le canal/clé spécifié.
+
+**Headers Exchange (Surcharge des paramètres de l'URI) :**
+
+- `CamelRedisCommand` - La commande Redis à exécuter (ex: `"GET"`).
+- `CamelRedisKey` - La clé Redis cible.
+- `CamelRedisChannel` - Le canal Pub/Sub cible pour la publication ou source pour l'abonnement.
+
+| Option | Type | Défaut | Description |
+|---|---|---|---|
+| `command` | string | `SET` | Commande Redis pour le producteur |
+| `key` | string | `""` | Clé Redis sur laquelle opérer |
+| `channel` | string | `""` | Canal Pub/Sub Redis |
+| `subscribe` | bool | `false` | Si vrai, agit en tant que consommateur Pub/Sub |
+
+---
+
+### Redis Idempotent Repository
+
+Le Redis Idempotent Repository fournit une implémentation distribuée de l'interface `IdempotentRepository`, permettant à plusieurs instances de GoCamel dans un cluster de se coordonner pour éviter de traiter des messages en doublon.
+
+```go
+import (
+    "time"
+    "github.com/redis/go-redis/v9"
+)
+
+rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+// Préfixe de clé "idempotent:" avec un TTL d'expiration de 24 heures
+repo := gocamel.NewRedisIdempotentRepository(rdb, "idempotent:", 24*time.Hour)
+
+builder.From("direct:start").
+    IdempotentConsumer("${header.MessageId}", repo).
+    To("direct:process")
+```
+
+---
+
+### Go Channel
+
+Un composant d'intégration intra-processus natif et ultra-rapide utilisant des canaux (channels) Go natifs. Il permet de découpler de manière asynchrone des segments de route au sein d'un même processus.
+
+```go
+ctx.AddComponent("chan", gocamel.NewChanComponent())
+
+// Consumer: traite les exchanges de manière asynchrone depuis le canal
+builder.From("chan:orders?bufferSize=500").
+    To("direct:process-order")
+
+// Producer: écrit une copie de l'exchange de manière asynchrone dans le canal
+builder.To("chan:orders")
+```
+
+| Option | Type | Défaut | Description |
+|---|---|---|---|
+| `bufferSize` | int | `100` | Capacité du canal bufferisé interne |
 
 ---
 

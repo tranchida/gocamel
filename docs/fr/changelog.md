@@ -7,6 +7,20 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-24
+
+### Ajouté
+
+- **EIP Loop** — `.Loop(count)`, `.LoopSimple(expr)` et `.LoopFunc(fn)` permettent de répéter un segment de route de façon statique ou dynamique, en suivant l'index via les propriétés `CamelLoopIndex`, `CamelLoopSize` et `CamelLoopComplete`
+- **EIP Saga** — Orchestrateur de transactions `.Saga()` qui coordonne les actions distribuées et leurs compensations avec un ordre d'annulation LIFO (via `.Action()` ou `.ActionFunc()`)
+- **EIP Transform** — `.Transform(fn)` et `.TransformSimple(expr)` pour effectuer des transformations propres et dédiées du corps des messages
+- **EIP Message History** — `.EnableMessageHistory()` retrace le parcours chronologique des messages à travers les nœuds de la route, inspectable via `gocamel.GetMessageHistory(exchange)`
+- **Composant NATS** — `nats://subject` éditeur et abonné haute performance avec configuration des serveurs NATS
+- **Composant Redis** — `redis://addr` prend en charge les commandes SET, GET, DEL, PUBLISH et les abonnements aux canaux Pub/Sub
+- **Dépôt Idempotent Redis** — `NewRedisIdempotentRepository` implémentation distribuée de dépôt d'idempotence avec préfixage et TTL configurables
+- **Composant Go Channel** — `chan:channelName` messagerie intra-processus asynchrone, rapide et thread-safe utilisant des canaux Go natifs
+- **Optimisations du Moteur** — `ProducerCache` global et thread-safe dans le `CamelContext` et cache d'AST thread-safe pour les expressions Simple Language afin de maximiser le débit de traitement
+
 ### Ajouté
 
 - **EIP Routing Slip** — `.RoutingSlip(expression)` route un exchange à travers une séquence dynamique d'endpoints ;
@@ -152,7 +166,7 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2
 ## Historique
 
 ```
-unreleased
-     │
-     ├──────▶ main
+0.1.0 ────────────── 1.1.0 ────────────── unreleased
+  │                    │                      │
+  └────────────────────┴──────────────────────┴──────▶ main
 ```

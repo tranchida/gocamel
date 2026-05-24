@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // The Simple Language implementation is split across this package:
@@ -153,6 +154,8 @@ func ParseSimpleExpression(expression string) (Expression, error) {
 	return template, nil
 }
 
+var simpleTemplateCache sync.Map
+
 // ParseSimpleTemplate parses a simple expression template.
 //
 // SECURITY: expressions larger than MaxSimpleInputBytes are rejected.
@@ -163,6 +166,12 @@ func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
 	if len(expression) > MaxSimpleInputBytes {
 		return nil, fmt.Errorf("simple template exceeds MaxSimpleInputBytes (%d > %d)", len(expression), MaxSimpleInputBytes)
 	}
+
+	// Try reading from cache
+	if val, ok := simpleTemplateCache.Load(expression); ok {
+		return val.(*SimpleTemplate), nil
+	}
+
 	template := &SimpleTemplate{
 		expression: expression,
 		parts:      make([]templatePart, 0),
@@ -172,6 +181,7 @@ func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
 	if !placeholderRegex.MatchString(expression) {
 		template.isLiteral = true
 		template.parts = append(template.parts, templatePart{isVariable: false, content: expression})
+		simpleTemplateCache.Store(expression, template)
 		return template, nil
 	}
 
@@ -207,6 +217,7 @@ func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
 		})
 	}
 
+	simpleTemplateCache.Store(expression, template)
 	return template, nil
 }
 

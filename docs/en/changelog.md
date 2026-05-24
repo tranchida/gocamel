@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-24
+
+### Added
+
+- **Loop EIP** — `.Loop(count)`, `.LoopSimple(expr)`, and `.LoopFunc(fn)` iterate a route segment statically or dynamically, tracking index via `CamelLoopIndex`, `CamelLoopSize`, and `CamelLoopComplete` properties
+- **Saga EIP** — `.Saga()` transaction orchestrator that coordinates distributed actions and compensations with LIFO rollback ordering (using `.Action()` or `.ActionFunc()`)
+- **Transform EIP** — `.Transform(fn)` and `.TransformSimple(expr)` for clean, dedicated message body transformations
+- **Message History EIP** — `.EnableMessageHistory()` tracks the chronological trajectory of exchanges across route nodes, inspectable via `gocamel.GetMessageHistory(exchange)`
+- **NATS Component** — `nats://subject` high-performance publisher and consumer with NATS server connection configuration
+- **Redis Component** — `redis://addr` supports SET, GET, DEL, PUBLISH commands and Pub/Sub channel subscriptions
+- **Redis Idempotent Repository** — `NewRedisIdempotentRepository` distributed idempotent repository implementation with customizable TTL and prefixing
+- **Go Channel Component** — `chan:channelName` fast, thread-safe asynchronous intra-process messaging utilizing native Go channels
+- **Core Engine Optimizations** — Thread-safe global `ProducerCache` in `CamelContext` and thread-safe AST Cache for Simple Language expressions to maximize processing throughput
+
 ### Added
 
 - **Routing Slip EIP** — `.RoutingSlip(expression)` routes an exchange through a dynamic sequence of endpoints; supports
@@ -76,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## History
 
 ```
-0.1.0 ─────────────────── unreleased
-  │                            │
-  └────────────────────────────┴──────▶ main
+0.1.0 ────────────── 1.1.0 ────────────── unreleased
+  │                    │                      │
+  └────────────────────┴──────────────────────┴──────▶ main
 ```

@@ -503,6 +503,27 @@ builder.From("direct:start").
 
 ---
 
+### Transform
+
+A dedicated message transformation EIP that modifies the message body dynamically using a custom Go function or a Simple language expression.
+
+```go
+// Transform using a custom Go function
+builder.From("direct:start").
+    Transform(func(e *gocamel.Exchange) (any, error) {
+        input, _ := e.GetBodyAsString()
+        return "Transformed: " + input, nil
+    }).
+    To("direct:output")
+
+// Transform using a Simple Language expression
+builder.From("direct:start").
+    TransformSimple("Modified: ${body} and type is ${header.Type}").
+    To("direct:output")
+```
+
+---
+
 ## Messaging Systems
 
 ### Pipeline
@@ -636,12 +657,45 @@ builder.From("direct:start").
 
 ### Loop
 
-Iterate with counter.
+Iterate a route segment a static or dynamic number of times.
 
 ```go
-// Not yet implemented in current version
-// Use Split with index instead
+// Static count
+builder.From("direct:start").
+    Loop(3).
+        ProcessFunc(func(e *gocamel.Exchange) error {
+            // Evaluated 3 times
+            idx, _ := e.GetPropertyAsInt(gocamel.CamelLoopIndex)
+            size, _ := e.GetPropertyAsInt(gocamel.CamelLoopSize)
+            fmt.Printf("Processing loop index %d of %d\n", idx, size)
+            return nil
+        }).
+    End().
+    To("direct:output")
+
+// Dynamic count from a Simple Language expression
+builder.From("direct:start").
+    LoopSimple("${header.LoopCount}").
+        To("direct:process-item").
+    End()
+
+// Dynamic count from a Go function
+builder.From("direct:start").
+    LoopFunc(func(e *gocamel.Exchange) (int, error) {
+        val, _ := e.GetHeaderAsInt("X-Max-Retries")
+        return val, nil
+    }).
+        To("direct:retry-attempt").
+    End()
 ```
+
+**Exchange Properties during Loop:**
+
+| Property | Type | Description |
+|---|---|---|
+| `CamelLoopIndex` | int | Current iteration index (0-based) |
+| `CamelLoopSize` | int | Total number of loop iterations |
+| `CamelLoopComplete` | bool | Boolean indicating if this is the last iteration |
 
 ---
 
@@ -745,6 +799,75 @@ builder.From("direct:start").
 
 ---
 
+## Transactions & Sagas
+
+### Saga
+
+The Saga EIP provides a mechanism to coordinate a series of local transactions across distributed services without locking databases. It defines a set of actions and their corresponding compensating actions (rollbacks).
+
+If any action in the Saga block fails or returns an error, the Saga orchestrator automatically triggers the compensating steps for all completed actions in reverse order (LIFO - Last In, First Out).
+
+```go
+builder.From("direct:saga-route").
+    Saga().
+        // Action 1: Reserve Hotel. Compensation 1: Cancel Hotel.
+        Action("direct:reserve-hotel", "direct:cancel-hotel").
+        // Action 2: Reserve Flight. Compensation 2: Cancel Flight.
+        Action("direct:reserve-flight", "direct:cancel-flight").
+    End().
+    To("direct:saga-completed")
+```
+
+You can also use custom Go functions for actions and compensations directly using `ActionFunc`:
+
+```go
+builder.From("direct:saga-route").
+    Saga().
+        ActionFunc(
+            func(e *gocamel.Exchange) error {
+                // Reserve booking
+                return nil
+            },
+            func(e *gocamel.Exchange) error {
+                // Cancel/compensate booking
+                return nil
+            },
+        ).
+    End()
+```
+
+---
+
+## Message Tracking & Diagnostics
+
+### Message History
+
+The Message History EIP enables tracing the chronological journey of a message as it flows through the various route nodes and processors.
+
+To enable tracking for a route, invoke `.EnableMessageHistory()` on your route builder. You can then retrieve and inspect the history using `gocamel.GetMessageHistory(exchange)`.
+
+```go
+// 1. Enable tracking in the route definition
+builder.From("direct:start").
+    EnableMessageHistory().
+    SetBody("Hello GoCamel").
+    TransformSimple("Modified: ${body}").
+    To("direct:output")
+
+// 2. Retrieve history inside a downstream processor
+builder.From("direct:output").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        history := gocamel.GetMessageHistory(e)
+        for i, entry := range history {
+            fmt.Printf("[%d] Route: %s | Processor: %T | Time: %s\n", 
+                i, entry.RouteID, entry.Processor, entry.Timestamp.Format(time.RFC3339))
+        }
+        return nil
+    })
+```
+
+---
+
 ## EIP Pattern Summary
 
 | Pattern             | Category       | Description                        |
@@ -772,3 +895,6 @@ builder.From("direct:start").
 | DoTry               | Control        | Try-Catch-Finally error handling   |
 | SetHeader           | Headers        | Header manipulation                |
 | SetProperty         | Properties     | Exchange properties                |
+| Loop                | Control        | Iterate with static/dynamic counter|
+| Saga                | Control        | Saga transactional pattern         |
+| Message History     | Diagnostics    | Track message processing trace     |

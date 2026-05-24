@@ -216,6 +216,122 @@ builder.To("telegram:bots")
 
 ---
 
+### NATS
+
+Asynchronous event-driven messaging with NATS. High performance publisher and subscriber with Go NATS client.
+
+```go
+ctx.AddComponent("nats", gocamel.NewNATSComponent())
+
+// Consumer: reactive asynchronous subscription
+builder.From("nats://orders?servers=nats://localhost:4222").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        // NATS payload is received as a byte slice
+        payload := e.GetIn().GetBody().([]byte)
+        fmt.Printf("Received order: %s\n", string(payload))
+        return nil
+    })
+
+// Producer: publish to subject
+builder.To("nats://orders?servers=nats://localhost:4222")
+
+// Dynamically override subject in header
+exchange.In.SetHeader(gocamel.CamelNATSSubject, "urgent-orders")
+```
+
+> [!WARNING]
+> When writing URIs, always use double slashes (e.g. `nats://orders`) instead of `nats:orders`, otherwise `url.Parse` treats it as an Opaque URI, which contaminates the subject string with query parameters.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `servers` | string | `nats://127.0.0.1:4222` | NATS server addresses (comma-separated) |
+| `subject` | string | parsed from path | NATS subject to subscribe/publish to |
+
+**Exchange Headers:**
+
+- `CamelNATSSubject` - Subject of the received message or target subject for publishing.
+
+---
+
+### Redis
+
+Send commands (SET, GET, DEL, PUBLISH) or subscribe to Redis Pub/Sub channels.
+
+```go
+ctx.AddComponent("redis", gocamel.NewRedisComponent())
+
+// Consumer: Subscribe to Pub/Sub channel
+builder.From("redis://localhost:6379?subscribe=true&channel=mychannel").
+    Log("Received Pub/Sub message: ${body}")
+
+// Producer: Execute commands
+builder.To("redis://localhost:6379?command=SET&key=mykey")
+```
+
+**Supported Commands:**
+
+- `SET`: Saves the exchange body as the value of `key`.
+- `GET`: Retrieves the value of `key` and writes it to `Out.Body`.
+- `DEL`: Deletes `key` and writes the number of affected keys to `Out.Body`.
+- `PUBLISH`: Publishes the exchange body to the specified channel/key.
+
+**Exchange Headers (Override URI parameters):**
+
+- `CamelRedisCommand` - The Redis command to execute (e.g. `"GET"`).
+- `CamelRedisKey` - The target Redis key.
+- `CamelRedisChannel` - Target Pub/Sub channel for publish or source channel for subscribe.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `command` | string | `SET` | Redis command for producer |
+| `key` | string | `""` | Redis key to operate on |
+| `channel` | string | `""` | Redis Pub/Sub channel |
+| `subscribe` | bool | `false` | If true, acts as a Pub/Sub consumer |
+
+---
+
+### Redis Idempotent Repository
+
+The Redis Idempotent Repository provides a distributed implementation of the `IdempotentRepository` interface, allowing multiple GoCamel instances in a cluster to coordinate and avoid processing duplicate messages.
+
+```go
+import (
+    "time"
+    "github.com/redis/go-redis/v9"
+)
+
+rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+// Key prefix "idempotent:" with 24-hour expiration TTL
+repo := gocamel.NewRedisIdempotentRepository(rdb, "idempotent:", 24*time.Hour)
+
+builder.From("direct:start").
+    IdempotentConsumer("${header.MessageId}", repo).
+    To("direct:process")
+```
+
+---
+
+### Go Channel
+
+A native, ultra-fast intra-process integration component utilizing native Go channels. It enables decoupling route segments asynchronously inside the same process.
+
+```go
+ctx.AddComponent("chan", gocamel.NewChanComponent())
+
+// Consumer: processes exchanges asynchronously from channel
+builder.From("chan:orders?bufferSize=500").
+    To("direct:process-order")
+
+// Producer: writes a copy of the exchange to the channel asynchronously
+builder.To("chan:orders")
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `bufferSize` | int | `100` | Capacity of the internal buffered channel |
+
+---
+
 ## AI Components
 
 ### OpenAI
@@ -691,3 +807,6 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | XSD        | Transform  | ❌        | ✅        | `xsd:schema`              |
 | Template   | Transform  | ❌        | ✅        | `template:template`       |
 | Exec       | Execution  | ❌        | ✅        | `exec:command`            |
+| NATS       | Messaging  | ✅        | ✅        | `nats://subject`          |
+| Redis      | Messaging  | ✅        | ✅        | `redis://host:port`       |
+| Go Channel | Core       | ✅        | ✅        | `chan:channelName`        |

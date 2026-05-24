@@ -16,18 +16,21 @@ type CamelContext struct {
 	registry     *ComponentRegistry
 	started      bool
 	startLock    sync.RWMutex // Protects started lifecycle state
-	routeCounter int
+	routeCounter  int
+	producerCache *ProducerCache
 }
 
 // NewCamelContext creates a new CamelContext instance
 func NewCamelContext() *CamelContext {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &CamelContext{
+	c := &CamelContext{
 		ctx:      ctx,
 		cancel:   cancel,
 		routes:   make([]*Route, 0),
 		registry: NewComponentRegistry(),
 	}
+	c.producerCache = NewProducerCache(c)
+	return c
 }
 
 // AddRoute adds a route to the context
@@ -156,6 +159,10 @@ func (c *CamelContext) Stop() error {
 	c.cancel()
 	c.started = false
 
+	if err := c.producerCache.Stop(); err != nil {
+		errs = append(errs, err)
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("errors stopping routes: %v", errs)
 	}
@@ -203,6 +210,13 @@ func (c *CamelContext) GracefulStop(timeout time.Duration) error {
 	select {
 	case err := <-done:
 		c.started = false
+		if cacheErr := c.producerCache.Stop(); cacheErr != nil {
+			if err != nil {
+				err = fmt.Errorf("%w; producer cache stop error: %v", err, cacheErr)
+			} else {
+				err = cacheErr
+			}
+		}
 		return err
 	case <-time.After(timeout):
 		// We mark the context as stopped to prevent re-entry, but the
@@ -313,4 +327,79 @@ func (c *CamelContext) GetStartedRouteCount() int {
 // CreateEndpoint creates an endpoint from a URI
 func (c *CamelContext) CreateEndpoint(uri string) (Endpoint, error) {
 	return c.registry.CreateEndpoint(uri)
+}
+
+// GetProducer retrieves a started producer from the global cache, creating it if necessary.
+func (c *CamelContext) GetProducer(uri string) (Producer, error) {
+	return c.producerCache.Get(uri)
+}
+
+// ProducerCache caches Producers thread-safely to reuse them.
+type ProducerCache struct {
+	context *CamelContext
+	cache   map[string]Producer
+	mu      sync.RWMutex
+}
+
+// NewProducerCache creates a new ProducerCache.
+func NewProducerCache(context *CamelContext) *ProducerCache {
+	return &ProducerCache{
+		context: context,
+		cache:   make(map[string]Producer),
+	}
+}
+
+// Get retrieves a started producer from the cache, creating and starting it if missing.
+func (pc *ProducerCache) Get(uri string) (Producer, error) {
+	pc.mu.RLock()
+	prod, exists := pc.cache[uri]
+	pc.mu.RUnlock()
+	if exists {
+		return prod, nil
+	}
+
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+
+	// Double-checked locking
+	prod, exists = pc.cache[uri]
+	if exists {
+		return prod, nil
+	}
+
+	endpoint, err := pc.context.CreateEndpoint(uri)
+	if err != nil {
+		return nil, fmt.Errorf("producer cache: endpoint creation failed for %s: %w", uri, err)
+	}
+
+	p, err := endpoint.CreateProducer()
+	if err != nil {
+		return nil, fmt.Errorf("producer cache: producer creation failed for %s: %w", uri, err)
+	}
+
+	if err := p.Start(context.Background()); err != nil {
+		return nil, fmt.Errorf("producer cache: producer start failed for %s: %w", uri, err)
+	}
+
+	pc.cache[uri] = p
+	return p, nil
+}
+
+// Stop stops all cached producers.
+func (pc *ProducerCache) Stop() error {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+
+	var errs []error
+	for uri, prod := range pc.cache {
+		if err := prod.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("producer cache: error stopping producer for %s: %w", uri, err))
+		}
+	}
+	pc.cache = make(map[string]Producer) // clear
+
+	if len(errs) > 0 {
+		return fmt.Errorf("producer cache: errors stopping producers: %v", errs)
+	}
+	return nil
 }

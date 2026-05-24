@@ -621,3 +621,133 @@ builder.ProcessFunc(func(e *gocamel.Exchange) error {
 // Struct implémentant Processor
 builder.Process(&MyCustomProcessor{config: cfg})
 ```
+
+---
+
+## Loop
+
+Répète un segment de route un nombre de fois statique ou dynamique.
+
+```go
+// Nombre d'itérations fixe (statique)
+builder.From("direct:start").
+    Loop(3).
+        ProcessFunc(func(e *gocamel.Exchange) error {
+            // Évalué 3 fois
+            idx, _ := e.GetPropertyAsInt(gocamel.CamelLoopIndex)
+            size, _ := e.GetPropertyAsInt(gocamel.CamelLoopSize)
+            fmt.Printf("Traitement de l'itération %d sur %d\n", idx, size)
+            return nil
+        }).
+    End().
+    To("direct:output")
+
+// Nombre d'itérations dynamique via une expression Simple Language
+builder.From("direct:start").
+    LoopSimple("${header.LoopCount}").
+        To("direct:process-item").
+    End()
+
+// Nombre d'itérations dynamique via une fonction Go
+builder.From("direct:start").
+    LoopFunc(func(e *gocamel.Exchange) (int, error) {
+        val, _ := e.GetHeaderAsInt("X-Max-Retries")
+        return val, nil
+    }).
+        To("direct:retry-attempt").
+    End()
+```
+
+**Propriétés de l'Exchange pendant la boucle :**
+
+| Propriété | Type | Description |
+|---|---|---|
+| `CamelLoopIndex` | int | Index de l'itération actuelle (commence à 0) |
+| `CamelLoopSize` | int | Nombre total d'itérations de la boucle |
+| `CamelLoopComplete` | bool | Booléen indiquant s'il s'agit de la dernière itération |
+
+---
+
+## Saga
+
+Le pattern Saga fournit un mécanisme pour coordonner une série de transactions locales à travers des services distribués sans verrouiller les bases de données. Il définit un ensemble d'actions et leurs actions de compensation correspondantes (annulations).
+
+Si une action dans le bloc Saga échoue ou retourne une erreur, l'orchestrateur de la Saga déclenche automatiquement les étapes de compensation pour toutes les actions terminées, dans l'ordre inverse (LIFO - Last In, First Out).
+
+```go
+builder.From("direct:saga-route").
+    Saga().
+        // Action 1: Réserver Hôtel. Compensation 1: Annuler Hôtel.
+        Action("direct:reserve-hotel", "direct:cancel-hotel").
+        // Action 2: Réserver Vol. Compensation 2: Annuler Vol.
+        Action("direct:reserve-flight", "direct:cancel-flight").
+    End().
+    To("direct:saga-completed")
+```
+
+Vous pouvez également utiliser des fonctions Go personnalisées pour les actions et les compensations directement avec `ActionFunc` :
+
+```go
+builder.From("direct:saga-route").
+    Saga().
+        ActionFunc(
+            func(e *gocamel.Exchange) error {
+                // Réserver l'hébergement
+                return nil
+            },
+            func(e *gocamel.Exchange) error {
+                // Annuler/compenser la réservation
+                return nil
+            },
+        ).
+    End()
+```
+
+---
+
+## Transform
+
+Un EIP dédié à la transformation de message qui modifie dynamiquement le corps (body) du message à l'aide d'une fonction Go ou d'une expression Simple Language.
+
+```go
+// Transformation via une fonction Go personnalisée
+builder.From("direct:start").
+    Transform(func(e *gocamel.Exchange) (any, error) {
+        input, _ := e.GetBodyAsString()
+        return "Transformed: " + input, nil
+    }).
+    To("direct:output")
+
+// Transformation via une expression Simple Language
+builder.From("direct:start").
+    TransformSimple("Modified: ${body} and type is ${header.Type}").
+    To("direct:output")
+```
+
+---
+
+## Message History
+
+L'EIP Message History permet de retracer le parcours chronologique d'un message lorsqu'il traverse les différents nœuds et processeurs de la route.
+
+Pour activer le suivi d'une route, appelez `.EnableMessageHistory()` sur votre route builder. Vous pouvez ensuite récupérer et inspecter l'historique des messages à l'aide de `gocamel.GetMessageHistory(exchange)`.
+
+```go
+// 1. Activer le suivi dans la définition de la route
+builder.From("direct:start").
+    EnableMessageHistory().
+    SetBody("Hello GoCamel").
+    TransformSimple("Modified: ${body}").
+    To("direct:output")
+
+// 2. Récupérer l'historique dans un processeur en aval
+builder.From("direct:output").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        history := gocamel.GetMessageHistory(e)
+        for i, entry := range history {
+            fmt.Printf("[%d] Route : %s | Processor : %T | Time : %s\n", 
+                i, entry.RouteID, entry.Processor, entry.Timestamp.Format(time.RFC3339))
+        }
+        return nil
+    })
+```
