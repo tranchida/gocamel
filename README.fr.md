@@ -156,6 +156,10 @@ sanitized := gocamel.SanitizeInput(userInput)
 
 Les contributions sont les bienvenues ! Voir les [GitLab Issues](https://gitlab.com/tranchida/gocamel/-/issues).
 
+## ✍️ Auteur
+
+**Giampaolo Tranchida** - [giampaolo@tranchida.ch](mailto:giampaolo@tranchida.ch)
+
 ## 📄 Licence
 
 Licence Apache Version 2.0 - voir le fichier [LICENSE](LICENSE) pour les détails.
@@ -163,5 +167,5 @@ Licence Apache Version 2.0 - voir le fichier [LICENSE](LICENSE) pour les détail
 ---
 
 <div align="center">
-  <sub>Fait avec ❤️ par l'équipe GoCamel</sub>
+  <sub>Fait avec ❤️ par [Giampaolo Tranchida](mailto:giampaolo@tranchida.ch) et l'équipe GoCamel</sub>
 </div>
