@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -57,8 +58,9 @@ type Route struct {
 	startLock     sync.RWMutex // Protects started state for concurrent access.
 	err           error        // Accumulated during construction, surfaced at Start().
 	errorHandler  ErrorHandler // Error handler for this route (nil means propagate).
-	metrics       bool         // Whether Prometheus metrics are enabled for this route.
-	tracing       bool         // Whether OpenTelemetry tracing is enabled for this route.
+	metrics        bool         // Whether Prometheus metrics are enabled for this route.
+	tracing        bool         // Whether OpenTelemetry tracing is enabled for this route.
+	messageHistory bool         // Whether Message History is enabled for this route.
 }
 
 // lazyProducer is a Processor that initialises its underlying Producer on first
@@ -184,10 +186,40 @@ func (r *Route) metricsProcess(exchange *Exchange, next func(*Exchange) error) e
 	return err
 }
 
+func (r *Route) EnableMessageHistory() *Route {
+	r.messageHistory = true
+	return r
+}
+
 func (r *Route) doProcess(exchange *Exchange) error {
 	for i := 0; i < len(r.processors); {
 		processor := r.processors[i]
-		if err := processor.Process(exchange); err != nil {
+		
+		var start time.Time
+		if r.messageHistory {
+			start = time.Now()
+		}
+
+		err := processor.Process(exchange)
+
+		if r.messageHistory {
+			elapsed := time.Since(start)
+			nodeID := reflect.TypeOf(processor).String()
+			if named, ok := processor.(interface{ ID() string }); ok {
+				nodeID = named.ID()
+			}
+			entry := MessageHistoryEntry{
+				NodeID:    nodeID,
+				RouteID:   r.ID,
+				Timestamp: start,
+				Elapsed:   elapsed,
+			}
+			history := GetMessageHistory(exchange)
+			history = append(history, entry)
+			exchange.SetProperty(CamelMessageHistory, history)
+		}
+
+		if err != nil {
 			if errors.Is(err, ErrStopRouting) {
 				return err // StopRouting is a control signal, not a failure
 			}

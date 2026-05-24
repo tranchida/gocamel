@@ -199,6 +199,12 @@ func (b *RouteBuilder) EnableTracing() *RouteBuilder {
 	return b
 }
 
+// EnableMessageHistory enables Message History tracking for the current route.
+func (b *RouteBuilder) EnableMessageHistory() *RouteBuilder {
+	b.route.EnableMessageHistory()
+	return b
+}
+
 // ErrorHandler configures a custom ErrorHandler for this route.
 // This is a terminal DSL operation — it sets the handler on the route
 // being built. Multiple calls will overwrite previous settings.
@@ -272,6 +278,24 @@ func (b *RouteBuilder) SimpleSetHeader(headerName string, expression string) *Ro
 // Marshal adds a dataformat marshal step to the current route.
 func (b *RouteBuilder) Marshal(dataFormat DataFormat) *RouteBuilder {
 	b.container.AddProcessor(&MarshalProcessor{DataFormat: dataFormat})
+	return b
+}
+
+// Transform adds a Transform/Content Filter EIP step.
+// The transformFn function takes the current exchange and returns a new body.
+func (b *RouteBuilder) Transform(transformFn func(*Exchange) (any, error)) *RouteBuilder {
+	b.container.AddProcessor(NewTransformer(transformFn))
+	return b
+}
+
+// TransformSimple adds a Transform EIP step evaluated via Simple Language.
+func (b *RouteBuilder) TransformSimple(expression string) *RouteBuilder {
+	t, err := NewSimpleTransformer(expression)
+	if err != nil {
+		b.err = err
+		return b
+	}
+	b.container.AddProcessor(t)
 	return b
 }
 

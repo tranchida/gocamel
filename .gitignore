@@ -13,3 +13,5 @@ bin/
 .claude/
 .junie/
 .gitnexus/
+/AGENTS.md
+/CLAUDE.md
