@@ -5,7 +5,7 @@
 **Enterprise Integration Framework for Go**
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 🌐 **Language / Langue**: 🇺🇸 English | [**🇫🇷 Français**](./README.fr.md)
 
@@ -157,7 +157,7 @@ Contributions are welcome! Please see [GitLab Issues](https://gitlab.com/tranchi
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Apache License, Version 2.0 - see [LICENSE](LICENSE) file for details.
 
 ---
 

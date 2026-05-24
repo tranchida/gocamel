@@ -5,7 +5,7 @@
 **Framework d'Intégration d'Entreprise pour Go**
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 🌐 **Langue / Language**: [**🇺🇸 English**](./README.md) | 🇫🇷 Français
 
@@ -158,7 +158,7 @@ Les contributions sont les bienvenues ! Voir les [GitLab Issues](https://gitlab.
 
 ## 📄 Licence
 
-Licence MIT - voir le fichier [LICENSE](LICENSE) pour les détails.
+Licence Apache Version 2.0 - voir le fichier [LICENSE](LICENSE) pour les détails.
 
 ---
 
