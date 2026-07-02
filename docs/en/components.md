@@ -16,9 +16,9 @@ In-memory synchronous routing between routes in the same context.
 builder.From("direct:start").To("direct:process")
 ```
 
-| Option         | Type | Default | Description            |
-|----------------|------|---------|------------------------|
-| `reuseChannel` | bool | `true`  | Reuse the same channel |
+Endpoints are identified by **name only** — query parameters are ignored for identity, so
+`direct:start` and `direct:start?x=1` resolve to the same endpoint. Only one consumer per
+endpoint is allowed.
 
 ---
 
@@ -181,6 +181,14 @@ names and values containing `\r` or `\n` (CRLF) to prevent HTTP response
 splitting (CWE-113). An exchange that tries to set such a header gets an
 error back from `Send()`.
 
+#### Hardening & responses
+
+- The embedded server sets a 10-second `ReadHeaderTimeout` to mitigate
+  slowloris-style attacks.
+- The response body is taken from `Out` (or `In` when no `Out` was set, per
+  Camel InOut semantics). `[]byte` and `string` bodies are written as-is;
+  any other non-nil body is written using its `%v` string representation.
+
 #### Shutdown
 
 The consumer goroutine is tracked by an internal `WaitGroup` and `Stop()`
@@ -329,6 +337,14 @@ builder.To("chan:orders")
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `bufferSize` | int | `100` | Capacity of the internal buffered channel |
+
+**Notes:**
+
+- Endpoints are cached **by channel name**: every producer and consumer using the same
+  name shares one endpoint, and only **one consumer** per channel is allowed (a second
+  `From("chan:orders")` fails at startup).
+- URI options are applied when the endpoint is **first created**; later references with
+  different options log a warning and reuse the existing endpoint.
 
 ---
 
@@ -737,16 +753,38 @@ Execute system commands.
 builder.To("exec:ls -la")
 ```
 
-| Option       | Type   | Default | Description                  |
-|--------------|--------|---------|------------------------------|
-| `args`       | string | `""`    | Command arguments            |
-| `workingDir` | string | `""`    | Working directory            |
-| `timeout`    | int    | `0`     | Timeout in ms (0=no timeout) |
+| Option                | Type   | Default | Description                                          |
+|-----------------------|--------|---------|------------------------------------------------------|
+| `args`                | string | `""`    | Command arguments                                    |
+| `workingDir`          | string | `""`    | Working directory                                    |
+| `timeout`             | int    | `0`     | Timeout in ms (0=no timeout)                         |
+| `outFile`             | string | `""`    | Read the result from this file instead of stdout     |
+| `useStderrOnEmpty`    | bool   | `false` | Use stderr as body when stdout is empty              |
+| `allowHeaderOverride` | bool   | `false` | Allow `CamelExecCommand*` headers to override the URI |
+
+**Per-message overrides (opt-in):**
+
+When `allowHeaderOverride=true`, these headers override the URI settings for a single message:
+
+| Header                       | Overrides         |
+|------------------------------|-------------------|
+| `CamelExecCommandExecutable` | Executable        |
+| `CamelExecCommandArgs`       | Arguments         |
+| `CamelExecCommandWorkingDir` | Working directory |
+| `CamelExecCommandTimeout`    | Timeout (ms)      |
+
+!!! danger "Security"
+    Header overrides let a message choose **which binary is executed**. They are
+    disabled by default; only enable `allowHeaderOverride=true` when message
+    headers cannot be influenced by untrusted input (e.g. headers coming from an
+    HTTP or mail consumer). Executables, arguments, and working directories are
+    always validated against shell metacharacters and path traversal.
 
 **Output:**
 
 - `Out.Body` = command stdout
-- Header `CamelExecExitCode` = exit code
+- Header `CamelExecExitValue` = exit code
+- Headers `CamelExecStdout` / `CamelExecStderr` = raw command output
 
 ---
 

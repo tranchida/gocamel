@@ -42,6 +42,13 @@ func (r *Resequencer) SetProcessor(p Processor) {
 }
 
 // Process implements the Processor interface.
+//
+// The incoming exchange is copied into the buffer and delivered downstream
+// (in order) via the internal pipeline; the ORIGINAL exchange never continues
+// past this processor, so Process returns ErrStopRouting for consumed
+// messages. Delivery happens under the internal mutex: ordering requires
+// serialized delivery, so downstream processors must not route back into the
+// same Resequencer (that would deadlock).
 func (r *Resequencer) Process(exchange *Exchange) error {
 	seq, err := r.expression(exchange)
 	if err != nil {
@@ -53,14 +60,14 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 
 	if seq < r.nextSeq {
 		logWarn("resequencer: received outdated sequence number", "seq", seq, "expected", r.nextSeq)
-		return nil
+		return ErrStopRouting
 	}
 
 	// Check for duplicates
 	for _, e := range r.buffer {
 		if e.seq == seq {
 			logWarn("resequencer: duplicate sequence number received", "seq", seq)
-			return nil
+			return ErrStopRouting
 		}
 	}
 
@@ -76,7 +83,10 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 
 	err = r.drain()
 	r.updateTimer()
-	return err
+	if err != nil {
+		return err
+	}
+	return ErrStopRouting
 }
 
 func (r *Resequencer) drain() error {
@@ -117,7 +127,11 @@ func (r *Resequencer) onTimeout(gen uint64) {
 	if len(r.buffer) > 0 && r.buffer[0].seq > r.nextSeq {
 		logWarn("resequencer: timeout reached", "expected", r.nextSeq, "skipping to", r.buffer[0].seq)
 		r.nextSeq = r.buffer[0].seq
-		_ = r.drain()
+		if err := r.drain(); err != nil {
+			// There is no caller to propagate to on the timeout path; surface
+			// the failure in the logs instead of dropping it silently.
+			logError("resequencer: downstream processing failed during timeout drain", "error", err)
+		}
 		r.updateTimer()
 	}
 }

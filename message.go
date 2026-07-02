@@ -156,3 +156,47 @@ func (m *Message) Copy() *Message {
 
 	return copy
 }
+
+// DeepCopy returns a copy of the message whose body and header values are
+// recursively duplicated for the common mutable container types ([]byte,
+// []any, map[string]any, []string). Values of other types are shared by
+// reference — treat them as immutable when the copy crosses a goroutine
+// boundary (WireTap, parallel Multicast).
+func (m *Message) DeepCopy() *Message {
+	copy := NewMessage()
+	copy.Body = deepCopyValue(m.Body)
+	for k, v := range m.Headers {
+		copy.Headers[k] = deepCopyValue(v)
+	}
+	return copy
+}
+
+// deepCopyValue duplicates the common mutable container types used in message
+// bodies and headers. Scalars are returned as-is; unknown types are shared by
+// reference.
+func deepCopyValue(v any) any {
+	switch val := v.(type) {
+	case []byte:
+		cp := make([]byte, len(val))
+		copy(cp, val)
+		return cp
+	case []any:
+		cp := make([]any, len(val))
+		for i, item := range val {
+			cp[i] = deepCopyValue(item)
+		}
+		return cp
+	case map[string]any:
+		cp := make(map[string]any, len(val))
+		for k, item := range val {
+			cp[k] = deepCopyValue(item)
+		}
+		return cp
+	case []string:
+		cp := make([]string, len(val))
+		copy(cp, val)
+		return cp
+	default:
+		return v
+	}
+}

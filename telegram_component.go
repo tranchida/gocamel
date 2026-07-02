@@ -183,7 +183,7 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 					exchange.SetHeader("TelegramUsername", update.Message.From.UserName)
 				}
 
-				if err := c.processor.Process(exchange); err != nil {
+				if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
 					logError("Error processing Telegram message", "error", err)
 				}
 			}

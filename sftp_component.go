@@ -464,10 +464,9 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 			moveFailed: c.opts.MoveFailed,
 		})
 
-		procErr := c.processor.Process(exchange)
-		exchange.Done(procErr)
+		procErr := completeExchange(exchange, c.processor.Process(exchange))
 
-		if procErr == nil || errors.Is(procErr, ErrStopRouting) {
+		if procErr == nil {
 			count++
 		}
 	}

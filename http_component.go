@@ -198,7 +198,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		}
 
 		// Processing the message
-		if err := c.processor.Process(exchange); err != nil {
+		if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -221,6 +221,12 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			w.Write(body)
 		case string:
 			w.Write([]byte(body))
+		case nil:
+			// no body
+		default:
+			// Fall back to the string representation rather than silently
+			// returning an empty response for non-string bodies.
+			fmt.Fprintf(w, "%v", body)
 		}
 	})
 
@@ -232,6 +238,8 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	c.server = &http.Server{
 		Addr:    ":" + port,
 		Handler: handler,
+		// Bound the time a client may take to send its headers (slowloris).
+		ReadHeaderTimeout: 10 * time.Second,
 		// BaseContext ties every inbound request to the consumer's parent ctx
 		// so that CamelContext.Stop() cancels in-flight requests.
 		BaseContext: func(net.Listener) context.Context { return ctx },

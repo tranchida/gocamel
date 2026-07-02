@@ -63,15 +63,15 @@ type Route struct {
 	messageHistory bool         // Whether Message History is enabled for this route.
 }
 
-// lazyProducer is a Processor that initialises its underlying Producer on first
-// use (via sync.Once) and exposes Stop() for cleanup when the route stops.
+// lazyProducer is a Processor that initialises its underlying Producer on
+// first use and exposes Stop() for cleanup when the route stops. A failed
+// initialisation is NOT cached: the next exchange retries, so a transient
+// connection error does not poison the producer for the lifetime of the route.
 type lazyProducer struct {
 	context *CamelContext
 	uri     string
-	once    sync.Once
 	mu      sync.Mutex
 	p       Producer
-	initErr error
 }
 
 func newLazyProducer(ctx *CamelContext, uri string) *lazyProducer {
@@ -79,32 +79,29 @@ func newLazyProducer(ctx *CamelContext, uri string) *lazyProducer {
 }
 
 func (lp *lazyProducer) Process(exchange *Exchange) error {
-	lp.once.Do(func() {
+	lp.mu.Lock()
+	prod := lp.p
+	if prod == nil {
 		endpoint, err := lp.context.CreateEndpoint(lp.uri)
 		if err != nil {
-			lp.initErr = err
-			return
+			lp.mu.Unlock()
+			return err
 		}
 		p, err := endpoint.CreateProducer()
 		if err != nil {
-			lp.initErr = err
-			return
+			lp.mu.Unlock()
+			return err
 		}
 		if err := p.Start(exchange.Context); err != nil {
-			lp.initErr = err
-			return
+			lp.mu.Unlock()
+			return err
 		}
-		lp.mu.Lock()
 		lp.p = p
-		lp.mu.Unlock()
-	})
-	if lp.initErr != nil {
-		return lp.initErr
+		prod = p
 	}
-	exchange.PropagateOutToIn()
-	lp.mu.Lock()
-	prod := lp.p
 	lp.mu.Unlock()
+
+	exchange.PropagateOutToIn()
 	return prod.Send(exchange)
 }
 
@@ -306,7 +303,9 @@ func (r *Route) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops the route.
+// Stop stops the route. All resources (consumer, producers, stoppable
+// processors) are stopped even if some fail; errors are collected and
+// returned combined so one failing producer cannot leak the others.
 func (r *Route) Stop() error {
 	r.startLock.Lock()
 	defer r.startLock.Unlock()
@@ -315,28 +314,30 @@ func (r *Route) Stop() error {
 		return nil
 	}
 
+	var errs []error
+
 	if r.consumer != nil {
 		if err := r.consumer.Stop(); err != nil {
-			return fmt.Errorf("error stopping consumer: %v", err)
+			errs = append(errs, fmt.Errorf("error stopping consumer: %w", err))
 		}
 	}
 
 	for _, lp := range r.lazyProducers {
 		if err := lp.Stop(); err != nil {
-			return fmt.Errorf("error stopping producer for %s: %v", lp.uri, err)
+			errs = append(errs, fmt.Errorf("error stopping producer for %s: %w", lp.uri, err))
 		}
 	}
 
 	for _, p := range r.processors {
 		if stoppable, ok := p.(interface{ Stop() error }); ok {
 			if err := stoppable.Stop(); err != nil {
-				return err
+				errs = append(errs, err)
 			}
 		}
 	}
 
 	r.started = false
-	return nil
+	return errors.Join(errs...)
 }
 
 func (r *Route) IsStarted() bool {

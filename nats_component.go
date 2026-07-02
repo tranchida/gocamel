@@ -250,7 +250,7 @@ func (c *NATSConsumer) run(ctx context.Context) {
 			exchange.In.SetBody(msg.Data)
 			exchange.In.SetHeader(CamelNATSSubject, msg.Subject)
 
-			if err := c.processor.Process(exchange); err != nil {
+			if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
 				logError("nats consumer processing error",
 					"uri", c.endpoint.uri,
 					"error", err,

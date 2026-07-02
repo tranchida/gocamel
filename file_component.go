@@ -283,8 +283,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 					moveFailed: moveFailed,
 				})
 
-				err = c.processor.Process(exchange)
-				exchange.Done(err)
+				_ = completeExchange(exchange, c.processor.Process(exchange))
 
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -332,8 +331,7 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 		moveFailed: moveFailed,
 	})
 
-	procErr := c.processor.Process(exchange)
-	exchange.Done(procErr)
+	_ = completeExchange(exchange, c.processor.Process(exchange))
 	return nil
 }
 

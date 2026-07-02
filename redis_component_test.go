@@ -124,13 +124,16 @@ func TestRedisComponent_PubSub(t *testing.T) {
 	camelCtx.AddComponent("direct", NewDirectComponent())
 	camelCtx.AddComponent("redis", NewRedisComponent())
 
-	var receivedBody string
+	// Buffered channel: the consumer goroutine writes, the test goroutine reads.
+	// A shared variable with a sleep would be a data race (no happens-before).
+	received := make(chan string, 1)
 
 	// Consumer route: redis pubsub (subscribe to 'news') -> ProcessFunc
 	_, err := camelCtx.CreateRouteBuilder().
 		From("redis://" + s.Addr() + "?subscribe=true&channel=news").
 		ProcessFunc(func(e *Exchange) error {
-			receivedBody, _ = e.GetBodyAsString()
+			body, _ := e.GetBodyAsString()
+			received <- body
 			return nil
 		}).
 		Build()
@@ -164,8 +167,11 @@ func TestRedisComponent_PubSub(t *testing.T) {
 	err = pubProducer.Send(pubExchange)
 	assert.NoError(t, err)
 
-	// Wait briefly for asynchronous consumer processing
-	time.Sleep(50 * time.Millisecond)
-
-	assert.Equal(t, "Breaking News!", receivedBody)
+	// Wait for asynchronous consumer processing
+	select {
+	case body := <-received:
+		assert.Equal(t, "Breaking News!", body)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the pubsub message to be consumed")
+	}
 }

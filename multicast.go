@@ -96,9 +96,11 @@ func (m *Multicast) processParallel(exchange *Exchange) error {
 	// concurrent reads of the parent exchange maps (Properties, Headers),
 	// which is safe in Go but trips the race detector under load and couples
 	// the branches to the parent's lifetime in subtle ways.
+	// DeepCopy (not Copy): branches run concurrently, so a shared mutable body
+	// ([]byte, map, ...) mutated by two branches would be a data race.
 	branches := make([]*Exchange, len(m.processors))
 	for i := range m.processors {
-		branchExchange := exchange.Copy()
+		branchExchange := exchange.DeepCopy()
 		branchExchange.SetProperty(CamelMulticastIndex, i)
 		branchExchange.SetProperty(CamelMulticastSize, len(m.processors))
 		branchExchange.SetProperty(CamelMulticastComplete, i == len(m.processors)-1)

@@ -121,7 +121,7 @@ func TestExecProducer_Send_ExitCode(t *testing.T) {
 
 func TestExecProducer_Send_Stderr(t *testing.T) {
 	// ls of a non-existent path writes to stderr
-	ep := &ExecEndpoint{uri: "exec:ls", executable: "ls"}
+	ep := &ExecEndpoint{uri: "exec:ls", executable: "ls", allowHeaderOverride: true}
 	producer := &ExecProducer{endpoint: ep}
 	require.NoError(t, producer.Start(context.Background()))
 	defer producer.Stop()
@@ -139,9 +139,10 @@ func TestExecProducer_Send_Stderr(t *testing.T) {
 
 func TestExecProducer_Send_UseStderrOnEmpty(t *testing.T) {
 	ep := &ExecEndpoint{
-		uri:              "exec:ls",
-		executable:       "ls",
-		useStderrOnEmpty: true,
+		uri:                 "exec:ls",
+		executable:          "ls",
+		useStderrOnEmpty:    true,
+		allowHeaderOverride: true,
 	}
 	producer := &ExecProducer{endpoint: ep}
 	require.NoError(t, producer.Start(context.Background()))
@@ -206,9 +207,10 @@ func TestExecProducer_Send_Timeout(t *testing.T) {
 
 func TestExecProducer_Send_HeaderOverrides(t *testing.T) {
 	ep := &ExecEndpoint{
-		uri:        "exec:echo",
-		executable: "echo",
-		args:       []string{"initial"},
+		uri:                 "exec:echo",
+		executable:          "echo",
+		args:                []string{"initial"},
+		allowHeaderOverride: true,
 	}
 	producer := &ExecProducer{endpoint: ep}
 	require.NoError(t, producer.Start(context.Background()))
@@ -224,6 +226,30 @@ func TestExecProducer_Send_HeaderOverrides(t *testing.T) {
 	body, ok := exchange.GetIn().GetBody().(string)
 	require.True(t, ok)
 	assert.Contains(t, body, "override from header")
+}
+
+func TestExecProducer_Send_HeaderOverridesDisabledByDefault(t *testing.T) {
+	ep := &ExecEndpoint{
+		uri:        "exec:echo",
+		executable: "echo",
+		args:       []string{"initial"},
+	}
+	producer := &ExecProducer{endpoint: ep}
+	require.NoError(t, producer.Start(context.Background()))
+	defer producer.Stop()
+
+	exchange := NewExchange(context.Background())
+	// Without allowHeaderOverride, headers must be ignored (secure default).
+	exchange.GetIn().SetHeader(CamelExecCommandExecutable, "id")
+	exchange.GetIn().SetHeader(CamelExecCommandArgs, "override from header")
+
+	err := producer.Send(exchange)
+	require.NoError(t, err)
+
+	body, ok := exchange.GetIn().GetBody().(string)
+	require.True(t, ok)
+	assert.Contains(t, body, "initial")
+	assert.NotContains(t, body, "override from header")
 }
 
 func TestExecProducer_Send_WorkingDir(t *testing.T) {

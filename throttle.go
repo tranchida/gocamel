@@ -73,13 +73,15 @@ func (t *Throttler) Process(exchange *Exchange) error {
 		sleepFor := time.Until(waitUntil)
 		if sleepFor > 0 {
 			if err := sleepWithContext(exchange, sleepFor); err != nil {
-				return err
+				return fmt.Errorf("throttle: %w", err)
 			}
 		}
 		// Loop to recheck (another goroutine may have consumed the reset window).
 	}
 }
 
+// sleepWithContext sleeps for d, aborting early if the exchange context is
+// cancelled. Shared by the Throttle and DeadLetterChannel redelivery delays.
 func sleepWithContext(exchange *Exchange, d time.Duration) error {
 	ctx := exchange.Context
 	if ctx == nil {
@@ -94,6 +96,6 @@ func sleepWithContext(exchange *Exchange, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("throttle: context cancelled: %w", ctx.Err())
+		return fmt.Errorf("context cancelled: %w", ctx.Err())
 	}
 }

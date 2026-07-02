@@ -48,8 +48,15 @@ func (s *SagaProcessor) Process(exchange *Exchange) error {
 				comp := completedCompensations[i]
 				// We run compensation on a copy of the exchange to avoid contaminating the failure state
 				compExchange := exchange.Copy()
-				// Run compensation and log/ignore errors to ensure other compensations still run
-				_ = comp.Process(compExchange)
+				// A failing compensation must not prevent the remaining ones from
+				// running, but it MUST be visible to operators.
+				if compErr := comp.Process(compExchange); compErr != nil {
+					logError("saga: compensation failed",
+						"compensation_index", i,
+						"error", compErr,
+						"original_error", err,
+					)
+				}
 			}
 			return fmt.Errorf("saga action failed: %w", err)
 		}

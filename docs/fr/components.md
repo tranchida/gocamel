@@ -21,9 +21,9 @@ Synchronous in-memory routing between routes in the same context.
 builder.From("direct:start").To("direct:process")
 ```
 
-| Option         | Type | Default | Description            |
-|----------------|------|---------|------------------------|
-| `reuseChannel` | bool | `true`  | Reuse the same channel |
+Endpoints are identified by **name only** — query parameters are ignored for identity, so
+`direct:start` and `direct:start?x=1` resolve to the same endpoint. Only one consumer per
+endpoint is allowed.
 
 ---
 
@@ -141,6 +141,15 @@ Le producer HTTP (`To`) et le chemin de réponse du consumer rejettent les
 noms et valeurs de header contenant `\r` ou `\n` (CRLF) pour empêcher le
 HTTP response splitting (CWE-113). Un exchange qui tente de positionner un
 tel header reçoit une erreur de `Send()`.
+
+#### Durcissement & réponses
+
+- Le serveur embarqué applique un `ReadHeaderTimeout` de 10 secondes pour
+  limiter les attaques de type slowloris.
+- Le body de réponse provient de `Out` (ou de `In` si aucun `Out` n'a été
+  défini, sémantique InOut de Camel). Les bodies `[]byte` et `string` sont
+  écrits tels quels ; tout autre body non nil est écrit via sa représentation
+  `%v`.
 
 #### Arrêt
 
@@ -276,6 +285,13 @@ builder.To("chan:orders")
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `bufferSize` | int | `100` | Capacity of the internal buffered channel |
+
+**Notes:**
+
+- Endpoints are cached **by channel name**: every producer and consumer using the same
+  name shares one endpoint, and only **one consumer** per channel is allowed.
+- URI options are applied when the endpoint is **first created**; later references with
+  different options log a warning and reuse the existing endpoint.
 
 ---
 
@@ -431,6 +447,18 @@ Execute system commands.
 ```go
 builder.To("exec:ls -la")
 ```
+
+| Option                | Type   | Default | Description                                           |
+|-----------------------|--------|---------|-------------------------------------------------------|
+| `args`                | string | `""`    | Command arguments                                     |
+| `workingDir`          | string | `""`    | Working directory                                     |
+| `timeout`             | int    | `0`     | Timeout in ms (0=no timeout)                          |
+| `allowHeaderOverride` | bool   | `false` | Allow `CamelExecCommand*` headers to override the URI |
+
+!!! danger "Security"
+    Header overrides let a message choose **which binary is executed**. They are
+    disabled by default; only enable `allowHeaderOverride=true` when message headers
+    cannot be influenced by untrusted input.
 
 ---
 
@@ -669,9 +697,9 @@ Routage synchrone en mémoire entre routes du même contexte.
 builder.From("direct:start").To("direct:process")
 ```
 
-| Option         | Type | Défaut | Description                |
-|----------------|------|--------|----------------------------|
-| `reuseChannel` | bool | `true` | Réutiliser le même channel |
+Les endpoints sont identifiés **par leur nom uniquement** — les paramètres de query sont
+ignorés pour l'identité : `direct:start` et `direct:start?x=1` désignent le même endpoint.
+Un seul consumer par endpoint est autorisé.
 
 ---
 
@@ -887,6 +915,15 @@ builder.To("chan:orders")
 |---|---|---|---|
 | `bufferSize` | int | `100` | Capacité du canal bufferisé interne |
 
+**Notes :**
+
+- Les endpoints sont mis en cache **par nom de canal** : tous les producers et consumers
+  utilisant le même nom partagent un seul endpoint, et **un seul consumer** par canal est
+  autorisé (un second `From("chan:orders")` échoue au démarrage).
+- Les options d'URI sont appliquées à la **première création** de l'endpoint ; les
+  références ultérieures avec des options différentes émettent un avertissement et
+  réutilisent l'endpoint existant.
+
 ---
 
 ## Composants IA/LLM
@@ -1041,6 +1078,21 @@ Exécution de commandes système.
 ```go
 builder.To("exec:ls -la")
 ```
+
+| Option                | Type   | Défaut  | Description                                                        |
+|-----------------------|--------|---------|--------------------------------------------------------------------|
+| `args`                | string | `""`    | Arguments de la commande                                           |
+| `workingDir`          | string | `""`    | Répertoire de travail                                              |
+| `timeout`             | int    | `0`     | Timeout en ms (0 = aucun)                                          |
+| `allowHeaderOverride` | bool   | `false` | Autorise les headers `CamelExecCommand*` à surcharger l'URI        |
+
+!!! danger "Sécurité"
+    Les surcharges par header permettent à un message de choisir **quel binaire est
+    exécuté**. Elles sont désactivées par défaut ; n'activez `allowHeaderOverride=true`
+    que si les headers ne peuvent pas être influencés par des données non fiables
+    (par exemple en provenance d'un consumer HTTP ou mail). Exécutables, arguments et
+    répertoires de travail sont toujours validés contre les métacaractères shell et le
+    path traversal.
 
 ---
 

@@ -138,14 +138,22 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 
 	// 1. Try redelivery
 	if attempt < dlc.maxRedeliveries {
-		// Wait before retrying
+		// Wait before retrying: base delay for the first redelivery, then
+		// base * multiplier^attempt when exponential backoff is enabled.
 		delay := dlc.redeliveryDelay
-		if dlc.useExponentialBackoff && attempt > 0 {
-			for i := 1; i < attempt; i++ {
+		if dlc.useExponentialBackoff {
+			for i := 0; i < attempt; i++ {
 				delay = time.Duration(float64(delay) * dlc.backoffMultiplier)
 			}
 		}
-		time.Sleep(delay)
+		if sleepErr := sleepWithContext(exchange, delay); sleepErr != nil {
+			// Context cancelled while waiting — abort redelivery, clean up state,
+			// and surface the cancellation alongside the original error.
+			dlc.mu.Lock()
+			delete(dlc.retryAttempts, exID)
+			dlc.mu.Unlock()
+			return fmt.Errorf("dead letter channel: redelivery aborted: %w (original error: %v)", sleepErr, err)
+		}
 
 		// Reset the output message for the retry
 		exchange.Out = NewMessage()

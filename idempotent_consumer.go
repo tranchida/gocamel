@@ -5,6 +5,12 @@ import (
 )
 
 // IdempotentConsumer implements the Idempotent Consumer EIP.
+//
+// The key is added to the repository eagerly (before downstream processing) so
+// that concurrent duplicates are blocked. If the exchange later FAILS, the key
+// is removed again via a Synchronization so the message can be redelivered —
+// otherwise a transient downstream error would permanently mark the message as
+// consumed and lose it.
 type IdempotentConsumer struct {
 	expression func(*Exchange) (string, error)
 	repo       IdempotentRepository
@@ -15,6 +21,23 @@ func NewIdempotentConsumer(expression func(*Exchange) (string, error), repo Idem
 	return &IdempotentConsumer{
 		expression: expression,
 		repo:       repo,
+	}
+}
+
+// idempotentSynchronization removes the eagerly-added key when the exchange
+// ultimately fails, restoring at-least-once semantics.
+type idempotentSynchronization struct {
+	repo IdempotentRepository
+	key  string
+}
+
+func (s *idempotentSynchronization) OnComplete(exchange *Exchange) {}
+
+func (s *idempotentSynchronization) OnFailure(exchange *Exchange) {
+	if err := s.repo.Remove(exchange.Context, s.key); err != nil {
+		logError("idempotent consumer: failed to remove key after exchange failure; "+
+			"future redeliveries of this message will be treated as duplicates",
+			"key", s.key, "error", err)
 	}
 }
 
@@ -34,6 +57,9 @@ func (p *IdempotentConsumer) Process(exchange *Exchange) error {
 		// Duplicate message, stop routing
 		return ErrStopRouting
 	}
+
+	// Roll the key back if the exchange fails downstream (fires on Done).
+	exchange.AddSynchronization(&idempotentSynchronization{repo: p.repo, key: key})
 
 	return nil
 }

@@ -183,8 +183,7 @@ func (c *TimerConsumer) run(ctx context.Context) {
 		exchange.SetProperty(CamelTimerCounter, counter)
 		exchange.GetIn().SetHeader(CamelTimerFiredTime, firedTime)
 
-		err := c.processor.Process(exchange)
-		if err != nil && err != ErrStopRouting {
+		if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
 			logError("error processing timer event", "name", c.endpoint.timerName, "error", err)
 		}
 

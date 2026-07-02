@@ -19,23 +19,33 @@ func NewDirectComponent() *DirectComponent {
 	}
 }
 
-// CreateEndpoint creates a new direct endpoint
+// CreateEndpoint creates a new direct endpoint.
+// Endpoints are cached by endpoint NAME (scheme + opaque/host/path, query
+// parameters excluded) so that "direct:foo" and "direct:foo?x=1" resolve to
+// the same endpoint and producers always find the matching consumer.
 func (c *DirectComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	u, err := ParseURI(uri)
+	if err != nil {
+		return nil, fmt.Errorf("invalid direct URI: %v", err)
+	}
+
+	name := u.Opaque
+	if name == "" {
+		name = u.Host + u.Path
+	}
+	key := u.Scheme + ":" + name
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if endpoint, exists := c.endpoints[uri]; exists {
+	if endpoint, exists := c.endpoints[key]; exists {
 		return endpoint, nil
-	}
-
-	if _, err := ParseURI(uri); err != nil {
-		return nil, fmt.Errorf("invalid direct URI: %v", err)
 	}
 
 	endpoint := &DirectEndpoint{
 		uri: uri,
 	}
-	c.endpoints[uri] = endpoint
+	c.endpoints[key] = endpoint
 	return endpoint, nil
 }
 

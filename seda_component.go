@@ -46,15 +46,19 @@ func (c *SedaComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 	size := 1000 // default size
 	if sizeStr := GetConfigValue(u, "size"); sizeStr != "" {
-		if s, err := strconv.Atoi(sizeStr); err == nil {
+		if s, err := strconv.Atoi(sizeStr); err == nil && s >= 0 {
 			size = s
+		} else {
+			logWarn("seda: invalid size; using default", "value", sizeStr, "default", size)
 		}
 	}
 
 	concurrentConsumers := 1 // default consumers
 	if consumersStr := GetConfigValue(u, "concurrentConsumers"); consumersStr != "" {
-		if cc, err := strconv.Atoi(consumersStr); err == nil {
+		if cc, err := strconv.Atoi(consumersStr); err == nil && cc > 0 {
 			concurrentConsumers = cc
+		} else {
+			logWarn("seda: invalid concurrentConsumers; using default", "value", consumersStr, "default", concurrentConsumers)
 		}
 	}
 
@@ -170,7 +174,7 @@ func (c *SedaConsumer) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if err := c.processor.Process(exchange); err != nil {
+			if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
 				logError("SEDA consumer processing error",
 					"uri", c.endpoint.uri,
 					"error", err,

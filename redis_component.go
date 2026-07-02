@@ -280,7 +280,7 @@ func (c *RedisConsumer) run(ctx context.Context) {
 			exchange.In.SetBody(msg.Payload)
 			exchange.In.SetHeader(CamelRedisChannel, msg.Channel)
 
-			if err := c.processor.Process(exchange); err != nil {
+			if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
 				logError("redis consumer processing error",
 					"uri", c.endpoint.uri,
 					"error", err,

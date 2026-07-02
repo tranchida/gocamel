@@ -28,6 +28,7 @@ type CircuitBreaker struct {
 	successCount      int
 	openTimeout       time.Duration
 	lastOpenTime      time.Time
+	halfOpenProbe     bool // true while a half-open trial request is in flight
 	mu                sync.RWMutex
 	processor         Processor
 	fallbackProcessor Processor
@@ -76,8 +77,20 @@ func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 	if cb.state == StateOpen && time.Since(cb.lastOpenTime) > cb.openTimeout {
 		cb.state = StateHalfOpen
 		cb.successCount = 0
+		cb.halfOpenProbe = false
 	}
 	state := cb.state
+
+	// In Half-Open only ONE trial request may probe the downstream at a time;
+	// concurrent requests are diverted to the fallback as if the circuit were open.
+	if state == StateHalfOpen {
+		if cb.halfOpenProbe {
+			fb := cb.fallbackProcessor
+			cb.mu.Unlock()
+			return cb.doFallback(exchange, ErrCircuitOpen, fb)
+		}
+		cb.halfOpenProbe = true
+	}
 	cb.mu.Unlock()
 
 	if state == StateOpen {
@@ -91,6 +104,9 @@ func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 	err := cb.processor.Process(exchange)
 
 	cb.mu.Lock()
+	if state == StateHalfOpen {
+		cb.halfOpenProbe = false
+	}
 	var fb Processor
 	if err != nil {
 		cb.onFailure()

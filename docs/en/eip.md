@@ -188,12 +188,16 @@ builder.From("direct:start").
 
 1. Evaluates the expression to get a unique key.
 2. Checks if the key exists in the repository.
-3. If not present, adds the key and proceeds.
+3. If not present, adds the key eagerly (blocking concurrent duplicates) and proceeds.
 4. If present, stops routing (`ErrStopRouting`).
+5. If the exchange later **fails** downstream, the key is removed from the repository again
+   (via an exchange `Synchronization`), so a redelivery of the same message is processed
+   instead of being dropped — at-least-once semantics.
 
 **Repositories:**
 
 - `NewMemoryIdempotentRepository()`: In-memory store (default).
+- `NewRedisIdempotentRepository()`: Distributed store backed by Redis.
 - SQL-based repositories can be implemented via the `IdempotentRepository` interface.
 
 ---
@@ -222,8 +226,10 @@ builder.From("direct:start").
 
 - **Closed**: Requests pass through. Failures are counted.
 - **Open**: Requests fail immediately or go to fallback.
-- **Half-Open**: After `OpenTimeout`, allows a few requests to test if the service has recovered. If `SuccessThreshold`
-  is reached, it closes. If any fail, it opens again.
+- **Half-Open**: After `OpenTimeout`, a **single trial request at a time** probes the downstream
+  service; concurrent requests are diverted to the fallback as if the circuit were still open.
+  Once `SuccessThreshold` successful probes complete, the circuit closes. If a probe fails, it
+  opens again.
 
 ---
 
@@ -274,6 +280,10 @@ builder.To("seda:process")
 - `size`: The capacity of the internal queue (default 1000).
 - `concurrentConsumers`: The number of worker goroutines (default 1).
 
+Invalid values (negative `size`, non-positive `concurrentConsumers`) fall back to the
+defaults with a warning. Parameters are applied when the endpoint is **first created**;
+later references to the same queue name reuse the existing endpoint.
+
 ---
 
 ### Resequencer
@@ -296,6 +306,15 @@ builder.From("direct:start").
 3. If it's a future sequence, it's buffered and sorted.
 4. If a gap persists longer than the `Timeout`, the resequencer skips the missing sequence and continues with the next
    available one in the buffer.
+
+**Notes:**
+
+- Messages are delivered downstream through the resequencer's **internal pipeline** (the steps
+  between `Resequence(...)` and `End()`). The original exchange stops there (`ErrStopRouting`),
+  so steps placed *after* `End()` never see out-of-order messages.
+- Delivery is serialized to guarantee ordering; downstream steps must not route back into the
+  same resequencer.
+- Duplicate or outdated sequence numbers are dropped (logged as warnings).
 
 ---
 

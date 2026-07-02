@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Exchange.DeepCopy()` / `Message.DeepCopy()`** — recursively duplicate the common mutable container types
+  (`[]byte`, `[]any`, `map[string]any`, `[]string`) in bodies, headers, and properties; used by `WireTap` and
+  parallel `Multicast` so concurrent branches never share a mutable body
+- **Consistent exchange lifecycle** — every consumer (direct, seda, chan, timer, cron, http, file, ftp, sftp, smb,
+  mail, redis, nats, telegram) now fires `Synchronization` callbacks (`OnComplete`/`OnFailure`) when route
+  processing finishes; `ErrStopRouting` is normalized to success
+- **Exec `allowHeaderOverride` option** — per-message `CamelExecCommand*` header overrides are now **opt-in**
+  (disabled by default) to prevent untrusted headers from choosing the executed binary
+
+### Fixed
+
+- **Idempotent Consumer message loss** — the idempotency key is now removed from the repository when the exchange
+  fails downstream, so redeliveries are processed instead of silently dropped (at-least-once semantics)
+- **`chan` component consumer guard** — endpoints are now cached by channel name; previously each `CreateEndpoint`
+  call returned a new instance, allowing multiple consumers to silently compete for the same channel
+- **Lazy producer poisoning** — a transient failure while creating/starting a `To()` producer no longer poisons the
+  route permanently; initialization is retried on the next exchange
+- **DeadLetterChannel exponential backoff** — the delay now grows from the first redelivery
+  (base × multiplier^attempt); the redelivery wait also respects context cancellation instead of sleeping blindly
+- **Circuit Breaker half-open probing** — only one trial request probes the downstream at a time; concurrent
+  requests are diverted to the fallback instead of stampeding the recovering service
+- **Resequencer routing semantics** — buffered/duplicate/outdated messages now stop the original route
+  (`ErrStopRouting`) so steps placed after `End()` never observe out-of-order exchanges; timeout-drain errors are
+  logged instead of swallowed
+- **Saga compensation visibility** — compensation failures are now logged (with step index and original error)
+  instead of being silently ignored
+- **`Route.Stop()` resource cleanup** — all producers and stoppable processors are stopped even when one of them
+  fails; errors are collected and returned combined
+- **Pipeline headers-only propagation** — an `Out` message carrying only headers (no body) now propagates between
+  pipeline steps without erasing the current body
+- **`direct` endpoint identity** — query parameters no longer create distinct endpoints (`direct:a` and
+  `direct:a?x=1` now resolve to the same endpoint)
+- **WireTap shutdown & efficiency** — taps reuse the shared producer cache instead of creating a producer per
+  message, and `Route.Stop()` waits for in-flight taps instead of dropping them
+- **HTTP consumer hardening** — added a 10-second `ReadHeaderTimeout` (slowloris) and a `%v` fallback for
+  non-string response bodies instead of returning an empty response
+- **SEDA/chan URI validation** — negative queue sizes and non-positive consumer counts fall back to defaults with
+  a warning instead of panicking or being silently accepted
+
 ## [1.1.0] - 2026-05-24
 
 ### Added

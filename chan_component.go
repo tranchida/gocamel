@@ -10,20 +10,26 @@ import (
 // ChanComponent represents the native Go channel component.
 // It allows message exchanges to flow asynchronously through standard Go channels.
 type ChanComponent struct {
-	channels map[string]chan *Exchange
-	mu       sync.Mutex
+	endpoints map[string]*ChanEndpoint
+	mu        sync.Mutex
 }
 
 // NewChanComponent creates a new instance of ChanComponent.
 func NewChanComponent() *ChanComponent {
 	return &ChanComponent{
-		channels: make(map[string]chan *Exchange),
+		endpoints: make(map[string]*ChanEndpoint),
 	}
 }
 
 // CreateEndpoint creates a new ChanEndpoint from a URI.
 // Supported parameters:
 // - bufferSize: The capacity of the internal channel (default 100).
+//
+// Endpoints are cached by channel name so that all producers and consumers of
+// the same channel share ONE endpoint instance — this is what makes the
+// single-consumer guard in CreateConsumer effective. URI parameters are only
+// honoured on first creation; subsequent lookups with different parameters
+// log a warning and reuse the existing endpoint.
 func (c *ChanComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -38,26 +44,32 @@ func (c *ChanComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		return nil, fmt.Errorf("channel name is required in URI: %s", uri)
 	}
 
-	bufferSize := 100 // default buffer size
-	if bufStr := GetConfigValue(u, "bufferSize"); bufStr != "" {
-		if b, err := strconv.Atoi(bufStr); err == nil {
-			bufferSize = b
-		}
-	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	ch, exists := c.channels[channelName]
-	if !exists {
-		ch = make(chan *Exchange, bufferSize)
-		c.channels[channelName] = ch
+	if endpoint, exists := c.endpoints[channelName]; exists {
+		if endpoint.uri != uri {
+			logWarn("chan endpoint already exists; URI parameters ignored",
+				"channel", channelName, "existing", endpoint.uri, "requested", uri)
+		}
+		return endpoint, nil
 	}
 
-	return &ChanEndpoint{
+	bufferSize := 100 // default buffer size
+	if bufStr := GetConfigValue(u, "bufferSize"); bufStr != "" {
+		if b, err := strconv.Atoi(bufStr); err == nil && b >= 0 {
+			bufferSize = b
+		} else {
+			logWarn("chan: invalid bufferSize; using default", "value", bufStr, "default", bufferSize)
+		}
+	}
+
+	endpoint := &ChanEndpoint{
 		uri:   uri,
-		queue: ch,
-	}, nil
+		queue: make(chan *Exchange, bufferSize),
+	}
+	c.endpoints[channelName] = endpoint
+	return endpoint, nil
 }
 
 // ChanEndpoint represents a Go channel endpoint.
@@ -165,7 +177,7 @@ func (c *ChanConsumer) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if err := c.processor.Process(exchange); err != nil {
+			if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
 				logError("chan consumer processing error",
 					"uri", c.endpoint.uri,
 					"error", err,

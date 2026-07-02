@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"regexp"
@@ -140,6 +141,20 @@ func (e *Exchange) Done(err error) {
 			s.OnComplete(e)
 		}
 	}
+}
+
+// completeExchange finalizes a consumer-created exchange after route processing.
+// It normalizes the ErrStopRouting control signal to success (a stopped route is
+// not a failure), fires the exchange synchronizations via Done, and returns the
+// error the consumer should report (nil when routing was merely stopped).
+// Every consumer that creates exchanges must call this so that Synchronization
+// callbacks (AddSynchronization) fire consistently across components.
+func completeExchange(exchange *Exchange, err error) error {
+	if errors.Is(err, ErrStopRouting) {
+		err = nil
+	}
+	exchange.Done(err)
+	return err
 }
 
 func (e *Exchange) GetIn() *Message {
@@ -372,6 +387,26 @@ func (e *Exchange) Copy() *Exchange {
 	copy.In = e.In.Copy()
 	copy.Out = e.Out.Copy()
 	maps.Copy(copy.Properties, e.Properties)
+
+	copy.Created = e.Created
+	copy.Modified = time.Now()
+	copy.Error = e.Error
+
+	return copy
+}
+
+// DeepCopy is like Copy but additionally duplicates the common mutable
+// container types held in bodies, headers, and properties (see
+// Message.DeepCopy). Use it whenever the copy is handed to another goroutine
+// that runs concurrently with the original exchange (WireTap, parallel
+// Multicast branches).
+func (e *Exchange) DeepCopy() *Exchange {
+	copy := NewExchange(e.Context)
+	copy.In = e.In.DeepCopy()
+	copy.Out = e.Out.DeepCopy()
+	for k, v := range e.Properties {
+		copy.Properties[k] = deepCopyValue(v)
+	}
 
 	copy.Created = e.Created
 	copy.Modified = time.Now()

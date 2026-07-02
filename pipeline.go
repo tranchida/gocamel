@@ -1,9 +1,5 @@
 package gocamel
 
-import (
-	"errors"
-)
-
 // Pipeline is a Processor that executes a series of Processors sequentially.
 // It propagates the Out message as the next In between steps, mirroring
 // Apache Camel's message flow. Used for grouping processors inside a Multicast branch.
@@ -24,22 +20,20 @@ func (p *Pipeline) AddProcessor(processor Processor) {
 }
 
 // Process executes all processors in sequence, propagating Out→In between steps.
-// Returns ErrStopRouting immediately to abort processing, per EIP Stop semantics.
+// Errors (including the ErrStopRouting control signal) are returned immediately.
 func (p *Pipeline) Process(exchange *Exchange) error {
 	for _, processor := range p.processors {
-		// Propagate Out → In if the previous processor set an output
-		if exchange.HasOut() {
-			exchange.In.SetBody(exchange.Out.GetBody())
-			exchange.In.SetHeaders(exchange.Out.GetHeaders())
+		// Propagate Out → In if the previous processor set an output.
+		// Headers-only outputs propagate too: the body is only overwritten
+		// when the previous processor actually produced one.
+		if exchange.Out.Body != nil || len(exchange.Out.Headers) > 0 {
+			exchange.PropagateOutToIn()
 			// Reuse the Out message by resetting it instead of allocating a new one
 			exchange.Out.Body = nil
 			exchange.Out.Headers = make(map[string]any)
 		}
 
 		if err := processor.Process(exchange); err != nil {
-			if errors.Is(err, ErrStopRouting) {
-				return err // propagate Stop signal
-			}
 			return err
 		}
 	}

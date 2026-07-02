@@ -270,7 +270,7 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 		exchange.GetIn().SetHeader(CronTriggerGroup, ep.group)
 		exchange.GetIn().SetHeader(CronRefireCount, n)
 
-		if err := c.processor.Process(exchange); err != nil && !errors.Is(err, ErrStopRouting) {
+		if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
 			logError("Cron processing error", "group", ep.group, "name", ep.name, "error", err)
 		}
 
@@ -384,7 +384,7 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 	exchange.GetIn().SetHeader(CronTriggerGroup, ep.group)
 	exchange.GetIn().SetHeader(CronRefireCount, n)
 
-	if err := c.processor.Process(exchange); err != nil && !errors.Is(err, ErrStopRouting) {
+	if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
 		logError("Cron processing error", "group", ep.group, "name", ep.name, "error", err)
 	}
 

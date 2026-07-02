@@ -307,12 +307,17 @@ builder.From("direct:start").
 
 1. Évalue l'expression pour obtenir une clé unique.
 2. Vérifie si la clé existe déjà dans le dépôt (repository).
-3. Si elle n'est pas présente, ajoute la clé et continue le traitement.
+3. Si elle n'est pas présente, ajoute la clé immédiatement (bloquant les doublons
+   concurrents) et continue le traitement.
 4. Si elle est déjà présente, arrête le routage (`ErrStopRouting`).
+5. Si l'exchange **échoue** ensuite en aval, la clé est retirée du dépôt (via une
+   `Synchronization` de l'exchange) : une relivraison du même message sera donc traitée
+   au lieu d'être perdue — sémantique at-least-once.
 
 **Dépôts (Repositories) :**
 
 - `NewMemoryIdempotentRepository()` : Stockage en mémoire vive (par défaut).
+- `NewRedisIdempotentRepository()` : Stockage distribué via Redis.
 - Des dépôts basés sur SQL peuvent être implémentés via l'interface `IdempotentRepository`.
 
 ---
@@ -341,8 +346,9 @@ builder.From("direct:start").
 
 - **Closed (Fermé)** : Les requêtes passent normalement. Les échecs sont comptabilisés.
 - **Open (Ouvert)** : Les requêtes échouent immédiatement ou passent par le fallback.
-- **Half-Open (Semi-ouvert)** : Après le `OpenTimeout`, autorise quelques requêtes pour tester si le service est
-  rétabli. Si le `SuccessThreshold` est atteint, il se referme. En cas d'échec, il s'ouvre à nouveau.
+- **Half-Open (Semi-ouvert)** : Après le `OpenTimeout`, **une seule requête d'essai à la fois** sonde le service
+  aval ; les requêtes concurrentes sont redirigées vers le fallback comme si le circuit était encore ouvert.
+  Quand `SuccessThreshold` sondes réussissent, le circuit se referme. Si une sonde échoue, il s'ouvre à nouveau.
 
 ---
 
@@ -394,6 +400,11 @@ builder.To("seda:traitement")
 - `size` : La capacité de la file d'attente (défaut 1000).
 - `concurrentConsumers` : Le nombre de goroutines esclaves traitant la file (défaut 1).
 
+Les valeurs invalides (`size` négatif, `concurrentConsumers` non positif) retombent sur
+les valeurs par défaut avec un avertissement. Les paramètres sont appliqués à la
+**première création** de l'endpoint ; les références ultérieures au même nom de file
+réutilisent l'endpoint existant.
+
 ---
 
 ## Resequencer
@@ -416,6 +427,16 @@ builder.From("direct:start").
 3. S'il s'agit d'une séquence future, elle est mise en tampon et triée.
 4. Si un trou (gap) persiste plus longtemps que le `Timeout`, le resequenceur saute la séquence manquante et continue
    avec la suivante disponible.
+
+**Notes :**
+
+- Les messages sont délivrés en aval via le **pipeline interne** du resequenceur (les étapes
+  entre `Resequence(...)` et `End()`). L'exchange original s'arrête là (`ErrStopRouting`) :
+  les étapes placées *après* `End()` ne voient jamais de messages hors ordre.
+- La livraison est sérialisée pour garantir l'ordre ; les étapes en aval ne doivent pas
+  rerouter vers le même resequenceur.
+- Les numéros de séquence dupliqués ou obsolètes sont ignorés (avec un avertissement dans
+  les logs).
 
 ---
 

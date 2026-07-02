@@ -7,6 +7,47 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/lang/fr/spec/v2
 
 ## [Unreleased]
 
+### Ajouté
+
+- **`Exchange.DeepCopy()` / `Message.DeepCopy()`** — dupliquent récursivement les types conteneurs mutables
+  courants (`[]byte`, `[]any`, `map[string]any`, `[]string`) des bodies, headers et propriétés ; utilisés par le
+  `WireTap` et le `Multicast` parallèle pour que les branches concurrentes ne partagent jamais un body mutable
+- **Cycle de vie d'exchange cohérent** — tous les consumers (direct, seda, chan, timer, cron, http, file, ftp,
+  sftp, smb, mail, redis, nats, telegram) déclenchent désormais les callbacks `Synchronization`
+  (`OnComplete`/`OnFailure`) à la fin du traitement ; `ErrStopRouting` est normalisé en succès
+- **Option Exec `allowHeaderOverride`** — les surcharges par headers `CamelExecCommand*` sont désormais
+  **opt-in** (désactivées par défaut) pour empêcher des headers non fiables de choisir le binaire exécuté
+
+### Corrigé
+
+- **Perte de messages de l'Idempotent Consumer** — la clé d'idempotence est retirée du dépôt quand l'exchange
+  échoue en aval : les relivraisons sont traitées au lieu d'être silencieusement perdues (at-least-once)
+- **Garde consumer du composant `chan`** — les endpoints sont mis en cache par nom de canal ; auparavant chaque
+  `CreateEndpoint` retournait une nouvelle instance, permettant à plusieurs consumers de se disputer le même canal
+- **Empoisonnement du lazy producer** — un échec transitoire à la création/démarrage d'un producer `To()`
+  n'empoisonne plus la route définitivement ; l'initialisation est retentée au message suivant
+- **Backoff exponentiel du DeadLetterChannel** — le délai croît dès la première relivraison
+  (base × multiplicateur^tentative) ; l'attente respecte désormais l'annulation du contexte
+- **Sondes half-open du Circuit Breaker** — une seule requête d'essai à la fois sonde le service aval ; les
+  requêtes concurrentes partent en fallback au lieu de submerger le service en cours de rétablissement
+- **Sémantique de routage du Resequencer** — les messages bufferisés/dupliqués/obsolètes arrêtent la route
+  d'origine (`ErrStopRouting`) : les étapes placées après `End()` ne voient plus d'exchanges hors ordre ; les
+  erreurs du drain de timeout sont loggées au lieu d'être avalées
+- **Visibilité des compensations Saga** — les compensations en échec sont désormais loggées (index et erreur
+  d'origine) au lieu d'être silencieusement ignorées
+- **Nettoyage des ressources de `Route.Stop()`** — tous les producers et processors stoppables sont arrêtés même
+  si l'un d'eux échoue ; les erreurs sont collectées et retournées combinées
+- **Propagation headers-only du Pipeline** — un message `Out` ne portant que des headers (sans body) se propage
+  entre les étapes sans effacer le body courant
+- **Identité des endpoints `direct`** — les paramètres de query ne créent plus d'endpoints distincts
+  (`direct:a` et `direct:a?x=1` désignent le même endpoint)
+- **Arrêt & efficacité du WireTap** — les taps réutilisent le cache de producers partagé au lieu de créer un
+  producer par message, et `Route.Stop()` attend les taps en vol au lieu de les perdre
+- **Durcissement du consumer HTTP** — ajout d'un `ReadHeaderTimeout` de 10 s (slowloris) et d'un fallback `%v`
+  pour les bodies de réponse non-string au lieu d'une réponse vide
+- **Validation d'URI SEDA/chan** — les tailles de file négatives et les nombres de consumers non positifs
+  retombent sur les valeurs par défaut avec un avertissement au lieu de paniquer ou d'être acceptés en silence
+
 ## [1.1.0] - 2026-05-24
 
 ### Ajouté

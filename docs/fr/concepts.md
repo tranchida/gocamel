@@ -39,6 +39,15 @@ body, _ := exchange.GetBodyAsString()
     temps du fan-out et redevient mutable une fois `wg.Wait()` retourné. Si
     vous écrivez un EIP personnalisé qui fan-out, suivez le même schéma.
 
+!!! note "Copy vs DeepCopy"
+    `Copy()` duplique les **maps** de headers et de propriétés mais partage le
+    body (et les valeurs de headers) **par référence**. Quand la copie s'exécute
+    en parallèle de l'original — taps du `WireTap`, branches du `Multicast`
+    parallèle — utilisez `DeepCopy()` : il duplique récursivement les types
+    conteneurs mutables courants (`[]byte`, `[]any`, `map[string]any`,
+    `[]string`). Les valeurs des autres types restent partagées ; traitez-les
+    comme immuables entre goroutines.
+
 ## Processeur (Processor)
 
 Une interface pour implémenter une logique personnalisée. Vous pouvez utiliser des instances directes, des closures ou
@@ -212,7 +221,11 @@ GoCamel supporte un modèle transactionnel basé sur le pattern **Unit of Work**
 par exemple, un fichier, un email ou un enregistrement de base de données) n'est marquée comme "consommée" qu'une fois
 que toute la route a été traitée avec succès.
 
-- **Synchronization**: Vous pouvez enregistrer des callbacks (`OnComplete`, `OnFailure`) sur un `Exchange`.
+- **Synchronization**: Vous pouvez enregistrer des callbacks (`OnComplete`, `OnFailure`) sur un `Exchange` via
+  `AddSynchronization`. **Tous** les consumers qui créent des exchanges (direct, seda, chan, timer, cron, http,
+  file, ftp, sftp, smb, mail, redis, nats, telegram, ...) déclenchent ces callbacks à la fin du traitement de la
+  route. Le signal de contrôle `ErrStopRouting` (Stop EIP, doublons idempotents, bufferisation d'agrégation) compte
+  comme un **succès**, pas comme un échec.
 - **Route Transactionnelle**: Marquez une route comme transactionnelle en utilisant `.Transacted()` dans le DSL.
 - **Composants Transactionnels**: Les composants tels que `file`, `ftp`, `sftp`, `smb` et `mail` supportent ce modèle en
   retardant la suppression ou le déplacement du fichier source jusqu'à la fin de la route.

@@ -75,7 +75,13 @@ func NewExecComponent() *ExecComponent {
 }
 
 // CreateEndpoint creates an ExecEndpoint from the URI
-// Format: exec:executable[?args=arg1+arg2&workingDir=/tmp&timeout=5000&outFile=result.txt&useStderrOnEmpty=true]
+// Format: exec:executable[?args=arg1+arg2&workingDir=/tmp&timeout=5000&outFile=result.txt&useStderrOnEmpty=true&allowHeaderOverride=true]
+//
+// SECURITY: by default the executable, arguments, working directory and
+// timeout are fixed by the URI. Set allowHeaderOverride=true to let the
+// CamelExecCommand* headers override them per message — only do this when
+// headers cannot be influenced by untrusted input (they would allow running
+// an arbitrary binary).
 func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	parsedURL, err := ParseURI(uri)
 	if err != nil {
@@ -122,18 +128,25 @@ func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 
+	if val := query.Get("allowHeaderOverride"); val != "" {
+		if v, err := strconv.ParseBool(val); err == nil {
+			endpoint.allowHeaderOverride = v
+		}
+	}
+
 	return endpoint, nil
 }
 
 // ExecEndpoint represents an exec endpoint
 type ExecEndpoint struct {
-	uri              string
-	executable       string
-	args             []string
-	workingDir       string
-	timeoutMs        int64
-	outFile          string
-	useStderrOnEmpty bool
+	uri                 string
+	executable          string
+	args                []string
+	workingDir          string
+	timeoutMs           int64
+	outFile             string
+	useStderrOnEmpty    bool
+	allowHeaderOverride bool // opt-in: CamelExecCommand* headers may override URI settings
 }
 
 // URI returns the endpoint URI
@@ -168,11 +181,13 @@ func (p *ExecProducer) Stop() error {
 
 // Send executes the command and puts the results in the exchange
 func (p *ExecProducer) Send(exchange *Exchange) error {
-	// Executable resolution (header > URI)
+	// Executable resolution (header > URI, when allowHeaderOverride is set)
 	executable := p.endpoint.executable
-	if v, ok := exchange.GetHeader(CamelExecCommandExecutable); ok {
-		if s, ok := v.(string); ok && s != "" {
-			executable = s
+	if p.endpoint.allowHeaderOverride {
+		if v, ok := exchange.GetHeader(CamelExecCommandExecutable); ok {
+			if s, ok := v.(string); ok && s != "" {
+				executable = s
+			}
 		}
 	}
 
@@ -181,14 +196,16 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		return fmt.Errorf("exec: invalid executable: %w", err)
 	}
 
-	// Arguments resolution (header > URI)
+	// Arguments resolution (header > URI, when allowHeaderOverride is set)
 	args := append([]string(nil), p.endpoint.args...)
-	if v, ok := exchange.GetHeader(CamelExecCommandArgs); ok {
-		switch val := v.(type) {
-		case []string:
-			args = val
-		case string:
-			args = strings.Fields(val)
+	if p.endpoint.allowHeaderOverride {
+		if v, ok := exchange.GetHeader(CamelExecCommandArgs); ok {
+			switch val := v.(type) {
+			case []string:
+				args = val
+			case string:
+				args = strings.Fields(val)
+			}
 		}
 	}
 
@@ -197,11 +214,13 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		return fmt.Errorf("exec: invalid arguments: %w", err)
 	}
 
-	// Working directory resolution (header > URI)
+	// Working directory resolution (header > URI, when allowHeaderOverride is set)
 	workingDir := p.endpoint.workingDir
-	if v, ok := exchange.GetHeader(CamelExecCommandWorkingDir); ok {
-		if s, ok := v.(string); ok && s != "" {
-			workingDir = s
+	if p.endpoint.allowHeaderOverride {
+		if v, ok := exchange.GetHeader(CamelExecCommandWorkingDir); ok {
+			if s, ok := v.(string); ok && s != "" {
+				workingDir = s
+			}
 		}
 	}
 
@@ -219,16 +238,18 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Timeout resolution (header > URI)
+	// Timeout resolution (header > URI, when allowHeaderOverride is set)
 	timeoutMs := p.endpoint.timeoutMs
-	if v, ok := exchange.GetHeader(CamelExecCommandTimeout); ok {
-		switch val := v.(type) {
-		case int64:
-			timeoutMs = val
-		case int:
-			timeoutMs = int64(val)
-		case float64:
-			timeoutMs = int64(val)
+	if p.endpoint.allowHeaderOverride {
+		if v, ok := exchange.GetHeader(CamelExecCommandTimeout); ok {
+			switch val := v.(type) {
+			case int64:
+				timeoutMs = val
+			case int:
+				timeoutMs = int64(val)
+			case float64:
+				timeoutMs = int64(val)
+			}
 		}
 	}
 

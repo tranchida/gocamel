@@ -38,6 +38,14 @@ body, _ := exchange.GetBodyAsString()
     duration of the fan-out and becomes writable again after `wg.Wait()`
     returns. If you write a custom EIP that fans out, follow the same pattern.
 
+!!! note "Copy vs DeepCopy"
+    `Copy()` duplicates the header and property **maps** but shares the body
+    (and header values) **by reference**. When the copy runs concurrently with
+    the original — `WireTap` taps, parallel `Multicast` branches — use
+    `DeepCopy()` instead: it recursively duplicates the common mutable
+    container types (`[]byte`, `[]any`, `map[string]any`, `[]string`). Values
+    of other types remain shared; treat them as immutable across goroutines.
+
 ## Processor
 
 An interface for implementing custom logic. You can use direct instances, closures, or references from the registry.
@@ -209,7 +217,11 @@ GoCamel supports a transactional model based on the **Unit of Work** pattern. Th
 e.g., a file, an email, or a database record) is only marked as "consumed" once the entire route has been processed
 successfully.
 
-- **Synchronization**: You can register callbacks (`OnComplete`, `OnFailure`) on an `Exchange`.
+- **Synchronization**: You can register callbacks (`OnComplete`, `OnFailure`) on an `Exchange`
+  via `AddSynchronization`. **Every** consumer that creates exchanges (direct, seda, chan, timer,
+  cron, http, file, ftp, sftp, smb, mail, redis, nats, telegram, ...) fires these callbacks when
+  route processing completes. The `ErrStopRouting` control signal (Stop EIP, idempotent
+  duplicates, aggregation buffering) counts as **success**, not failure.
 - **Transacted Route**: Mark a route as transactional using `.Transacted()` in the DSL.
 - **Transactional Components**: Components like `file`, `ftp`, `sftp`, `smb`, and `mail` support this model by delaying
   deletion or movement of the source file until the route completes.
