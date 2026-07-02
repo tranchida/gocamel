@@ -99,7 +99,7 @@ func warnCredentialInQuery(scheme, key string) {
 	if _, loaded := credentialWarningOnce.LoadOrStore(cacheKey, struct{}{}); loaded {
 		return
 	}
-	logWarn("config: credential resolved from URI query parameter; prefer environment variables "+
+	LogWarn("config: credential resolved from URI query parameter; prefer environment variables "+
 		"(URIs often leak into connection-error logs and audit trails)",
 		"scheme", scheme,
 		"key", key)

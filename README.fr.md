@@ -33,8 +33,58 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 
 ## 📦 Installation
 
+Le module core (moteur de routage, EIPs, Simple Language et tous les
+composants sans dépendance externe : direct, seda, chan, timer, http, exec,
+template, sql) n'a **aucune dépendance externe** :
+
 ```bash
 go get gitlab.com/tranchida/gocamel
+```
+
+Les composants qui s'appuient sur des bibliothèques tierces vivent dans leurs
+propres modules Go — vous ne récupérez que les dépendances de ce que vous
+utilisez réellement :
+
+```bash
+go get gitlab.com/tranchida/gocamel/components/redis    # go-redis
+go get gitlab.com/tranchida/gocamel/components/nats     # nats.go
+go get gitlab.com/tranchida/gocamel/components/mongodb  # mongo-driver
+go get gitlab.com/tranchida/gocamel/components/mail     # SMTP/IMAP/POP3
+go get gitlab.com/tranchida/gocamel/components/ftp
+go get gitlab.com/tranchida/gocamel/components/sftp
+go get gitlab.com/tranchida/gocamel/components/smb
+go get gitlab.com/tranchida/gocamel/components/telegram
+go get gitlab.com/tranchida/gocamel/components/openai
+go get gitlab.com/tranchida/gocamel/components/cron     # robfig/cron
+go get gitlab.com/tranchida/gocamel/components/file     # watcher fsnotify
+go get gitlab.com/tranchida/gocamel/observability/prometheus
+go get gitlab.com/tranchida/gocamel/observability/otel
+```
+
+```go
+import (
+	"gitlab.com/tranchida/gocamel"
+	"gitlab.com/tranchida/gocamel/components/redis"
+)
+
+ctx := gocamel.NewCamelContext()
+ctx.AddComponent("redis", redis.NewRedisComponent())
+```
+
+Les métriques et le tracing sont des intercepteurs de route fournis par les
+modules d'observabilité :
+
+```go
+import (
+	gocamelotel "gitlab.com/tranchida/gocamel/observability/otel"
+	gocamelprom "gitlab.com/tranchida/gocamel/observability/prometheus"
+)
+
+ctx.CreateRouteBuilder().
+	From("timer:tick?period=5s").
+	Intercept(gocamelprom.Metrics()).
+	Intercept(gocamelotel.Tracing()).
+	...
 ```
 
 ## 🚀 Démarrage Rapide
@@ -108,7 +158,7 @@ builder.From("direct:start").
 
 | Data Format | Description                                                       |
 |-------------|-------------------------------------------------------------------|
-| **RSS**     | Marshal/unmarshal XML RSS avec `MarshalRSS()` et `UnmarshalRSS()` |
+| **RSS**     | Marshal/unmarshal XML RSS avec `Marshal(NewRSSDataFormat())` et `Unmarshal(NewRSSDataFormat())` |
 
 ## 🔒 Sécurité
 

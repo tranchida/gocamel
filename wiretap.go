@@ -56,14 +56,14 @@ func (w *WireTap) Process(exchange *Exchange) error {
 	go func() {
 		defer w.wg.Done()
 		if err := w.sendTap(tapExchange); err != nil {
-			logWarn("WireTap: tap delivery failed",
+			LogWarn("WireTap: tap delivery failed",
 				"uri", w.uri,
 				"error", err,
 			)
 			return
 		}
 
-		logDebug("WireTap: tap delivered successfully",
+		LogDebug("WireTap: tap delivered successfully",
 			"uri", w.uri,
 		)
 	}()

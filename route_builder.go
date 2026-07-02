@@ -175,27 +175,24 @@ func (b *RouteBuilder) LogSimple(expression string) *RouteBuilder {
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		result, err := template.EvaluateAsString(exchange)
 		if err != nil {
-			logError("Error evaluating log expression",
+			LogError("Error evaluating log expression",
 				"error", err,
 				"expression", expression,
 				"route_id", b.route.ID,
 			)
 			return nil // Don't fail the exchange just because logging failed
 		}
-		logInfo("LogSimple", "message", result, "route_id", b.route.ID)
+		LogInfo("LogSimple", "message", result, "route_id", b.route.ID)
 		return nil
 	})
 }
 
-// EnableMetrics enables Prometheus metrics collection for the current route.
-func (b *RouteBuilder) EnableMetrics() *RouteBuilder {
-	b.route.EnableMetrics()
-	return b
-}
-
-// EnableTracing enables OpenTelemetry tracing for the current route.
-func (b *RouteBuilder) EnableTracing() *RouteBuilder {
-	b.route.EnableTracing()
+// Intercept adds an interceptor around the current route's processing.
+// Interceptors are the extension point for cross-cutting concerns such as
+// metrics or tracing (see the observability/prometheus and observability/otel
+// modules).
+func (b *RouteBuilder) Intercept(interceptor RouteInterceptor) *RouteBuilder {
+	b.route.Intercept(interceptor)
 	return b
 }
 
@@ -303,16 +300,6 @@ func (b *RouteBuilder) TransformSimple(expression string) *RouteBuilder {
 func (b *RouteBuilder) Unmarshal(dataFormat DataFormat) *RouteBuilder {
 	b.container.AddProcessor(&UnmarshalProcessor{DataFormat: dataFormat})
 	return b
-}
-
-// MarshalRSS converts an RSSFeed body to RSS XML.
-func (b *RouteBuilder) MarshalRSS() *RouteBuilder {
-	return b.Marshal(NewRSSDataFormat())
-}
-
-// UnmarshalRSS converts RSS XML into an RSSFeed body.
-func (b *RouteBuilder) UnmarshalRSS() *RouteBuilder {
-	return b.Unmarshal(NewRSSDataFormat())
 }
 
 // Stop halts processing of the current exchange.
@@ -559,4 +546,3 @@ func (b *RouteBuilder) RoutingSlip(expression any) *RouteBuilder {
 	b.container.AddProcessor(rs)
 	return b
 }
-

@@ -169,7 +169,7 @@ func (r *RecipientList) processSequential(exchange *Exchange, uris []string) err
 		processor := newLazyProducer(r.context, uri)
 		processErr := processor.Process(recipientExchange)
 		if stopErr := processor.Stop(); stopErr != nil {
-			logError("recipient list: producer stop error", "uri", uri, "error", stopErr)
+			LogError("recipient list: producer stop error", "uri", uri, "error", stopErr)
 		}
 
 		if processErr != nil {
@@ -220,7 +220,7 @@ func (r *RecipientList) processParallel(exchange *Exchange, uris []string) error
 			// applied to dynamic_router to avoid leaking producer resources.
 			defer func() {
 				if stopErr := processor.Stop(); stopErr != nil {
-					logError("recipient list: producer stop error", "uri", uri, "error", stopErr)
+					LogError("recipient list: producer stop error", "uri", uri, "error", stopErr)
 				}
 			}()
 

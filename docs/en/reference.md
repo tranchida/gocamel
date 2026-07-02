@@ -88,8 +88,6 @@ Accessible via `ctx.GetComponentRegistry()`:
 |---------------------------------------|----------------------------------------------------------------------------------|
 | `Marshal(df) *RouteBuilder`           | Marshal body using a data format                                                 |
 | `Unmarshal(df) *RouteBuilder`         | Unmarshal body using a data format                                               |
-| `MarshalRSS() *RouteBuilder`          | Convert `RSSFeed` to RSS XML                                                     |
-| `UnmarshalRSS() *RouteBuilder`        | Convert RSS XML to `RSSFeed`                                                     |
 | `MarshalCSV(opts...) *RouteBuilder`   | Write a structured body as a CSV string                                          |
 | `UnmarshalCSV(opts...) *RouteBuilder` | Read a CSV body as `[][]string` or `[]map[string]string` with `CSVUseMaps(true)` |
 

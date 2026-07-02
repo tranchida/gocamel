@@ -229,7 +229,7 @@ func (cb *ChoiceBuilder) To(uri string) *ChoiceBuilder {
 // Log logs a message for the current When clause
 func (cb *ChoiceBuilder) Log(message string) *ChoiceBuilder {
 	return cb.ProcessFunc(func(exchange *Exchange) error {
-		logInfo("Choice log", "message", message)
+		LogInfo("Choice log", "message", message)
 		return nil
 	})
 }
@@ -237,7 +237,7 @@ func (cb *ChoiceBuilder) Log(message string) *ChoiceBuilder {
 // LogBody logs the body for the current When clause
 func (cb *ChoiceBuilder) LogBody(message string) *ChoiceBuilder {
 	return cb.ProcessFunc(func(exchange *Exchange) error {
-		logInfo("Choice log", "message", message, "body", exchange.GetIn().GetBody())
+		LogInfo("Choice log", "message", message, "body", exchange.GetIn().GetBody())
 		return nil
 	})
 }
@@ -332,7 +332,7 @@ func (ob *OtherwiseBuilder) To(uri string) *OtherwiseBuilder {
 // Log logs a message for the Otherwise clause
 func (ob *OtherwiseBuilder) Log(message string) *OtherwiseBuilder {
 	return ob.ProcessFunc(func(exchange *Exchange) error {
-		logInfo("Choice otherwise log", "message", message)
+		LogInfo("Choice otherwise log", "message", message)
 		return nil
 	})
 }
@@ -340,7 +340,7 @@ func (ob *OtherwiseBuilder) Log(message string) *OtherwiseBuilder {
 // LogBody logs the body for the Otherwise clause
 func (ob *OtherwiseBuilder) LogBody(message string) *OtherwiseBuilder {
 	return ob.ProcessFunc(func(exchange *Exchange) error {
-		logInfo("Choice otherwise log", "message", message, "body", exchange.GetIn().GetBody())
+		LogInfo("Choice otherwise log", "message", message, "body", exchange.GetIn().GetBody())
 		return nil
 	})
 }

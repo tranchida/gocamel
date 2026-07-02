@@ -51,7 +51,7 @@ func (s *SagaProcessor) Process(exchange *Exchange) error {
 				// A failing compensation must not prevent the remaining ones from
 				// running, but it MUST be visible to operators.
 				if compErr := comp.Process(compExchange); compErr != nil {
-					logError("saga: compensation failed",
+					LogError("saga: compensation failed",
 						"compensation_index", i,
 						"error", compErr,
 						"original_error", err,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	file "gitlab.com/tranchida/gocamel/components/file"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +49,7 @@ func main() {
 	fmt.Printf("Watched directory: %s\n", watchDir)
 
 	camelCtx := gocamel.NewCamelContext()
-	camelCtx.AddComponent("file", gocamel.NewFileComponent())
+	camelCtx.AddComponent("file", file.NewFileComponent())
 
 	// Correlation key: base name without extension (e.g. "file.xml" and "file.pdf" → "file").
 	correlationKey := func(exchange *gocamel.Exchange) string {

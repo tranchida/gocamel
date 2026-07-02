@@ -9,13 +9,13 @@ import (
 
 // CamelContext represents the main application context
 type CamelContext struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	routes       []*Route
-	routesLock   sync.RWMutex // Protects routes slice and routeCounter
-	registry     *ComponentRegistry
-	started      bool
-	startLock    sync.RWMutex // Protects started lifecycle state
+	ctx           context.Context
+	cancel        context.CancelFunc
+	routes        []*Route
+	routesLock    sync.RWMutex // Protects routes slice and routeCounter
+	registry      *ComponentRegistry
+	started       bool
+	startLock     sync.RWMutex // Protects started lifecycle state
 	routeCounter  int
 	producerCache *ProducerCache
 }

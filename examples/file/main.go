@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	file "gitlab.com/tranchida/gocamel/components/file"
 	"os"
 	"path/filepath"
 	"time"
@@ -20,7 +21,7 @@ func main() {
 
 	// Create the context and register the File component.
 	context := gocamel.NewCamelContext()
-	context.AddComponent("file", gocamel.NewFileComponent())
+	context.AddComponent("file", file.NewFileComponent())
 
 	// Create a route that watches the directory.
 	route, err := context.CreateRouteBuilder().

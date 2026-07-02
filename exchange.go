@@ -143,13 +143,13 @@ func (e *Exchange) Done(err error) {
 	}
 }
 
-// completeExchange finalizes a consumer-created exchange after route processing.
+// CompleteExchange finalizes a consumer-created exchange after route processing.
 // It normalizes the ErrStopRouting control signal to success (a stopped route is
 // not a failure), fires the exchange synchronizations via Done, and returns the
 // error the consumer should report (nil when routing was merely stopped).
 // Every consumer that creates exchanges must call this so that Synchronization
 // callbacks (AddSynchronization) fire consistently across components.
-func completeExchange(exchange *Exchange, err error) error {
+func CompleteExchange(exchange *Exchange, err error) error {
 	if errors.Is(err, ErrStopRouting) {
 		err = nil
 	}

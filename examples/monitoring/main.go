@@ -9,6 +9,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gitlab.com/tranchida/gocamel"
+	gocamelotel "gitlab.com/tranchida/gocamel/observability/otel"
+	gocamelprom "gitlab.com/tranchida/gocamel/observability/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -50,8 +52,8 @@ func main() {
 	_, err = ctx.CreateRouteBuilder().
 		From("timer:monitor?period=5000").
 		SetID("monitoring-route").
-		EnableMetrics(). // Enable Prometheus metrics.
-		EnableTracing(). // Enable OpenTelemetry tracing.
+		Intercept(gocamelprom.Metrics()). // Enable Prometheus metrics.
+		Intercept(gocamelotel.Tracing()). // Enable OpenTelemetry tracing.
 		ProcessFunc(func(e *gocamel.Exchange) error {
 			fmt.Println("Processing exchange...")
 			e.GetIn().SetBody("Hello Monitoring!")
@@ -68,8 +70,8 @@ func main() {
 	_, _ = ctx.CreateRouteBuilder().
 		From("direct:next").
 		SetID("destination-route").
-		EnableMetrics().
-		EnableTracing().
+		Intercept(gocamelprom.Metrics()).
+		Intercept(gocamelotel.Tracing()).
 		ProcessFunc(func(e *gocamel.Exchange) error {
 			time.Sleep(100 * time.Millisecond) // Simulate processing.
 			fmt.Printf("Received: %v\n", e.GetIn().GetBody())

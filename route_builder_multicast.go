@@ -135,18 +135,6 @@ func (d *MulticastDefinition) Unmarshal(dataFormat DataFormat) *MulticastDefinit
 	return d
 }
 
-// MarshalRSS converts an RSSFeed body to RSS XML and stays in the multicast context.
-func (d *MulticastDefinition) MarshalRSS() *MulticastDefinition {
-	d.RouteBuilder.MarshalRSS()
-	return d
-}
-
-// UnmarshalRSS converts RSS XML into an RSSFeed body and stays in the multicast context.
-func (d *MulticastDefinition) UnmarshalRSS() *MulticastDefinition {
-	d.RouteBuilder.UnmarshalRSS()
-	return d
-}
-
 // WireTap adds a WireTap step and stays in the multicast context.
 func (d *MulticastDefinition) WireTap(uri string) *MulticastDefinition {
 	d.RouteBuilder.WireTap(uri)
@@ -227,18 +215,6 @@ func (d *PipelineDefinition) Marshal(dataFormat DataFormat) *PipelineDefinition 
 // Unmarshal adds a dataformat unmarshal step and stays in the pipeline context.
 func (d *PipelineDefinition) Unmarshal(dataFormat DataFormat) *PipelineDefinition {
 	d.RouteBuilder.Unmarshal(dataFormat)
-	return d
-}
-
-// MarshalRSS converts an RSSFeed body to RSS XML and stays in the pipeline context.
-func (d *PipelineDefinition) MarshalRSS() *PipelineDefinition {
-	d.RouteBuilder.MarshalRSS()
-	return d
-}
-
-// UnmarshalRSS converts RSS XML into an RSSFeed body and stays in the pipeline context.
-func (d *PipelineDefinition) UnmarshalRSS() *PipelineDefinition {
-	d.RouteBuilder.UnmarshalRSS()
 	return d
 }
 

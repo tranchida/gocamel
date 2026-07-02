@@ -198,7 +198,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		}
 
 		// Processing the message
-		if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
+		if err := CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -252,7 +252,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	go func() {
 		defer c.wg.Done()
 		if err := c.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logError("HTTP server error", "error", err)
+			LogError("HTTP server error", "error", err)
 		}
 	}()
 

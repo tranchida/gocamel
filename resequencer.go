@@ -59,14 +59,14 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 	defer r.mu.Unlock()
 
 	if seq < r.nextSeq {
-		logWarn("resequencer: received outdated sequence number", "seq", seq, "expected", r.nextSeq)
+		LogWarn("resequencer: received outdated sequence number", "seq", seq, "expected", r.nextSeq)
 		return ErrStopRouting
 	}
 
 	// Check for duplicates
 	for _, e := range r.buffer {
 		if e.seq == seq {
-			logWarn("resequencer: duplicate sequence number received", "seq", seq)
+			LogWarn("resequencer: duplicate sequence number received", "seq", seq)
 			return ErrStopRouting
 		}
 	}
@@ -125,12 +125,12 @@ func (r *Resequencer) onTimeout(gen uint64) {
 	}
 
 	if len(r.buffer) > 0 && r.buffer[0].seq > r.nextSeq {
-		logWarn("resequencer: timeout reached", "expected", r.nextSeq, "skipping to", r.buffer[0].seq)
+		LogWarn("resequencer: timeout reached", "expected", r.nextSeq, "skipping to", r.buffer[0].seq)
 		r.nextSeq = r.buffer[0].seq
 		if err := r.drain(); err != nil {
 			// There is no caller to propagate to on the timeout path; surface
 			// the failure in the logs instead of dropping it silently.
-			logError("resequencer: downstream processing failed during timeout drain", "error", err)
+			LogError("resequencer: downstream processing failed during timeout drain", "error", err)
 		}
 		r.updateTimer()
 	}

@@ -45,22 +45,42 @@ func (f ProcessorFunc) Process(exchange *Exchange) error {
 // Route represents a Camel route: a pipeline of Processors fed by a single Consumer.
 // Routes are built via RouteBuilder (fluent DSL) and managed by CamelContext.
 type Route struct {
-	ID            string // Unique identifier for this route.
-	Description   string // Human-readable description of the route purpose.
-	Group         string // Logical group this route belongs to.
-	Transacted    bool   // Whether the route uses transactional semantics.
-	context       *CamelContext
-	from          Endpoint
-	consumer      Consumer
-	processors    []Processor
-	lazyProducers []*lazyProducer // static To() producers; stopped at Route.Stop().
-	started       bool
-	startLock     sync.RWMutex // Protects started state for concurrent access.
-	err           error        // Accumulated during construction, surfaced at Start().
-	errorHandler  ErrorHandler // Error handler for this route (nil means propagate).
-	metrics        bool         // Whether Prometheus metrics are enabled for this route.
-	tracing        bool         // Whether OpenTelemetry tracing is enabled for this route.
-	messageHistory bool         // Whether Message History is enabled for this route.
+	ID             string // Unique identifier for this route.
+	Description    string // Human-readable description of the route purpose.
+	Group          string // Logical group this route belongs to.
+	Transacted     bool   // Whether the route uses transactional semantics.
+	context        *CamelContext
+	from           Endpoint
+	consumer       Consumer
+	processors     []Processor
+	lazyProducers  []*lazyProducer // static To() producers; stopped at Route.Stop().
+	started        bool
+	startLock      sync.RWMutex // Protects started state for concurrent access.
+	err            error        // Accumulated during construction, surfaced at Start().
+	errorHandler   ErrorHandler // Error handler for this route (nil means propagate).
+	interceptors   []RouteInterceptor
+	process        func(*Exchange) error // doProcess wrapped by the interceptor chain.
+	messageHistory bool                  // Whether Message History is enabled for this route.
+}
+
+// RouteInterceptor wraps the processing of every exchange flowing through a
+// route. Interceptors are the extension point for cross-cutting concerns such
+// as metrics or tracing (see the observability/prometheus and
+// observability/otel modules). The route is passed so interceptors can read
+// its ID and metadata; next runs the rest of the chain.
+type RouteInterceptor func(route *Route, next func(*Exchange) error) func(*Exchange) error
+
+// Intercept adds an interceptor around the route's processing. Interceptors
+// run in registration order: the first added is the outermost. Like the rest
+// of the route DSL, Intercept must be called before the route starts.
+func (r *Route) Intercept(interceptor RouteInterceptor) *Route {
+	r.interceptors = append(r.interceptors, interceptor)
+	chain := r.doProcess
+	for i := len(r.interceptors) - 1; i >= 0; i-- {
+		chain = r.interceptors[i](r, chain)
+	}
+	r.process = chain
+	return r
 }
 
 // lazyProducer is a Processor that initialises its underlying Producer on
@@ -151,36 +171,10 @@ func (r *Route) ProcessFunc(f func(*Exchange) error) *Route {
 // Process implements the Processor interface.
 // Errors are delegated to the configured ErrorHandler if one is set.
 func (r *Route) Process(exchange *Exchange) error {
-	if r.metrics && r.tracing {
-		return r.metricsProcess(exchange, func(e *Exchange) error {
-			return r.traceProcess(e)
-		})
-	}
-	if r.metrics {
-		return r.metricsProcess(exchange, r.doProcess)
-	}
-	if r.tracing {
-		return r.traceProcess(exchange)
+	if r.process != nil {
+		return r.process(exchange)
 	}
 	return r.doProcess(exchange)
-}
-
-func (r *Route) metricsProcess(exchange *Exchange, next func(*Exchange) error) error {
-	start := time.Now()
-	exchangesInFlight.WithLabelValues(r.ID).Inc()
-	defer exchangesInFlight.WithLabelValues(r.ID).Dec()
-
-	err := next(exchange)
-
-	duration := time.Since(start).Seconds()
-	exchangesDuration.WithLabelValues(r.ID).Observe(duration)
-
-	status := "success"
-	if err != nil && err != ErrStopRouting {
-		status = "failure"
-	}
-	exchangesTotal.WithLabelValues(r.ID, status).Inc()
-	return err
 }
 
 func (r *Route) EnableMessageHistory() *Route {
@@ -191,7 +185,7 @@ func (r *Route) EnableMessageHistory() *Route {
 func (r *Route) doProcess(exchange *Exchange) error {
 	for i := 0; i < len(r.processors); {
 		processor := r.processors[i]
-		
+
 		var start time.Time
 		if r.messageHistory {
 			start = time.Now()
@@ -375,11 +369,6 @@ func (r *Route) GetErrorHandler() ErrorHandler {
 	return r.errorHandler
 }
 
-func (r *Route) EnableMetrics() *Route {
-	r.metrics = true
-	return r
-}
-
 func (r *Route) SetBody(body interface{}) *Route {
 	r.AddProcessor(setBodyProcessor(body))
 	return r
@@ -398,14 +387,6 @@ func (r *Route) Marshal(dataFormat DataFormat) *Route {
 func (r *Route) Unmarshal(dataFormat DataFormat) *Route {
 	r.AddProcessor(&UnmarshalProcessor{DataFormat: dataFormat})
 	return r
-}
-
-func (r *Route) MarshalRSS() *Route {
-	return r.Marshal(NewRSSDataFormat())
-}
-
-func (r *Route) UnmarshalRSS() *Route {
-	return r.Unmarshal(NewRSSDataFormat())
 }
 
 // To adds one or more destination endpoints to the route.

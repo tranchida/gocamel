@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	mail "gitlab.com/tranchida/gocamel/components/mail"
 	"log"
 	"time"
 
@@ -15,7 +16,7 @@ func ExampleMailProducer() {
 	ctx := gocamel.NewCamelContext()
 
 	// Create and register mail component
-	mailComponent := gocamel.NewMailComponent()
+	mailComponent := mail.NewMailComponent()
 	mailComponent.SetDefaultFrom("sender@example.com")
 	ctx.AddComponent("smtp", mailComponent)
 	ctx.AddComponent("smtps", mailComponent)
@@ -54,7 +55,7 @@ func ExampleMailProducer() {
 func ExampleMailWithAttachments() {
 	ctx := gocamel.NewCamelContext()
 
-	mailComponent := gocamel.NewMailComponent()
+	mailComponent := mail.NewMailComponent()
 	ctx.AddComponent("smtp", mailComponent)
 	ctx.AddComponent("direct", gocamel.NewDirectComponent())
 	route := ctx.CreateRoute()
@@ -71,8 +72,8 @@ func ExampleMailWithAttachments() {
 	exchange.SetBody([]byte("Please find the report attached."))
 
 	// Add an attachment via headers
-	exchange.SetHeader(gocamel.MailAttachmentPrefix+"_report.pdf", []byte("%PDF-1.4 PDF content..."))
-	exchange.SetHeader(gocamel.MailAttachmentPrefix+"_data.csv", "col1,col2\n1,2\n3,4")
+	exchange.SetHeader(mail.MailAttachmentPrefix+"_report.pdf", []byte("%PDF-1.4 PDF content..."))
+	exchange.SetHeader(mail.MailAttachmentPrefix+"_data.csv", "col1,col2\n1,2\n3,4")
 
 	fmt.Println("Email with attachments ready!")
 }
@@ -93,7 +94,7 @@ func ExampleSMTPS() {
 func ExampleMailConsumer() {
 	ctx := gocamel.NewCamelContext()
 
-	mailComponent := gocamel.NewMailComponent()
+	mailComponent := mail.NewMailComponent()
 	ctx.AddComponent("imap", mailComponent)
 	ctx.AddComponent("imaps", mailComponent)
 

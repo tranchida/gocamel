@@ -37,7 +37,7 @@ var interpolateRegex = regexp.MustCompile(`\${(header|property|body)(?:\.([^}]+)
 // attacker-controlled Exchange body from triggering pathological backtracking.
 func Interpolate(text string, exchange *Exchange) string {
 	if len(text) > MaxSimpleInputBytes {
-		logError("Interpolate: input exceeds MaxSimpleInputBytes; returning unchanged",
+		LogError("Interpolate: input exceeds MaxSimpleInputBytes; returning unchanged",
 			"size", len(text), "limit", MaxSimpleInputBytes)
 		return text
 	}

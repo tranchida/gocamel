@@ -1,0 +1,19 @@
+go 1.25.0
+
+use (
+	.
+	./components/cron
+	./components/file
+	./components/ftp
+	./components/mail
+	./components/mongodb
+	./components/nats
+	./components/openai
+	./components/redis
+	./components/sftp
+	./components/smb
+	./components/telegram
+	./observability/otel
+	./observability/prometheus
+	./examples
+)

@@ -49,7 +49,7 @@ func (c *ChanComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 	if endpoint, exists := c.endpoints[channelName]; exists {
 		if endpoint.uri != uri {
-			logWarn("chan endpoint already exists; URI parameters ignored",
+			LogWarn("chan endpoint already exists; URI parameters ignored",
 				"channel", channelName, "existing", endpoint.uri, "requested", uri)
 		}
 		return endpoint, nil
@@ -60,7 +60,7 @@ func (c *ChanComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		if b, err := strconv.Atoi(bufStr); err == nil && b >= 0 {
 			bufferSize = b
 		} else {
-			logWarn("chan: invalid bufferSize; using default", "value", bufStr, "default", bufferSize)
+			LogWarn("chan: invalid bufferSize; using default", "value", bufStr, "default", bufferSize)
 		}
 	}
 
@@ -177,8 +177,8 @@ func (c *ChanConsumer) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if err := completeExchange(exchange, c.processor.Process(exchange)); err != nil {
-				logError("chan consumer processing error",
+			if err := CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+				LogError("chan consumer processing error",
 					"uri", c.endpoint.uri,
 					"error", err,
 					"exchange_id", exchange.ID,

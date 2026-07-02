@@ -114,18 +114,6 @@ func (d *SplitDefinition) Unmarshal(dataFormat DataFormat) *SplitDefinition {
 	return d
 }
 
-// MarshalRSS converts an RSSFeed body to RSS XML and stays in the split context.
-func (d *SplitDefinition) MarshalRSS() *SplitDefinition {
-	d.RouteBuilder.MarshalRSS()
-	return d
-}
-
-// UnmarshalRSS converts RSS XML into an RSSFeed body and stays in the split context.
-func (d *SplitDefinition) UnmarshalRSS() *SplitDefinition {
-	d.RouteBuilder.UnmarshalRSS()
-	return d
-}
-
 // SetHeaders sets multiple headers and stays in the split context.
 func (d *SplitDefinition) SetHeaders(headers map[string]any) *SplitDefinition {
 	d.RouteBuilder.SetHeaders(headers)

@@ -1,17 +1,42 @@
-image: python:3.12-slim
-
 # Speed up pip installs by caching
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   # Required for mkdocs-git-revision-date-localized-plugin to have access to git history
   GIT_DEPTH: 0
+  GOPATH: "$CI_PROJECT_DIR/.cache/go"
 
-cache:
-  paths:
-    - .cache/pip
+stages:
+  - test
+  - deploy
+
+# Build, vet and test every Go module in the repo (core, components/*,
+# observability/*, examples). Each directory containing a go.mod is an
+# independent module and is validated on its own.
+go:
+  stage: test
+  image: golang:1.25
+  cache:
+    key: go-mod
+    paths:
+      - .cache/go/pkg/mod
+  script:
+    - |
+      set -e
+      for mod in $(find . -name go.mod -not -path '*/.*'); do
+        dir=$(dirname "$mod")
+        echo "== $dir =="
+        (cd "$dir" && go build ./... && go vet ./... && go test ./...)
+      done
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
 
 pages:
   stage: deploy
+  image: python:3.12-slim
+  cache:
+    paths:
+      - .cache/pip
   script:
     - pip install -r requirements.txt
     - mkdocs build

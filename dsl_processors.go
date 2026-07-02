@@ -122,7 +122,7 @@ func removeHeadersProcessor(pattern string, excludePatterns []string) Processor 
 // with the exchange pointer and the route ID.
 func logProcessor(message, routeID string) Processor {
 	return ProcessorFunc(func(exchange *Exchange) error {
-		logInfo(message,
+		LogInfo(message,
 			"exchange_id", fmt.Sprintf("%p", exchange),
 			"route_id", routeID,
 		)
@@ -134,7 +134,7 @@ func logProcessor(message, routeID string) Processor {
 // structured message and the route ID.
 func logBodyProcessor(message, routeID string) Processor {
 	return ProcessorFunc(func(exchange *Exchange) error {
-		logInfo(message,
+		LogInfo(message,
 			"body", exchange.GetIn().GetBody(),
 			"route_id", routeID,
 		)
@@ -146,7 +146,7 @@ func logBodyProcessor(message, routeID string) Processor {
 // a structured message and the route ID.
 func logHeadersProcessor(message, routeID string) Processor {
 	return ProcessorFunc(func(exchange *Exchange) error {
-		logInfo(message,
+		LogInfo(message,
 			"headers", exchange.GetIn().GetHeaders(),
 			"route_id", routeID,
 		)
@@ -161,4 +161,3 @@ func stopProcessor() Processor {
 		return ErrStopRouting
 	})
 }
-

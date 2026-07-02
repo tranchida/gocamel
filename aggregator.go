@@ -192,11 +192,11 @@ func (a *Aggregator) runTimeout(key string, ctx context.Context, gen uint64) {
 	}
 
 	if err := a.AggregationRepository.Remove(ctx, key); err != nil {
-		logWarn("Aggregator timeout: failed to remove key", "key", key, "error", err)
+		LogWarn("Aggregator timeout: failed to remove key", "key", key, "error", err)
 		return
 	}
 	a.keyLocks.Delete(key)
-	logWarn("Aggregator timeout: group expired and dropped",
+	LogWarn("Aggregator timeout: group expired and dropped",
 		"key", key,
 		"exchange_id", stored.ID,
 		"size", stored.GetPropertyOrDefault(CamelAggregatorSize, 0),

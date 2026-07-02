@@ -93,8 +93,8 @@ func ParseFileExist(u *url.URL) FileExistBehavior {
 	}
 }
 
-// parseConnectTimeout reads the connectTimeout from a parsed URI (default: 10s).
-func parseConnectTimeout(u *url.URL) time.Duration {
+// ParseConnectTimeout reads the connectTimeout from a parsed URI (default: 10s).
+func ParseConnectTimeout(u *url.URL) time.Duration {
 	if s := GetConfigValue(u, "connectTimeout"); s != "" {
 		if d, err := time.ParseDuration(s); err == nil {
 			return d

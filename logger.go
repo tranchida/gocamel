@@ -30,22 +30,22 @@ func GetLogger() *slog.Logger {
 	return defaultLogger
 }
 
-// logDebug logs a debug message with optional attributes.
-func logDebug(msg string, args ...any) {
+// LogDebug logs a debug message with optional attributes.
+func LogDebug(msg string, args ...any) {
 	defaultLogger.Debug(msg, args...)
 }
 
-// logInfo logs an info message with optional attributes.
-func logInfo(msg string, args ...any) {
+// LogInfo logs an info message with optional attributes.
+func LogInfo(msg string, args ...any) {
 	defaultLogger.Info(msg, args...)
 }
 
-// logWarn logs a warning message with optional attributes.
-func logWarn(msg string, args ...any) {
+// LogWarn logs a warning message with optional attributes.
+func LogWarn(msg string, args ...any) {
 	defaultLogger.Warn(msg, args...)
 }
 
-// logError logs an error message with optional attributes.
-func logError(msg string, args ...any) {
+// LogError logs an error message with optional attributes.
+func LogError(msg string, args ...any) {
 	defaultLogger.Error(msg, args...)
 }

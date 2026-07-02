@@ -177,7 +177,9 @@ integration pipelines.
 
 ### Prometheus (Metrics)
 
-Expose metrics for any route by calling `.EnableMetrics()` in the DSL. The following metrics are collected
+Expose metrics for any route with the interceptor from the
+`gitlab.com/tranchida/gocamel/observability/prometheus` module:
+`.Intercept(gocamelprom.Metrics())`. The following metrics are collected
 automatically:
 
 - `gocamel_exchanges_total`: Total processed exchanges (with `route_id` and `status` labels).
@@ -186,7 +188,9 @@ automatically:
 
 ### OpenTelemetry (Tracing)
 
-Enable distributed tracing with `.EnableTracing()`. GoCamel creates an OTel **Span** for each route execution,
+Enable distributed tracing with the interceptor from the
+`gitlab.com/tranchida/gocamel/observability/otel` module:
+`.Intercept(gocamelotel.Tracing())`. GoCamel creates an OTel **Span** for each route execution,
 providing:
 
 - Route and Exchange identifiers in span attributes.
@@ -196,8 +200,8 @@ providing:
 ```go
 route, _ := context.CreateRouteBuilder().
     From("timer:tick?period=5000").
-    EnableMetrics().
-    EnableTracing().
+    Intercept(gocamelprom.Metrics()).
+    Intercept(gocamelotel.Tracing()).
     To("http://api.service.com").
     Build()
 ```

@@ -16,16 +16,16 @@ func TestLoopProcessor_Static(t *testing.T) {
 	_, err := camelCtx.CreateRouteBuilder().
 		From("direct:start").
 		Loop(3).
-			ProcessFunc(func(e *Exchange) error {
-				idx, _ := e.GetPropertyAsInt(CamelLoopIndex)
-				size, _ := e.GetPropertyAsInt(CamelLoopSize)
-				indices = append(indices, idx)
-				runs = append(runs, size)
+		ProcessFunc(func(e *Exchange) error {
+			idx, _ := e.GetPropertyAsInt(CamelLoopIndex)
+			size, _ := e.GetPropertyAsInt(CamelLoopSize)
+			indices = append(indices, idx)
+			runs = append(runs, size)
 
-				body, _ := e.GetBodyAsString()
-				e.In.SetBody(body + "x")
-				return nil
-			}).
+			body, _ := e.GetBodyAsString()
+			e.In.SetBody(body + "x")
+			return nil
+		}).
 		End().
 		To("direct:end").
 		Build()
@@ -95,18 +95,18 @@ func TestLoopProcessor_SimpleExpression(t *testing.T) {
 	_, err := camelCtx.CreateRouteBuilder().
 		From("direct:start").
 		LoopSimple("${header.LoopCount}").
-			ProcessFunc(func(e *Exchange) error {
-				counter++
-				complete, _ := e.GetPropertyAsBool(CamelLoopComplete)
-				idx, _ := e.GetPropertyAsInt(CamelLoopIndex)
-				if idx == 1 && complete {
-					t.Errorf("Loop should not be complete at index 1")
-				}
-				if idx == 2 && !complete {
-					t.Errorf("Loop should be complete at index 2")
-				}
-				return nil
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			counter++
+			complete, _ := e.GetPropertyAsBool(CamelLoopComplete)
+			idx, _ := e.GetPropertyAsInt(CamelLoopIndex)
+			if idx == 1 && complete {
+				t.Errorf("Loop should not be complete at index 1")
+			}
+			if idx == 2 && !complete {
+				t.Errorf("Loop should be complete at index 2")
+			}
+			return nil
+		}).
 		End().
 		Build()
 
@@ -150,14 +150,14 @@ func TestLoopProcessor_StopRouting(t *testing.T) {
 	_, err := camelCtx.CreateRouteBuilder().
 		From("direct:start").
 		Loop(5).
-			ProcessFunc(func(e *Exchange) error {
-				counter++
-				idx, _ := e.GetPropertyAsInt(CamelLoopIndex)
-				if idx == 2 {
-					return ErrStopRouting // Break out of the loop early
-				}
-				return nil
-			}).
+		ProcessFunc(func(e *Exchange) error {
+			counter++
+			idx, _ := e.GetPropertyAsInt(CamelLoopIndex)
+			if idx == 2 {
+				return ErrStopRouting // Break out of the loop early
+			}
+			return nil
+		}).
 		End().
 		Build()
 

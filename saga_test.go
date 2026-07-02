@@ -16,26 +16,26 @@ func TestSagaProcessor_Success(t *testing.T) {
 	_, err := camelCtx.CreateRouteBuilder().
 		From("direct:start").
 		Saga().
-			ActionFunc(
-				func(e *Exchange) error {
-					orderReserved = true
-					return nil
-				},
-				func(e *Exchange) error {
-					orderCompensated = true
-					return nil
-				},
-			).
-			ActionFunc(
-				func(e *Exchange) error {
-					flightBooked = true
-					return nil
-				},
-				func(e *Exchange) error {
-					flightCompensated = true
-					return nil
-				},
-			).
+		ActionFunc(
+			func(e *Exchange) error {
+				orderReserved = true
+				return nil
+			},
+			func(e *Exchange) error {
+				orderCompensated = true
+				return nil
+			},
+		).
+		ActionFunc(
+			func(e *Exchange) error {
+				flightBooked = true
+				return nil
+			},
+			func(e *Exchange) error {
+				flightCompensated = true
+				return nil
+			},
+		).
 		End().
 		Build()
 
@@ -81,28 +81,28 @@ func TestSagaProcessor_FailureAndRollback(t *testing.T) {
 	_, err := camelCtx.CreateRouteBuilder().
 		From("direct:start").
 		Saga().
-			ActionFunc(
-				func(e *Exchange) error {
-					orderReserved = true
-					return nil
-				},
-				func(e *Exchange) error {
-					orderCompensated = true
-					compensationOrder = append(compensationOrder, "order")
-					return nil
-				},
-			).
-			ActionFunc(
-				func(e *Exchange) error {
-					// Second step fails
-					return errors.New("flight booking failed")
-				},
-				func(e *Exchange) error {
-					flightCompensated = true
-					compensationOrder = append(compensationOrder, "flight")
-					return nil
-				},
-			).
+		ActionFunc(
+			func(e *Exchange) error {
+				orderReserved = true
+				return nil
+			},
+			func(e *Exchange) error {
+				orderCompensated = true
+				compensationOrder = append(compensationOrder, "order")
+				return nil
+			},
+		).
+		ActionFunc(
+			func(e *Exchange) error {
+				// Second step fails
+				return errors.New("flight booking failed")
+			},
+			func(e *Exchange) error {
+				flightCompensated = true
+				compensationOrder = append(compensationOrder, "flight")
+				return nil
+			},
+		).
 		End().
 		Build()
 
@@ -152,27 +152,27 @@ func TestSagaProcessor_LIFORollback(t *testing.T) {
 	_, err := camelCtx.CreateRouteBuilder().
 		From("direct:start").
 		Saga().
-			ActionFunc(
-				func(e *Exchange) error { return nil },
-				func(e *Exchange) error {
-					compensationOrder = append(compensationOrder, "first")
-					return nil
-				},
-			).
-			ActionFunc(
-				func(e *Exchange) error { return nil },
-				func(e *Exchange) error {
-					compensationOrder = append(compensationOrder, "second")
-					return nil
-				},
-			).
-			ActionFunc(
-				func(e *Exchange) error { return errors.New("third step failure") },
-				func(e *Exchange) error {
-					compensationOrder = append(compensationOrder, "third")
-					return nil
-				},
-			).
+		ActionFunc(
+			func(e *Exchange) error { return nil },
+			func(e *Exchange) error {
+				compensationOrder = append(compensationOrder, "first")
+				return nil
+			},
+		).
+		ActionFunc(
+			func(e *Exchange) error { return nil },
+			func(e *Exchange) error {
+				compensationOrder = append(compensationOrder, "second")
+				return nil
+			},
+		).
+		ActionFunc(
+			func(e *Exchange) error { return errors.New("third step failure") },
+			func(e *Exchange) error {
+				compensationOrder = append(compensationOrder, "third")
+				return nil
+			},
+		).
 		End().
 		Build()
 

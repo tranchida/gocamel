@@ -88,8 +88,6 @@ Accessible via `ctx.GetComponentRegistry()` :
 |-------------------------|------------------------------------------------------------------------------------|
 | `Marshal(df)`           | Sérialiser le corps avec un data format                                            |
 | `Unmarshal(df)`         | Désérialiser le corps avec un data format                                          |
-| `MarshalRSS()`          | Convertir `RSSFeed` en XML RSS                                                     |
-| `UnmarshalRSS()`        | Convertir XML RSS en `RSSFeed`                                                     |
 | `MarshalCSV(opts...)`   | Écrire un corps structuré en chaîne CSV                                            |
 | `UnmarshalCSV(opts...)` | Lire un corps CSV en `[][]string` ou `[]map[string]string` avec `CSVUseMaps(true)` |
 

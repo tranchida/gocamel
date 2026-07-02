@@ -35,7 +35,7 @@ func (s *idempotentSynchronization) OnComplete(exchange *Exchange) {}
 
 func (s *idempotentSynchronization) OnFailure(exchange *Exchange) {
 	if err := s.repo.Remove(exchange.Context, s.key); err != nil {
-		logError("idempotent consumer: failed to remove key after exchange failure; "+
+		LogError("idempotent consumer: failed to remove key after exchange failure; "+
 			"future redeliveries of this message will be treated as duplicates",
 			"key", s.key, "error", err)
 	}

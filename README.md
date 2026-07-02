@@ -33,8 +33,57 @@ provides a powerful DSL for creating integration routes to connect different sys
 
 ## 📦 Installation
 
+The core module (routing engine, EIPs, Simple Language and all stdlib-only
+components: direct, seda, chan, timer, http, exec, template, sql) has **zero
+external dependencies**:
+
 ```bash
 go get gitlab.com/tranchida/gocamel
+```
+
+Components that rely on third-party libraries live in their own Go modules —
+you only pull the dependencies of what you actually use:
+
+```bash
+go get gitlab.com/tranchida/gocamel/components/redis    # go-redis
+go get gitlab.com/tranchida/gocamel/components/nats     # nats.go
+go get gitlab.com/tranchida/gocamel/components/mongodb  # mongo-driver
+go get gitlab.com/tranchida/gocamel/components/mail     # SMTP/IMAP/POP3
+go get gitlab.com/tranchida/gocamel/components/ftp
+go get gitlab.com/tranchida/gocamel/components/sftp
+go get gitlab.com/tranchida/gocamel/components/smb
+go get gitlab.com/tranchida/gocamel/components/telegram
+go get gitlab.com/tranchida/gocamel/components/openai
+go get gitlab.com/tranchida/gocamel/components/cron     # robfig/cron
+go get gitlab.com/tranchida/gocamel/components/file     # fsnotify watcher
+go get gitlab.com/tranchida/gocamel/observability/prometheus
+go get gitlab.com/tranchida/gocamel/observability/otel
+```
+
+```go
+import (
+	"gitlab.com/tranchida/gocamel"
+	"gitlab.com/tranchida/gocamel/components/redis"
+)
+
+ctx := gocamel.NewCamelContext()
+ctx.AddComponent("redis", redis.NewRedisComponent())
+```
+
+Metrics and tracing are route interceptors provided by the observability
+modules:
+
+```go
+import (
+	gocamelotel "gitlab.com/tranchida/gocamel/observability/otel"
+	gocamelprom "gitlab.com/tranchida/gocamel/observability/prometheus"
+)
+
+ctx.CreateRouteBuilder().
+	From("timer:tick?period=5s").
+	Intercept(gocamelprom.Metrics()).
+	Intercept(gocamelotel.Tracing()).
+	...
 ```
 
 ## 🚀 Quick Start
@@ -108,7 +157,7 @@ EndChoice()
 
 | Data Format | Description                                                        |
 |-------------|--------------------------------------------------------------------|
-| **RSS**     | Marshal/unmarshal RSS XML with `MarshalRSS()` and `UnmarshalRSS()` |
+| **RSS**     | Marshal/unmarshal RSS XML with `Marshal(NewRSSDataFormat())` and `Unmarshal(NewRSSDataFormat())` |
 
 ## 🔒 Security
 

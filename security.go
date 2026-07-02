@@ -11,9 +11,9 @@ import (
 // SecurityValidator provides common security validation functions for GoCamel
 // to prevent various injection and traversal attacks.
 
-// validateRemotePath validates paths for remote protocols (FTP, SFTP, SMB)
+// ValidateRemotePath validates paths for remote protocols (FTP, SFTP, SMB)
 // These paths may be Unix-style even on Windows
-func validateRemotePath(path string) error {
+func ValidateRemotePath(path string) error {
 	if path == "" {
 		return nil
 	}
