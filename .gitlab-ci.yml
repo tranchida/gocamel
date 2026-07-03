@@ -27,12 +27,16 @@ go:
     - |
       set -e
       mkdir -p .coverage
+      covdir="$CI_PROJECT_DIR/.coverage"
       for mod in $(find . -name go.mod -not -path '*/.*'); do
         dir=$(dirname "$mod")
         echo "== $dir =="
-        # Replace path-unsafe characters in the profile name (e.g. components/redis -> components-redis)
-        profile_name=$(echo "$dir" | tr '/' '-')
-        (cd "$dir" && go build ./... && go vet ./... && go test -coverprofile="../../.coverage/${profile_name}.out" ./...)
+        # Build a path-safe profile name: drop leading "./", replace "/" with "-"
+        # and collapse "." (e.g. "." -> "root", "./examples" -> "examples",
+        # "./components/redis" -> "components-redis").
+        profile_name=$(echo "$dir" | sed 's#^\./##; s#/#-#g')
+        [ -z "$profile_name" ] || [ "$profile_name" = "." ] && profile_name="root"
+        (cd "$dir" && go build ./... && go vet ./... && go test -coverprofile="${covdir}/${profile_name}.out" ./...)
       done
   artifacts:
     when: always
