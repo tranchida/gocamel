@@ -121,29 +121,6 @@ func SanitizeInput(input string) string {
 	return input
 }
 
-// pathDepth computes the effective directory depth of a path by counting
-// path components: '.' and empty components are ignored, '..' decrements
-// the depth, anything else increments it. A path that drives depth below
-// zero escapes its base directory. Unlike a naive strings.Contains(path, "..")
-// check, this does not reject legitimate filenames that merely contain two
-// adjacent dots (e.g. "report..v2.txt", "foo..bar").
-func pathDepth(path string) int {
-	normalized := strings.ReplaceAll(path, "\\", "/")
-	parts := strings.Split(normalized, "/")
-	depth := 0
-	for _, part := range parts {
-		switch part {
-		case "", ".":
-			// no-op
-		case "..":
-			depth--
-		default:
-			depth++
-		}
-	}
-	return depth
-}
-
 // containsTraversal reports whether path escapes its base via a '..' component
 // (depth drops below zero at any point during the walk).
 func containsTraversal(path string) bool {

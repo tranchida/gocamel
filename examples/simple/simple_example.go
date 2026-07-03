@@ -294,15 +294,6 @@ func demoChoiceWithLogicalOperators(ctx *gocamel.CamelContext) {
 	}
 }
 
-// Additional helper for parsing expressions
-func mustParse(expr string) *gocamel.SimpleTemplate {
-	template, err := gocamel.ParseSimpleTemplate(expr)
-	if err != nil {
-		panic(err)
-	}
-	return template
-}
-
 // Example output:
 //=================
 //=== GoCamel Simple Language Example with Phase 3 & 4 Features ===

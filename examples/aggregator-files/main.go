@@ -23,15 +23,14 @@ func (s *xmlPdfStrategy) Aggregate(oldExchange, newExchange *gocamel.Exchange) *
 		return newExchange
 	}
 
-	oldName, _ := oldExchange.GetIn().GetHeader(headerFileName)
 	newName, _ := newExchange.GetIn().GetHeader(headerFileName)
 
 	// Keep the XML body as the body of the aggregated exchange.
+	// When the new file is the XML one, copy its body over; otherwise the old
+	// XML body is already in place and nothing needs to change.
 	if strings.HasSuffix(fmt.Sprint(newName), ".xml") {
 		oldExchange.GetIn().SetBody(newExchange.GetIn().GetBody())
 		oldExchange.GetIn().SetHeader(headerFileName, newName)
-	} else if strings.HasSuffix(fmt.Sprint(oldName), ".xml") {
-		// The body is already the XML one — nothing to do.
 	}
 
 	return oldExchange

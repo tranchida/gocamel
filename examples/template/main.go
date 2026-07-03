@@ -70,7 +70,7 @@ This is an automated message from GoCamel
 	if err != nil {
 		log.Fatalf("Error creating email producer: %v", err)
 	}
-	err = emailProducer.Start(nil)
+	err = emailProducer.Start(context.TODO())
 	if err != nil {
 		log.Fatalf("Error starting email producer: %v", err)
 	}
@@ -94,7 +94,7 @@ This is an automated message from GoCamel
 	if err != nil {
 		log.Fatalf("Error creating JSON producer: %v", err)
 	}
-	err = jsonProducer.Start(nil)
+	err = jsonProducer.Start(context.TODO())
 	if err != nil {
 		log.Fatalf("Error starting JSON producer: %v", err)
 	}
@@ -119,7 +119,7 @@ This is an automated message from GoCamel
 	if err != nil {
 		log.Fatalf("Error creating cached producer: %v", err)
 	}
-	err = cachedProducer.Start(nil)
+	err = cachedProducer.Start(context.TODO())
 	if err != nil {
 		log.Fatalf("Error starting cached producer: %v", err)
 	}
