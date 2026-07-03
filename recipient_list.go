@@ -201,9 +201,12 @@ func (r *RecipientList) processParallel(exchange *Exchange, uris []string) error
 
 	// Copy and configure each branch exchange in the caller goroutine BEFORE
 	// spawning workers (see Multicast.processParallel for rationale).
+	// DeepCopy (not Copy): branches run concurrently, so a shared mutable body
+	// ([]byte, map, ...) mutated by two branches would be a data race. Mirrors
+	// the fix already applied to Multicast.processParallel.
 	branches := make([]*Exchange, len(uris))
 	for i := range uris {
-		recipientExchange := exchange.Copy()
+		recipientExchange := exchange.DeepCopy()
 		recipientExchange.SetProperty(CamelRecipientListIndex, i)
 		recipientExchange.SetProperty(CamelRecipientListSize, len(uris))
 		recipientExchange.SetProperty(CamelRecipientListComplete, i == len(uris)-1)

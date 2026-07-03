@@ -338,6 +338,11 @@ func (p *SQLStoredProducer) sendTx(ctx context.Context, exchange *Exchange, proc
 			break
 		}
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		_ = tx.Rollback()
+		return fmt.Errorf("error iterating rows: %w", err)
+	}
 	rows.Close()
 
 	if err := tx.Commit(); err != nil {

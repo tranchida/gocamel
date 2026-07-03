@@ -119,7 +119,13 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 		bodyReader = bytes.NewReader([]byte(body))
 	}
 
-	req, err := http.NewRequest("POST", p.uri, bodyReader)
+	// HTTP method: the CamelHttpMethod header overrides the default POST.
+	method := http.MethodPost
+	if v, ok := exchange.GetHeaderAsString(CamelHttpMethod); ok && v != "" {
+		method = strings.ToUpper(v)
+	}
+
+	req, err := http.NewRequest(method, p.uri, bodyReader)
 	if err != nil {
 		return fmt.Errorf("error creating HTTP request: %v", err)
 	}
