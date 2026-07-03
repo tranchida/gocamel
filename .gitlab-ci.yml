@@ -86,9 +86,7 @@ lint:
   stage: test
   image: golang:1.25
   cache:
-    key:
-      files: []
-      prefix: lint-tools
+    key: lint-tools
     paths:
       - .cache/go/bin
       - .cache/go/pkg/mod
