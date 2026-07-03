@@ -83,7 +83,11 @@ func main() {
 	go func() {
 		fmt.Println("Prometheus metrics available at http://localhost:8080/metrics")
 		http.Handle("/metrics", promhttp.Handler())
-		log.Fatal(http.ListenAndServe(":8080", nil))
+		srv := &http.Server{
+			Addr:              ":8080",
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		log.Fatal(srv.ListenAndServe())
 	}()
 
 	// 5. Start the context.

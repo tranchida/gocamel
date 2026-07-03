@@ -13,7 +13,7 @@ import (
 func main() {
 	// Create the templates directory if it does not exist.
 	templateDir := "templates"
-	if err := os.MkdirAll(templateDir, 0755); err != nil {
+	if err := os.MkdirAll(templateDir, 0750); err != nil {
 		log.Fatal(err)
 	}
 
@@ -28,7 +28,7 @@ Exchange ID: {{.Exchange.ID}}
 --
 This is an automated message from GoCamel
 `
-	if err := os.WriteFile(filepath.Join(templateDir, "email.tmpl"), []byte(emailTemplate), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(templateDir, "email.tmpl"), []byte(emailTemplate), 0600); err != nil {
 		log.Fatal(err)
 	}
 
@@ -39,7 +39,7 @@ This is an automated message from GoCamel
   "user": "{{.Headers.user}}",
   "status": {{if .Headers.status}}"{{.Headers.status | upper}}"{{else}}"UNKNOWN"{{end}}
 }`
-	if err := os.WriteFile(filepath.Join(templateDir, "report.json.tmpl"), []byte(jsonTemplate), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(templateDir, "report.json.tmpl"), []byte(jsonTemplate), 0600); err != nil {
 		log.Fatal(err)
 	}
 

@@ -53,7 +53,7 @@ func main() {
 	for i := 1; i <= 3; i++ {
 		content := fmt.Sprintf("Content of test file %d", i)
 		filename := filepath.Join(tempDir, fmt.Sprintf("test%d.txt", i))
-		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filename, []byte(content), 0600); err != nil {
 			fmt.Printf("Error writing file: %v\n", err)
 			return
 		}

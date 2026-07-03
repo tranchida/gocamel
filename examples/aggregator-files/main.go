@@ -101,7 +101,7 @@ func main() {
 
 	pdfContent := []byte("%PDF-1.4 fake pdf content")
 
-	if err := os.WriteFile(filepath.Join(watchDir, "file.xml"), []byte(xmlContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(watchDir, "file.xml"), []byte(xmlContent), 0600); err != nil {
 		fmt.Printf("Error writing file.xml: %v\n", err)
 		return
 	}
@@ -109,7 +109,7 @@ func main() {
 
 	time.Sleep(100 * time.Millisecond)
 
-	if err := os.WriteFile(filepath.Join(watchDir, "file.pdf"), pdfContent, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(watchDir, "file.pdf"), pdfContent, 0600); err != nil {
 		fmt.Printf("Error writing file.pdf: %v\n", err)
 		return
 	}
