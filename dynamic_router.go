@@ -52,15 +52,21 @@ func (p *DynamicRouter) Process(exchange *Exchange) error {
 		}
 
 		slog.Debug("dynamic router: sending to next endpoint", "uri", uri)
-		producer := newLazyProducer(p.context, uri)
-		processErr := producer.Process(exchange)
-		producer.Stop()
+		// Reuse the started producer from the CamelContext cache (created once
+		// per URI, stopped with the context) instead of creating and tearing
+		// down a producer — and potentially a connection — on every step of
+		// every message. Mirrors ToD and WireTap.
+		producer, err := p.context.GetProducer(uri)
+		if err != nil {
+			return fmt.Errorf("dynamic router: producer error for %s: %w", uri, err)
+		}
+		exchange.PropagateOutToIn()
+		processErr := producer.Send(exchange)
 		if processErr != nil {
 			return fmt.Errorf("dynamic router: error sending to %s: %w", uri, processErr)
 		}
 
 		// Prepare exchange for next step
-		exchange.PropagateOutToIn()
 		exchange.Out = NewMessage()
 	}
 

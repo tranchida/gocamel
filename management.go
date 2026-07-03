@@ -1,16 +1,27 @@
 package gocamel
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
 // ManagementServer exposes a REST API for monitoring and controlling routes.
+//
+// SECURITY: the REST API is unauthenticated by default and allows starting or
+// stopping any route by ID. Bind to a loopback address (e.g. "127.0.0.1:8081")
+// or put it behind a reverse proxy enforcing authentication/authorization
+// before exposing it to anything other than localhost. A future revision may
+// add a middleware hook similar to HTTPComponent.SetMiddleware.
 type ManagementServer struct {
-	context *CamelContext
-	server  *http.Server
+	context  *CamelContext
+	server   *http.Server
+	wg       sync.WaitGroup
+	stopOnce sync.Once
 }
 
 // NewManagementServer creates a new ManagementServer instance.
@@ -46,9 +57,16 @@ func (m *ManagementServer) Start(addr string) error {
 	m.server = &http.Server{
 		Addr:    addr,
 		Handler: mux,
+		// Bound the time a client may take to send its headers (slowloris).
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// Starting the server. The WaitGroup is signalled when ListenAndServe
+	// returns, so Stop() can wait for the goroutine to fully unwind before
+	// returning — mirroring the HTTP consumer shutdown pattern.
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
 		if err := m.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			LogError("Management REST server error", "error", err)
 		}
@@ -57,12 +75,23 @@ func (m *ManagementServer) Start(addr string) error {
 	return nil
 }
 
-// Stop stops the management REST server.
+// Stop stops the management REST server. Safe to call multiple times: server
+// shutdown is invoked at most once via sync.Once and Stop blocks until the
+// ListenAndServe goroutine has fully returned (no leaked goroutine). Shutdown
+// is graceful: in-flight requests are given up to 10s to complete before the
+// connections are closed.
 func (m *ManagementServer) Stop() error {
-	if m.server != nil {
-		return m.server.Close()
+	if m.server == nil {
+		return nil
 	}
-	return nil
+	var err error
+	m.stopOnce.Do(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err = m.server.Shutdown(shutdownCtx)
+	})
+	m.wg.Wait()
+	return err
 }
 
 func (m *ManagementServer) handleContext(w http.ResponseWriter, r *http.Request) {

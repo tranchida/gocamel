@@ -80,25 +80,27 @@ func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 		cb.halfOpenProbe = false
 	}
 	state := cb.state
+	var fallback Processor
 
 	// In Half-Open only ONE trial request may probe the downstream at a time;
 	// concurrent requests are diverted to the fallback as if the circuit were open.
 	if state == StateHalfOpen {
 		if cb.halfOpenProbe {
-			fb := cb.fallbackProcessor
+			fallback = cb.fallbackProcessor
 			cb.mu.Unlock()
-			return cb.doFallback(exchange, ErrCircuitOpen, fb)
+			return cb.doFallback(exchange, ErrCircuitOpen, fallback)
 		}
 		cb.halfOpenProbe = true
+	} else if state == StateOpen {
+		// Circuit is open and the timeout has not elapsed: divert to the
+		// fallback. fallbackProcessor is read here while still holding the
+		// write lock so there is no TOCTOU window between Unlock and a
+		// separate RLock.
+		fallback = cb.fallbackProcessor
+		cb.mu.Unlock()
+		return cb.doFallback(exchange, ErrCircuitOpen, fallback)
 	}
 	cb.mu.Unlock()
-
-	if state == StateOpen {
-		cb.mu.RLock()
-		fb := cb.fallbackProcessor
-		cb.mu.RUnlock()
-		return cb.doFallback(exchange, ErrCircuitOpen, fb)
-	}
 
 	// Try to execute the main processor
 	err := cb.processor.Process(exchange)

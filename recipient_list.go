@@ -153,6 +153,21 @@ func (r *RecipientList) Process(exchange *Exchange) error {
 	return r.processSequential(exchange, uris)
 }
 
+// sendToURI resolves a started producer from the CamelContext producer cache
+// (created once per URI, reused across messages, stopped with the context) and
+// sends the exchange to it. This avoids creating and tearing down a connection
+// per message, which is what newLazyProducer + Stop per call did previously.
+// Out is propagated to In so the next recipient/step sees the response, mirroring
+// the behaviour of ToD and WireTap.
+func (r *RecipientList) sendToURI(uri string, exchange *Exchange) error {
+	producer, err := r.context.GetProducer(uri)
+	if err != nil {
+		return fmt.Errorf("recipient list: producer error for %s: %w", uri, err)
+	}
+	exchange.PropagateOutToIn()
+	return producer.Send(exchange)
+}
+
 func (r *RecipientList) processSequential(exchange *Exchange, uris []string) error {
 	var aggregatedExchange *Exchange
 
@@ -163,14 +178,7 @@ func (r *RecipientList) processSequential(exchange *Exchange, uris []string) err
 		recipientExchange.SetProperty(CamelRecipientListSize, len(uris))
 		recipientExchange.SetProperty(CamelRecipientListComplete, i == len(uris)-1)
 
-		// Create a producer processor for this URI. The producer is stopped
-		// after sending to avoid leaking resources — recipient lists routinely
-		// fan out to dozens of URIs that may each open a connection.
-		processor := newLazyProducer(r.context, uri)
-		processErr := processor.Process(recipientExchange)
-		if stopErr := processor.Stop(); stopErr != nil {
-			LogError("recipient list: producer stop error", "uri", uri, "error", stopErr)
-		}
+		processErr := r.sendToURI(uri, recipientExchange)
 
 		if processErr != nil {
 			if !errors.Is(processErr, ErrStopRouting) {
@@ -218,16 +226,7 @@ func (r *RecipientList) processParallel(exchange *Exchange, uris []string) error
 		go func(index int, uri string, recipientExchange *Exchange) {
 			defer wg.Done()
 
-			processor := newLazyProducer(r.context, uri)
-			// Stop the per-call producer after sending — mirrors the fix
-			// applied to dynamic_router to avoid leaking producer resources.
-			defer func() {
-				if stopErr := processor.Stop(); stopErr != nil {
-					LogError("recipient list: producer stop error", "uri", uri, "error", stopErr)
-				}
-			}()
-
-			err := processor.Process(recipientExchange)
+			err := r.sendToURI(uri, recipientExchange)
 
 			mu.Lock()
 			defer mu.Unlock()

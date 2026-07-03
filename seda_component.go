@@ -122,9 +122,14 @@ func (p *SedaProducer) Stop() error {
 }
 
 // Send asynchronously sends an exchange to the SEDA queue.
-// It creates a copy of the exchange to ensure decoupling.
+// It creates a deep copy of the exchange so the queued exchange is fully
+// independent of the caller's: the producer returns immediately and the
+// consumer processes the copy later, so a shallow Copy() would let the
+// caller mutate a shared mutable body ([]byte, map, ...) underneath the
+// consumer — a data race. DeepCopy duplicates the common mutable container
+// types (see Message.DeepCopy).
 func (p *SedaProducer) Send(exchange *Exchange) error {
-	copy := exchange.Copy()
+	copy := exchange.DeepCopy()
 
 	select {
 	case p.endpoint.queue <- copy:
