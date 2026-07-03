@@ -4,7 +4,7 @@
 
 **Enterprise Integration Framework for Go**
 
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 🌐 **Language / Langue**: 🇺🇸 English | [**🇫🇷 Français**](./README.fr.md)

@@ -382,6 +382,16 @@ func (e *Exchange) PropagateOutToIn() {
 	}
 }
 
+// Copy returns a shallow copy of the exchange. The In/Out Message bodies and
+// header/property values are shared by reference (see Message.Copy); use
+// DeepCopy when the copy crosses a goroutine boundary that runs concurrently
+// with the original.
+//
+// The synchronizations slice is intentionally NOT copied: completion callbacks
+// are bound to the original exchange's lifecycle and should not fire again
+// when a derived copy finishes (a Multicast/Splitter branch is a different
+// logical exchange). Add new Synchronization callbacks to the copy explicitly
+// if its own completion must be observed.
 func (e *Exchange) Copy() *Exchange {
 	copy := NewExchange(e.Context)
 	copy.In = e.In.Copy()
