@@ -1,157 +1,247 @@
-# Features Overview | Vue d'Ensemble des Fonctionnalités
+# Fonctionnalités
 
----
+## Capacités Principales
 
-# 🇺🇸 English
+### Framework d'Intégration d'Entreprise
 
-## Core Features
+GoCamel est un framework d'intégration léger et natif à Go, inspiré d'Apache Camel. Il fournit :
 
-### Enterprise Integration Patterns (EIP)
+- **Architecture Modulaire** — Conception basée sur les composants
+- **Sécurité des Types** — Sécurité de typage complète en Go
+- **Concurrence** — Construit sur les goroutines de Go
+- **Zéro Dépendance Externe** — Pilotes de base de données optionnels uniquement
 
-GoCamel implements proven integration patterns from the *Enterprise Integration Patterns* book by Gregor Hohpe and Bobby
-Woolf:
-
-| Pattern       | Description                           |
-|---------------|---------------------------------------|
-| **Choice**    | Content-based routing with conditions |
-| **Split**     | Divide message into parts             |
-| **Aggregate** | Combine multiple messages             |
-| **Multicast** | Send to multiple destinations         |
-| **Stop**      | Stop routing without error            |
-| **ToD**       | Dynamic endpoint URI resolution       |
-
-### Security Features
-
-GoCamel includes built-in security utilities to protect against common vulnerabilities:
-
-- **Path Validation** — Protection against directory traversal attacks
-- **SQL Injection Prevention** — Input validation for database queries
-- **Input Sanitization** — Null byte and control character removal
-- **Safe Path Operations** — Bounds-checking for file operations
-
-### Type-Safe Message Exchange
+### Modèle de Route et d'Endpoint
 
 ```go
-exchange := gocamel.NewExchange(context.Background())
-exchange.GetIn().SetBody("Hello")
-exchange.GetIn().SetHeader("X-ID", "123")
+context := gocamel.NewCamelContext()
+
+route := context.CreateRouteBuilder().
+    From("direct:input").      // Endpoint consommateur
+    Process(myProcessor).      // Processeur personnalisé
+    To("direct:output").       // Endpoint producteur
+    Build()
+
+context.AddRoute(route)
+context.Start()
 ```
 
-### DSL (Domain Specific Language)
+### Modèle de Message
 
-Fluent builder pattern for route construction:
-
-```go
-builder.From("direct:start").
-    SetHeader("X-Trace", "abc").
-    Log("Processing: ${body}").
-    To("direct:end")
+```
+┌───────────────────────────────────────────────┐
+│                    Exchange                     │
+│  ┌─────────────────────────────────────────┐  │
+│  │               Propriétés                │  │
+│  │  correlationId: "abc-123"              │  │
+│  │  routeId: "route-1"                    │  │
+│  └─────────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────┐  │
+│  │                  In                     │  │
+│  │  Headers: map[string]any                │  │
+│  │    Content-Type: "application/json"    │  │
+│  │                                        │  │
+│  │  Body: any                              │  │
+│  │    {"name": "John", "age": 30}         │  │
+│  └─────────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────┐  │
+│  │                  Out                    │  │
+│  │  Headers: map[string]any                │  │
+│  │    X-Processed: "true"                 │  │
+│  │                                        │  │
+│  │  Body: any                              │  │
+│  │    {"name": "John", "age": 31}         │  │
+│  └─────────────────────────────────────────┘  │
+└───────────────────────────────────────────────┘
 ```
 
 ### Simple Language
 
-Expression language for dynamic routing:
+Langage d'expressions dynamique pour le routage et les transformations :
 
 ```go
-builder.From("direct:input").
-    Choice().
-        When("${header.priority == 'high'}").
-            To("direct:urgent").
-        Otherwise().
-            To("direct:normal").
-    EndChoice()
+// Accès aux headers
+SimpleSetHeader("X-ID", "${uuid}")
+
+// Manipulation du body
+SimpleSetBody("Bonjour ${body}")
+
+// Routage conditionnel
+When("${header.priority} == 'high'")
+
+// Accès null-safe
+When("${body?.user?.name} != ''")
+
+// Date/heure
+When("${date:now:yyyy-MM-dd}")
 ```
 
-### Component Architecture
+### Écosystème de Composants
 
-- **Producer**: Sends messages to endpoints
-- **Consumer**: Receives messages from endpoints
-- **Endpoint**: URI-based resource location
-- **Component**: Factory for endpoints
+#### Noyau (Intégré)
 
-### Management API
+- **Direct** — Routage en mémoire
+- **Timer** — Exécution planifiée
 
-REST API for monitoring and control:
-
-```go
-mgmt := gocamel.NewManagementServer(context)
-mgmt.Start(":8081")
-```
-
----
-
-# 🇫🇷 Français
-
-## Fonctionnalités Principales
-
-### Enterprise Integration Patterns (EIP)
-
-GoCamel implémente les patterns d'intégration éprouvés du livre *Enterprise Integration Patterns* de Gregor Hohpe et
-Bobby Woolf:
-
-| Pattern       | Description                                 |
-|---------------|---------------------------------------------|
-| **Choice**    | Routage basé sur le contenu avec conditions |
-| **Split**     | Division du message en parties              |
-| **Aggregate** | Combinaison de plusieurs messages           |
-| **Multicast** | Envoi vers plusieurs destinations           |
-| **Stop**      | Arrêt du routage sans erreur                |
-| **ToD**       | Résolution dynamique d'URI d'endpoint       |
-
-### Fonctionnalités de Sécurité
-
-GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre les vulnérabilités courantes :
+#### Sécurité
 
 - **Validation des Chemins** — Protection contre les attaques de traversée de répertoire
-- **Prévention des Injections SQL** — Validation des entrées pour les requêtes base de données
+- **Prévention des Injections SQL** — Validation des entrées pour les requêtes de base de données
 - **Assainissement des Entrées** — Suppression des octets nuls et caractères de contrôle
-- **Opérations de Chemins Sécurisées** — Vérification des limites pour les opérations fichiers
+- **Opérations de Chemins Sécurisées** — Vérification des limites pour les opérations sur fichiers
 
-### Échange de Messages Type-Safe
+#### Transfert de Fichiers
 
-```go
-exchange := gocamel.NewExchange(context.Background())
-exchange.GetIn().SetBody("Bonjour")
-exchange.GetIn().SetHeader("X-ID", "123")
-```
+- **File** — Système de fichiers local
+- **FTP/FTPS** — File Transfer Protocol
+- **SFTP** — Transfert de fichiers SSH
+- **SMB** — Partages Windows
 
-### DSL (Domain Specific Language)
+#### Réseau
 
-Pattern Builder fluide pour la construction de routes:
+- **HTTP** — Serveur/client HTTP
 
-```go
-builder.From("direct:start").
-    SetHeader("X-Trace", "abc").
-    Log("Traitement: ${body}").
-    To("direct:end")
-```
+#### Messagerie
 
-### Simple Language
+- **Telegram** — Bot API
+- **Mail** — SMTP/IMAP/POP3
 
-Langage d'expressions pour le routage dynamique:
+#### IA
 
-```go
-builder.From("direct:input").
-    Choice().
-        When("${header.priority == 'high'}").
-            To("direct:urgent").
-        Otherwise().
-            To("direct:normal").
-    EndChoice()
-```
+- **OpenAI** — Modèles GPT
 
-### Architecture des Composants
+#### Base de Données
 
-- **Producer**: Envoie des messages vers les endpoints
-- **Consumer**: Reçoit des messages depuis les endpoints
-- **Endpoint**: Localisation de ressource basée sur URI
-- **Component**: Usine pour créer des endpoints
+- **SQL** — Exécution de requêtes
+- **SQL-Stored** — Procédures stockées
 
-### API de Management
+#### Planification
 
-API REST pour monitoring et contrôle:
+- **Cron** — Expressions cron
+
+#### Transformation
+
+- **XSLT** — Transformation XML
+- **XSD** — Validation de schéma
+- **Template** — Templates Go
+- **Exec** — Exécution de commandes
+
+### Enterprise Integration Patterns
+
+| Pattern     | Description                  | Statut |
+|-------------|------------------------------|--------|
+| Choice      | Routeur basé sur le contenu  | ✅      |
+| Split       | Découpage de message         | ✅      |
+| Aggregate   | Agrégateur de messages       | ✅      |
+| Multicast   | Destinations multiples       | ✅      |
+| Filter      | Filtrage conditionnel        | ✅      |
+| Transform   | Transformation de message    | ✅      |
+| ToD         | Endpoint dynamique           | ✅      |
+| Stop        | Arrêt du routage             | ✅      |
+| Pipeline    | Branches séquentielles       | ✅      |
+| SetHeader   | Manipulation de headers      | ✅      |
+| SetProperty | Manipulation de propriétés   | ✅      |
+
+### API REST de Management
+
+Surveiller et contrôler les routes via HTTP :
 
 ```go
 mgmt := gocamel.NewManagementServer(context)
 mgmt.Start(":8081")
 ```
+
+**Endpoints :**
+
+- `GET /routes` — Lister les routes
+- `GET /routes/{id}` — Détails d'une route
+- `POST /routes/{id}/start` — Démarrer une route
+- `POST /routes/{id}/stop` — Arrêter une route
+- `GET /health` — Vérification de santé
+
+### Configuration
+
+Plusieurs sources d'identification :
+
+1. **Directement dans l'URI** — `ftp://user:pass@host`
+2. **Paramètres de requête** — `?username=user&password=pass`
+3. **Variables d'environnement** — `FTP_PASSWORD` (recommandé)
+
+```go
+builder.From("ftp://host?username=${env:FTP_USER}")
+```
+
+### Support de Test
+
+```go
+import "testing"
+
+func TestRoute(t *testing.T) {
+    ctx := gocamel.NewCamelContext()
+
+    // Construire la route de test
+    route := ctx.CreateRouteBuilder().
+        From("direct:test").
+        SetBody("traité").
+        To("direct:result").
+        Build()
+
+    ctx.AddRoute(route)
+    ctx.Start()
+    defer ctx.Stop()
+
+    // Envoyer le message de test
+    exchange := gocamel.NewExchange(context.Background())
+    exchange.GetIn().SetBody("entrée")
+
+    endpoint, _ := ctx.CreateEndpoint("direct:test")
+    producer, _ := endpoint.CreateProducer()
+    producer.Send(exchange)
+
+    // Vérifier
+    result := exchange.GetOut().GetBody()
+    if result != "traité" {
+        t.Fail()
+    }
+}
+```
+
+### Performance
+
+- **Allocations minimales** — Pooling d'objets
+- **Efficacité des goroutines** — Threads légers
+- **Pas de réflexion** — Opérations type-safe
+- **Initialisation paresseuse** — Chargement à la demande
+
+### Extensibilité
+
+```go
+// Composant personnalisé
+type CustomComponent struct{}
+
+func (c *CustomComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
+    return &CustomEndpoint{}, nil
+}
+
+type CustomEndpoint struct{}
+
+func (e *CustomEndpoint) CreateProducer() (gocamel.Producer, error) {
+    return &CustomProducer{}, nil
+}
+
+func (e *CustomEndpoint) CreateConsumer(p gocamel.Processor) (gocamel.Consumer, error) {
+    return &CustomConsumer{}, nil
+}
+
+// Enregistrer
+ctx.AddComponent("custom", &CustomComponent{})
+```
+
+### Bonnes Pratiques
+
+- Utiliser les **variables d'environnement** pour les identifiants
+- Définir des **IDs de route** pour la gestion
+- Implémenter la **gestion des erreurs** dans les processeurs
+- Utiliser un **stockage approprié** pour les agrégations
+- Configurer des **timeouts** pour les systèmes externes
+- Activer l'**API REST** pour la surveillance en production

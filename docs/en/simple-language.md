@@ -73,7 +73,7 @@ extract parts of the filename, path, size, etc.
 | `<`      | Less than        | `${header.count} < 100`  |
 | `<=`     | Less or equal    | `${header.count} <= 100` |
 | `&&`     | Logical AND      | `a > 5 && b == 'x'`      |
-| `        |                  | `                        | Logical OR | `a > 5 || b == 'y'` |
+| `||`     | Logical OR       | `a > 5 || b == 'y'`      |
 
 ## Null-safe Navigation
 

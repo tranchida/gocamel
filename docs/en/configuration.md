@@ -66,6 +66,35 @@ builder.From("ftp://host?username=admin&password=secret")
 builder.From("ftp://user:pass@host:21/path")
 ```
 
+## Context Configuration
+
+```go
+ctx := gocamel.NewCamelContext()
+
+// Custom configuration
+cfg := ctx.Config()
+```
+
+## Security
+
+**Never hardcode credentials:**
+
+```go
+// ❌ BAD
+endpoint := "ftp://user:secret@host"
+
+// ✅ GOOD
+endpoint := "ftp://host?username=${env:FTP_USER}"
+```
+
+## Proxy
+
+```go
+os.Setenv("HTTP_PROXY", "http://proxy.company:8080")
+os.Setenv("HTTPS_PROXY", "http://proxy.company:8080")
+os.Setenv("NO_PROXY", "localhost,127.0.0.1")
+```
+
 ## Component Registration
 
 ### Standard Components
@@ -167,4 +196,3 @@ builder.To("http://api?httpMethod=POST")
 2. **Use different configs per environment** — Dev/staging/prod
 3. **Document required env vars** — In README or deployment docs
 4. **Validate config at startup** — Fail fast on missing config
-

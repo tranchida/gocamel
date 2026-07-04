@@ -4,6 +4,58 @@
 
 Collection of practical examples demonstrating GoCamel features.
 
+## Hello World
+
+```go title="hello.go"
+package main
+
+import (
+    "gitlab.com/tranchida/gocamel"
+)
+
+func main() {
+    ctx := gocamel.NewCamelContext()
+
+    route := ctx.CreateRouteBuilder().
+        From("timer:tick?period=5s").
+        SetBody("Hello GoCamel!").
+        Log("${body}").
+        Build()
+
+    ctx.AddRoute(route)
+    ctx.Start()
+    select {}
+}
+```
+
+## OpenAI Integration
+
+```go title="openai_example.go"
+package main
+
+import (
+    "fmt"
+    "gitlab.com/tranchida/gocamel"
+)
+
+func main() {
+    ctx := gocamel.NewCamelContext()
+    ctx.AddComponent("openai", gocamel.NewOpenAIComponent())
+
+    // Manual producer usage
+    endpoint, _ := ctx.CreateEndpoint("openai:chat?model=gpt-3.5-turbo")
+    producer, _ := endpoint.CreateProducer()
+
+    exchange := gocamel.NewExchange(nil)
+    exchange.GetIn().SetBody("Explain Go integration")
+
+    producer.Send(exchange)
+    fmt.Println(exchange.GetOut().GetBody())
+}
+```
+
+---
+
 ## File Processing
 
 ### File to File
@@ -53,7 +105,7 @@ route := ctx.CreateRouteBuilder().
 
 ### HTTP Echo Server
 
-```go
+```go title="http_echo.go"
 package main
 
 import (
@@ -70,11 +122,11 @@ func main() {
         Build()
 
     ctx.AddRoute(route)
-    
+
     // Management API
     mgmt := gocamel.NewManagementServer(ctx)
     mgmt.Start(":8081")
-    
+
     ctx.Start()
     select {}
 }
@@ -143,9 +195,9 @@ route := ctx.CreateRouteBuilder().
 
 ## Content-Based Routing
 
-### Router Example
+### Choice Routing
 
-```go
+```go title="choice_routing.go"
 package main
 
 import (
@@ -156,30 +208,122 @@ func main() {
     ctx := gocamel.NewCamelContext()
 
     route := ctx.CreateRouteBuilder().
-        From("direct:orders").
+        From("direct:start").
         Choice().
-            When("${header.orderType} == 'priority'").
-                Log("Priority order: ${body}").
-                To("direct:priority-queue").
-            When("${body['amount']} > 1000").
-                Log("Large order").
-                To("direct:finance-approval").
-            When("${header.orderType} == 'standard'").
-                To("direct:standard-queue").
+            When("${header.priority == 'high'}").
+                SimpleSetBody("🚨 HIGH PRIORITY: ${body}").
+                SetHeader("X-Urgent", "true").
+                To("direct:urgent-queue").
+            When("${header.priority == 'medium'}").
+                SimpleSetBody("⚠️ MEDIUM: ${body}").
+                To("direct:normal-queue").
+            When("${body['count'] > 100}").
+                SimpleSetBody("📦 LARGE BATCH: ${body['count']} items").
+                To("direct:batch-queue").
             Otherwise().
-                Log("Unknown order type").
+                SimpleSetBody("📄 LOW: ${body}").
+                To("direct:low-queue").
+        EndChoice().
+        Build()
+
+    ctx.AddRoute(route)
+    ctx.Start()
+    select {}
+}
+```
+
+---
+
+## Simple Language
+
+### Transformation with Simple Language Expressions
+
+```go title="simple_transformation.go"
+package main
+
+import (
+    "gitlab.com/tranchida/gocamel"
+)
+
+func main() {
+    ctx := gocamel.NewCamelContext()
+
+    route := ctx.CreateRouteBuilder().
+        From("direct:start").
+        SimpleSetBody("📨 Message: ${body}").
+        SimpleSetHeader("X-Timestamp", "${date:now}").
+        SimpleSetHeader("X-Request-ID", "${uuid}").
+        Log("Processing at ${header.X-Timestamp}").
+        To("direct:output").
+        Build()
+
+    ctx.AddRoute(route)
+    ctx.Start()
+    select {}
+}
+```
+
+### JSON Processing with Simple Language
+
+```go title="json_processing.go"
+package main
+
+import (
+    "gitlab.com/tranchida/gocamel"
+)
+
+func main() {
+    ctx := gocamel.NewCamelContext()
+
+    // Expected body: {"user": {"name": "John", "email": "john@example.com"}}
+    route := ctx.CreateRouteBuilder().
+        From("direct:api").
+        Choice().
+            When("${header.Content-Type == 'application/json'}").
+                SimpleSetHeader("X-User-Name", "${body['user']['name']}").
+                SimpleSetHeader("X-User-Email", "${body['user']['email']}").
+                SimpleSetBody("👤 User ${body['user']['name']} registered").
+                Log("📝 User registration: ${body}").
+                To("direct:process-json").
+            When("${header.Content-Type == 'text/plain'}").
+                SimpleSetBody("📝 Message received: ${body}").
+                To("direct:process-text").
+            Otherwise().
+                SimpleSetBody("❌ Unsupported type: ${body}").
                 To("direct:error").
         EndChoice().
         Build()
 
-    // Priority handler
-    priorityRoute := ctx.CreateRouteBuilder().
-        From("direct:priority-queue").
-        Log("Processing priority order...").
+    ctx.AddRoute(route)
+    ctx.Start()
+    select {}
+}
+```
+
+### Null-safe & Collections
+
+```go title="null_safe_collection.go"
+package main
+
+import (
+    "gitlab.com/tranchida/gocamel"
+)
+
+func main() {
+    ctx := gocamel.NewCamelContext()
+
+    // Body: [{"name": "A"}, {"name": "B"}, {"name": "C"}]
+    route := ctx.CreateRouteBuilder().
+        From("direct:start").
+        Log("First: ${body[0]['name']}").
+        Log("Last: ${body[last]['name']}").
+        Log("User (null-safe): ${body?.user?.name}").
+        SimpleSetHeader("X-First-Item", "${body[0]['name']}").
+        SimpleSetHeader("X-Last-Item", "${body[last]['name']}").
+        To("direct:output").
         Build()
 
     ctx.AddRoute(route)
-    ctx.AddRoute(priorityRoute)
     ctx.Start()
     select {}
 }
@@ -214,6 +358,58 @@ route := ctx.CreateRouteBuilder().
 
 ## Aggregation
 
+### Split & Aggregate
+
+```go title="split_aggregate.go"
+package main
+
+import (
+    "strings"
+    "gitlab.com/tranchida/gocamel"
+)
+
+type StringConcatStrategy struct{}
+
+func (s *StringConcatStrategy) Aggregate(
+    oldExchange,
+    newExchange *gocamel.Exchange,
+) *gocamel.Exchange {
+    if oldExchange == nil {
+        return newExchange
+    }
+    oldBody := oldExchange.GetOut().GetBody().(string)
+    newBody := newExchange.GetOut().GetBody().(string)
+    oldExchange.GetOut().SetBody(oldBody + newBody)
+    return oldExchange
+}
+
+func main() {
+    ctx := gocamel.NewCamelContext()
+
+    strategy := &StringConcatStrategy{}
+    repo := gocamel.NewMemoryAggregationRepository()
+
+    route := ctx.CreateRouteBuilder().
+        From("direct:start").
+        Split(func(e *gocamel.Exchange) (any, error) {
+            body := e.GetIn().GetBody().(string)
+            return strings.Split(body, ","), nil
+        }).
+        To("direct:transform").
+        End().
+        Aggregate(gocamel.NewAggregator(
+            func(e *gocamel.Exchange) string { return "group" },
+            strategy,
+            repo,
+        ).SetCompletionSize(3)).
+        Build()
+
+    ctx.AddRoute(route)
+    ctx.Start()
+    select {}
+}
+```
+
 ### Order Aggregation
 
 ```go
@@ -225,11 +421,11 @@ func (s *OrderAggregationStrategy) Aggregate(
     if oldEx == nil {
         return newEx
     }
-    
+
     // Combine orders with same ID
     old := oldEx.GetIn().GetBody()
     new := newEx.GetIn().GetBody()
-    
+
     combined := fmt.Sprintf("%s + %s", old, new)
     oldEx.GetIn().SetBody(combined)
     return oldEx
@@ -276,7 +472,7 @@ route := ctx.CreateRouteBuilder().
 
 ### Timer
 
-```go
+```go title="timer.go"
 package main
 
 import (
@@ -328,7 +524,7 @@ func main() {
     defer db.Close()
 
     ctx := gocamel.NewCamelContext()
-    
+
     sqlComp := gocamel.NewSQLComponent()
     sqlComp.RegisterDataSource("appdb", db)
     ctx.AddComponent("sql", sqlComp)
@@ -366,7 +562,7 @@ route := ctx.CreateRouteBuilder().
 
 ## Telegram Bot
 
-```go
+```go title="telegram_bot.go"
 package main
 
 import (
@@ -395,16 +591,58 @@ func main() {
 
 ## Template Processing
 
-```go
-// template.txt: "Hello {{.Headers.name}}, your order is {{.Body}}"
+Generating formatted messages with native Go templates (inspired by Apache Camel's Velocity component).
 
-route := ctx.CreateRouteBuilder().
-    From("direct:process").
-    SetHeader("name", "John").
-    SetBody("12345").
-    To("template:templates/email.tmpl").
-    Log("Result: ${body}").
-    Build()
+```go title="template_email.go"
+package main
+
+import (
+    "gitlab.com/tranchida/gocamel"
+)
+
+// templates/email.tmpl:
+// Hello {{.Headers.name}},
+//
+// {{.Body}}
+//
+// Sent on {{now | formatDate "2006-01-02"}}
+
+func main() {
+    ctx := gocamel.NewCamelContext()
+    ctx.AddComponent("template", gocamel.NewTemplateComponent())
+
+    route := ctx.CreateRouteBuilder().
+        From("direct:notify").
+        SetHeader("name", "Alice").
+        SetBody("Your order is ready!").
+        To("template:templates/email.tmpl").
+        Log("Generated email: ${body}").
+        Build()
+
+    ctx.AddRoute(route)
+    ctx.Start()
+    select {}
+}
+```
+
+### With template cache
+
+```go
+To("template:templates/email.tmpl?contentCache=true")
+```
+
+### Available template functions
+
+| Function     | Description         | Example   |
+|--------------|---------------------|-----------|
+| `upper`      | Uppercase           | `{{.Body  | upper}}` |
+| `lower`      | Lowercase           | `{{.Body  | lower}}` |
+| `trim`       | Trim whitespace     | `{{.Body  | trim}}` |
+| `now`        | Current date        | `{{now}}` |
+| `formatDate` | Format date         | `{{now    | formatDate "2006-01-02"}}` |
+| `toString`   | Convert to string   | `{{.Body  | toString}}` |
+| `safeHTML`   | Unescaped HTML      | `{{.Body  | safeHTML}}` |
+
 ```
 
 ---
@@ -447,13 +685,13 @@ func main() {
         SetID("file-processor").
         From("file://input?include=*.json&delete=true").
         Log("Processing: ${header.CamelFileName}").
-        
+
         // Parse JSON
         ProcessFunc(func(e *gocamel.Exchange) error {
             // Parse JSON here
             return nil
         }).
-        
+
         // Route by type
         Choice().
             When("${body.type} == 'order'").
@@ -463,7 +701,7 @@ func main() {
             Otherwise().
                 To("direct:unknown").
         EndChoice().
-        
+
         Build()
 
     // Order processing
@@ -495,4 +733,3 @@ func main() {
     select {}
 }
 ```
-

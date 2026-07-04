@@ -67,10 +67,9 @@ markdown_extensions:
 
 # Navigation - Français
 nav:
-  - Accueil:
-      - fr/index.md
-      - Fonctionnalités: fr/features.md
-      - Démarrage Rapide: fr/quickstart.md
+  - Accueil: fr/index.md
+  - Fonctionnalités: fr/features.md
+  - Démarrage Rapide: fr/quickstart.md
   - Documentation:
       - Concepts: fr/concepts.md
       - Architecture: fr/architecture.md
@@ -82,4 +81,3 @@ nav:
       - Configuration: fr/configuration.md
       - Exemples: fr/examples.md
   - Référence API: fr/reference.md
-  - Changelog: fr/changelog.md

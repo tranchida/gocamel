@@ -60,6 +60,8 @@ Accessible via `ctx.GetComponentRegistry()` :
 | `Lookup(name)`      | Récupérer un objet par nom                   |
 | `Remove(name)`      | Supprimer un objet du registre               |
 
+### Méthodes EIP
+
 | Méthode        | Description            |
 |----------------|------------------------|
 | `Choice()`     | Routeur par contenu    |

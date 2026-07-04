@@ -6,7 +6,7 @@ Les patterns d'intégration enterprise implémentés dans GoCamel.
 
 Divise un message en plusieurs parties traitées individuellement.
 
-```go go
+```go
 builder.From("direct:start").
     Split(func(e *gocamel.Exchange) (any, error) {
         body := e.GetIn().GetBody().(string)
@@ -23,13 +23,36 @@ builder.From("direct:start").
 - `CamelSplitSize` — Nombre total de parties
 - `CamelSplitComplete` — Dernière partie ?
 
+**Avec agrégation :**
+
+```go
+type StringJoinStrategy struct{}
+
+func (s *StringJoinStrategy) Aggregate(oldEx, newEx *gocamel.Exchange) *gocamel.Exchange {
+    if oldEx == nil {
+        return newEx
+    }
+    old := oldEx.GetIn().GetBody().(string)
+    new := newEx.GetIn().GetBody().(string)
+    oldEx.GetIn().SetBody(old + "," + new)
+    return oldEx
+}
+
+strategy := &StringJoinStrategy{}
+
+builder.From("direct:start").
+    Split(splitter).Strategy(strategy).
+        To("direct:process").
+    End()
+```
+
 ---
 
 ## Aggregate
 
 Combine plusieurs messages en un seul.
 
-```go go
+```go
 strategy := &MyAggregationStrategy{}
 repo := gocamel.NewMemoryAggregationRepository()
 
@@ -41,7 +64,7 @@ builder.From("direct:start").
 
 **Stratégie personnalisée:**
 
-```go go
+```go
 type MyAggregationStrategy struct{}
 
 func (s *MyAggregationStrategy) Aggregate(
@@ -53,13 +76,31 @@ func (s *MyAggregationStrategy) Aggregate(
 }
 ```
 
+**Conditions de complétion :**
+
+| Méthode                      | Description                                    |
+|------------------------------|------------------------------------------------|
+| `SetCompletionSize(n)`       | Compléter après n messages                     |
+| `SetCompletionTimeout(ms)`   | Compléter après un délai (timeout)             |
+| `SetCompletionPredicate(fn)` | Compléter quand le prédicat retourne vrai      |
+
+**Options de stockage :**
+
+```go
+// En mémoire (par défaut)
+repo := gocamel.NewMemoryAggregationRepository()
+
+// Persistance SQLite
+repo := gocamel.NewSQLAggregationRepository(db, "schema")
+```
+
 ---
 
 ## Multicast
 
 Envoie une copie à plusieurs destinations.
 
-```go go
+```go
 builder.From("direct:start").
     Multicast().
         Pipeline().
@@ -86,11 +127,37 @@ builder.From("direct:start").
 
 ---
 
+## Wire Tap
+
+Envoie une copie de l'exchange à un endpoint secondaire de manière asynchrone (fire-and-forget), sans bloquer la route principale. La copie est indépendante : les modifications sur l'exchange tapé n'affectent pas la route principale et vice-versa.
+
+```go
+builder.From("direct:start").
+    WireTap("direct:audit"). // Copie asynchrone vers audit
+    To("direct:result")
+```
+
+**Fonctionnement :**
+
+1. Crée une **copie profonde** (deep copy) de l'exchange.
+2. Lance un goroutine qui envoie la copie à l'endpoint spécifié.
+3. Retourne immédiatement — la route principale continue sans attendre.
+4. L'exchange tapé utilise un contexte indépendant (`context.Background()`) : il n'est pas annulé quand la route principale se termine.
+5. Les erreurs lors du tap sont loggées mais ne sont pas propagées à la route principale.
+
+**Notes :**
+
+- Idéal pour l'audit, la journalisation ou la surveillance sans impact sur les performances.
+- `Route.Stop()` attend que tous les taps en cours soient terminés avant de s'arrêter (aucun message n'est perdu lors du shutdown).
+- Disponible également dans les contextes `Multicast`, `Pipeline`, `Split` et `Loop`.
+
+---
+
 ## Pipeline
 
 Chaîne séquentielle de processors.
 
-```go go
+```go
 builder.From("direct:start").
     Pipeline().
         Log("Étape 1").
@@ -106,7 +173,7 @@ builder.From("direct:start").
 
 Content-Based Router - route les messages vers différentes destinations selon des conditions sur le contenu.
 
-```go go
+```go
 builder.From("direct:start").
     Choice().
         When("${header.priority == 'high'}").
@@ -146,7 +213,7 @@ builder.From("direct:start").
 
 **Méthodes disponibles dans When/Otherwise :**
 
-```go go
+```go
 // Définir le corps/header
 When(expression).SetBody(value)
 When(expression).SetHeader(key, value)
@@ -383,7 +450,7 @@ channel).
 // Consommateur avec workers concurrents
 builder.From("seda:traitement?concurrentConsumers=5&size=1000").
     Log("Traitement asynchrone : ${body}").
-    To("direct: suivant")
+    To("direct:suivant")
 
 // Producteur
 builder.To("seda:traitement")
@@ -470,7 +537,7 @@ builder.From("direct:start").
 
 Arrête le routage actuel sans erreur.
 
-```go go
+```go
 builder.From("direct:start").
     ProcessFunc(func(e *gocamel.Exchange) error {
         if shouldStop(e) {
@@ -489,7 +556,7 @@ builder.From("direct:start").
 
 URI résolue dynamiquement à l'exécution.
 
-```go go
+```go
 builder.From("direct:start").
     SetHeader("CamelFileName", "data.txt").
     ToD("file://output/${header.CamelFileName}")
@@ -500,6 +567,19 @@ builder.From("direct:start").
 - `${header.<name>}` — Valeur d'en-tête
 - `${property.<name>}` — Valeur de propriété
 - `${body}` — Corps du message
+
+---
+
+## Recipient List
+
+Envoie un message à plusieurs destinataires calculés dynamiquement à l'exécution.
+
+```go
+// Destinataires depuis un en-tête
+builder.From("direct:start").
+    SetHeader("recipients", "direct:a,direct:b,direct:c").
+    RecipientList("${header.recipients}")
+```
 
 ---
 
@@ -566,7 +646,7 @@ builder.From("direct:start").
 
 ### Set/Remove Headers
 
-```go go
+```go
 // Définir
 builder.SetHeader("X-Correlation-ID", uuid.New().String())
 builder.SetHeaders(map[string]any{
@@ -581,7 +661,7 @@ builder.RemoveHeaders("X-Debug*", "X-Debug-Rare") // Wildcard
 
 ### Set/Remove Properties
 
-```go go
+```go
 // Définir
 builder.SetProperty("correlationId", "abc-123")
 builder.SetPropertyFunc("status", func(e *gocamel.Exchange) (any, error) {
@@ -631,7 +711,7 @@ builder.From("direct:start").
 
 Exécute un processeur personnalisé.
 
-```go go
+```go
 // Fonction simple
 builder.ProcessFunc(func(e *gocamel.Exchange) error {
     body := e.GetIn().GetBody().(string)
@@ -726,6 +806,29 @@ builder.From("direct:saga-route").
 
 ---
 
+## Transformer
+
+Transforme le contenu du message.
+
+```go
+// Définir le corps directement
+builder.From("direct:start").
+    SetBody("Hello World")
+
+// Définir le corps via une fonction
+builder.From("direct:start").
+    SetBodyFunc(func(e *gocamel.Exchange) (any, error) {
+        input := e.GetIn().GetBody().(string)
+        return strings.ToUpper(input), nil
+    })
+
+// Transformer via Simple Language
+builder.From("direct:start").
+    SimpleSetBody("Processed: ${body} at ${date:now}")
+```
+
+---
+
 ## Transform
 
 Un EIP dédié à la transformation de message qui modifie dynamiquement le corps (body) du message à l'aide d'une fonction Go ou d'une expression Simple Language.
@@ -772,3 +875,36 @@ builder.From("direct:output").
         return nil
     })
 ```
+
+---
+
+## Récapitulatif des patterns EIP
+
+| Pattern             | Catégorie      | Description                                  |
+|---------------------|----------------|----------------------------------------------|
+| Choice              | Routage        | Routage basé sur le contenu                  |
+| Filter              | Routage        | Filtrage conditionnel                        |
+| Idempotent Consumer | Routage        | Empêche les messages en double               |
+| Circuit Breaker     | Routage        | Pattern de résilience pour les pannes        |
+| Load Balancer       | Routage        | Répartition de charge entre endpoints        |
+| Dynamic Router      | Routage        | Routage dynamique basé sur décision          |
+| Resequencer         | Routage        | Réordonnancer les messages par séquence      |
+| Claim Check         | Routage        | Stocker le payload et passer une référence   |
+| Throttle            | Routage        | Limitation de débit                          |
+| Delay               | Routage        | Pause avant la prochaine étape               |
+| Multicast           | Routage        | Destinations multiples                       |
+| Recipient List      | Routage        | Routage dynamique vers plusieurs destinataires|
+| Routing Slip        | Routage        | Routage séquentiel dynamique                 |
+| Wire Tap            | Routage        | Copie asynchrone fire-and-forget             |
+| Split               | Transformation | Découpage de message                         |
+| Aggregate           | Transformation | Agrégation de messages                       |
+| Content Enricher    | Transformation | Enrichissement avec données externes         |
+| Transform           | Transformation | Transformation de contenu                    |
+| ToD                 | Endpoint       | Endpoint dynamique                           |
+| Stop                | Contrôle       | Arrêter le routage                           |
+| DoTry               | Contrôle       | Gestion d'erreurs Try-Catch-Finally          |
+| SetHeader           | En-têtes       | Manipulation d'en-têtes                      |
+| SetProperty         | Propriétés     | Propriétés d'exchange                        |
+| Loop                | Contrôle       | Itération avec compteur statique/dynamique   |
+| Saga                | Contrôle       | Pattern transactionnel Saga                  |
+| Message History     | Diagnostics    | Suivi du parcours de traitement des messages |

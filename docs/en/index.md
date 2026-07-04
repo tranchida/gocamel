@@ -18,7 +18,6 @@ Welcome to the GoCamel documentation.
 - [Core Concepts](concepts.md)
 - [Components](components.md)
 - [Features](features.md)
-- [Changelog](changelog.md)
 - [API Reference](reference.md)
 
 ## Security Notice

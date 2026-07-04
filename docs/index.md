@@ -14,7 +14,6 @@ DSL for creating integration routes to connect different systems and services.
 - [📚 Core Concepts](en/concepts.md)
 - [🔌 Components](en/components.md)
 - [✨ Features](en/features.md)
-- [📊 Changelog](en/changelog.md)
 - [📖 API Reference](en/reference.md)
 
 ## Features
@@ -34,10 +33,6 @@ GoCamel includes built-in security utilities to protect against common vulnerabi
 - [🔐 SQL injection prevention](en/features.md#security-features)
 - [🔐 Input sanitization](en/features.md#security-features)
 - [🔐 Safe file operations](en/features.md#security-features)
-
----
-
-🗓️ [View Changelog](en/changelog.md) - Latest updates and changes
 
 ---
 
