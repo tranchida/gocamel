@@ -236,12 +236,15 @@ type FTPConsumer struct {
 	opts      gocamel.PollingOptions
 	cancel    context.CancelFunc
 	conn      *ftp.ServerConn // persistent connection (disconnect=false)
+	wg        sync.WaitGroup
 }
 
 func (c *FTPConsumer) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		select {
 		case <-time.After(c.opts.InitialDelay):
 		case <-ctx.Done():
@@ -413,6 +416,7 @@ func (c *FTPConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	c.wg.Wait()
 	if c.conn != nil {
 		c.conn.Quit()
 		c.conn = nil

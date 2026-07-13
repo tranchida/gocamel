@@ -128,6 +128,7 @@ func (lp *lazyProducer) Process(exchange *Exchange) error {
 func (lp *lazyProducer) Stop() error {
 	lp.mu.Lock()
 	prod := lp.p
+	lp.p = nil
 	lp.mu.Unlock()
 	if prod != nil {
 		return prod.Stop()
@@ -183,7 +184,14 @@ func (r *Route) EnableMessageHistory() *Route {
 }
 
 func (r *Route) doProcess(exchange *Exchange) error {
-	for i := 0; i < len(r.processors); {
+	return r.processFrom(exchange, 0)
+}
+
+// processFrom runs the route pipeline starting at start. Aggregators use this
+// to resume routing after a completion timeout without re-running processors
+// that already handled the exchange.
+func (r *Route) processFrom(exchange *Exchange, start int) error {
+	for i := start; i < len(r.processors); {
 		processor := r.processors[i]
 
 		var start time.Time
@@ -288,8 +296,14 @@ func (r *Route) Start(ctx context.Context) error {
 		return fmt.Errorf("error creating consumer: %v", err)
 	}
 	r.consumer = consumer
+	r.configureAggregatorTimeouts(ctx)
 
 	if err := consumer.Start(ctx); err != nil {
+		r.stopAggregatorTimeouts()
+		r.consumer = nil
+		if stopErr := consumer.Stop(); stopErr != nil {
+			return fmt.Errorf("error starting consumer: %v; cleanup failed: %v", err, stopErr)
+		}
 		return fmt.Errorf("error starting consumer: %v", err)
 	}
 
@@ -314,6 +328,13 @@ func (r *Route) Stop() error {
 		if err := r.consumer.Stop(); err != nil {
 			errs = append(errs, fmt.Errorf("error stopping consumer: %w", err))
 		}
+		r.consumer = nil
+	}
+
+	// Aggregator timeouts can resume the downstream pipeline asynchronously.
+	// Cancel and join them before stopping producers they may still call.
+	if err := r.stopAggregatorTimeouts(); err != nil {
+		errs = append(errs, err)
 	}
 
 	for _, lp := range r.lazyProducers {
@@ -323,6 +344,9 @@ func (r *Route) Stop() error {
 	}
 
 	for _, p := range r.processors {
+		if _, isAggregator := p.(*Aggregator); isAggregator {
+			continue // already stopped before producers above
+		}
 		if stoppable, ok := p.(interface{ Stop() error }); ok {
 			if err := stoppable.Stop(); err != nil {
 				errs = append(errs, err)
@@ -331,6 +355,31 @@ func (r *Route) Stop() error {
 	}
 
 	r.started = false
+	return errors.Join(errs...)
+}
+
+func (r *Route) configureAggregatorTimeouts(ctx context.Context) {
+	for i, processor := range r.processors {
+		aggregator, ok := processor.(*Aggregator)
+		if !ok || aggregator.CompletionTimeout <= 0 {
+			continue
+		}
+		next := i + 1
+		aggregator.configureTimeout(ctx, ProcessorFunc(func(exchange *Exchange) error {
+			return r.processFrom(exchange, next)
+		}))
+	}
+}
+
+func (r *Route) stopAggregatorTimeouts() error {
+	var errs []error
+	for _, processor := range r.processors {
+		if aggregator, ok := processor.(*Aggregator); ok {
+			if err := aggregator.Stop(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
 	return errors.Join(errs...)
 }
 

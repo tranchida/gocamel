@@ -228,6 +228,9 @@ func (c *NATSConsumer) Stop() error {
 		c.endpoint.conn.Close()
 		c.endpoint.conn = nil
 	}
+	if c.endpoint.consumer == c {
+		c.endpoint.consumer = nil
+	}
 	return nil
 }
 

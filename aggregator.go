@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -27,6 +28,16 @@ type Aggregator struct {
 	// keyLocks provides per-correlation-key mutual exclusion to avoid serialising
 	// unrelated keys while still preventing races within a single key.
 	keyLocks sync.Map // map[string]*keyState
+
+	// lifecycleMu coordinates timeout goroutines with Route.Stop. A configured
+	// timeout resumes at the processor immediately following this Aggregator.
+	lifecycleMu       sync.Mutex
+	timeoutContext    context.Context
+	timeoutCancel     context.CancelFunc
+	timeoutProcessor  Processor
+	timeoutConfigured bool
+	timeoutActive     bool
+	timeoutWG         sync.WaitGroup
 }
 
 // keyState holds the per-key mutex and a generation counter.
@@ -94,16 +105,12 @@ func (a *Aggregator) Process(exchange *Exchange) error {
 	defer st.mu.Unlock()
 
 	isFirstMessage, err := a.processLocked(ctx, key, exchange, st)
-	if err != nil {
-		return err
-	}
 
 	// Start the timeout goroutine on the first message for this key.
-	if isFirstMessage && a.CompletionTimeout > 0 {
-		go a.runTimeout(key, exchange.Context, st.gen)
+	if isFirstMessage && a.CompletionTimeout > 0 && errors.Is(err, ErrStopRouting) {
+		a.startTimeout(key, ctx, st.gen, st)
 	}
-
-	return nil
+	return err
 }
 
 // processLocked performs aggregation while the per-key lock is held.
@@ -140,7 +147,7 @@ func (a *Aggregator) processLocked(ctx context.Context, key string, exchange *Ex
 	}
 
 	if completed {
-		return isFirst, a.emitLocked(ctx, key, aggregatedExchange, exchange)
+		return isFirst, a.emitLocked(ctx, key, aggregatedExchange, exchange, st)
 	}
 
 	if err := a.AggregationRepository.Add(ctx, key, aggregatedExchange); err != nil {
@@ -152,11 +159,12 @@ func (a *Aggregator) processLocked(ctx context.Context, key string, exchange *Ex
 
 // emitLocked removes the group from the repository and copies the aggregated state
 // onto the current exchange so it continues through the route.
-func (a *Aggregator) emitLocked(ctx context.Context, key string, aggregated, current *Exchange) error {
+func (a *Aggregator) emitLocked(ctx context.Context, key string, aggregated, current *Exchange, st *keyState) error {
 	if err := a.AggregationRepository.Remove(ctx, key); err != nil {
 		return fmt.Errorf("failed to remove exchange from repository: %w", err)
 	}
-	a.keyLocks.Delete(key)
+	st.gen++ // invalidate the timeout belonging to the completed group
+	a.keyLocks.CompareAndDelete(key, st)
 
 	current.In = aggregated.In
 	current.Out = aggregated.Out
@@ -164,39 +172,121 @@ func (a *Aggregator) emitLocked(ctx context.Context, key string, aggregated, cur
 	return nil
 }
 
-// runTimeout waits for CompletionTimeout then forces completion of the group if still pending.
-// gen is matched against st.gen to ensure we only expire the group we were started for;
-// if a newer group has started with the same key in the meantime, we bail out.
-func (a *Aggregator) runTimeout(key string, ctx context.Context, gen uint64) {
+// configureTimeout associates timeout completions with the remainder of a
+// running route. It is intentionally internal: the route owns this lifecycle.
+func (a *Aggregator) configureTimeout(ctx context.Context, processor Processor) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
+	a.lifecycleMu.Lock()
+	a.timeoutContext, a.timeoutCancel = context.WithCancel(ctx)
+	a.timeoutProcessor = processor
+	a.timeoutConfigured = true
+	a.timeoutActive = true
+	a.lifecycleMu.Unlock()
+}
+
+func (a *Aggregator) startTimeout(key string, fallback context.Context, gen uint64, st *keyState) {
+	a.lifecycleMu.Lock()
+	if a.timeoutConfigured && !a.timeoutActive {
+		a.lifecycleMu.Unlock()
+		return
+	}
+	ctx := a.timeoutContext
+	processor := a.timeoutProcessor
+	if ctx == nil {
+		ctx = fallback
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a.timeoutWG.Add(1)
+	a.lifecycleMu.Unlock()
+
+	go func() {
+		defer a.timeoutWG.Done()
+		a.runTimeout(key, ctx, gen, st, processor)
+	}()
+}
+
+// Stop cancels pending completion timeouts and waits for callbacks that have
+// already started. A later Route.Start configures the Aggregator again.
+func (a *Aggregator) Stop() error {
+	a.lifecycleMu.Lock()
+	if a.timeoutConfigured {
+		a.timeoutActive = false
+	}
+	cancel := a.timeoutCancel
+	a.timeoutCancel = nil
+	a.timeoutContext = nil
+	a.timeoutProcessor = nil
+	a.lifecycleMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	a.timeoutWG.Wait()
+	return nil
+}
+
+// runTimeout waits for CompletionTimeout then forces completion of the group if still pending.
+// gen is matched against st.gen to ensure we only expire the group we were started for;
+// if a newer group has started with the same key in the meantime, we bail out.
+func (a *Aggregator) runTimeout(key string, ctx context.Context, gen uint64, st *keyState, processor Processor) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	timer := time.NewTimer(a.CompletionTimeout)
+	defer timer.Stop()
 	select {
-	case <-time.After(a.CompletionTimeout):
+	case <-timer.C:
 	case <-ctx.Done():
 		return
 	}
 
-	st := a.lockForKey(key)
 	st.mu.Lock()
-	defer st.mu.Unlock()
 
 	if st.gen != gen {
+		st.mu.Unlock()
 		return // a newer group has started for this key; leave it alone
 	}
 
 	stored, err := a.AggregationRepository.Get(ctx, key)
-	if err != nil || stored == nil {
-		return // already completed or repo error
+	if err != nil {
+		st.mu.Unlock()
+		LogWarn("Aggregator timeout: failed to get key", "key", key, "error", err)
+		return
+	}
+	if stored == nil {
+		st.mu.Unlock()
+		return // already completed
 	}
 
 	if err := a.AggregationRepository.Remove(ctx, key); err != nil {
+		st.mu.Unlock()
 		LogWarn("Aggregator timeout: failed to remove key", "key", key, "error", err)
 		return
 	}
-	a.keyLocks.Delete(key)
-	LogWarn("Aggregator timeout: group expired and dropped",
+	st.gen++
+	a.keyLocks.CompareAndDelete(key, st)
+	st.mu.Unlock()
+
+	// The originating exchange may come from a short-lived request context
+	// (for example an HTTP consumer). Timeout completion belongs to the route
+	// lifecycle, so downstream work must use the timeout's route context.
+	stored.Context = ctx
+	if processor != nil {
+		if err := processor.Process(stored); err != nil && !errors.Is(err, ErrStopRouting) {
+			LogError("Aggregator timeout: downstream processing failed",
+				"key", key,
+				"exchange_id", stored.ID,
+				"error", err,
+			)
+		}
+	}
+	LogDebug("Aggregator timeout: group completed",
 		"key", key,
 		"exchange_id", stored.ID,
 		"size", stored.GetPropertyOrDefault(CamelAggregatorSize, 0),

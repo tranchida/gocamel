@@ -619,6 +619,11 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 | `collection`    | string | Oui    | Nom de la collection                                                     |
 | `operation`     | string | Oui    | Opération : find, findOne, insert, insertOne, save, update, remove, count |
 | `connectionRef` | string | Non    | Référence de connexion enregistrée                                      |
+| `allowDeleteAll` | bool   | Non    | Autorise `remove` avec un filtre vide (défaut : `false`)                 |
+
+Par sécurité, `remove` refuse les filtres nuls ou vides. Définissez
+`allowDeleteAll=true` explicitement uniquement si la suppression de toute la
+collection est intentionnelle.
 
 #### Headers d'entrée
 

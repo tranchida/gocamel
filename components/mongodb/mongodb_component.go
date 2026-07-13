@@ -3,6 +3,7 @@ package mongodb
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -88,6 +89,7 @@ func (c *MongoDBComponent) lookup(name string) (*MongoDBConnection, bool) {
 //	collection     Name of the collection
 //	operation      Default operation (find, findOne, insert, insertOne, save, update, remove, count)
 //	connectionRef  Name of a registered connection
+//	allowDeleteAll Permit remove with an empty filter (default false)
 func (c *MongoDBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -117,25 +119,34 @@ func (c *MongoDBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) 
 
 	collConfig := gocamel.GetConfigValue(u, "collection")
 	operation := gocamel.GetConfigValue(u, "operation")
+	allowDeleteAll := false
+	if raw := gocamel.GetConfigValue(u, "allowDeleteAll"); raw != "" {
+		allowDeleteAll, err = strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowDeleteAll value %q: %w", raw, err)
+		}
+	}
 
 	return &MongoDBEndpoint{
-		uri:        uri,
-		connName:   name,
-		dbConfig:   dbConfig,
-		collConfig: collConfig,
-		operation:  operation,
-		connection: conn,
+		uri:            uri,
+		connName:       name,
+		dbConfig:       dbConfig,
+		collConfig:     collConfig,
+		operation:      operation,
+		allowDeleteAll: allowDeleteAll,
+		connection:     conn,
 	}, nil
 }
 
 // MongoDBEndpoint represents a configured MongoDB endpoint.
 type MongoDBEndpoint struct {
-	uri        string
-	connName   string
-	dbConfig   string
-	collConfig string
-	operation  string
-	connection *MongoDBConnection
+	uri            string
+	connName       string
+	dbConfig       string
+	collConfig     string
+	operation      string
+	allowDeleteAll bool
+	connection     *MongoDBConnection
 }
 
 // URI returns the endpoint URI.
@@ -503,6 +514,9 @@ func (p *MongoDBProducer) execRemove(ctx context.Context, exchange *gocamel.Exch
 	if err != nil {
 		return fmt.Errorf("remove: invalid filter: %w", err)
 	}
+	if isEmptyMongoFilter(filter) && !p.endpoint.allowDeleteAll {
+		return fmt.Errorf("remove: empty filter rejected; set allowDeleteAll=true on the endpoint to delete all documents")
+	}
 
 	result, err := coll.DeleteMany(ctx, filter)
 	if err != nil {
@@ -512,6 +526,24 @@ func (p *MongoDBProducer) execRemove(ctx context.Context, exchange *gocamel.Exch
 	exchange.GetOut().SetHeader(CamelMongoDbResultTotal, result.DeletedCount)
 	exchange.GetOut().SetBody(result.DeletedCount)
 	return nil
+}
+
+func isEmptyMongoFilter(filter interface{}) bool {
+	if filter == nil {
+		return true
+	}
+	switch v := filter.(type) {
+	case map[string]interface{}:
+		return len(v) == 0
+	case bson.M:
+		return len(v) == 0
+	case bson.D:
+		return len(v) == 0
+	case string:
+		return strings.TrimSpace(v) == ""
+	default:
+		return false
+	}
 }
 
 // execCount executes a countDocuments.

@@ -125,9 +125,13 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 		method = strings.ToUpper(v)
 	}
 
-	req, err := http.NewRequest(method, p.uri, bodyReader)
+	reqCtx := exchange.Context
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(reqCtx, method, p.uri, bodyReader)
 	if err != nil {
-		return fmt.Errorf("error creating HTTP request: %v", err)
+		return fmt.Errorf("error creating HTTP request: %w", err)
 	}
 
 	// Adding headers (CRLF-stripped to prevent header injection — CWE-113)
@@ -142,14 +146,14 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	// Sending the request
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error sending HTTP request: %v", err)
+		return fmt.Errorf("error sending HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Reading the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("error reading HTTP response: %v", err)
+		return fmt.Errorf("error reading HTTP response: %w", err)
 	}
 
 	// Updating the exchange with the response
@@ -182,6 +186,15 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	port := parsedURL.Port()
 	if port == "" {
 		port = "8080" // Default port
+	}
+	host := parsedURL.Hostname()
+	addr := net.JoinHostPort(host, port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("error listening on %s: %w", addr, err)
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	mux := http.NewServeMux()
@@ -242,7 +255,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	}
 
 	c.server = &http.Server{
-		Addr:    ":" + port,
+		Addr:    addr,
 		Handler: handler,
 		// Bound the time a client may take to send its headers (slowloris).
 		ReadHeaderTimeout: 10 * time.Second,
@@ -251,13 +264,14 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
-	// Starting the server. The WaitGroup is signalled when ListenAndServe
+	// Starting the server. The listener is created synchronously above so bind
+	// failures are returned from Start. The WaitGroup is signalled when Serve
 	// returns, so Stop() can wait for the goroutine to fully unwind before
 	// the CamelContext continues its shutdown.
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		if err := c.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := c.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			LogError("HTTP server error", "error", err)
 		}
 	}()

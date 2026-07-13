@@ -1,7 +1,9 @@
 package gocamel
 
 import (
+	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -72,6 +74,90 @@ func TestCamelContext_GracefulStop_Empty(t *testing.T) {
 	require.NoError(t, ctx.Start())
 	require.NoError(t, ctx.GracefulStop(time.Second))
 	assert.False(t, ctx.IsStarted())
+}
+
+type gracefulStopTestComponent struct {
+	releaseOnce sync.Once
+	release     chan struct{}
+	producer    *gracefulStopTestProducer
+}
+
+func newGracefulStopTestComponent() *gracefulStopTestComponent {
+	return &gracefulStopTestComponent{
+		release:  make(chan struct{}),
+		producer: &gracefulStopTestProducer{stopped: make(chan struct{})},
+	}
+}
+
+func (c *gracefulStopTestComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &gracefulStopTestEndpoint{uri: uri, component: c}, nil
+}
+
+func (c *gracefulStopTestComponent) unblock() {
+	c.releaseOnce.Do(func() { close(c.release) })
+}
+
+type gracefulStopTestEndpoint struct {
+	uri       string
+	component *gracefulStopTestComponent
+}
+
+func (e *gracefulStopTestEndpoint) URI() string { return e.uri }
+func (e *gracefulStopTestEndpoint) CreateProducer() (Producer, error) {
+	return e.component.producer, nil
+}
+func (e *gracefulStopTestEndpoint) CreateConsumer(Processor) (Consumer, error) {
+	return &gracefulStopTestConsumer{release: e.component.release}, nil
+}
+
+type gracefulStopTestConsumer struct{ release <-chan struct{} }
+
+func (*gracefulStopTestConsumer) Start(context.Context) error { return nil }
+func (c *gracefulStopTestConsumer) Stop() error {
+	<-c.release
+	return nil
+}
+
+type gracefulStopTestProducer struct {
+	stopOnce sync.Once
+	stopped  chan struct{}
+}
+
+func (*gracefulStopTestProducer) Start(context.Context) error { return nil }
+func (p *gracefulStopTestProducer) Stop() error {
+	p.stopOnce.Do(func() { close(p.stopped) })
+	return nil
+}
+func (*gracefulStopTestProducer) Send(*Exchange) error { return nil }
+
+func TestCamelContext_GracefulStopTimeoutEventuallyStopsProducerCache(t *testing.T) {
+	ctx := NewCamelContext()
+	component := newGracefulStopTestComponent()
+	t.Cleanup(component.unblock)
+	ctx.AddComponent("shutdown-test", component)
+
+	ctx.CreateRoute().From("shutdown-test:source")
+	require.NoError(t, ctx.Start())
+	_, err := ctx.GetProducer("shutdown-test:sink")
+	require.NoError(t, err)
+
+	err = ctx.GracefulStop(10 * time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out")
+	assert.False(t, ctx.IsStarted())
+
+	select {
+	case <-component.producer.stopped:
+		t.Fatal("producer cache stopped before the route finished shutting down")
+	default:
+	}
+
+	component.unblock()
+	select {
+	case <-component.producer.stopped:
+	case <-time.After(time.Second):
+		t.Fatal("producer cache was not stopped after route shutdown completed")
+	}
 }
 
 // TestRoute_Validate_NoFrom surfaces missing source endpoint at validate time.

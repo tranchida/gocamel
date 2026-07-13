@@ -365,3 +365,34 @@ func TestSQLEndpoint_ConsumerNotSupported(t *testing.T) {
 	_, err = endpoint.CreateConsumer(nil)
 	assert.Error(t, err)
 }
+
+func TestSQLProducer_RejectsStackedStatementWithOneSemicolon(t *testing.T) {
+	db := newTestSQLDB(t)
+	comp := NewSQLComponent()
+	comp.RegisterDataSource("testdb", db)
+
+	uri := "sql://testdb?query=" + url.QueryEscape("SELECT 1")
+	endpoint, err := comp.CreateEndpoint(uri)
+	require.NoError(t, err)
+	producer, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	exchange := NewExchange(context.Background())
+	exchange.SetHeader(SqlQuery, "SELECT 1; DROP TABLE users")
+	err = producer.Send(exchange)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stacked SQL statements")
+
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count))
+}
+
+func TestValidateSQLQuery_AllowsQuotedAndTrailingSemicolons(t *testing.T) {
+	assert.NoError(t, validateSQLQuery("SELECT ';' AS value;   "))
+	assert.NoError(t, validateSQLQuery(`SELECT ";" AS value`))
+	assert.NoError(t, validateSQLQuery("SELECT 1; -- trailing comment"))
+	assert.NoError(t, validateSQLQuery("SELECT 1; /* trailing ; comment */"))
+	assert.NoError(t, validateSQLQuery("SELECT 1 /* embedded ; comment */;"))
+	assert.Error(t, validateSQLQuery("SELECT 1; SELECT 2"))
+	assert.Error(t, validateSQLQuery("SELECT 1; /* comment */ DROP TABLE users"))
+}

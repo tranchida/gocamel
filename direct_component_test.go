@@ -2,6 +2,8 @@ package gocamel
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,6 +47,72 @@ func TestDirectComponent(t *testing.T) {
 	assert.Equal(t, "Modified: Hello Direct", exchange.GetOut().GetBody())
 
 	camelCtx.Stop()
+}
+
+type lifecycleCountingComponent struct {
+	created atomic.Int32
+	stopped atomic.Int32
+}
+
+func (c *lifecycleCountingComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &lifecycleCountingEndpoint{uri: uri, component: c}, nil
+}
+
+type lifecycleCountingEndpoint struct {
+	uri       string
+	component *lifecycleCountingComponent
+}
+
+func (e *lifecycleCountingEndpoint) URI() string { return e.uri }
+func (e *lifecycleCountingEndpoint) CreateProducer() (Producer, error) {
+	e.component.created.Add(1)
+	return &lifecycleCountingProducer{component: e.component}, nil
+}
+func (e *lifecycleCountingEndpoint) CreateConsumer(Processor) (Consumer, error) {
+	return nil, fmt.Errorf("producer-only endpoint")
+}
+
+type lifecycleCountingProducer struct {
+	component *lifecycleCountingComponent
+}
+
+func (p *lifecycleCountingProducer) Start(context.Context) error { return nil }
+func (p *lifecycleCountingProducer) Stop() error {
+	p.component.stopped.Add(1)
+	return nil
+}
+func (p *lifecycleCountingProducer) Send(*Exchange) error { return nil }
+
+func TestRoute_StopDisconnectsDirectAndRestartRecreatesLazyProducer(t *testing.T) {
+	camelCtx := NewCamelContext()
+	camelCtx.AddComponent("direct", NewDirectComponent())
+	counting := &lifecycleCountingComponent{}
+	camelCtx.AddComponent("counting", counting)
+
+	route, err := camelCtx.CreateRouteBuilder().
+		From("direct:lifecycle").
+		To("counting:out").
+		Build()
+	assert.NoError(t, err)
+	assert.NoError(t, route.Start(context.Background()))
+
+	endpoint, err := camelCtx.CreateEndpoint("direct:lifecycle")
+	assert.NoError(t, err)
+	producer, err := endpoint.CreateProducer()
+	assert.NoError(t, err)
+
+	assert.NoError(t, producer.Send(NewExchange(context.Background())))
+	assert.EqualValues(t, 1, counting.created.Load())
+
+	assert.NoError(t, route.Stop())
+	assert.Error(t, producer.Send(NewExchange(context.Background())))
+	assert.EqualValues(t, 1, counting.stopped.Load())
+
+	assert.NoError(t, route.Start(context.Background()))
+	assert.NoError(t, producer.Send(NewExchange(context.Background())))
+	assert.EqualValues(t, 2, counting.created.Load())
+	assert.NoError(t, route.Stop())
+	assert.EqualValues(t, 2, counting.stopped.Load())
 }
 
 func TestDirectComponentMultipleRoutes(t *testing.T) {

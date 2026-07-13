@@ -102,8 +102,12 @@ func (p *OpenAIProducer) Send(exchange *gocamel.Exchange) error {
 		prompt = fmt.Sprintf("%v", body)
 	}
 
+	reqCtx := exchange.Context
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
 	resp, err := p.client.CreateChatCompletion(
-		context.Background(),
+		reqCtx,
 		openai.ChatCompletionRequest{
 			Model: p.model,
 			Messages: []openai.ChatCompletionMessage{

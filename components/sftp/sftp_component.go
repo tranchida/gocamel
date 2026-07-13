@@ -288,12 +288,15 @@ type SFTPConsumer struct {
 	cancel     context.CancelFunc
 	sshClient  *ssh.Client  // persistent connection (disconnect=false)
 	sftpClient *sftp.Client // persistent connection (disconnect=false)
+	wg         sync.WaitGroup
 }
 
 func (c *SFTPConsumer) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		select {
 		case <-time.After(c.opts.InitialDelay):
 		case <-ctx.Done():
@@ -478,6 +481,7 @@ func (c *SFTPConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	c.wg.Wait()
 	if c.sftpClient != nil {
 		c.sftpClient.Close()
 		c.sftpClient = nil
