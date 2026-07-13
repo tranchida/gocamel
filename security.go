@@ -60,38 +60,94 @@ func ValidateRemotePath(path string) error {
 // Only ';' characters that fall OUTSIDE string literals are considered, so a
 // semicolon inside a quoted value does not trip the check.
 func validateSQLQuery(query string) error {
-	if countSemicolonsOutsideStrings(query) > 1 {
-		return fmt.Errorf("query contains multiple statement terminators: %s", query)
+	if hasNonTrailingSemicolonOutsideStrings(query) {
+		return fmt.Errorf("query contains stacked SQL statements: %s", query)
 	}
 	return nil
 }
 
-// countSemicolonsOutsideStrings counts ';' characters that are not inside a
-// single- or double-quoted string literal. It is a minimal lexer that does not
-// handle escape sequences or identifier quoting — sufficient for the sanity
-// check above, where the query is trusted configuration.
-func countSemicolonsOutsideStrings(query string) int {
-	count := 0
+// hasNonTrailingSemicolonOutsideStrings reports whether a statement terminator
+// is followed by SQL code. Whitespace and comments may follow a single trailing
+// semicolon, while "SELECT 1; DROP TABLE t" is rejected.
+func hasNonTrailingSemicolonOutsideStrings(query string) bool {
 	inSingle := false
 	inDouble := false
+	inLineComment := false
+	inBlockComment := false
+	seenTerminator := false
 	for i := 0; i < len(query); i++ {
 		c := query[i]
+		if inLineComment {
+			if c == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			if c == '*' && i+1 < len(query) && query[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		}
+		if inSingle {
+			if c == '\\' && i+1 < len(query) {
+				i++
+				continue
+			}
+			if c == '\'' {
+				if i+1 < len(query) && query[i+1] == '\'' {
+					i++
+				} else {
+					inSingle = false
+				}
+			}
+			continue
+		}
+		if inDouble {
+			if c == '"' {
+				if i+1 < len(query) && query[i+1] == '"' {
+					i++
+				} else {
+					inDouble = false
+				}
+			}
+			continue
+		}
+
 		switch c {
 		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
+			inSingle = true
 		case '"':
-			if !inSingle {
-				inDouble = !inDouble
+			inDouble = true
+		case '-':
+			if i+1 < len(query) && query[i+1] == '-' {
+				inLineComment = true
+				i++
+			} else if seenTerminator {
+				return true
+			}
+		case '/':
+			if i+1 < len(query) && query[i+1] == '*' {
+				inBlockComment = true
+				i++
+			} else if seenTerminator {
+				return true
 			}
 		case ';':
-			if !inSingle && !inDouble {
-				count++
+			if seenTerminator {
+				return true
+			}
+			seenTerminator = true
+		case ' ', '\t', '\r', '\n', '\f':
+			// Whitespace is valid after the final terminator.
+		default:
+			if seenTerminator {
+				return true
 			}
 		}
 	}
-	return count
+	return false
 }
 
 // sanitizer is a regex-based sanitizer for common patterns

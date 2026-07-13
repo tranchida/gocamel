@@ -200,6 +200,9 @@ func (c *CamelContext) GracefulStop(timeout time.Duration) error {
 				errs = append(errs, fmt.Errorf("route %s: %w", route.ID, err))
 			}
 		}
+		if err := c.producerCache.Stop(); err != nil {
+			errs = append(errs, err)
+		}
 		if len(errs) > 0 {
 			done <- fmt.Errorf("errors stopping routes: %v", errs)
 			return
@@ -210,13 +213,6 @@ func (c *CamelContext) GracefulStop(timeout time.Duration) error {
 	select {
 	case err := <-done:
 		c.started = false
-		if cacheErr := c.producerCache.Stop(); cacheErr != nil {
-			if err != nil {
-				err = fmt.Errorf("%w; producer cache stop error: %v", err, cacheErr)
-			} else {
-				err = cacheErr
-			}
-		}
 		return err
 	case <-time.After(timeout):
 		// We mark the context as stopped to prevent re-entry, but the

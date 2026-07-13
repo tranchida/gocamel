@@ -153,3 +153,16 @@ func TestNATSComponent_DynamicSubject(t *testing.T) {
 		t.Fatal("Timed out waiting for NATS message in DynamicSubject test")
 	}
 }
+
+func TestNATSConsumer_StopReleasesEndpointRegistration(t *testing.T) {
+	component := NewNATSComponent()
+	endpoint, err := component.CreateEndpoint("nats://restart")
+	assert.NoError(t, err)
+
+	consumer, err := endpoint.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	assert.NoError(t, err)
+	assert.NoError(t, consumer.Stop())
+
+	_, err = endpoint.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	assert.NoError(t, err)
+}

@@ -617,6 +617,10 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 | `collection`    | string | Yes      | Collection name                                                          |
 | `operation`     | string | Yes      | Operation: find, findOne, insert, insertOne, save, update, remove, count |
 | `connectionRef` | string | No       | Registered connection reference                                          |
+| `allowDeleteAll` | bool   | No       | Allow `remove` with an empty filter (default: `false`)                    |
+
+For safety, `remove` rejects nil and empty filters. Set `allowDeleteAll=true`
+explicitly only when deleting the entire collection is intentional.
 
 #### Input Headers
 

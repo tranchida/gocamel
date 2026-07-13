@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hirochachacha/go-smb2"
@@ -275,12 +276,15 @@ type SMBConsumer struct {
 	opts      gocamel.PollingOptions
 	cancel    context.CancelFunc
 	sc        *smbConn // connexion persistante (disconnect=false)
+	wg        sync.WaitGroup
 }
 
 func (c *SMBConsumer) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		select {
 		case <-time.After(c.opts.InitialDelay):
 		case <-ctx.Done():
@@ -453,6 +457,7 @@ func (c *SMBConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	c.wg.Wait()
 	if c.sc != nil {
 		c.sc.close()
 		c.sc = nil

@@ -166,6 +166,11 @@ func (c *SedaConsumer) Stop() error {
 		c.cancel()
 	}
 	c.wg.Wait()
+	c.endpoint.mu.Lock()
+	if c.endpoint.consumer == c {
+		c.endpoint.consumer = nil
+	}
+	c.endpoint.mu.Unlock()
 	return nil
 }
 

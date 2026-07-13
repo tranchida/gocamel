@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestChanComponent_Basic(t *testing.T) {
@@ -103,4 +104,18 @@ func TestChanComponent_MultipleExchanges(t *testing.T) {
 			t.Fatalf("Timed out waiting for %s", exp)
 		}
 	}
+}
+
+func TestChanConsumer_StopReleasesEndpointRegistration(t *testing.T) {
+	component := NewChanComponent()
+	endpoint, err := component.CreateEndpoint("chan:restart")
+	require.NoError(t, err)
+
+	consumer, err := endpoint.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+	require.NoError(t, err)
+	require.NoError(t, consumer.Start(context.Background()))
+	require.NoError(t, consumer.Stop())
+
+	_, err = endpoint.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+	assert.NoError(t, err)
 }

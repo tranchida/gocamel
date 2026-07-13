@@ -2,9 +2,13 @@ package openai
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/url"
 	"os"
 	"testing"
+
+	sdkopenai "github.com/sashabaranov/go-openai"
 
 	gocamel "gitlab.com/tranchida/gocamel"
 )
@@ -43,5 +47,37 @@ func TestOpenAIProducer_Send_NotStarted(t *testing.T) {
 	err := producer.Send(exchange)
 	if err == nil {
 		t.Error("Expected error when sending with unstarted producer")
+	}
+}
+
+type contextRecordingDoer struct {
+	ctx context.Context
+}
+
+func (d *contextRecordingDoer) Do(req *http.Request) (*http.Response, error) {
+	d.ctx = req.Context()
+	return nil, req.Context().Err()
+}
+
+func TestOpenAIProducer_SendUsesExchangeContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	doer := &contextRecordingDoer{}
+	config := sdkopenai.DefaultConfig("test-token")
+	config.HTTPClient = doer
+	producer := &OpenAIProducer{
+		client: sdkopenai.NewClientWithConfig(config),
+		model:  sdkopenai.GPT3Dot5Turbo,
+	}
+	exchange := gocamel.NewExchange(ctx)
+	exchange.SetBody("hello")
+
+	err := producer.Send(exchange)
+	if err == nil {
+		t.Fatal("expected canceled request to fail")
+	}
+	if doer.ctx == nil || !errors.Is(doer.ctx.Err(), context.Canceled) {
+		t.Fatalf("request did not receive the exchange context: %v", doer.ctx)
 	}
 }

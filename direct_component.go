@@ -123,5 +123,10 @@ func (c *DirectConsumer) Start(ctx context.Context) error {
 
 // Stop stops the consumer
 func (c *DirectConsumer) Stop() error {
+	c.endpoint.mu.Lock()
+	if c.endpoint.consumer == c {
+		c.endpoint.consumer = nil
+	}
+	c.endpoint.mu.Unlock()
 	return nil
 }

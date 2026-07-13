@@ -2,10 +2,13 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // StringConcatStrategy is a simple aggregation strategy that concatenates message bodies.
@@ -28,6 +31,59 @@ func (s *StringConcatStrategy) Aggregate(oldExchange, newExchange *Exchange) *Ex
 
 	oldExchange.GetIn().SetBody(oldBody + "," + newBody)
 	return oldExchange
+}
+
+func TestAggregator_CompletionTimeoutContinuesRoute(t *testing.T) {
+	camelCtx := NewCamelContext()
+	camelCtx.AddComponent("direct", NewDirectComponent())
+
+	repo := NewMemoryAggregationRepository()
+	aggregator := NewAggregator(
+		func(exchange *Exchange) string {
+			key, _ := exchange.GetHeaderAsString("group")
+			return key
+		},
+		&StringConcatStrategy{},
+		repo,
+	).SetCompletionSize(10).SetCompletionTimeout(20 * time.Millisecond)
+
+	received := make(chan *Exchange, 1)
+	route, err := camelCtx.CreateRouteBuilder().
+		From("direct:timeout").
+		Aggregate(aggregator).
+		ProcessFunc(func(exchange *Exchange) error {
+			received <- exchange
+			return nil
+		}).
+		Build()
+	require.NoError(t, err)
+	require.NoError(t, route.Start(context.Background()))
+	t.Cleanup(func() { require.NoError(t, route.Stop()) })
+
+	endpoint, err := camelCtx.CreateEndpoint("direct:timeout")
+	require.NoError(t, err)
+	producer, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	exchangeContext, cancelExchange := context.WithCancel(context.Background())
+	exchange := NewExchange(exchangeContext)
+	exchange.SetHeader("group", "A")
+	exchange.SetBody("only-message")
+	err = producer.Send(exchange)
+	require.True(t, errors.Is(err, ErrStopRouting))
+	cancelExchange() // timeout completion must use the longer-lived route context
+
+	select {
+	case completed := <-received:
+		assert.Equal(t, "only-message", completed.GetIn().GetBody())
+		assert.NoError(t, completed.Context.Err())
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for aggregated exchange to continue downstream")
+	}
+
+	stored, err := repo.Get(context.Background(), "A")
+	require.NoError(t, err)
+	assert.Nil(t, stored)
 }
 
 func TestAggregator_CompletionSize(t *testing.T) {

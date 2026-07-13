@@ -93,3 +93,17 @@ func TestSedaComponent_QueueFull(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context deadline exceeded")
 }
+
+func TestSedaConsumer_StopReleasesEndpointRegistration(t *testing.T) {
+	component := NewSedaComponent()
+	endpoint, err := component.CreateEndpoint("seda:restart")
+	require.NoError(t, err)
+
+	consumer, err := endpoint.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+	require.NoError(t, err)
+	require.NoError(t, consumer.Start(context.Background()))
+	require.NoError(t, consumer.Stop())
+
+	_, err = endpoint.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+	assert.NoError(t, err)
+}
