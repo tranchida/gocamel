@@ -150,6 +150,7 @@ builder.From("direct:start").
 | **OpenAI**     | API ChatGPT/GPT-4              |
 | **Mail**       | Email SMTP/IMAP/POP3           |
 | **SQL**        | Requêtes base de données       |
+| **MongoDB**    | Opérations CRUD MongoDB        |
 | **XSLT/XSD**   | Transformation/validation XML  |
 | **Template**   | Templates Go natifs            |
 | **Exec**       | Exécution commandes système    |
@@ -168,7 +169,7 @@ GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre
 
 - **Protection contre les Traversées de Répertoire** - Prévient les attaques de traversée de répertoire (ex.
   `../etc/passwd`)
-- **Prévention des Injections SQL** - Validation des entrées pour les requêtes SQL
+- **Prévention des Injections SQL** - Validation des entrées pour les requêtes SQL (rejette les requêtes superposées tout en autorisant les guillemets simples/doubles, backticks et commentaires)
 - **Assainissement des Entrées** - Supprime les octets nuls et caractères de contrôle des entrées utilisateur
 - **Validation des Chemins** - Garantit que les chemins restent dans les répertoires autorisés
 

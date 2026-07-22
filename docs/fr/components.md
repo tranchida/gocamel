@@ -848,6 +848,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | POP3       | Mail         | ✅        | ❌        | `pop3://host:port`       |
 | SQL        | Base de données | ❌     | ✅        | `sql://datasource`       |
 | SQL-Stored | Base de données | ❌     | ✅        | `sql-stored://datasource`|
+| MongoDB    | Base de données | ❌     | ✅        | `mongodb:connectionName` |
 | XSLT       | Transformation | ❌     | ✅        | `xslt:template`          |
 | XSD        | Transformation | ❌     | ✅        | `xsd:schema`             |
 | Template   | Transformation | ❌     | ✅        | `template:template`      |

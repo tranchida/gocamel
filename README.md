@@ -149,6 +149,7 @@ EndChoice()
 | **OpenAI**     | ChatGPT/GPT-4 API             |
 | **Mail**       | SMTP/IMAP/POP3 email          |
 | **SQL**        | Database queries              |
+| **MongoDB**    | MongoDB CRUD operations       |
 | **XSLT/XSD**   | XML transformation/validation |
 | **Template**   | Go template processing        |
 | **Exec**       | System command execution      |
@@ -166,7 +167,7 @@ GoCamel includes built-in security utilities to protect against common vulnerabi
 ### Security Features
 
 - **Path Traversal Protection** - Prevents directory traversal attacks (e.g., `../etc/passwd`)
-- **SQL Injection Prevention** - Input validation for SQL queries
+- **SQL Injection Prevention** - Input validation for SQL queries (rejects stacked queries while supporting single/double quotes, backticks, and comments)
 - **Input Sanitization** - Removes null bytes and control characters from user input
 - **Path Validation** - Ensures file paths stay within allowed directories
 
