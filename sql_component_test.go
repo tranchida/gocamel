@@ -390,9 +390,12 @@ func TestSQLProducer_RejectsStackedStatementWithOneSemicolon(t *testing.T) {
 func TestValidateSQLQuery_AllowsQuotedAndTrailingSemicolons(t *testing.T) {
 	assert.NoError(t, validateSQLQuery("SELECT ';' AS value;   "))
 	assert.NoError(t, validateSQLQuery(`SELECT ";" AS value`))
+	assert.NoError(t, validateSQLQuery("SELECT `;` AS value"))
+	assert.NoError(t, validateSQLQuery("SELECT `col;name` FROM users;"))
 	assert.NoError(t, validateSQLQuery("SELECT 1; -- trailing comment"))
 	assert.NoError(t, validateSQLQuery("SELECT 1; /* trailing ; comment */"))
 	assert.NoError(t, validateSQLQuery("SELECT 1 /* embedded ; comment */;"))
 	assert.Error(t, validateSQLQuery("SELECT 1; SELECT 2"))
 	assert.Error(t, validateSQLQuery("SELECT 1; /* comment */ DROP TABLE users"))
+	assert.Error(t, validateSQLQuery("SELECT `col` FROM users; DROP TABLE users"))
 }

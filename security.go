@@ -72,6 +72,7 @@ func validateSQLQuery(query string) error {
 func hasNonTrailingSemicolonOutsideStrings(query string) bool {
 	inSingle := false
 	inDouble := false
+	inBacktick := false
 	inLineComment := false
 	inBlockComment := false
 	seenTerminator := false
@@ -114,12 +115,24 @@ func hasNonTrailingSemicolonOutsideStrings(query string) bool {
 			}
 			continue
 		}
+		if inBacktick {
+			if c == '`' {
+				if i+1 < len(query) && query[i+1] == '`' {
+					i++
+				} else {
+					inBacktick = false
+				}
+			}
+			continue
+		}
 
 		switch c {
 		case '\'':
 			inSingle = true
 		case '"':
 			inDouble = true
+		case '`':
+			inBacktick = true
 		case '-':
 			if i+1 < len(query) && query[i+1] == '-' {
 				inLineComment = true
