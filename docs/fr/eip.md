@@ -23,6 +23,27 @@ builder.From("direct:start").
 - `CamelSplitSize` — Nombre total de parties
 - `CamelSplitComplete` — Dernière partie ?
 
+!!! note "Ces propriétés sont limitées à la branche"
+    Elles décrivent une partie, pas le message entier, et sont **retirées au
+    moment où le résultat agrégé est publié sur l'exchange parent**. Un
+    processeur placé après le Split ne voit donc pas un `CamelSplitComplete=true`
+    résiduel de la dernière partie, et un Split imbriqué n'écrase pas la
+    comptabilité de celui qui l'englobe. La même règle s'applique à
+    `CamelMulticast*`, `CamelRecipientList*` et `CamelRoutingSlip*`.
+
+!!! warning "Un corps `[]byte` n'est pas une collection"
+    Découper un corps `[]byte` produit une **seule partie**, comme Apache Camel
+    qui ne découpe pas les `byte[]`. Le traiter comme une liste produisait un
+    exchange par octet — une charge utile de 10 Ko devenait 10 000 exchanges.
+    Pour découper délibérément du contenu binaire, découpez sur une valeur
+    décodée :
+
+    ```go
+    Split(func(e *gocamel.Exchange) (any, error) {
+        return strings.Split(string(e.GetBody().([]byte)), "\n"), nil
+    })
+    ```
+
 **Avec agrégation :**
 
 ```go

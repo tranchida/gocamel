@@ -86,9 +86,17 @@ When("${date:now:yyyy-MM-dd}")
 #### Security
 
 - **Path Validation** — Protection against directory traversal attacks
-- **SQL Injection Prevention** — Input validation for database queries
+- **SQL Injection Prevention** — Parameter binding; the statement is trusted
+  configuration and is never interpolated with message data
 - **Input Sanitization** — Null byte and control character removal
-- **Safe Path Operations** — Bounds-checking for file operations
+- **Safe Path Operations** — Bounds-checking for file operations, with symlink
+  resolution so a link inside the base directory cannot escape it
+- **No credential reflection** — the HTTP consumer never echoes inbound
+  request headers back in its response
+- **Bounded body reads** — HTTP request and response bodies are size-limited
+  (32 MiB by default) to prevent memory exhaustion
+- **Panic containment** — a panicking processor fails its exchange instead of
+  the process
 
 #### File Transfer
 

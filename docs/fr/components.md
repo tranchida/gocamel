@@ -62,6 +62,26 @@ builder.To("file://output")
 | `move`       | string | `""`    | Déplacer le fichier après traitement |
 | `moveFailed` | string | `""`    | Déplacer le fichier en cas d'échec |
 
+#### Verrou de lecture
+
+Lorsqu'il surveille un répertoire, le consumer attend qu'un fichier nouvellement
+créé cesse de changer avant de le lire. `fsnotify` signale `Create` dès que
+l'inode existe — bien avant que l'écrivain ait terminé — si bien qu'une lecture
+immédiate livrait un corps tronqué (souvent vide) pour tout fichier non écrit
+de façon atomique : une redirection shell, une copie, un upload.
+
+Le consumer échantillonne la taille et la date de modification toutes les
+100 ms et lit dès que deux échantillons consécutifs coïncident, en abandonnant
+au bout de 10 secondes (le fichier est ignoré et un avertissement journalisé).
+C'est l'équivalent du `readLock=changed` de Camel.
+
+!!! tip "Préférez un passage de relais atomique"
+    Le verrou de lecture est une heuristique : un écrivain qui s'interrompt plus
+    longtemps que l'intervalle d'échantillonnage en cours d'écriture peut encore
+    être observé comme stable. Pour un passage de relais garanti, faites écrire
+    le producteur sous un nom temporaire puis effectuez un `rename` vers le
+    répertoire surveillé — le rename est atomique.
+
 ---
 
 ### FTP / FTPS
@@ -181,14 +201,87 @@ valeurs de header contenant `\r` ou `\n` (CRLF) pour empêcher le HTTP response
 splitting (CWE-113). Un exchange qui tente de définir un tel header reçoit une
 erreur de la part de `Send()`.
 
-#### Durcissement & réponses
+#### Headers de réponse
+
+Le corps de la réponse provient de `Out` (ou de `In` si aucun `Out` n'a été
+défini, selon la sémantique InOut de Camel). Les corps `[]byte` et `string`
+sont écrits tels quels ; tout autre corps non nil est écrit en utilisant sa
+représentation `%v`.
+
+Comme le consumer copie tous les headers de la requête entrante sur l'exchange,
+une route qui ne définit pas `Out` répondrait avec les headers de la requête
+elle-même. Deux filtres l'en empêchent :
+
+- **Les headers entrants inchangés ne sont pas renvoyés.** Un header qui
+  revient identique à celui reçu est écarté : `Cookie` et `Authorization` ne
+  sont donc jamais réfléchis vers le client. Un header posé ou modifié par la
+  route est toujours émis.
+- **Les headers hop-by-hop et de cadrage ne sont jamais émis** (`Connection`,
+  `Keep-Alive`, `Transfer-Encoding`, `Content-Length`, `Host`, ...). Renvoyer
+  le `Content-Length` de la requête corrompait le cadrage de la réponse.
+
+Le même filtre s'applique au producer : un pont `From(http://...)` →
+`To(http://...)` ne transmet donc pas le `Content-Length` ni le `Host` entrants
+au service amont.
+
+#### Statut de la réponse
+
+Une route fixe le code de statut via le header `CamelHttpResponseCode` sur le
+message de réponse (l'ancien header `Status-Code` reste accepté). Les valeurs
+hors de 100–599 sont ignorées :
+
+```go
+builder.From("http://localhost:8080/api").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        e.GetOut().SetHeader(gocamel.CamelHttpResponseCode, 201)
+        e.GetOut().SetHeader("Content-Type", "application/json")
+        e.GetOut().SetBody(`{"created":true}`)
+        return nil
+    })
+```
+
+#### Gestion des erreurs du producer
+
+Une réponse amont de statut **≥ 300 est une erreur** (comportement par défaut
+d'Apache Camel). L'erreur enveloppe `gocamel.ErrHTTPStatus`, et le corps ainsi
+que les headers de la réponse restent publiés sur `Out` pour inspection :
+
+```go
+if errors.Is(err, gocamel.ErrHTTPStatus) {
+    code, _ := exchange.GetOut().GetHeader(gocamel.CamelHttpResponseCode)
+    // code est un int ; le corps contient la charge utile d'erreur amont
+}
+```
+
+Pour considérer toute réponse comme un succès et traiter le statut soi-même :
+
+```go
+http := gocamel.NewHTTPComponent()
+http.SetThrowExceptionOnFailure(false)
+```
+
+Le producer renseigne également `CamelHttpResponseCode` (int) et
+`CamelHttpResponseText` (ex. `"500 Internal Server Error"`) sur `Out`.
+
+#### Durcissement
 
 - Le serveur embarqué définit un `ReadHeaderTimeout` de 10 secondes pour limiter
   les attaques de type slowloris.
-- Le corps de la réponse provient de `Out` (ou de `In` si aucun `Out` n'a été défini,
-  selon la sémantique InOut de Camel). Les corps `[]byte` et `string` sont écrits
-  tels quels ; tout autre corps non nil est écrit en utilisant sa représentation
-  `%v`.
+- Les corps de requête et de réponse sont lus au travers d'une limite de taille
+  — `DefaultMaxBodySize` (32 Mio) — afin qu'une charge utile surdimensionnée ne
+  puisse pas épuiser la mémoire du processus (CWE-400). Une requête trop
+  volumineuse reçoit un `413 Request Entity Too Large`. Ajustez ou désactivez
+  la limite par composant :
+
+    ```go
+    http := gocamel.NewHTTPComponent()
+    http.SetMaxBodySize(256 << 20) // 256 Mio ; <= 0 désactive la limite
+    ```
+
+- Les erreurs de route ne sont **pas** renvoyées au client : le handler répond
+  par un `500 internal server error` générique et journalise le détail, qui
+  peut contenir du texte SQL, des chemins de fichiers ou des messages de
+  driver.
 
 #### Arrêt
 
@@ -514,17 +607,40 @@ sql://<datasourceName>?query=<SQL>
 sql://logical?dataSourceRef=<datasourceName>&query=<SQL>
 ```
 
-| Option          | Type   | Défaut       | Description                   |
-|-----------------|--------|--------------|-------------------------------|
-| `query`         | string | requis       | Chaîne de requête SQL         |
-| `dataSourceRef` | string | chemin hôte  | Nom de la datasource          |
-| `outputType`    | string | `SelectList` | `SelectList` ou `SelectOne`   |
-| `batch`         | bool   | `false`      | Mode d'exécution par lot      |
-| `transacted`    | bool   | `false`      | Encapsuler dans une transaction |
+| Option                | Type   | Défaut       | Description                                         |
+|-----------------------|--------|--------------|-----------------------------------------------------|
+| `query`               | string | requis       | Chaîne de requête SQL                               |
+| `dataSourceRef`       | string | chemin hôte  | Nom de la datasource                                |
+| `outputType`          | string | `SelectList` | `SelectList` ou `SelectOne`                         |
+| `batch`               | bool   | `false`      | Mode d'exécution par lot                            |
+| `transacted`          | bool   | `false`      | Encapsuler dans une transaction                     |
+| `allowHeaderOverride` | bool   | `false`      | Autoriser `CamelSqlQuery` à remplacer la requête    |
 
 **Paramètres de requête :**
 
 Fournis via le header `CamelSqlParameters` ou le corps comme `[]any`.
+
+!!! danger "La requête est une configuration de confiance"
+    La requête n'est **jamais** interpolée avec les données de l'Exchange :
+    substituer `${header.X}` dans la chaîne SQL annulerait le bénéfice des
+    requêtes paramétrées et ouvrirait la porte à l'injection SQL. Liez toujours
+    les valeurs dynamiques via `CamelSqlParameters` (placeholders positionnels
+    `?`) ou un corps `[]any`.
+
+    Le header `CamelSqlQuery` remplace la requête **dans son intégralité** :
+    depuis la v0.2 il est donc ignoré sauf si l'endpoint l'active avec
+    `allowHeaderOverride=true`. Ne l'activez que là où les headers ne peuvent
+    pas être influencés par une entrée non fiable — sinon tout composant
+    reportant des métadonnées externes sur les headers donne à l'appelant le
+    contrôle total de la requête.
+
+    ```go
+    // Requête fixée par la configuration (défaut, recommandé)
+    builder.To("sql://appdb?query=SELECT+*+FROM+users+WHERE+id=?")
+
+    // Requête fournie par message — uniquement avec des headers de confiance
+    builder.To("sql://appdb?allowHeaderOverride=true&query=SELECT+1")
+    ```
 
 **Headers de sortie :**
 
@@ -538,6 +654,20 @@ Fournis via le header `CamelSqlParameters` ou le corps comme `[]any`.
 | `SELECT` + `SelectList` | `[]map[string]any`         |
 | `SELECT` + `SelectOne`  | `map[string]any` ou `nil`  |
 | `INSERT/UPDATE/DELETE`  | `int64` (lignes affectées) |
+
+**Classification des requêtes :**
+
+Le choix entre exécution en lecture (jeu de résultats) et en écriture (lignes
+affectées) se fait sur le premier mot-clé, en ignorant les commentaires et
+parenthèses de tête. `SELECT`, `WITH` (CTE), `VALUES`, `TABLE`, `SHOW`,
+`EXPLAIN`, `DESCRIBE` et `PRAGMA` renvoient des lignes, tout comme une requête
+portant une clause `RETURNING` :
+
+```sql
+WITH recent AS (SELECT * FROM orders WHERE ts > ?)
+SELECT id, total FROM recent          -- jeu de résultats
+INSERT INTO users(name) VALUES (?) RETURNING id   -- jeu de résultats
+```
 
 ---
 
@@ -784,12 +914,21 @@ Quand `allowHeaderOverride=true`, ces headers surchargent les paramètres URI po
     Les surcharges de header permettent à un message de choisir **quel binaire est exécuté**. Elles sont
     désactivées par défaut ; n'activez `allowHeaderOverride=true` que lorsque les headers de message
     ne peuvent pas être influencés par une entrée non fiable (ex. headers provenant d'un consumer
-    HTTP ou mail). Les exécutables, arguments et répertoires de travail sont toujours validés
-    contre les métacaractères shell et le path traversal.
+    HTTP ou mail).
+
+    L'**exécutable** et le **répertoire de travail** sont validés contre les
+    métacaractères shell et le path traversal. Les **arguments ne le sont
+    pas** : les commandes sont lancées via `execve`, sans shell, donc `|`, `&`,
+    `$`, `<` et `>` n'ont aucune signification particulière et parviennent
+    verbatim au processus fils — c'est précisément l'intention. Les rejeter
+    bloquait des valeurs légitimes (un document JSON, un mot de passe contenant
+    `$`, un chemin relatif) sans empêcher la moindre injection. Le caractère NUL
+    et les autres caractères de contrôle restent rejetés.
 
 **Sortie :**
 
-- `Out.Body` = stdout de la commande
+- `Out.Body` = stdout de la commande (également recopié sur `In` pour la
+  rétrocompatibilité, afin qu'une route InOut voie la sortie de la commande)
 - Header `CamelExecExitValue` = code de sortie
 - Headers `CamelExecStdout` / `CamelExecStderr` = sortie brute de la commande
 

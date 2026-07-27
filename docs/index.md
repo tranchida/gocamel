@@ -29,10 +29,13 @@ DSL for creating integration routes to connect different systems and services.
 
 GoCamel includes built-in security utilities to protect against common vulnerabilities:
 
-- [🔐 Path traversal protection](en/features.md#security-features)
-- [🔐 SQL injection prevention](en/features.md#security-features)
-- [🔐 Input sanitization](en/features.md#security-features)
-- [🔐 Safe file operations](en/features.md#security-features)
+- [🔐 Path traversal protection](en/features.md#security)
+- [🔐 SQL injection prevention](en/features.md#security)
+- [🔐 Input sanitization](en/features.md#security)
+- [🔐 Safe file operations](en/features.md#security)
+- [🔐 No credential reflection in HTTP responses](en/features.md#security)
+- [🔐 Bounded HTTP body reads](en/features.md#security)
+- [🔐 Panic containment](en/features.md#security)
 
 ---
 

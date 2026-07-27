@@ -431,6 +431,26 @@ builder.From("direct:start").
 | `CamelSplitSize`     | int  | Total number of parts   |
 | `CamelSplitComplete` | bool | Last part indicator     |
 
+!!! note "These properties are branch-scoped"
+    They describe one part, not the whole message, and are **removed when the
+    aggregated result is published back onto the parent exchange**. A processor
+    placed after the Split does not see `CamelSplitComplete=true` left over
+    from the last part, and a nested Split does not overwrite the bookkeeping
+    of the enclosing one. The same rule applies to `CamelMulticast*`,
+    `CamelRecipientList*` and `CamelRoutingSlip*`.
+
+!!! warning "A `[]byte` body is not a collection"
+    Splitting a `[]byte` body yields a **single part**, matching Apache Camel,
+    which does not split `byte[]`. Treating it as a list produced one exchange
+    per byte — a 10 KB payload became 10 000 exchanges. To divide binary
+    content deliberately, split on a decoded value instead:
+
+    ```go
+    Split(func(e *gocamel.Exchange) (any, error) {
+        return strings.Split(string(e.GetBody().([]byte)), "\n"), nil
+    })
+    ```
+
 ---
 
 ### Aggregator

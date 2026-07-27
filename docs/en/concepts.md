@@ -63,6 +63,32 @@ builder.ProcessFunc(func(e *gocamel.Exchange) error { ... })
 builder.ProcessRef("myNamedBean")
 ```
 
+### Panic recovery
+
+A processor that panics **fails its exchange, not the process**. The panic is
+recovered, its stack is logged, and it is converted into an error wrapping
+`gocamel.ErrProcessorPanic` — an ordinary route error that the configured
+`ErrorHandler` (redelivery, dead letter) can act on:
+
+```go
+if errors.Is(err, gocamel.ErrProcessorPanic) {
+    // the exchange failed on a panic rather than a returned error
+}
+```
+
+This applies both to the synchronous route pipeline and to every goroutine the
+framework owns: SEDA and chan workers, parallel Multicast and Recipient List
+branches, WireTap deliveries, Aggregator completion timeouts, and the
+component consumers. Without it, a nil map write in a single processor would
+take down the whole application.
+
+If you write a custom `Consumer` that invokes a processor from a goroutine you
+own, call `gocamel.ProcessSafely` rather than `Process` directly:
+
+```go
+err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
+```
+
 ## Registry
 
 A central key-value store for named objects (Beans, Processors, Components).

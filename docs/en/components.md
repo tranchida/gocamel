@@ -62,6 +62,25 @@ builder.To("file://output")
 | `move`       | string | `""`    | Move file after processing  |
 | `moveFailed` | string | `""`    | Move file on failure        |
 
+#### Read lock
+
+When watching a directory, the consumer waits for a newly created file to
+stop changing before reading it. `fsnotify` signals `Create` as soon as the
+inode exists — long before a writer has finished — so reading immediately
+delivered a truncated (often empty) body for anything not written atomically:
+a shell redirect, a copy, an upload.
+
+The consumer samples size and mtime every 100 ms and reads once two
+consecutive samples match, giving up after 10 seconds (the file is skipped
+and a warning is logged). This is the equivalent of Camel's
+`readLock=changed`.
+
+!!! tip "Prefer an atomic handoff"
+    The read lock is a heuristic: a writer that stalls for longer than the
+    sampling interval mid-write can still be observed as stable. For a
+    guaranteed handoff, have the producer write to a temporary name and
+    `rename` it into the watched directory — rename is atomic.
+
 ---
 
 ### FTP / FTPS
@@ -181,13 +200,84 @@ names and values containing `\r` or `\n` (CRLF) to prevent HTTP response
 splitting (CWE-113). An exchange that tries to set such a header gets an
 error back from `Send()`.
 
-#### Hardening & responses
+#### Response headers
+
+The response body is taken from `Out` (or `In` when no `Out` was set, per Camel
+InOut semantics). `[]byte` and `string` bodies are written as-is; any other
+non-nil body is written using its `%v` string representation.
+
+Because the consumer copies every inbound request header onto the exchange, a
+route that does not set `Out` would answer with the request's own headers. Two
+filters prevent that:
+
+- **Unchanged inbound headers are not echoed.** A header that comes back
+  identical to the one received is dropped, so `Cookie` and `Authorization`
+  are never reflected to the client. A header the route sets or modifies is
+  always sent.
+- **Hop-by-hop and framing headers are never emitted** (`Connection`,
+  `Keep-Alive`, `Transfer-Encoding`, `Content-Length`, `Host`, ...). Echoing
+  the request's `Content-Length` corrupted the response framing.
+
+The same hop-by-hop filter applies to the producer, so a `From(http://...)`
+→ `To(http://...)` bridge does not forward the inbound `Content-Length` or
+`Host` to the upstream.
+
+#### Response status
+
+A route sets the status code with the `CamelHttpResponseCode` header on the
+response message (the legacy `Status-Code` header is still honoured). Values
+outside 100–599 are ignored:
+
+```go
+builder.From("http://localhost:8080/api").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        e.GetOut().SetHeader(gocamel.CamelHttpResponseCode, 201)
+        e.GetOut().SetHeader("Content-Type", "application/json")
+        e.GetOut().SetBody(`{"created":true}`)
+        return nil
+    })
+```
+
+#### Producer error handling
+
+An upstream response with status **≥ 300 is an error** (the Apache Camel
+default). The error wraps `gocamel.ErrHTTPStatus`, and the response body and
+headers are still published on `Out` so the route can inspect them:
+
+```go
+if errors.Is(err, gocamel.ErrHTTPStatus) {
+    code, _ := exchange.GetOut().GetHeader(gocamel.CamelHttpResponseCode)
+    // code is an int; the body holds the upstream error payload
+}
+```
+
+To treat every response as a success and branch on the status yourself:
+
+```go
+http := gocamel.NewHTTPComponent()
+http.SetThrowExceptionOnFailure(false)
+```
+
+The producer also sets `CamelHttpResponseCode` (int) and
+`CamelHttpResponseText` (e.g. `"500 Internal Server Error"`) on `Out`.
+
+#### Hardening
 
 - The embedded server sets a 10-second `ReadHeaderTimeout` to mitigate
   slowloris-style attacks.
-- The response body is taken from `Out` (or `In` when no `Out` was set, per
-  Camel InOut semantics). `[]byte` and `string` bodies are written as-is;
-  any other non-nil body is written using its `%v` string representation.
+- Request and response bodies are read through a size limit —
+  `DefaultMaxBodySize` (32 MiB) — so a single oversized payload cannot exhaust
+  process memory (CWE-400). An oversized request is answered with
+  `413 Request Entity Too Large`. Adjust or disable it per component:
+
+    ```go
+    http := gocamel.NewHTTPComponent()
+    http.SetMaxBodySize(256 << 20) // 256 MiB; <= 0 disables the limit
+    ```
+
+- Route errors are **not** returned to the client: the handler answers with a
+  generic `500 internal server error` and logs the detail, which may carry SQL
+  text, file paths or driver messages.
 
 #### Shutdown
 
@@ -512,17 +602,38 @@ sql://<datasourceName>?query=<SQL>
 sql://logical?dataSourceRef=<datasourceName>&query=<SQL>
 ```
 
-| Option          | Type   | Default      | Description                 |
-|-----------------|--------|--------------|-----------------------------|
-| `query`         | string | required     | SQL query string            |
-| `dataSourceRef` | string | host path    | Datasource name             |
-| `outputType`    | string | `SelectList` | `SelectList` or `SelectOne` |
-| `batch`         | bool   | `false`      | Batch execution mode        |
-| `transacted`    | bool   | `false`      | Wrap in transaction         |
+| Option                | Type   | Default      | Description                                    |
+|-----------------------|--------|--------------|------------------------------------------------|
+| `query`               | string | required     | SQL query string                               |
+| `dataSourceRef`       | string | host path    | Datasource name                                |
+| `outputType`          | string | `SelectList` | `SelectList` or `SelectOne`                    |
+| `batch`               | bool   | `false`      | Batch execution mode                           |
+| `transacted`          | bool   | `false`      | Wrap in transaction                            |
+| `allowHeaderOverride` | bool   | `false`      | Allow `CamelSqlQuery` to replace the statement |
 
 **Query Parameters:**
 
 Provide via `CamelSqlParameters` header or body as `[]any`.
+
+!!! danger "The query is trusted configuration"
+    The statement is **never** interpolated with Exchange data — substituting
+    `${header.X}` into the SQL string would defeat parameterised queries and
+    enable SQL injection. Always bind dynamic values through
+    `CamelSqlParameters` (positional `?` placeholders) or a `[]any` body.
+
+    The `CamelSqlQuery` header replaces the statement **wholesale**, so since
+    v0.2 it is ignored unless the endpoint opts in with
+    `allowHeaderOverride=true`. Enable it only where headers cannot be
+    influenced by untrusted input: any component that maps external metadata
+    onto headers would otherwise hand a caller full control of the statement.
+
+    ```go
+    // Statement fixed by configuration (default, recommended)
+    builder.To("sql://appdb?query=SELECT+*+FROM+users+WHERE+id=?")
+
+    // Statement supplied per message — only with trusted headers
+    builder.To("sql://appdb?allowHeaderOverride=true&query=SELECT+1")
+    ```
 
 **Output Headers:**
 
@@ -536,6 +647,20 @@ Provide via `CamelSqlParameters` header or body as `[]any`.
 | `SELECT` + `SelectList` | `[]map[string]any`        |
 | `SELECT` + `SelectOne`  | `map[string]any` or `nil` |
 | `INSERT/UPDATE/DELETE`  | `int64` (affected rows)   |
+
+**Statement classification:**
+
+Whether a statement is run as a query (result set) or an update (affected
+rows) is decided from its leading keyword, ignoring leading comments and
+parentheses. `SELECT`, `WITH` (CTE), `VALUES`, `TABLE`, `SHOW`, `EXPLAIN`,
+`DESCRIBE` and `PRAGMA` return rows, as does any statement carrying a
+`RETURNING` clause:
+
+```sql
+WITH recent AS (SELECT * FROM orders WHERE ts > ?)
+SELECT id, total FROM recent          -- result set
+INSERT INTO users(name) VALUES (?) RETURNING id   -- result set
+```
 
 ---
 
@@ -781,12 +906,20 @@ When `allowHeaderOverride=true`, these headers override the URI settings for a s
     Header overrides let a message choose **which binary is executed**. They are
     disabled by default; only enable `allowHeaderOverride=true` when message
     headers cannot be influenced by untrusted input (e.g. headers coming from an
-    HTTP or mail consumer). Executables, arguments, and working directories are
-    always validated against shell metacharacters and path traversal.
+    HTTP or mail consumer).
+
+    The **executable** and the **working directory** are validated against shell
+    metacharacters and path traversal. **Arguments are not**: commands run
+    through `execve` without a shell, so `|`, `&`, `$`, `<` and `>` carry no
+    special meaning and reach the child process verbatim — which is the intent.
+    Rejecting them blocked legitimate values (a JSON document, a password
+    containing `$`, a relative path) without preventing any injection. NUL and
+    other control characters are still rejected.
 
 **Output:**
 
-- `Out.Body` = command stdout
+- `Out.Body` = command stdout (also mirrored on `In` for backward
+  compatibility, so an InOut route sees the command output)
 - Header `CamelExecExitValue` = exit code
 - Headers `CamelExecStdout` / `CamelExecStderr` = raw command output
 

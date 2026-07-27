@@ -167,9 +167,12 @@ GoCamel includes built-in security utilities to protect against common vulnerabi
 ### Security Features
 
 - **Path Traversal Protection** - Prevents directory traversal attacks (e.g., `../etc/passwd`)
-- **SQL Injection Prevention** - Input validation for SQL queries (rejects stacked queries while supporting single/double quotes, backticks, and comments)
+- **SQL Injection Prevention** - The query is trusted configuration and is never interpolated with message data; dynamic values are bound as positional parameters. Stacked statements are rejected while single/double quotes, backticks and comments are supported
 - **Input Sanitization** - Removes null bytes and control characters from user input
-- **Path Validation** - Ensures file paths stay within allowed directories
+- **Path Validation** - Ensures file paths stay within allowed directories, resolving symlinks so a link inside the base directory cannot escape it
+- **No Credential Reflection** - The HTTP consumer never echoes inbound request headers (`Cookie`, `Authorization`, ...) back in its response
+- **Bounded Body Reads** - HTTP request and response bodies are size-limited (32 MiB by default) to prevent memory exhaustion
+- **Panic Containment** - A panicking processor fails its exchange rather than the whole process
 
 ### Security Utilities (`security.go`)
 
@@ -196,6 +199,40 @@ sanitized := gocamel.SanitizeInput(userInput)
 - Use `ValidatePathInDir()` when working with uploads or file operations
 - Never execute unsanitized external commands
 - Use parameter binding for SQL queries instead of string concatenation
+- Put a middleware on the HTTP consumer (`SetMiddleware`) before exposing it to an untrusted network — it ships with no authentication
+
+## ⚠️ Upgrade Notes
+
+Two defaults changed for security and Apache Camel alignment. Both are
+opt-out if the previous behaviour is required.
+
+**The `CamelSqlQuery` header no longer overrides the configured statement.**
+The header replaced the SQL statement wholesale, so any component mapping
+external metadata onto headers could hand a caller full control of the query.
+It is now ignored unless the endpoint opts in:
+
+```go
+// Before: the header silently replaced the statement
+builder.To("sql://appdb?query=SELECT+1")
+
+// After: opt in explicitly, and only with trusted headers
+builder.To("sql://appdb?allowHeaderOverride=true&query=SELECT+1")
+```
+
+**The HTTP producer treats a response status ≥ 300 as an error**, matching
+Apache Camel. The error wraps `gocamel.ErrHTTPStatus`; the body and
+`CamelHttpResponseCode` are still available on `Out`:
+
+```go
+// Restore the previous permissive behaviour
+http := gocamel.NewHTTPComponent()
+http.SetThrowExceptionOnFailure(false)
+```
+
+Two further behaviour changes are unlikely to need action: splitting a
+`[]byte` body now yields a single part instead of one exchange per byte, and
+the HTTP consumer no longer echoes unchanged inbound request headers in its
+response.
 
 ## 📚 Documentation
 

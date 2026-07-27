@@ -21,7 +21,9 @@ func main() {
 		LogHeaders("Received headers").
 		SetBody("Hello, World!").
 		SetHeader("Content-Type", "text/plain").
-		SetHeader("Status-Code", "200").
+		// CamelHttpResponseCode drives the HTTP status of the response.
+		// The legacy "Status-Code" header is still honoured.
+		SetHeader(gocamel.CamelHttpResponseCode, 200).
 		SetHeader("X-Processed-At", time.Now().Format(time.RFC3339)).
 		Build()
 	if err != nil {

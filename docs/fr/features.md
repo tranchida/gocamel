@@ -86,9 +86,18 @@ When("${date:now:yyyy-MM-dd}")
 #### Sécurité
 
 - **Validation des Chemins** — Protection contre les attaques de traversée de répertoire
-- **Prévention des Injections SQL** — Validation des entrées pour les requêtes de base de données
+- **Prévention des Injections SQL** — Liaison de paramètres ; la requête est une
+  configuration de confiance, jamais interpolée avec les données du message
 - **Assainissement des Entrées** — Suppression des octets nuls et caractères de contrôle
-- **Opérations de Chemins Sécurisées** — Vérification des limites pour les opérations sur fichiers
+- **Opérations de Chemins Sécurisées** — Vérification des limites pour les
+  opérations sur fichiers, avec résolution des liens symboliques pour qu'un lien
+  placé dans le répertoire de base ne puisse pas s'en échapper
+- **Aucune Réflexion d'Identifiants** — le consumer HTTP ne renvoie jamais les
+  headers de la requête entrante dans sa réponse
+- **Lectures de Corps Bornées** — les corps de requête et de réponse HTTP sont
+  limités en taille (32 Mio par défaut) pour prévenir l'épuisement mémoire
+- **Confinement des Panics** — un processeur qui panique fait échouer son
+  exchange, pas le processus
 
 #### Transfert de Fichiers
 

@@ -169,9 +169,12 @@ GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre
 
 - **Protection contre les Traversées de Répertoire** - Prévient les attaques de traversée de répertoire (ex.
   `../etc/passwd`)
-- **Prévention des Injections SQL** - Validation des entrées pour les requêtes SQL (rejette les requêtes superposées tout en autorisant les guillemets simples/doubles, backticks et commentaires)
+- **Prévention des Injections SQL** - La requête est une configuration de confiance, jamais interpolée avec les données du message ; les valeurs dynamiques sont liées en paramètres positionnels. Les requêtes superposées sont rejetées, les guillemets simples/doubles, backticks et commentaires restent autorisés
 - **Assainissement des Entrées** - Supprime les octets nuls et caractères de contrôle des entrées utilisateur
-- **Validation des Chemins** - Garantit que les chemins restent dans les répertoires autorisés
+- **Validation des Chemins** - Garantit que les chemins restent dans les répertoires autorisés, en résolvant les liens symboliques pour qu'un lien placé dans le répertoire de base ne puisse pas s'en échapper
+- **Aucune Réflexion d'Identifiants** - Le consommateur HTTP ne renvoie jamais les en-têtes de la requête entrante (`Cookie`, `Authorization`, ...) dans sa réponse
+- **Lectures de Corps Bornées** - Les corps de requête et de réponse HTTP sont limités en taille (32 Mio par défaut) pour prévenir l'épuisement mémoire
+- **Confinement des Panics** - Un processeur qui panique fait échouer son exchange, pas le processus entier
 
 ### Utilitaires de Sécurité (`security.go`)
 
@@ -198,6 +201,40 @@ sanitized := gocamel.SanitizeInput(userInput)
 - Utiliser `ValidatePathInDir()` lors de l'utilisation d'uploads ou d'opérations de fichiers
 - Ne jamais exécuter des commandes externes non assainies
 - Utiliser le binding de paramètres pour les requêtes SQL au lieu de la concaténation de strings
+- Installer un middleware sur le consommateur HTTP (`SetMiddleware`) avant de l'exposer à un réseau non fiable — il est livré sans authentification
+
+## ⚠️ Notes de Migration
+
+Deux comportements par défaut ont changé, pour la sécurité et l'alignement sur
+Apache Camel. Les deux sont désactivables si l'ancien comportement est requis.
+
+**L'en-tête `CamelSqlQuery` ne remplace plus la requête configurée.**
+Il remplaçait la requête SQL dans son intégralité : tout composant reportant
+des métadonnées externes sur les en-têtes pouvait donc donner à un appelant le
+contrôle total de la requête. Il est désormais ignoré sauf opt-in explicite :
+
+```go
+// Avant : l'en-tête remplaçait silencieusement la requête
+builder.To("sql://appdb?query=SELECT+1")
+
+// Après : opt-in explicite, et uniquement avec des en-têtes de confiance
+builder.To("sql://appdb?allowHeaderOverride=true&query=SELECT+1")
+```
+
+**Le producteur HTTP considère un statut ≥ 300 comme une erreur**, comme
+Apache Camel. L'erreur enveloppe `gocamel.ErrHTTPStatus` ; le corps et
+`CamelHttpResponseCode` restent disponibles sur `Out` :
+
+```go
+// Rétablir le comportement permissif précédent
+http := gocamel.NewHTTPComponent()
+http.SetThrowExceptionOnFailure(false)
+```
+
+Deux autres changements ne nécessitent probablement aucune action : découper un
+corps `[]byte` produit désormais une seule part au lieu d'un exchange par
+octet, et le consommateur HTTP ne renvoie plus les en-têtes entrants inchangés
+dans sa réponse.
 
 ## 📚 Documentation
 
