@@ -129,13 +129,21 @@ func (p *SedaProducer) Stop() error {
 // consumer — a data race. DeepCopy duplicates the common mutable container
 // types (see Message.DeepCopy).
 func (p *SedaProducer) Send(exchange *Exchange) error {
-	copy := exchange.DeepCopy()
+	queued := exchange.DeepCopy()
+
+	// A nil exchange context must not panic here; fall back to a blocking
+	// enqueue, which is the behaviour of an uncancellable context.
+	ctx := exchange.Context
+	if ctx == nil {
+		p.endpoint.queue <- queued
+		return nil
+	}
 
 	select {
-	case p.endpoint.queue <- copy:
+	case p.endpoint.queue <- queued:
 		return nil
-	case <-exchange.Context.Done():
-		return exchange.Context.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -184,7 +192,8 @@ func (c *SedaConsumer) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if err := CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+			err := safeProcess(func() error { return c.processor.Process(exchange) })
+			if err := CompleteExchange(exchange, err); err != nil {
 				LogError("SEDA consumer processing error",
 					"uri", c.endpoint.uri,
 					"error", err,

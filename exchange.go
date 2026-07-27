@@ -382,6 +382,48 @@ func (e *Exchange) PropagateOutToIn() {
 	}
 }
 
+// branchScopedProperties are the properties an EIP sets on each of its branch
+// exchanges to describe that branch's position in the fan-out. They describe
+// the branch, not the parent, so they must not survive when the aggregated
+// result is published back onto the parent exchange — a downstream processor
+// seeing CamelSplitComplete=true from a finished Split (or a nested Split
+// leaking into its enclosing one) would draw the wrong conclusion.
+var branchScopedProperties = []string{
+	CamelSplitIndex, CamelSplitSize, CamelSplitComplete,
+	CamelMulticastIndex, CamelMulticastSize, CamelMulticastComplete,
+	CamelRecipientListIndex, CamelRecipientListSize, CamelRecipientListComplete,
+	CamelRoutingSlipIndex, CamelRoutingSlipSize, CamelRoutingSlipComplete,
+}
+
+// publishAggregatedResult copies the aggregated In/Out messages and properties
+// from a fan-out branch back onto the parent exchange, dropping the
+// branch-scoped bookkeeping properties listed in branchScopedProperties.
+//
+// Properties the parent already carried but the branch did not are preserved:
+// the branch was derived from the parent by Copy/DeepCopy, so anything missing
+// from the branch was deliberately removed by the route, except for the scoped
+// keys stripped here.
+func publishAggregatedResult(parent, aggregated *Exchange) {
+	if aggregated == nil {
+		return
+	}
+	parent.In = aggregated.In
+	parent.Out = aggregated.Out
+
+	properties := make(map[string]any, len(aggregated.Properties))
+	maps.Copy(properties, aggregated.Properties)
+	for _, key := range branchScopedProperties {
+		// Only drop a scoped key the parent did not itself define: an
+		// enclosing Split legitimately owns its own CamelSplitIndex.
+		if _, parentHad := parent.Properties[key]; !parentHad {
+			delete(properties, key)
+			continue
+		}
+		properties[key] = parent.Properties[key]
+	}
+	parent.Properties = properties
+}
+
 // Copy returns a shallow copy of the exchange. The In/Out Message bodies and
 // header/property values are shared by reference (see Message.Copy); use
 // DeepCopy when the copy crosses a goroutine boundary that runs concurrently
@@ -393,16 +435,16 @@ func (e *Exchange) PropagateOutToIn() {
 // logical exchange). Add new Synchronization callbacks to the copy explicitly
 // if its own completion must be observed.
 func (e *Exchange) Copy() *Exchange {
-	copy := NewExchange(e.Context)
-	copy.In = e.In.Copy()
-	copy.Out = e.Out.Copy()
-	maps.Copy(copy.Properties, e.Properties)
+	cloned := NewExchange(e.Context)
+	cloned.In = e.In.Copy()
+	cloned.Out = e.Out.Copy()
+	maps.Copy(cloned.Properties, e.Properties)
 
-	copy.Created = e.Created
-	copy.Modified = time.Now()
-	copy.Error = e.Error
+	cloned.Created = e.Created
+	cloned.Modified = time.Now()
+	cloned.Error = e.Error
 
-	return copy
+	return cloned
 }
 
 // DeepCopy is like Copy but additionally duplicates the common mutable
@@ -411,16 +453,16 @@ func (e *Exchange) Copy() *Exchange {
 // that runs concurrently with the original exchange (WireTap, parallel
 // Multicast branches).
 func (e *Exchange) DeepCopy() *Exchange {
-	copy := NewExchange(e.Context)
-	copy.In = e.In.DeepCopy()
-	copy.Out = e.Out.DeepCopy()
+	cloned := NewExchange(e.Context)
+	cloned.In = e.In.DeepCopy()
+	cloned.Out = e.Out.DeepCopy()
 	for k, v := range e.Properties {
-		copy.Properties[k] = deepCopyValue(v)
+		cloned.Properties[k] = deepCopyValue(v)
 	}
 
-	copy.Created = e.Created
-	copy.Modified = time.Now()
-	copy.Error = e.Error
+	cloned.Created = e.Created
+	cloned.Modified = time.Now()
+	cloned.Error = e.Error
 
-	return copy
+	return cloned
 }

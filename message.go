@@ -150,11 +150,11 @@ func (m *Message) ClearHeaders() {
 }
 
 func (m *Message) Copy() *Message {
-	copy := NewMessage()
-	copy.Body = m.Body
-	maps.Copy(copy.Headers, m.Headers)
+	cloned := NewMessage()
+	cloned.Body = m.Body
+	maps.Copy(cloned.Headers, m.Headers)
 
-	return copy
+	return cloned
 }
 
 // DeepCopy returns a copy of the message whose body and header values are
@@ -163,12 +163,12 @@ func (m *Message) Copy() *Message {
 // reference — treat them as immutable when the copy crosses a goroutine
 // boundary (WireTap, parallel Multicast).
 func (m *Message) DeepCopy() *Message {
-	copy := NewMessage()
-	copy.Body = deepCopyValue(m.Body)
+	cloned := NewMessage()
+	cloned.Body = deepCopyValue(m.Body)
 	for k, v := range m.Headers {
-		copy.Headers[k] = deepCopyValue(v)
+		cloned.Headers[k] = deepCopyValue(v)
 	}
-	return copy
+	return cloned
 }
 
 // deepCopyValue duplicates the common mutable container types used in message

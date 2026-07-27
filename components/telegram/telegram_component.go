@@ -57,7 +57,7 @@ func (e *TelegramEndpoint) getBot() (*tgbotapi.BotAPI, error) {
 
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
-		return nil, fmt.Errorf("error during la creation du bot Telegram: %w", err)
+		return nil, fmt.Errorf("error creating the Telegram bot: %w", err)
 	}
 
 	return bot, nil
@@ -92,56 +92,72 @@ func (p *TelegramProducer) Stop() error {
 }
 
 func (p *TelegramProducer) Send(exchange *gocamel.Exchange) error {
+	// Resolve the chat ID and the text before building the bot: getBot performs
+	// a network round-trip to Telegram, so validating the locally-available
+	// inputs first turns a misconfiguration into an immediate, precise error
+	// instead of a connection failure that hides the real cause.
+	chatID, err := p.resolveChatID(exchange)
+	if err != nil {
+		return err
+	}
+
+	text := messageText(exchange.GetIn().GetBody())
+
 	bot, err := p.endpoint.getBot()
 	if err != nil {
 		return err
 	}
 
-	var chatID int64
-	// Try to retrieve the chat ID from the headers.
-	if val, ok := exchange.GetIn().GetHeader(TelegramChatId); ok {
-		switch v := val.(type) {
-		case int64:
-			chatID = v
-		case string:
-			parsed, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid chat ID in header %s: %w", TelegramChatId, err)
-			}
-			chatID = parsed
-		default:
-			return fmt.Errorf("unsupported type for %s: %T", TelegramChatId, val)
-		}
-	} else {
-		// Otherwise, try to retrieve it from the URI.
-		chatIdStr := gocamel.GetConfigValue(p.endpoint.url, "chatId")
-		if chatIdStr == "" {
-			return fmt.Errorf("chatId missing (required via header %s or URI parameter)", TelegramChatId)
-		}
-		parsed, err := strconv.ParseInt(chatIdStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("invalid chatId in URI: %w", err)
-		}
-		chatID = parsed
-	}
-
-	var text string
-	switch body := exchange.GetIn().GetBody().(type) {
-	case string:
-		text = body
-	case []byte:
-		text = string(body)
-	default:
-		text = fmt.Sprintf("%v", body)
-	}
-
-	msg := tgbotapi.NewMessage(chatID, text)
-	_, err = bot.Send(msg)
-	if err != nil {
-		return fmt.Errorf("error during l'sending du message Telegram: %w", err)
+	if _, err := bot.Send(tgbotapi.NewMessage(chatID, text)); err != nil {
+		return fmt.Errorf("error sending the Telegram message: %w", err)
 	}
 
 	return nil
+}
+
+// resolveChatID reads the destination chat from the TelegramChatId header,
+// falling back to the chatId URI parameter.
+func (p *TelegramProducer) resolveChatID(exchange *gocamel.Exchange) (int64, error) {
+	if val, ok := exchange.GetIn().GetHeader(TelegramChatId); ok {
+		switch v := val.(type) {
+		case int64:
+			return v, nil
+		case int:
+			return int64(v), nil
+		case string:
+			parsed, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid chat ID in header %s: %w", TelegramChatId, err)
+			}
+			return parsed, nil
+		default:
+			return 0, fmt.Errorf("unsupported type for %s: %T", TelegramChatId, val)
+		}
+	}
+
+	chatIdStr := gocamel.GetConfigValue(p.endpoint.url, "chatId")
+	if chatIdStr == "" {
+		return 0, fmt.Errorf("chatId missing (required via header %s or URI parameter)", TelegramChatId)
+	}
+	parsed, err := strconv.ParseInt(chatIdStr, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid chatId in URI: %w", err)
+	}
+	return parsed, nil
+}
+
+// messageText renders a message body as the text of a Telegram message.
+func messageText(body any) string {
+	switch v := body.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	case nil:
+		return ""
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // TelegramConsumer represents a consommateur Telegram
@@ -185,7 +201,7 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 					exchange.SetHeader("TelegramUsername", update.Message.From.UserName)
 				}
 
-				if err := gocamel.CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+				if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
 					gocamel.LogError("Error processing Telegram message", "error", err)
 				}
 			}

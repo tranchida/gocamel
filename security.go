@@ -263,27 +263,69 @@ func ValidatePath(path string) error {
 	return nil
 }
 
-// ValidatePathInDir validates that a path is within a specific directory
+// ValidatePathInDir validates that a path is within a specific directory.
+//
+// Symlinks are resolved before the containment check: a lexical comparison
+// alone accepts a symlink that lives under baseDir but points outside it,
+// which defeats the confinement this function exists to provide. When the path
+// does not exist yet, the closest existing ancestor is resolved instead so
+// that a not-yet-created file under a symlinked directory is still checked.
 func ValidatePathInDir(path, baseDir string) error {
 	if err := ValidatePath(path); err != nil {
 		return err
-	}
-
-	// Get absolute paths
-	absPath, err := filepath.Abs(filepath.Clean(path))
-	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
 	}
 
 	absBase, err := filepath.Abs(filepath.Clean(baseDir))
 	if err != nil {
 		return fmt.Errorf("failed to resolve base directory: %w", err)
 	}
+	// The base itself may be reached through a symlink; resolve it so both
+	// sides of the comparison are in the same (real) namespace.
+	if resolvedBase, err := filepath.EvalSymlinks(absBase); err == nil {
+		absBase = resolvedBase
+	}
+
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("failed to resolve path: %w", err)
+	}
+	resolvedPath, err := resolveExistingPrefix(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve path: %w", err)
+	}
 
 	// Ensure path is within base directory
-	if !strings.HasPrefix(absPath, absBase+string(filepath.Separator)) && absPath != absBase {
-		return fmt.Errorf("path escapes base directory: %s not under %s", absPath, absBase)
+	if !strings.HasPrefix(resolvedPath, absBase+string(filepath.Separator)) && resolvedPath != absBase {
+		return fmt.Errorf("path escapes base directory: %s not under %s", resolvedPath, absBase)
 	}
 
 	return nil
+}
+
+// resolveExistingPrefix resolves symlinks in the longest existing prefix of
+// path and re-appends the remaining (not yet created) components. This lets
+// containment be enforced for files that do not exist yet without failing on
+// them outright.
+func resolveExistingPrefix(path string) (string, error) {
+	remaining := ""
+	current := path
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			if remaining == "" {
+				return resolved, nil
+			}
+			return filepath.Join(resolved, remaining), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Reached the root without finding an existing component.
+			return path, nil
+		}
+		remaining = filepath.Join(filepath.Base(current), remaining)
+		current = parent
+	}
 }

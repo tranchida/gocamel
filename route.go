@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -13,6 +14,38 @@ import (
 // routing of a message without it being considered a failure.
 // Used notably by the Aggregator EIP.
 var ErrStopRouting = errors.New("stop routing")
+
+// ErrProcessorPanic is wrapped by the error produced when a processor panics.
+// Routes can detect it with errors.Is.
+var ErrProcessorPanic = errors.New("processor panic")
+
+// safeProcess runs fn and converts a panic into an error instead of letting it
+// unwind the goroutine.
+//
+// Processors run arbitrary user code. When that code is invoked from a
+// library-owned goroutine (SEDA worker, parallel Multicast/RecipientList
+// branch, Aggregator completion timeout, WireTap), an unrecovered panic takes
+// down the whole process rather than failing the one exchange responsible for
+// it. Recovering here turns it into an ordinary route error that the
+// configured ErrorHandler can act on. The stack is logged before it is lost.
+// ProcessSafely runs processor.Process(exchange), converting a panic into an
+// error wrapping ErrProcessorPanic. Consumers that invoke a processor from a
+// goroutine they own should call this instead of Process directly, so that a
+// panic in user code fails the exchange rather than the whole process.
+func ProcessSafely(processor Processor, exchange *Exchange) error {
+	return safeProcess(func() error { return processor.Process(exchange) })
+}
+
+func safeProcess(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			stack := debug.Stack()
+			LogError("processor panic recovered", "panic", r, "stack", string(stack))
+			err = fmt.Errorf("%w: %v", ErrProcessorPanic, r)
+		}
+	}()
+	return fn()
+}
 
 // Processor defines the interface for message processing.
 type Processor interface {
@@ -61,6 +94,8 @@ type Route struct {
 	interceptors   []RouteInterceptor
 	process        func(*Exchange) error // doProcess wrapped by the interceptor chain.
 	messageHistory bool                  // Whether Message History is enabled for this route.
+	nodeIDMu       sync.RWMutex          // Guards nodeIDCache.
+	nodeIDCache    []string              // Memoised Message History labels, indexed by processor position.
 }
 
 // RouteInterceptor wraps the processing of every exchange flowing through a
@@ -151,6 +186,14 @@ func (r *Route) SetTransacted(transacted bool) *Route {
 // From sets the source endpoint of the route.
 // Errors are stored and surfaced at Start() time.
 func (r *Route) From(uri string) *Route {
+	// A Route built with NewRoute() has no CamelContext and cannot resolve an
+	// endpoint. Record the error instead of dereferencing a nil context:
+	// use CamelContext.CreateRoute() (or a RouteBuilder) to obtain a usable Route.
+	if r.context == nil {
+		r.err = fmt.Errorf("route has no CamelContext: build it with CamelContext.CreateRoute() instead of NewRoute()")
+		return r
+	}
+
 	endpoint, err := r.context.CreateEndpoint(uri)
 	if err != nil {
 		r.err = fmt.Errorf("error creating endpoint: %w", err)
@@ -194,23 +237,24 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 	for i := start; i < len(r.processors); {
 		processor := r.processors[i]
 
-		var start time.Time
+		// Named stepStart, not start: shadowing the loop's start parameter
+		// here made the function hard to read for no benefit.
+		var stepStart time.Time
 		if r.messageHistory {
-			start = time.Now()
+			stepStart = time.Now()
 		}
 
-		err := processor.Process(exchange)
+		// A panicking processor is turned into an ordinary error so the
+		// configured ErrorHandler (dead letter, redelivery) can act on it
+		// instead of the panic unwinding the consumer goroutine.
+		err := safeProcess(func() error { return processor.Process(exchange) })
 
 		if r.messageHistory {
-			elapsed := time.Since(start)
-			nodeID := reflect.TypeOf(processor).String()
-			if named, ok := processor.(interface{ ID() string }); ok {
-				nodeID = named.ID()
-			}
+			elapsed := time.Since(stepStart)
 			entry := MessageHistoryEntry{
-				NodeID:    nodeID,
+				NodeID:    r.nodeIDFor(i, processor),
 				RouteID:   r.ID,
-				Timestamp: start,
+				Timestamp: stepStart,
 				Elapsed:   elapsed,
 			}
 			history := GetMessageHistory(exchange)
@@ -236,6 +280,41 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 		i++
 	}
 	return nil
+}
+
+// nodeIDFor returns the Message History label for the processor at index i:
+// its ID() when it exposes one, otherwise its Go type name.
+//
+// reflect.TypeOf(...).String() was called for every processor of every message
+// while Message History was enabled. The type name never changes for a given
+// pipeline slot, so it is resolved once and memoised by position — Processor
+// itself cannot key a map, since ProcessorFunc is a func type and func values
+// are not hashable.
+func (r *Route) nodeIDFor(i int, processor Processor) string {
+	if named, ok := processor.(interface{ ID() string }); ok {
+		return named.ID() // may legitimately change; never cached
+	}
+
+	r.nodeIDMu.RLock()
+	cache := r.nodeIDCache
+	r.nodeIDMu.RUnlock()
+	if i < len(cache) && cache[i] != "" {
+		return cache[i]
+	}
+
+	id := reflect.TypeOf(processor).String()
+
+	r.nodeIDMu.Lock()
+	if len(r.nodeIDCache) < len(r.processors) {
+		grown := make([]string, len(r.processors))
+		copy(grown, r.nodeIDCache)
+		r.nodeIDCache = grown
+	}
+	if i < len(r.nodeIDCache) {
+		r.nodeIDCache[i] = id
+	}
+	r.nodeIDMu.Unlock()
+	return id
 }
 
 func (r *Route) resetErrorHandlerState(exchange *Exchange) {

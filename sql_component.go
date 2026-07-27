@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,8 +13,12 @@ import (
 // SQL headers set or consumed on Exchange objects.
 // These correspond to the headers of the Apache Camel SQL component.
 const (
-	SqlQuery       = "CamelSqlQuery"       // Overrides the query configured in the URI
-	SqlSelect      = "CamelSqlQuery"       // Alias: query override (body can be used as parameters)
+	// SqlQuery overrides the query configured in the URI. Honoured ONLY when
+	// the endpoint sets allowHeaderOverride=true — see SQLProducer.Send.
+	SqlQuery = "CamelSqlQuery"
+	// SqlSelect is a deprecated alias of SqlQuery, kept for source
+	// compatibility. Both names resolve to the same header.
+	SqlSelect      = SqlQuery
 	SqlParameters  = "CamelSqlParameters"  // Positional parameters ([]any)
 	SqlRowCount    = "CamelSqlRowCount"    // Number of rows affected or returned
 	SqlColumnNames = "CamelSqlColumnNames" // Column names returned by a SELECT
@@ -79,11 +84,13 @@ func (c *SQLComponent) lookup(name string) (*sql.DB, bool) {
 //
 // Options:
 //
-//	query          SQL query (required)
-//	dataSourceRef  Name of a registered datasource (otherwise uses the host of the URI)
-//	batch          Enables batch mode: parameters = [][]any (default: false)
-//	outputType     SelectList (default) or SelectOne
-//	transacted     true to wrap the query in a transaction (default: false)
+//	query               SQL query (required)
+//	dataSourceRef       Name of a registered datasource (otherwise uses the host of the URI)
+//	batch               Enables batch mode: parameters = [][]any (default: false)
+//	outputType          SelectList (default) or SelectOne
+//	transacted          true to wrap the query in a transaction (default: false)
+//	allowHeaderOverride true to let the CamelSqlQuery header replace the
+//	                    configured query (default: false — see SQLProducer.Send)
 func (c *SQLComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -130,26 +137,35 @@ func (c *SQLComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 
+	allowHeaderOverride := false
+	if v := GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
 	return &SQLEndpoint{
-		uri:        uri,
-		name:       name,
-		query:      query,
-		outputType: outputType,
-		batch:      batch,
-		transacted: transacted,
-		db:         db,
+		uri:                 uri,
+		name:                name,
+		query:               query,
+		outputType:          outputType,
+		batch:               batch,
+		transacted:          transacted,
+		allowHeaderOverride: allowHeaderOverride,
+		db:                  db,
 	}, nil
 }
 
 // SQLEndpoint represents a configured SQL endpoint.
 type SQLEndpoint struct {
-	uri        string
-	name       string
-	query      string
-	outputType SQLOutputType
-	batch      bool
-	transacted bool
-	db         *sql.DB
+	uri                 string
+	name                string
+	query               string
+	outputType          SQLOutputType
+	batch               bool
+	transacted          bool
+	allowHeaderOverride bool // opt-in: the CamelSqlQuery header may replace the query
+	db                  *sql.DB
 }
 
 // URI returns the endpoint URI.
@@ -181,10 +197,23 @@ func (p *SQLProducer) Stop() error { return nil }
 // For a SELECT: Out.Body = []map[string]any (or map[string]any with outputType=SelectOne).
 // For INSERT/UPDATE/DELETE: Out.Body = number of affected rows (int64).
 func (p *SQLProducer) Send(exchange *Exchange) error {
+	// SECURITY: the query is trusted configuration. It is never interpolated
+	// with Exchange data — interpolating ${header.X} into the SQL string would
+	// defeat parameterised queries and enable SQL injection. Bind dynamic
+	// values via the CamelSqlParameters header (positional '?' placeholders)
+	// or via the body when it is a []any.
+	//
+	// The CamelSqlQuery header replaces the statement wholesale, so it is
+	// honoured only when the endpoint opts in with allowHeaderOverride=true.
+	// Enable it only where headers cannot be influenced by untrusted input:
+	// any component that maps external metadata onto headers would otherwise
+	// hand an attacker full control of the statement.
 	query := p.endpoint.query
-	if v, ok := exchange.GetIn().GetHeader(SqlQuery); ok {
-		if s, ok := v.(string); ok {
-			query = s
+	if p.endpoint.allowHeaderOverride {
+		if v, ok := exchange.GetIn().GetHeader(SqlQuery); ok {
+			if s, ok := v.(string); ok && s != "" {
+				query = s
+			}
 		}
 	}
 
@@ -193,11 +222,6 @@ func (p *SQLProducer) Send(exchange *Exchange) error {
 		ctx = context.Background()
 	}
 
-	// SECURITY: the query is intentionally NOT interpolated with Exchange data.
-	// Interpolating ${header.X} into the SQL string would defeat parameterised
-	// queries and enable SQL injection. Bind dynamic values via the
-	// CamelSqlParameters header (positional '?' placeholders) or via the body
-	// when it is a []any. The query string is treated as trusted configuration.
 	if err := validateSQLQuery(query); err != nil {
 		return fmt.Errorf("sql: query validation failed: %w", err)
 	}
@@ -207,7 +231,7 @@ func (p *SQLProducer) Send(exchange *Exchange) error {
 	}
 
 	params := extractSQLParameters(exchange)
-	isSelect := strings.HasPrefix(strings.TrimSpace(strings.ToUpper(query)), "SELECT")
+	isSelect := returnsRows(query)
 
 	if p.endpoint.transacted {
 		return p.sendTx(ctx, exchange, query, params, isSelect)
@@ -348,6 +372,75 @@ func (p *SQLProducer) execWrite(ctx context.Context, exchange *Exchange, e sqlEx
 	exchange.GetOut().SetHeader(SqlRowCount, affected)
 	exchange.GetOut().SetBody(affected)
 	return nil
+}
+
+// rowReturningKeywords are the leading keywords of statements that produce a
+// result set rather than an affected-row count.
+var rowReturningKeywords = map[string]bool{
+	"SELECT":   true,
+	"WITH":     true, // common table expression, e.g. WITH t AS (...) SELECT ...
+	"VALUES":   true,
+	"TABLE":    true,
+	"SHOW":     true,
+	"EXPLAIN":  true,
+	"DESCRIBE": true,
+	"DESC":     true,
+	"PRAGMA":   true,
+}
+
+// returnsRows reports whether the statement should be run through
+// QueryContext (result set) rather than ExecContext (affected rows).
+//
+// Checking only for a "SELECT" prefix misclassified any statement introduced
+// by a comment, a leading parenthesis, or a CTE — a "WITH ... SELECT" query
+// was executed as a write and its result set silently discarded. A statement
+// carrying a RETURNING clause (PostgreSQL, SQLite) also produces rows.
+func returnsRows(query string) bool {
+	s := stripLeadingSQLNoise(query)
+
+	upper := strings.ToUpper(s)
+	word := upper
+	if i := strings.IndexFunc(upper, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '(' || r == ';'
+	}); i >= 0 {
+		word = upper[:i]
+	}
+	if rowReturningKeywords[word] {
+		return true
+	}
+
+	// A data-modifying statement with RETURNING yields rows too.
+	return regexpReturning.MatchString(upper)
+}
+
+// regexpReturning matches a RETURNING clause as a standalone keyword.
+var regexpReturning = regexp.MustCompile(`(^|[\s)])RETURNING[\s(]`)
+
+// stripLeadingSQLNoise removes leading whitespace, line/block comments and
+// opening parentheses so the first significant keyword can be inspected.
+func stripLeadingSQLNoise(query string) string {
+	s := strings.TrimSpace(query)
+	for {
+		switch {
+		case strings.HasPrefix(s, "--"):
+			if i := strings.IndexByte(s, '\n'); i >= 0 {
+				s = strings.TrimSpace(s[i+1:])
+				continue
+			}
+			return ""
+		case strings.HasPrefix(s, "/*"):
+			if i := strings.Index(s, "*/"); i >= 0 {
+				s = strings.TrimSpace(s[i+2:])
+				continue
+			}
+			return ""
+		case strings.HasPrefix(s, "("):
+			s = strings.TrimSpace(s[1:])
+			continue
+		default:
+			return s
+		}
+	}
 }
 
 // extractSQLParameters retrieves positional parameters from the Exchange.

@@ -256,7 +256,7 @@ func (c *NATSConsumer) run(ctx context.Context) {
 			exchange.In.SetBody(msg.Data)
 			exchange.In.SetHeader(CamelNATSSubject, msg.Subject)
 
-			if err := gocamel.CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+			if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
 				gocamel.LogError("nats consumer processing error",
 					"uri", c.endpoint.uri,
 					"error", err,

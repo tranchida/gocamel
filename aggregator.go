@@ -82,10 +82,27 @@ func (a *Aggregator) SetCompletionPredicate(pred func(*Exchange) bool) *Aggregat
 	return a
 }
 
-// lockForKey returns the per-key state, creating it on first use.
+// lockForKey returns the per-key state, creating it on first use, and locks it.
+//
+// The load/lock pair is retried until the state is still the one registered for
+// the key after the lock is acquired. Removing a keyState on completion
+// (emitLocked, runTimeout) would otherwise let one goroutine wait on a retired
+// state while another creates a fresh one, leaving two goroutines operating on
+// the same correlation key under two different mutexes — and therefore racing
+// on the aggregation repository.
 func (a *Aggregator) lockForKey(key string) *keyState {
-	st, _ := a.keyLocks.LoadOrStore(key, &keyState{})
-	return st.(*keyState)
+	for {
+		st, _ := a.keyLocks.LoadOrStore(key, &keyState{})
+		state := st.(*keyState)
+		state.mu.Lock()
+
+		current, ok := a.keyLocks.Load(key)
+		if ok && current.(*keyState) == state {
+			return state
+		}
+		// The state was retired while we waited; drop it and take the new one.
+		state.mu.Unlock()
+	}
 }
 
 // Process handles the arrival of a new exchange.
@@ -100,8 +117,7 @@ func (a *Aggregator) Process(exchange *Exchange) error {
 		return fmt.Errorf("correlation key evaluated to empty string")
 	}
 
-	st := a.lockForKey(key)
-	st.mu.Lock()
+	st := a.lockForKey(key) // returns with st.mu held
 	defer st.mu.Unlock()
 
 	isFirstMessage, err := a.processLocked(ctx, key, exchange, st)
@@ -166,9 +182,7 @@ func (a *Aggregator) emitLocked(ctx context.Context, key string, aggregated, cur
 	st.gen++ // invalidate the timeout belonging to the completed group
 	a.keyLocks.CompareAndDelete(key, st)
 
-	current.In = aggregated.In
-	current.Out = aggregated.Out
-	current.Properties = aggregated.Properties
+	publishAggregatedResult(current, aggregated)
 	return nil
 }
 
@@ -278,7 +292,8 @@ func (a *Aggregator) runTimeout(key string, ctx context.Context, gen uint64, st 
 	// lifecycle, so downstream work must use the timeout's route context.
 	stored.Context = ctx
 	if processor != nil {
-		if err := processor.Process(stored); err != nil && !errors.Is(err, ErrStopRouting) {
+		err := safeProcess(func() error { return processor.Process(stored) })
+		if err != nil && !errors.Is(err, ErrStopRouting) {
 			LogError("Aggregator timeout: downstream processing failed",
 				"key", key,
 				"exchange_id", stored.ID,

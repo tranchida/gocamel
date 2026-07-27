@@ -55,7 +55,7 @@ func (w *WireTap) Process(exchange *Exchange) error {
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
-		if err := w.sendTap(tapExchange); err != nil {
+		if err := safeProcess(func() error { return w.sendTap(tapExchange) }); err != nil {
 			LogWarn("WireTap: tap delivery failed",
 				"uri", w.uri,
 				"error", err,

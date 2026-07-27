@@ -469,7 +469,7 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 			moveFailed: c.opts.MoveFailed,
 		})
 
-		procErr := gocamel.CompleteExchange(exchange, c.processor.Process(exchange))
+		procErr := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
 
 		if procErr == nil {
 			count++

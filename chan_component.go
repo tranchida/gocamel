@@ -182,7 +182,8 @@ func (c *ChanConsumer) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if err := CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+			err := safeProcess(func() error { return c.processor.Process(exchange) })
+			if err := CompleteExchange(exchange, err); err != nil {
 				LogError("chan consumer processing error",
 					"uri", c.endpoint.uri,
 					"error", err,

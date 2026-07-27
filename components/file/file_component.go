@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 
@@ -45,21 +46,18 @@ func (c *FileComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		return nil, fmt.Errorf("file path missing in URI: %s", uri)
 	}
 
-	// Reject null bytes before cleaning
-	if strings.Contains(path, "\x00") {
-		return nil, fmt.Errorf("path contains null byte")
-	}
-
-	// Clean the path and reject any remaining traversal sequences
-	cleanPath := filepath.Clean(path)
-	if strings.Contains(cleanPath, "..") {
-		return nil, fmt.Errorf("path contains traversal sequence: %s", path)
+	// Delegate to the shared validator instead of a local substring test.
+	// A plain strings.Contains(path, "..") check also rejects legitimate
+	// filenames such as "report..v2.txt"; gocamel.ValidatePath walks the
+	// components and only rejects a '..' that actually escapes the base.
+	if err := gocamel.ValidatePath(path); err != nil {
+		return nil, err
 	}
 
 	return &FileEndpoint{
 		uri:  uri,
 		url:  u,
-		path: cleanPath,
+		path: filepath.Clean(path),
 	}, nil
 }
 
@@ -266,6 +264,18 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 					continue
 				}
 
+				// fsnotify reports Create as soon as the inode exists, long
+				// before the writer has finished. Reading immediately yields a
+				// truncated (often empty) body for anything not written
+				// atomically — a shell redirect, a copy, an upload. Wait for
+				// the size to stop changing first; this is the equivalent of
+				// Camel's readLock=changed.
+				if !waitForStableFile(ctx, event.Name, readLockTimeout, readLockInterval) {
+					gocamel.LogWarn("file did not stabilise before the read lock timeout; skipping",
+						"file", event.Name, "timeout", readLockTimeout)
+					continue
+				}
+
 				content, err := os.ReadFile(event.Name)
 				if err != nil {
 					gocamel.LogError("error reading file", "file", event.Name, "error", err)
@@ -285,7 +295,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 					moveFailed: moveFailed,
 				})
 
-				_ = gocamel.CompleteExchange(exchange, c.processor.Process(exchange))
+				_ = gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
 
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -333,7 +343,7 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 		moveFailed: moveFailed,
 	})
 
-	_ = gocamel.CompleteExchange(exchange, c.processor.Process(exchange))
+	_ = gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
 	return nil
 }
 
@@ -346,6 +356,50 @@ func (c *FileConsumer) Stop() error {
 		return err
 	}
 	return nil
+}
+
+// Read-lock defaults: how long to wait for a file to stop growing before
+// giving up, and how often to sample its size.
+const (
+	readLockTimeout  = 10 * time.Second
+	readLockInterval = 100 * time.Millisecond
+)
+
+// waitForStableFile blocks until path's size and modification time stop
+// changing between two consecutive samples, and reports whether the file
+// settled before timeout elapsed (or the context was cancelled).
+//
+// This is a heuristic, not a lock: a writer that pauses longer than interval
+// mid-write can still be observed as stable. It removes the common truncated
+// read without requiring cooperation from the producer. For strict handoff,
+// have the writer create the file under a temporary name and rename it into
+// the watched directory — rename is atomic.
+func waitForStableFile(ctx context.Context, path string, timeout, interval time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	lastSize, lastMod := info.Size(), info.ModTime()
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(interval):
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			return false // removed or replaced while we waited
+		}
+		if info.Size() == lastSize && info.ModTime().Equal(lastMod) {
+			return true
+		}
+		lastSize, lastMod = info.Size(), info.ModTime()
+	}
+	return false
 }
 
 // moveFilelocal moves src to destDir, creating the directory if needed.

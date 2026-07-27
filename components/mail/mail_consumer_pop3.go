@@ -221,7 +221,7 @@ func (c *Pop3Consumer) processMessage(ctx context.Context, msgID int) error {
 	c.populateExchange(exchange, mailMsg)
 
 	// Process via processor
-	if err := gocamel.CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+	if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
 		return err
 	}
 
@@ -341,7 +341,7 @@ func (c *Pop3Consumer) handleFailedMessage(ctx context.Context, msgID int, msgEr
 	exchange.SetHeader("CamelMailError", msgErr.Error())
 	exchange.SetHeader("CamelMailFailedMsgID", strconv.Itoa(msgID))
 
-	return gocamel.CompleteExchange(exchange, c.processor.Process(exchange))
+	return gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
 }
 
 // getBoolHeader retrieves a bool value from a header.

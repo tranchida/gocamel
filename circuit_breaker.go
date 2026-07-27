@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -72,6 +73,12 @@ func (cb *CircuitBreaker) SetOpenTimeout(timeout time.Duration) {
 
 // Process implements the Processor interface.
 func (cb *CircuitBreaker) Process(exchange *Exchange) error {
+	// Guard the zero-configuration case: NewCircuitBreaker() leaves the main
+	// processor unset, and calling through it would panic.
+	if cb.processor == nil {
+		return fmt.Errorf("circuit breaker: no processor configured (call SetProcessor)")
+	}
+
 	cb.mu.Lock()
 	// Check if we should transition from Open to Half-Open
 	if cb.state == StateOpen && time.Since(cb.lastOpenTime) > cb.openTimeout {

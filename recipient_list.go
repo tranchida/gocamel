@@ -193,9 +193,7 @@ func (r *RecipientList) processSequential(exchange *Exchange, uris []string) err
 	}
 
 	if r.AggregationStrategy != nil && aggregatedExchange != nil {
-		exchange.In = aggregatedExchange.In
-		exchange.Out = aggregatedExchange.Out
-		exchange.Properties = aggregatedExchange.Properties
+		publishAggregatedResult(exchange, aggregatedExchange)
 	}
 
 	return nil
@@ -226,7 +224,7 @@ func (r *RecipientList) processParallel(exchange *Exchange, uris []string) error
 		go func(index int, uri string, recipientExchange *Exchange) {
 			defer wg.Done()
 
-			err := r.sendToURI(uri, recipientExchange)
+			err := safeProcess(func() error { return r.sendToURI(uri, recipientExchange) })
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -251,9 +249,7 @@ func (r *RecipientList) processParallel(exchange *Exchange, uris []string) error
 	}
 
 	if r.AggregationStrategy != nil && aggregatedExchange != nil {
-		exchange.In = aggregatedExchange.In
-		exchange.Out = aggregatedExchange.Out
-		exchange.Properties = aggregatedExchange.Properties
+		publishAggregatedResult(exchange, aggregatedExchange)
 	}
 
 	return nil

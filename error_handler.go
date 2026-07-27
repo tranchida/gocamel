@@ -51,7 +51,8 @@ type DeadLetterChannel struct {
 	useExponentialBackoff bool
 	backoffMultiplier     float64
 	mu                    sync.Mutex
-	retryAttempts         map[string]int // keyed by exchange.ID; protected by mu
+	retryAttempts         map[string]int      // keyed by exchange.ID; protected by mu
+	synchronized          map[string]struct{} // exchange IDs with a cleanup callback registered
 }
 
 // DeadLetterChannelOption is a functional option for configuring DeadLetterChannel.
@@ -94,6 +95,7 @@ func NewDeadLetterChannel(context *CamelContext, deadLetterURI string, opts ...D
 		useExponentialBackoff: false,
 		backoffMultiplier:     2.0,
 		retryAttempts:         make(map[string]int),
+		synchronized:          make(map[string]struct{}),
 	}
 	for _, opt := range opts {
 		opt(dlc)
@@ -111,11 +113,15 @@ type deadLetterSynchronization struct {
 func (s *deadLetterSynchronization) OnComplete(exchange *Exchange) {
 	s.dlc.mu.Lock()
 	delete(s.dlc.retryAttempts, s.exchangeID)
+	delete(s.dlc.synchronized, s.exchangeID)
 	s.dlc.mu.Unlock()
 }
 
 func (s *deadLetterSynchronization) OnFailure(exchange *Exchange) {
-	// Cleanup on the failure path is handled by HandleError when max redeliveries is reached.
+	s.dlc.mu.Lock()
+	delete(s.dlc.retryAttempts, s.exchangeID)
+	delete(s.dlc.synchronized, s.exchangeID)
+	s.dlc.mu.Unlock()
 }
 
 // HandleError implements the ErrorHandler interface.
@@ -126,13 +132,19 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 
 	dlc.mu.Lock()
 	attempt := dlc.retryAttempts[exID]
-	isFirst := attempt == 0
+	_, alreadyTracked := dlc.synchronized[exID]
 	dlc.retryAttempts[exID] = attempt + 1
+	if !alreadyTracked {
+		dlc.synchronized[exID] = struct{}{}
+	}
 	dlc.mu.Unlock()
 
 	// Register a one-time cleanup callback so that if the exchange eventually
 	// succeeds after retries the map entry is freed (avoids leak on happy path).
-	if isFirst {
+	// Keyed on its own set rather than on attempt == 0: ResetRetryState clears
+	// the counter after every successful step, so a later failure of the same
+	// exchange would otherwise register a duplicate callback each time.
+	if !alreadyTracked {
 		exchange.AddSynchronization(&deadLetterSynchronization{dlc: dlc, exchangeID: exID})
 	}
 
@@ -192,23 +204,16 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 	// Store the error on the exchange itself
 	exchange.Error = err
 
-	// Send to dead letter endpoint
-	deadEndpoint, createErr := dlc.context.CreateEndpoint(dlc.deadLetterURI)
-	if createErr != nil {
-		return fmt.Errorf("dead letter channel: failed to create endpoint %s: %w (original error: %v)",
-			dlc.deadLetterURI, createErr, err)
-	}
-
-	producer, prodErr := deadEndpoint.CreateProducer()
+	// Send to dead letter endpoint via the shared producer cache. Creating,
+	// starting and stopping a producer for every dead-lettered message would
+	// re-open a connection on exactly the path where the system is already
+	// under stress; the cache keeps one started producer per URI and
+	// CamelContext.Stop() owns its lifecycle.
+	producer, prodErr := dlc.context.GetProducer(dlc.deadLetterURI)
 	if prodErr != nil {
-		return fmt.Errorf("dead letter channel: failed to create producer for %s: %w (original error: %v)",
+		return fmt.Errorf("dead letter channel: failed to obtain producer for %s: %w (original error: %v)",
 			dlc.deadLetterURI, prodErr, err)
 	}
-
-	if startErr := producer.Start(exchange.Context); startErr != nil {
-		return fmt.Errorf("dead letter channel: failed to start producer: %w", startErr)
-	}
-	defer producer.Stop()
 
 	// Send the failed exchange to the dead letter queue
 	sendErr := producer.Send(exchange)

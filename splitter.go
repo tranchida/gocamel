@@ -62,10 +62,12 @@ func (s *Splitter) Process(exchange *Exchange) error {
 			splitParts[i] = item
 		}
 	case []byte:
-		splitParts = make([]any, len(p))
-		for i, item := range p {
-			splitParts[i] = item
-		}
+		// A []byte body is a binary payload, not a collection: splitting it
+		// yielded one exchange per byte, so a 10 KB message produced 10 000
+		// exchanges. Treat it as a single, indivisible part — matching Apache
+		// Camel, which does not split byte[]. Use a Simple/expression split
+		// (e.g. on the decoded string) to divide binary content deliberately.
+		isList = false
 	case []int64:
 		splitParts = make([]any, len(p))
 		for i, item := range p {
@@ -107,9 +109,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		if s.AggregationStrategy != nil {
 			aggregatedExchange := s.AggregationStrategy.Aggregate(nil, partExchange)
 			if aggregatedExchange != nil {
-				exchange.In = aggregatedExchange.In
-				exchange.Out = aggregatedExchange.Out
-				exchange.Properties = aggregatedExchange.Properties
+				publishAggregatedResult(exchange, aggregatedExchange)
 			}
 		}
 		return nil
@@ -147,9 +147,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 
 	if s.AggregationStrategy != nil && aggregatedExchange != nil {
 		// Update the original exchange with the aggregation result
-		exchange.In = aggregatedExchange.In
-		exchange.Out = aggregatedExchange.Out
-		exchange.Properties = aggregatedExchange.Properties
+		publishAggregatedResult(exchange, aggregatedExchange)
 	}
 
 	return nil

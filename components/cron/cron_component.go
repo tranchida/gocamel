@@ -272,7 +272,7 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 		exchange.GetIn().SetHeader(CronTriggerGroup, ep.group)
 		exchange.GetIn().SetHeader(CronRefireCount, n)
 
-		if err := gocamel.CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+		if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
 			gocamel.LogError("Cron processing error", "group", ep.group, "name", ep.name, "error", err)
 		}
 
@@ -386,7 +386,7 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 	exchange.GetIn().SetHeader(CronTriggerGroup, ep.group)
 	exchange.GetIn().SetHeader(CronRefireCount, n)
 
-	if err := gocamel.CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+	if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
 		gocamel.LogError("Cron processing error", "group", ep.group, "name", ep.name, "error", err)
 	}
 

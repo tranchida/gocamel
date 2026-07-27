@@ -45,22 +45,28 @@ func validateExecPath(executable string) error {
 	return nil
 }
 
-// validateExecArgs validates command arguments
+// validateExecArgs validates command arguments.
+//
+// Arguments are passed to exec.CommandContext, which invokes the executable
+// directly via execve — there is NO shell, so '|', '&', '$', '<', '>' and
+// friends carry no special meaning and reaching the child process verbatim is
+// exactly the intent. Rejecting them blocked legitimate values (a JSON
+// document, a password containing '$', a relative path) without preventing any
+// injection, so only genuinely problematic content is rejected here:
+//
+//   - NUL, which truncates the argument at the syscall boundary,
+//   - other control characters, which corrupt logs and terminal output.
+//
+// The executable itself is held to a stricter standard — see validateExecPath.
 func validateExecArgs(args []string) error {
 	for _, arg := range args {
-		// Check for shell metacharacters in arguments
-		dangerousChars := []string{"|", "&", ";", "`", "$", "<", ">"}
-		for _, char := range dangerousChars {
-			if strings.Contains(arg, char) {
-				return fmt.Errorf("argument contains shell metacharacter '%s': %s", char, arg)
-			}
+		if strings.ContainsRune(arg, 0) {
+			return fmt.Errorf("argument contains null byte: %q", arg)
 		}
-		// Check for path traversal in file-related arguments
-		if strings.Contains(arg, "..") && (strings.Contains(arg, "/") || strings.Contains(arg, "\\")) {
-			return fmt.Errorf("argument contains path traversal: %s", arg)
-		}
-		// Check for control characters
 		for _, r := range arg {
+			if r == '\t' || r == '\n' || r == '\r' {
+				continue // legitimate in a multi-line argument
+			}
 			if r < 32 || r == 127 {
 				return fmt.Errorf("argument contains control character: %q", arg)
 			}
@@ -253,8 +259,13 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Build context with optional timeout
+	// Build context with optional timeout. The exchange context may be nil
+	// when the exchange was built by hand; context.WithTimeout and
+	// exec.CommandContext both panic on a nil parent.
 	ctx := exchange.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if timeoutMs > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
@@ -298,17 +309,23 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		stdoutStr = string(data)
 	}
 
-	// Setting output headers
-	exchange.GetIn().SetHeader(CamelExecExitValue, exitValue)
-	exchange.GetIn().SetHeader(CamelExecStdout, stdoutStr)
-	exchange.GetIn().SetHeader(CamelExecStderr, stderrStr)
-
 	// Setting body: stdout, or stderr if stdout is empty and useStderrOnEmpty
 	resultBody := stdoutStr
 	if resultBody == "" && p.endpoint.useStderrOnEmpty {
 		resultBody = stderrStr
 	}
-	exchange.GetIn().SetBody(resultBody)
+
+	// The result is published on Out, like every other producer (sql, http):
+	// leaving Out empty makes HasOut() report false, so an InOut route (an HTTP
+	// consumer, an enricher) would answer with the request message instead of
+	// the command output. In is kept in sync so routes that read the In message
+	// straight after the exec step keep working.
+	for _, message := range []*Message{exchange.GetOut(), exchange.GetIn()} {
+		message.SetHeader(CamelExecExitValue, exitValue)
+		message.SetHeader(CamelExecStdout, stdoutStr)
+		message.SetHeader(CamelExecStderr, stderrStr)
+		message.SetBody(resultBody)
+	}
 
 	// Only return an error if the command failed AND it is not
 	// just a non-zero exit code (Camel behavior: exitValue is

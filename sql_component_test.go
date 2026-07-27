@@ -231,7 +231,7 @@ func TestSQLProducer_HeaderOverridesQuery(t *testing.T) {
 	comp := NewSQLComponent()
 	comp.RegisterDataSource("testdb", db)
 
-	uri := "sql://testdb?query=" + url.QueryEscape("SELECT 1")
+	uri := "sql://testdb?allowHeaderOverride=true&query=" + url.QueryEscape("SELECT 1")
 	endpoint, err := comp.CreateEndpoint(uri)
 	require.NoError(t, err)
 
@@ -247,6 +247,33 @@ func TestSQLProducer_HeaderOverridesQuery(t *testing.T) {
 	results, ok := exchange.GetOut().GetBody().([]map[string]any)
 	require.True(t, ok)
 	require.Len(t, results, 1)
+	assert.Equal(t, "Alice", results[0]["name"])
+}
+
+// TestSQLProducer_IgnoresHeaderOverrideByDefault pins the secure default: the
+// CamelSqlQuery header must NOT replace the configured statement unless the
+// endpoint opted in with allowHeaderOverride=true. Without this, any component
+// that maps external metadata onto headers hands an attacker full control of
+// the SQL statement.
+func TestSQLProducer_IgnoresHeaderOverrideByDefault(t *testing.T) {
+	db := newTestSQLDB(t)
+	comp := NewSQLComponent()
+	comp.RegisterDataSource("testdb", db)
+
+	uri := "sql://testdb?query=" + url.QueryEscape("SELECT name FROM users WHERE id = 1")
+	endpoint, err := comp.CreateEndpoint(uri)
+	require.NoError(t, err)
+	producer, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	exchange := NewExchange(context.Background())
+	exchange.GetIn().SetHeader(SqlQuery, "SELECT name FROM users WHERE id = 2")
+	require.NoError(t, producer.Send(exchange))
+
+	results, ok := exchange.GetOut().GetBody().([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, results, 1)
+	// The configured query ran, not the one from the header.
 	assert.Equal(t, "Alice", results[0]["name"])
 }
 
@@ -371,7 +398,7 @@ func TestSQLProducer_RejectsStackedStatementWithOneSemicolon(t *testing.T) {
 	comp := NewSQLComponent()
 	comp.RegisterDataSource("testdb", db)
 
-	uri := "sql://testdb?query=" + url.QueryEscape("SELECT 1")
+	uri := "sql://testdb?allowHeaderOverride=true&query=" + url.QueryEscape("SELECT 1")
 	endpoint, err := comp.CreateEndpoint(uri)
 	require.NoError(t, err)
 	producer, err := endpoint.CreateProducer()

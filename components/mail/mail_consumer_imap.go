@@ -519,7 +519,7 @@ func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selecte
 	}
 
 	// Process via processor
-	if err := gocamel.CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+	if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
 		// Processing failed — rollback if peek=true
 		if ep.peek {
 			if err2 := c.markUnseen(uid); err2 != nil {
@@ -806,7 +806,7 @@ func (c *MailConsumer) handleFailedMessage(ctx context.Context, uid imap.UID, ms
 	exchange.SetHeader("CamelMailError", msgErr.Error())
 	exchange.SetHeader("CamelMailFailedUID", strconv.FormatUint(uint64(uid), 10))
 
-	return gocamel.CompleteExchange(exchange, c.processor.Process(exchange))
+	return gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
 }
 
 // getStringHeader retrieves a string value from a header.

@@ -77,9 +77,7 @@ func (m *Multicast) processSequential(exchange *Exchange) error {
 
 	if m.AggregationStrategy != nil && aggregatedExchange != nil {
 		// Update the original exchange with the aggregation result
-		exchange.In = aggregatedExchange.In
-		exchange.Out = aggregatedExchange.Out
-		exchange.Properties = aggregatedExchange.Properties
+		publishAggregatedResult(exchange, aggregatedExchange)
 	}
 
 	return nil
@@ -112,7 +110,7 @@ func (m *Multicast) processParallel(exchange *Exchange) error {
 		go func(index int, processor Processor, branchExchange *Exchange) {
 			defer wg.Done()
 
-			err := processor.Process(branchExchange)
+			err := safeProcess(func() error { return processor.Process(branchExchange) })
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -137,9 +135,7 @@ func (m *Multicast) processParallel(exchange *Exchange) error {
 	}
 
 	if m.AggregationStrategy != nil && aggregatedExchange != nil {
-		exchange.In = aggregatedExchange.In
-		exchange.Out = aggregatedExchange.Out
-		exchange.Properties = aggregatedExchange.Properties
+		publishAggregatedResult(exchange, aggregatedExchange)
 	}
 
 	return nil

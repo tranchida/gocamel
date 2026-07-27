@@ -17,6 +17,7 @@ type CamelContext struct {
 	started       bool
 	startLock     sync.RWMutex // Protects started lifecycle state
 	routeCounter  int
+	usedRouteIDs  map[string]bool // ids already assigned; guarded by routesLock
 	producerCache *ProducerCache
 }
 
@@ -45,26 +46,27 @@ func (c *CamelContext) AddRoute(route *Route) {
 	}
 
 	if route.ID == "" {
+		// Collision check against a set rather than a linear scan of every
+		// route per candidate: generating N ids was O(N^2).
+		if c.usedRouteIDs == nil {
+			c.usedRouteIDs = make(map[string]bool, len(c.routes))
+		}
+		for _, r := range c.routes {
+			c.usedRouteIDs[r.ID] = true
+		}
 		for {
 			c.routeCounter++
 			newID := fmt.Sprintf("route-%d", c.routeCounter)
-
-			// Check if this ID is already in use
-			idExists := false
-			for _, r := range c.routes {
-				if r.ID == newID {
-					idExists = true
-					break
-				}
-			}
-
-			if !idExists {
+			if !c.usedRouteIDs[newID] {
 				route.ID = newID
 				break
 			}
 		}
 	}
 
+	if c.usedRouteIDs != nil {
+		c.usedRouteIDs[route.ID] = true
+	}
 	c.routes = append(c.routes, route)
 }
 
@@ -335,6 +337,12 @@ type ProducerCache struct {
 	context *CamelContext
 	cache   map[string]Producer
 	mu      sync.RWMutex
+	entries sync.Map // map[string]*producerEntry — per-URI creation locks
+}
+
+// producerEntry single-flights the creation of one URI's producer.
+type producerEntry struct {
+	once sync.Mutex
 }
 
 // NewProducerCache creates a new ProducerCache.
@@ -346,6 +354,12 @@ func NewProducerCache(context *CamelContext) *ProducerCache {
 }
 
 // Get retrieves a started producer from the cache, creating and starting it if missing.
+//
+// Creation happens outside the cache-wide lock: CreateProducer and Start can
+// perform network I/O (connecting to a broker, opening a session), and holding
+// the write lock across that would serialise every other endpoint behind the
+// slowest one. A per-URI entry lock keeps creation single-flighted so a given
+// producer is still built only once.
 func (pc *ProducerCache) Get(uri string) (Producer, error) {
 	pc.mu.RLock()
 	prod, exists := pc.cache[uri]
@@ -354,11 +368,14 @@ func (pc *ProducerCache) Get(uri string) (Producer, error) {
 		return prod, nil
 	}
 
-	pc.mu.Lock()
-	defer pc.mu.Unlock()
+	entry := pc.entryFor(uri)
+	entry.once.Lock()
+	defer entry.once.Unlock()
 
-	// Double-checked locking
+	// Another goroutine may have populated the cache while we waited.
+	pc.mu.RLock()
 	prod, exists = pc.cache[uri]
+	pc.mu.RUnlock()
 	if exists {
 		return prod, nil
 	}
@@ -373,12 +390,23 @@ func (pc *ProducerCache) Get(uri string) (Producer, error) {
 		return nil, fmt.Errorf("producer cache: producer creation failed for %s: %w", uri, err)
 	}
 
-	if err := p.Start(context.Background()); err != nil {
+	// Start with the CamelContext's context, not context.Background(): a
+	// producer started with a detached context never observes shutdown and
+	// keeps its connections alive past CamelContext.Stop().
+	if err := p.Start(pc.context.GetContext()); err != nil {
 		return nil, fmt.Errorf("producer cache: producer start failed for %s: %w", uri, err)
 	}
 
+	pc.mu.Lock()
 	pc.cache[uri] = p
+	pc.mu.Unlock()
 	return p, nil
+}
+
+// entryFor returns the per-URI creation lock, allocating it on first use.
+func (pc *ProducerCache) entryFor(uri string) *producerEntry {
+	actual, _ := pc.entries.LoadOrStore(uri, &producerEntry{})
+	return actual.(*producerEntry)
 }
 
 // Stop stops all cached producers.
@@ -393,6 +421,7 @@ func (pc *ProducerCache) Stop() error {
 		}
 	}
 	pc.cache = make(map[string]Producer) // clear
+	pc.entries.Clear()
 
 	if len(errs) > 0 {
 		return fmt.Errorf("producer cache: errors stopping producers: %v", errs)
