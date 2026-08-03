@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [v0.1.0] - 2026-08-03
+## [v0.2.0] - 2026-08-03
 
 First release. GoCamel is a lightweight Apache Camel-inspired integration
 framework for Go, organized as a Go workspace of independent modules.
@@ -48,4 +48,4 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
-[v0.1.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.1.0
+[v0.2.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.2.0
