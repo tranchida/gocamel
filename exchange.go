@@ -80,6 +80,10 @@ const (
 	CamelAuthenticationScheme = "CamelAuthenticationScheme" // Authentication scheme
 	CamelAuthenticationType   = "CamelAuthenticationType"   // Authentication type
 	CamelAuthorizationPolicy  = "CamelAuthorizationPolicy"  // Authorization policy
+
+	// Net properties
+	CamelNetRemoteAddress = "CamelNetRemoteAddress" // Remote peer address (host:port)
+	CamelNetLocalAddress  = "CamelNetLocalAddress"  // Local socket address (host:port)
 )
 
 // Synchronization defines the interface for callbacks triggered when an Exchange is done.

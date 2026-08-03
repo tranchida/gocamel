@@ -27,7 +27,7 @@ provides a powerful DSL for creating integration routes to connect different sys
 - 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Recipient List, Routing Slip, Wire Tap,
   Stop, ToD, Loop, Saga, Transform, Message History
 - 📝 **Simple Language** - Dynamic expressions (`${body}`, `${header.name}`, functions)
-- 🔌 **Multiple Components** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, Redis, NATS, Go Channel (chan), etc.
+- 🔌 **Multiple Components** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, Redis, NATS, Go Channel (chan), TCP/UDP (net), etc.
 - 🛠️ **REST Management API** - JMX-like monitoring and control
 - 🔒 **Security Utilities** - Path traversal protection, SQL injection prevention, input sanitization
 
@@ -137,6 +137,7 @@ EndChoice()
 | Component      | Description                   |
 |----------------|-------------------------------|
 | **HTTP**       | HTTP server and client        |
+| **Net**        | Raw TCP/UDP sockets           |
 | **File**       | Local file system operations  |
 | **FTP/SFTP**   | File transfer via FTP/SSH     |
 | **SMB**        | Windows/Samba shares          |

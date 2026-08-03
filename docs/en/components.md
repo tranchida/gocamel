@@ -287,6 +287,69 @@ internal deadline) before returning. `Stop()` is idempotent.
 
 ---
 
+### Net (TCP/UDP)
+
+Raw TCP and UDP sockets, built on the standard library — the Go equivalent of
+Apache Camel's `netty`/`mina` components. The consumer listens and feeds
+inbound messages into the route; the producer dials and sends the message
+body.
+
+```go
+// Consumer (server): request-reply over TCP
+builder.From("net:tcp://localhost:9090")
+
+// Consumer (server): fire-and-forget UDP
+builder.From("net:udp://localhost:9090?sync=false")
+
+// Producer (client)
+builder.To("net:tcp://localhost:9090")
+```
+
+| Option       | Type   | Default  | Description                                    |
+|--------------|--------|----------|------------------------------------------------|
+| `sync`       | bool   | `true`   | Request-reply: the consumer writes the route's response back to the peer; the producer waits for a reply |
+| `textline`   | bool   | `true`   | Newline-delimited messages (TCP only). `false` = one message per read |
+| `bufferSize` | int    | `8192`   | Maximum message/datagram size in bytes         |
+| `timeout`    | int    | `30000`  | Producer dial/reply timeout in ms (0 = none)   |
+| `keepAlive`  | bool   | `false`  | TCP keepalive on connections                   |
+
+**URI forms** — both `net:tcp://host:port` and `net:tcp:host:port` are
+accepted; the same applies to `udp`. An omitted host defaults to `localhost`.
+Port `0` asks the OS for an ephemeral port: read the actual bound address
+from `NetConsumer.Address()`.
+
+**Framing.** TCP is a byte stream, so the component needs a message boundary.
+With `textline=true` (default) each newline-terminated line is one message
+(the trailing `\r\n` or `\n` is stripped). With `textline=false` each read
+is one message. UDP datagrams need no framing: each datagram is one message.
+
+```go
+// Request-reply echo server
+builder.From("net:tcp://localhost:9090").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        body, _ := e.GetIn().GetBody().([]byte)
+        e.GetOut().SetBody([]byte("echo: " + string(body)))
+        return nil
+    })
+```
+
+**Headers.** The consumer sets `CamelNetRemoteAddress` and
+`CamelNetLocalAddress` (host:port) on the In message.
+
+#### Hardening
+
+- Message reads are bounded by `bufferSize`. A textline message longer than
+  the limit is a protocol error: the connection is dropped rather than
+  buffering unbounded data (CWE-400). UDP datagrams larger than the limit
+  are truncated.
+- The producer's reply read in sync mode is bounded by `bufferSize` and by
+  the `timeout` read deadline, so a silent peer cannot hang the route
+  forever.
+- Panics in route processors are contained (`ProcessSafely`): a misbehaving
+  route fails its exchange, never the consumer.
+
+---
+
 ## Messaging Components
 
 ### Telegram
@@ -970,6 +1033,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | SFTP       | File       | ✅        | ✅        | `sftp://host/path`        |
 | SMB        | File       | ✅        | ✅        | `smb://host/share`        |
 | HTTP       | Network    | ✅        | ✅        | `http://host:port/path`   |
+| Net        | Network    | ✅        | ✅        | `net:tcp://host:port`     |
 | Telegram   | Messaging  | ✅        | ✅        | `telegram:bots`           |
 | OpenAI     | AI         | ❌        | ✅        | `openai:chat`             |
 | Cron       | Scheduling | ✅        | ❌        | `cron://group/job`        |

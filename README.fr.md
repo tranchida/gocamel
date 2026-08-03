@@ -26,7 +26,7 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 - ⚖️ **Routes Transactionnelles** - Pattern Unit of Work pour un traitement fiable
 - 🧩 **Patterns d'Intégration** - Split, Aggregate, Multicast, Choice, Recipient List, Routing Slip, Wire Tap, Stop, ToD, Loop, Saga, Transform, Message History
 - 📝 **Simple Language** - Expressions dynamiques (`${body}`, `${header.name}`, fonctions)
-- 🔌 **Composants Multiples** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, Redis, NATS, Go Channel (chan), etc.
+- 🔌 **Composants Multiples** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, Redis, NATS, Go Channel (chan), TCP/UDP (net), etc.
 - 🛠️ **API REST de Management** - Monitoring et contrôle inspiré de JMX
 - 🔒 **Utilitaires de Sécurité** - Protection contre les traversées de répertoire, prévention des injections SQL,
   assainissement des entrées
@@ -138,6 +138,7 @@ builder.From("direct:start").
 | Composant      | Description                    |
 |----------------|--------------------------------|
 | **HTTP**       | Serveur et client HTTP         |
+| **Net**        | Sockets TCP/UDP bruts          |
 | **File**       | Opérations système de fichiers |
 | **FTP/SFTP**   | Transfert via FTP/SSH          |
 | **SMB**        | Partages Windows/Samba         |

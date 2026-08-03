@@ -291,6 +291,71 @@ attend que `http.Server.Shutdown` se termine (borné par un délai interne de
 
 ---
 
+### Net (TCP/UDP)
+
+Sockets TCP et UDP bruts, construits sur la bibliothèque standard — l'équivalent
+Go des composants `netty`/`mina` d'Apache Camel. Le consumer écoute et alimente
+la route avec les messages entrants ; le producer se connecte et envoie le
+corps du message.
+
+```go
+// Consumer (serveur) : requête-réponse sur TCP
+builder.From("net:tcp://localhost:9090")
+
+// Consumer (serveur) : UDP sans accusé de réception
+builder.From("net:udp://localhost:9090?sync=false")
+
+// Producer (client)
+builder.To("net:tcp://localhost:9090")
+```
+
+| Option       | Type   | Défaut  | Description                                      |
+|--------------|--------|---------|--------------------------------------------------|
+| `sync`       | bool   | `true`  | Requête-réponse : le consumer renvoie la réponse de la route au pair ; le producer attend une réponse |
+| `textline`   | bool   | `true`  | Messages délimités par saut de ligne (TCP uniquement). `false` = un message par lecture |
+| `bufferSize` | int    | `8192`  | Taille maximale d'un message/datagramme en octets |
+| `timeout`    | int    | `30000` | Délai d'attente de connexion/réponse du producer en ms (0 = aucun) |
+| `keepAlive`  | bool   | `false` | Keepalive TCP sur les connexions                 |
+
+**Formes d'URI** — `net:tcp://hôte:port` et `net:tcp:hôte:port` sont acceptées ;
+idem pour `udp`. Un hôte omis prend la valeur `localhost`. Le port `0` demande
+un port éphémère à l'OS : lisez l'adresse réellement liée via
+`NetConsumer.Address()`.
+
+**Cadrage.** TCP est un flux d'octets : le composant a donc besoin d'une limite
+de message. Avec `textline=true` (défaut), chaque ligne terminée par un saut
+de ligne est un message (le `\r\n` ou `\n` final est retiré). Avec
+`textline=false`, chaque lecture est un message. Les datagrammes UDP n'ont
+pas besoin de cadrage : chaque datagramme est un message.
+
+```go
+// Serveur écho requête-réponse
+builder.From("net:tcp://localhost:9090").
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        body, _ := e.GetIn().GetBody().([]byte)
+        e.GetOut().SetBody([]byte("echo: " + string(body)))
+        return nil
+    })
+```
+
+**Headers.** Le consumer définit `CamelNetRemoteAddress` et
+`CamelNetLocalAddress` (hôte:port) sur le message In.
+
+#### Durcissement
+
+- Les lectures de messages sont bornées par `bufferSize`. Un message textline
+  plus long que la limite est une erreur de protocole : la connexion est
+  fermée plutôt que de mettre en tampon des données illimitées (CWE-400).
+  Les datagrammes UDP plus grands que la limite sont tronqués.
+- La lecture de la réponse du producer en mode sync est bornée par
+  `bufferSize` et par le délai `timeout`, afin qu'un pair muet ne puisse pas
+  bloquer la route indéfiniment.
+- Les paniques dans les processeurs de route sont contenues
+  (`ProcessSafely`) : une route défectueuse échoue son exchange, jamais le
+  consumer.
+
+---
+
 ## Composants de Messagerie
 
 ### Telegram
@@ -979,6 +1044,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | SFTP       | Fichier      | ✅        | ✅        | `sftp://host/path`       |
 | SMB        | Fichier      | ✅        | ✅        | `smb://host/share`       |
 | HTTP       | Réseau       | ✅        | ✅        | `http://host:port/path`  |
+| Net        | Réseau       | ✅        | ✅        | `net:tcp://host:port`    |
 | Telegram   | Messagerie   | ✅        | ✅        | `telegram:bots`          |
 | OpenAI     | IA           | ❌        | ✅        | `openai:chat`            |
 | Cron       | Ordonnancement | ✅      | ❌        | `cron://group/job`       |
