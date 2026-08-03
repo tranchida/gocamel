@@ -16,9 +16,7 @@ const (
 )
 
 // NATSComponent represents the Camel NATS component.
-type NATSComponent struct {
-	mu sync.Mutex
-}
+type NATSComponent struct{}
 
 // NewNATSComponent creates a new NATSComponent instance.
 func NewNATSComponent() *NATSComponent {

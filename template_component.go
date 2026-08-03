@@ -346,8 +346,9 @@ func prepareTemplateData(exchange *Exchange) *TemplateData {
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
 		// Utility functions.
-		"upper":     strings.ToUpper,
-		"lower":     strings.ToLower,
+		"upper": strings.ToUpper,
+		"lower": strings.ToLower,
+		//lint:ignore SA1019 strings.Title has no dependency-free Unicode equivalent in the zero-dep core
 		"title":     strings.Title,
 		"trim":      strings.TrimSpace,
 		"join":      strings.Join,

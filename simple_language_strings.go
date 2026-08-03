@@ -107,6 +107,7 @@ func applyStringFunction(funcName string, val interface{}, args []interface{}) (
 		return strings.ToUpper(string(strVal[0])) + strings.ToLower(strVal[1:]), nil
 	case "title":
 		// Title case each word separated by spaces
+		//lint:ignore SA1019 strings.Title has no dependency-free Unicode equivalent in the zero-dep core
 		return strings.Title(strVal), nil
 	case "padstart":
 		if len(args) < 1 {

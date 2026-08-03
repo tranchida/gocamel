@@ -141,7 +141,7 @@ func (c *MailComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	case ProtocolSMTP, ProtocolSMTPS, ProtocolPOP3, ProtocolPOP3S, ProtocolIMAP, ProtocolIMAPS:
 		// OK
 	default:
-		return nil, fmt.Errorf("Unsupported mail protocol: %s", scheme)
+		return nil, fmt.Errorf("unsupported mail protocol: %s", scheme)
 	}
 
 	// Host and port

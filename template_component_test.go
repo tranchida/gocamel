@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,12 +187,12 @@ func TestTemplateProducer_Send(t *testing.T) {
 				t.Fatalf("CreateProducer() error = %v", err)
 			}
 
-			if err := producer.Start(nil); err != nil {
+			if err := producer.Start(context.TODO()); err != nil {
 				t.Fatalf("Start() error = %v", err)
 			}
 			defer producer.Stop()
 
-			exchange := NewExchange(nil)
+			exchange := NewExchange(context.TODO())
 			if tt.headers != nil {
 				for k, v := range tt.headers {
 					exchange.SetHeader(k, v)
@@ -243,13 +244,13 @@ func TestTemplateProducer_SendWithCachedTemplate(t *testing.T) {
 		t.Fatalf("CreateProducer() error = %v", err)
 	}
 
-	if err := producer.Start(nil); err != nil {
+	if err := producer.Start(context.TODO()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	defer producer.Stop()
 
 	// First send
-	exchange1 := NewExchange(nil)
+	exchange1 := NewExchange(context.TODO())
 	exchange1.SetBody("First")
 	if err := producer.Send(exchange1); err != nil {
 		t.Errorf("First Send() error = %v", err)
@@ -259,7 +260,7 @@ func TestTemplateProducer_SendWithCachedTemplate(t *testing.T) {
 	}
 
 	// Second send (should use cache)
-	exchange2 := NewExchange(nil)
+	exchange2 := NewExchange(context.TODO())
 	exchange2.SetBody("Second")
 	if err := producer.Send(exchange2); err != nil {
 		t.Errorf("Second Send() error = %v", err)
@@ -300,13 +301,13 @@ func TestTemplateProducer_SendWithTemplateFromHeader(t *testing.T) {
 		t.Fatalf("CreateProducer() error = %v", err)
 	}
 
-	if err := producer.Start(nil); err != nil {
+	if err := producer.Start(context.TODO()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	defer producer.Stop()
 
 	// Sending with default template
-	exchange1 := NewExchange(nil)
+	exchange1 := NewExchange(context.TODO())
 	exchange1.SetBody("Test")
 	if err := producer.Send(exchange1); err != nil {
 		t.Errorf("Send() with default template error = %v", err)
@@ -316,7 +317,7 @@ func TestTemplateProducer_SendWithTemplateFromHeader(t *testing.T) {
 	}
 
 	// Sending with template via header
-	exchange2 := NewExchange(nil)
+	exchange2 := NewExchange(context.TODO())
 	exchange2.SetHeader(CamelTemplatePath, path2)
 	exchange2.SetBody("Test2")
 	if err := producer.Send(exchange2); err != nil {
@@ -395,12 +396,12 @@ func TestTemplateFuncs(t *testing.T) {
 				t.Fatalf("CreateProducer() error = %v", err)
 			}
 
-			if err := producer.Start(nil); err != nil {
+			if err := producer.Start(context.TODO()); err != nil {
 				t.Fatalf("Start() error = %v", err)
 			}
 			defer producer.Stop()
 
-			exchange := NewExchange(nil)
+			exchange := NewExchange(context.TODO())
 			// Use test data
 			if data, ok := tt.data.(*TemplateData); ok {
 				exchange.SetBody(data.Body)

@@ -21,6 +21,7 @@ func TestStopEIP(t *testing.T) {
 			return nil
 		}).
 		Build()
+	assert.NoError(t, err)
 
 	exchange := NewExchange(context.Background())
 	err = route.Process(exchange)
@@ -53,6 +54,7 @@ func TestStopInSplit(t *testing.T) {
 			return nil
 		}).
 		Build()
+	assert.NoError(t, err)
 
 	exchange := NewExchange(context.Background())
 	err = route.Process(exchange)
@@ -91,6 +93,7 @@ func TestStopInSplitPartial(t *testing.T) {
 			return nil
 		}).
 		Build()
+	assert.NoError(t, err)
 
 	exchange := NewExchange(context.Background())
 	err = route.Process(exchange)

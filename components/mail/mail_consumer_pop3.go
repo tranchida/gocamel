@@ -57,13 +57,6 @@ func (c *Pop3Consumer) run(ctx context.Context) {
 	}
 }
 
-// pop3MessageID represents a message in the POP3 listing.
-type pop3MessageID struct {
-	ID   int
-	Size int
-	UID  string
-}
-
 // poll connects to the POP3 server and retrieves new messages.
 func (c *Pop3Consumer) poll(parentCtx context.Context) {
 	ep := c.endpoint

@@ -20,9 +20,7 @@ import (
 //   simple_language_processors.go   — SimpleSetBodyProcessor and friends
 
 // SimpleLanguage represents the Simple Language expression evaluator
-type SimpleLanguage struct {
-	exchange *Exchange
-}
+type SimpleLanguage struct{}
 
 // Expression defines the interface for evaluating expressions
 type Expression interface {
@@ -106,10 +104,6 @@ var (
 	// We handle || at higher level
 	ternaryRegex = regexp.MustCompile(`^(.+?)\?\s*(.+?)\s*:\s*(.+)$`)
 
-	// Bracket notation pattern: supports body['key'], body["key"], body[0], body[last], body[last-1]
-	// Captures: base (body/header/etc), accessor (quotes or index expression), rest (for chaining)
-	bracketNotationRegex = regexp.MustCompile(`^(body|header|exchangeProperty)(\?[\?\[]?|[\[]?)\[([^\]]+)\](.*)$`)
-
 	// Null-safe dot notation: body?.field or header?.name
 	nullSafeDotNotationRegex = regexp.MustCompile(`^(body|header|exchangeProperty)\?\.([a-zA-Z0-9_\-]+)(.*)$`)
 
@@ -122,12 +116,6 @@ var (
 	// Index access for last keyword
 	lastIndexRegex = regexp.MustCompile(`^last(-(\d+))?$`)
 
-	// Function call pattern: name(arg1,arg2)
-	functionCallRegex = regexp.MustCompile(`^(\w+)\s*\(([^)]*)\)$`)
-
-	// Chain function call pattern: .function(args)
-	chainFunctionRegex = regexp.MustCompile(`^\.(\w+)\s*\(([^)]*)\)(.*)$`)
-
 	// "in" operator for list membership
 	inOperatorRegex = regexp.MustCompile(`^(.+?)\s+in\s+(.+)$`)
 
@@ -136,13 +124,6 @@ var (
 
 	// "is" operator for type checking
 	isOperatorRegex = regexp.MustCompile(`^(.+?)\s+is\s+'?(\w+)'?$`)
-
-	// Math operations (+, -, *, /, %)
-	mathAddRegex      = regexp.MustCompile(`^(.+?)\s*\+\s*(.+)$`)
-	mathSubtractRegex = regexp.MustCompile(`^(.+?)\s*-\s*(.+)$`)
-	mathMultiplyRegex = regexp.MustCompile(`^(.+?)\s*\*\s*(.+)$`)
-	mathDivideRegex   = regexp.MustCompile(`^(.+?)\s*/\s*(.+)$`)
-	mathModuloRegex   = regexp.MustCompile(`^(.+?)\s*%\s*(.+)$`)
 )
 
 // ParseSimpleExpression parses a simple expression string into an Expression

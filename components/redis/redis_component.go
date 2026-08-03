@@ -19,9 +19,7 @@ const (
 )
 
 // RedisComponent represents the Camel Redis component.
-type RedisComponent struct {
-	mu sync.Mutex
-}
+type RedisComponent struct{}
 
 // NewRedisComponent creates a new RedisComponent instance.
 func NewRedisComponent() *RedisComponent {
