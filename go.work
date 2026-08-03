@@ -13,7 +13,7 @@ use (
 	./components/sftp
 	./components/smb
 	./components/telegram
+	./examples
 	./observability/otel
 	./observability/prometheus
-	./examples
 )
