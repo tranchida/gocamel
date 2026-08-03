@@ -118,8 +118,18 @@ lint:
         (cd "$dir" && staticcheck ./...)
         echo "== gosec $dir =="
         # gosec excludes the test files (which legitimately use weak patterns
-        # like math/rand or fixed test secrets) and the generated examples.
-        (cd "$dir" && gosec -exclude-dir=_test -severity medium ./...)
+        # like math/rand or fixed test secrets).
+        gosec_opts="-exclude-dir=_test"
+        # gosec walks the whole tree below the module. From the root module
+        # that includes the nested modules (components/, examples/,
+        # observability/), which each get their own pass in this loop, plus
+        # the CI tool cache (.cache/) and local worktrees (.claude/) — none
+        # of which are root-module code. Exclude them from the root pass only;
+        # the per-module passes below must keep scanning their own files.
+        if [ "$dir" = "." ]; then
+          gosec_opts="$gosec_opts -exclude-dir=components -exclude-dir=examples -exclude-dir=observability -exclude-dir=.cache -exclude-dir=.claude"
+        fi
+        (cd "$dir" && gosec $gosec_opts -severity medium ./...)
       done
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
