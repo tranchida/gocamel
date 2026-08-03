@@ -85,7 +85,10 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid random argument: %s", randomMatch[1])
 		}
-		return rand.Intn(max), nil
+		// Deliberately non-cryptographic: this is the Camel-compatible
+		// ${random(n)} helper for test/demo values, not a secret source
+		// (gosec G404).
+		return rand.Intn(max), nil // #nosec G404
 	}
 
 	// Check for uuid function

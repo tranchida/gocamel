@@ -66,7 +66,9 @@ func (e *SFTPEndpoint) getHostKeyCallback(u *url.URL) (ssh.HostKeyCallback, erro
 		gocamel.LogError("SFTP host key verification DISABLED (strictHostKeyChecking=false). "+
 			"Connection is vulnerable to MITM — do not use against untrusted networks.",
 			"host", u.Host)
-		return ssh.InsecureIgnoreHostKey(), nil
+		// Explicit user opt-in via the URI; the loud warning above is logged
+		// on every connect (gosec G106).
+		return ssh.InsecureIgnoreHostKey(), nil // #nosec G106
 	}
 	knownHostsFile := gocamel.GetConfigValue(u, "knownHostsFile")
 	if knownHostsFile == "" {
@@ -101,7 +103,12 @@ func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 
 	// Private key authentication (takes priority over password if present).
 	if privateKeyFile := gocamel.GetConfigValue(e.url, "privateKeyFile"); privateKeyFile != "" {
-		key, err := os.ReadFile(privateKeyFile)
+		// The key path comes from the trusted endpoint URI config; validate it
+		// before touching the filesystem (gosec G304).
+		if err := gocamel.ValidatePath(privateKeyFile); err != nil {
+			return nil, nil, fmt.Errorf("invalid private key path %s: %w", privateKeyFile, err)
+		}
+		key, err := os.ReadFile(privateKeyFile) // #nosec G304
 		if err != nil {
 			return nil, nil, fmt.Errorf("cannot read private key %s: %w", privateKeyFile, err)
 		}

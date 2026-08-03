@@ -360,6 +360,7 @@ func (c *MailConsumer) connect(ctx context.Context) error {
 	// Connection options — TLS config
 	tlsConfig := &tls.Config{
 		ServerName: ep.host,
+		MinVersion: tls.VersionTLS12,
 	}
 
 	var client *imapclient.Client

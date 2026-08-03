@@ -214,7 +214,10 @@ func (c *Pop3Consumer) processMessage(ctx context.Context, msgID int) error {
 	if err != nil {
 		return fmt.Errorf("message parsing error: %w", err)
 	}
-	mailMsg.UID = uint32(msgID)
+	// msgID is a sequential index 1..count built from the server-reported
+	// message count (see fetch loop); it cannot exceed uint32 on any real
+	// POP3 server, so the narrowing conversion cannot wrap (gosec G115).
+	mailMsg.UID = uint32(msgID) // #nosec G115
 
 	// Create exchange
 	exchange := gocamel.NewExchange(ctx)

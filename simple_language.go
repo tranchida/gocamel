@@ -1,8 +1,8 @@
 package gocamel
 
 import (
+	"crypto/rand"
 	"fmt"
-	"math/rand"
 	"regexp"
 	"strconv"
 	"strings"

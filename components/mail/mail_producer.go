@@ -152,7 +152,7 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			// Exponential backoff: 1s, 2s, 4s, 8s
-			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			delay := baseDelay * time.Duration(1<<(attempt-1))
 			if delay > maxDelay {
 				delay = maxDelay
 			}
@@ -193,6 +193,7 @@ func (p *MailProducer) trySendMail(addr string, auth smtp.Auth, from string, rec
 		// Native TLS connection (port 465)
 		tlsConfig := &tls.Config{
 			ServerName: ep.host,
+			MinVersion: tls.VersionTLS12,
 		}
 		conn, err := tls.Dial("tcp", addr, tlsConfig)
 		if err != nil {

@@ -210,8 +210,13 @@ func (p *TemplateProducer) Send(exchange *Exchange) error {
 		// Use the cached template.
 		templateContent = p.templateText
 	} else {
-		// Load from file.
-		content, err := os.ReadFile(templatePath)
+		// Load from file. The path is validated regardless of source:
+		// header-supplied paths get the traversal/null-byte checks above, and
+		// ValidatePath covers the endpoint URI path too (gosec G304).
+		if err := ValidatePath(templatePath); err != nil {
+			return fmt.Errorf("invalid template path: %w", err)
+		}
+		content, err := os.ReadFile(templatePath) // #nosec G304
 		if err != nil {
 			return fmt.Errorf("error reading template %s: %w", templatePath, err)
 		}
@@ -354,7 +359,9 @@ func templateFuncs() template.FuncMap {
 			return strings.ReplaceAll(s, old, new)
 		},
 		"replaceN": strings.Replace,
-		// Function for JSON-escaping values.
+		// Function for JSON-escaping values. The escaping below is the safety
+		// boundary; returning template.HTML prevents html/template from
+		// re-escaping the quoted JSON (gosec G203).
 		"json": func(v any) template.HTML {
 			switch val := v.(type) {
 			case string:
@@ -364,20 +371,21 @@ func templateFuncs() template.FuncMap {
 				result = strings.ReplaceAll(result, "\n", "\\n")
 				result = strings.ReplaceAll(result, "\r", "\\r")
 				result = strings.ReplaceAll(result, "\t", "\\t")
-				return template.HTML(fmt.Sprintf("\"%s\"", result))
+				return template.HTML(fmt.Sprintf("\"%s\"", result)) // #nosec G203
 			default:
-				return template.HTML(toString(val))
+				return template.HTML(toString(val)) // #nosec G203
 			}
 		},
-		// Function for marking content as safe (no HTML escaping).
+		// Function for marking content as safe (no HTML escaping). Deliberate
+		// escape hatch for already-trusted content (gosec G203).
 		"safeHTML": func(v any) template.HTML {
 			switch val := v.(type) {
 			case string:
-				return template.HTML(val)
+				return template.HTML(val) // #nosec G203
 			case template.HTML:
 				return val
 			default:
-				return template.HTML(fmt.Sprintf("%v", val))
+				return template.HTML(fmt.Sprintf("%v", val)) // #nosec G203
 			}
 		},
 		// Date functions.

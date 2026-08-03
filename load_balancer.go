@@ -33,7 +33,9 @@ func (s *RandomStrategy) Select(processors []Processor) Processor {
 	if len(processors) == 0 {
 		return nil
 	}
-	return processors[rand.Intn(len(processors))]
+	// Random load distribution — not security-sensitive, so math/rand is
+	// adequate and faster than crypto/rand (gosec G404).
+	return processors[rand.Intn(len(processors))] // #nosec G404
 }
 
 // LoadBalancerProcessor implements the Load Balancer EIP.

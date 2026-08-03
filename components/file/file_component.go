@@ -110,6 +110,17 @@ func (p *FileProducer) Stop() error {
 // FileExistFail and FileExistIgnore use O_EXCL for an atomic existence check,
 // avoiding the TOCTOU race that a separate os.Stat + os.OpenFile would introduce.
 func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
+	// Re-validate the endpoint path before any filesystem access. The path is
+	// already checked in CreateEndpoint (null byte + traversal); validating
+	// again here keeps this write path self-contained (gosec G304).
+	if err := gocamel.ValidatePath(p.path); err != nil {
+		return err
+	}
+
+	// 0755 is the deliberate default for created parent directories: it keeps
+	// produced files reachable by other users/processes (same rationale as the
+	// 0644 file mode below) and the effective mode still respects the umask.
+	// #nosec G301
 	if err := os.MkdirAll(filepath.Dir(p.path), 0755); err != nil {
 		return fmt.Errorf("error creating directory: %v", err)
 	}
@@ -132,7 +143,10 @@ func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 		flags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
 	}
 
-	file, err := os.OpenFile(p.path, flags, 0644)
+	// p.path was validated above via ValidatePath. 0644 is the deliberate
+	// default: produced files are meant to be read by other processes, and the
+	// effective mode still respects the process umask.
+	file, err := os.OpenFile(p.path, flags, 0644) // #nosec G302,G304
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			if p.fileExist == gocamel.FileExistIgnore {
@@ -404,6 +418,8 @@ func waitForStableFile(ctx context.Context, path string, timeout, interval time.
 
 // moveFilelocal moves src to destDir, creating the directory if needed.
 func moveFilelocal(src, destDir string) {
+	// 0755 is the deliberate default for move directories (see Send).
+	// #nosec G301
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		gocamel.LogError("error creating directory", "directory", destDir, "error", err)
 		return

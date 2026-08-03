@@ -272,7 +272,11 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(ctx, executable, args...)
+	// The executable, args and working dir are resolved from the trusted
+	// endpoint URI config (header overrides only when allowHeaderOverride is
+	// set) and each is validated above — validateExecPath, validateExecArgs
+	// and the workingDir traversal/metacharacter checks (gosec G204).
+	cmd := exec.CommandContext(ctx, executable, args...) // #nosec G204
 
 	if workingDir != "" {
 		cmd.Dir = workingDir
