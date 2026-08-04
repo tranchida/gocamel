@@ -12,6 +12,7 @@ bin/
 # Agent/Local caches
 .claude/
 .junie/
+.kimi-code/
 .gitnexus/
 /AGENTS.md
 /CLAUDE.md

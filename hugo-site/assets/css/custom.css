@@ -1,0 +1,27 @@
+/* Custom styles for GoCamel — Relearn theme overrides */
+
+/* Indigo accent (matches original MkDocs Material palette) */
+:root {
+  --PRIMARY-color: #3f51b5; /* indigo 500 */
+  --ACCENT-color: #3f51b5;
+}
+
+/* Rounded admonition boxes */
+.box.cstyle.notices {
+  border-radius: 0.5rem;
+}
+
+/* Rounded inline code */
+code {
+  border-radius: 0.2rem;
+}
+
+/* Hero gradient for the home page title */
+.hero-title {
+  text-align: center;
+  font-size: 3em;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
