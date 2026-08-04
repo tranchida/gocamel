@@ -1,0 +1,90 @@
+baseURL = 'https://gocamel.tranchida.cloud/'
+title = 'GoCamel'
+theme = 'hugo-theme-relearn'
+defaultContentLanguage = 'en'
+defaultContentLanguageInSubdir = true
+
+[params]
+  author.name = 'GoCamel'
+  linkTitle = 'GoCamel'
+
+  # Theme variants: auto (follows OS), light, dark
+  [[params.themeVariant]]
+    identifier = 'auto'
+    name = 'Auto'
+    auto = ['relearn-light', 'relearn-dark']
+  [[params.themeVariant]]
+    identifier = 'relearn-light'
+    name = 'Light'
+  [[params.themeVariant]]
+    identifier = 'relearn-dark'
+    name = 'Dark'
+
+  # Mermaid diagram support
+  mermaidInitialize = '{ "securityLevel": "loose" }'
+  mermaidZoom = true
+
+  # Navigation
+  showVisitedLinks = true
+  disableLandingPageButton = true
+  disableBreadcrumb = false
+  disableNextPrev = false
+  collapsibleMenu = true
+
+  # Edit URL for "Edit this page" links
+  editURL = 'https://gitlab.com/tranchida/gocamel/-/edit/docs/migrate-to-hugo/hugo-site/content/${FilePath}'
+
+  # Link checking (expensive; enable occasionally)
+  urlExternalCheck = false
+
+[languages]
+  [languages.en]
+    title = 'GoCamel'
+    weight = 1
+    contentDir = 'content/en'
+    [languages.en.params]
+      [[languages.en.params.themeVariant]]
+        identifier = 'auto'
+        name = 'Auto'
+        auto = ['relearn-light', 'relearn-dark']
+      [[languages.en.params.themeVariant]]
+        identifier = 'relearn-light'
+        name = 'Light'
+      [[languages.en.params.themeVariant]]
+        identifier = 'relearn-dark'
+        name = 'Dark'
+  [languages.fr]
+    title = 'GoCamel'
+    weight = 2
+    contentDir = 'content/fr'
+    [languages.fr.params]
+      [[languages.fr.params.themeVariant]]
+        identifier = 'auto'
+        name = 'Auto'
+        auto = ['relearn-light', 'relearn-dark']
+      [[languages.fr.params.themeVariant]]
+        identifier = 'relearn-light'
+        name = 'Clair'
+      [[languages.fr.params.themeVariant]]
+        identifier = 'relearn-dark'
+        name = 'Sombre'
+
+[markup]
+  [markup.highlight]
+    codeFences = true
+    guessSyntax = false
+    lineNos = false
+    noClasses = false
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+    [markup.goldmark.extensions]
+      [markup.goldmark.extensions.extras]
+        [markup.goldmark.extensions.extras.insert]
+          enable = true
+        [markup.goldmark.extensions.extras.mark]
+          enable = true
+        [markup.goldmark.extensions.extras.subscript]
+          enable = true
+        [markup.goldmark.extensions.extras.superscript]
+          enable = true

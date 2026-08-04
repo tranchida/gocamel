@@ -2,5 +2,7 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/hugo-site" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/hugo-site/themes/hugo-theme-relearn" vcs="Git" />
   </component>
 </project>
