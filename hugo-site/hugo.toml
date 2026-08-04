@@ -1,4 +1,4 @@
-baseURL = 'https://tranchida.gitlab.io/gocamel/'
+baseURL = 'https://gocamel.tranchida.cloud/'
 title = 'GoCamel'
 theme = 'hugo-theme-relearn'
 defaultContentLanguage = 'en'
