@@ -5,13 +5,23 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"time"
 )
+
+// tableNamePattern is the allowlist for table identifiers spliced into SQL DDL
+// and DML statements. Identifiers cannot be bound as parameters, so the table
+// name must be a strict identifier (optionally schema-qualified with dots).
+var tableNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
 
 // SQLAggregationRepository is a SQL-based implementation of AggregationRepository.
 type SQLAggregationRepository struct {
 	db        *sql.DB
 	tableName string
+	// initErr holds a misconfiguration error surfaced on first use: the table
+	// name is validated once at construction so a bad identifier never reaches
+	// the database (it is spliced into every statement).
+	initErr error
 	// UseDollarParam uses dollar parameters (true for PostgreSQL $1, $2; false for MySQL/SQLite ?, ?)
 	UseDollarParam bool
 }
@@ -37,15 +47,26 @@ func NewSQLAggregationRepository(db *sql.DB, opts SQLAggregationOptions) *SQLAgg
 	if tableName == "" {
 		tableName = "camel_aggregations"
 	}
-	return &SQLAggregationRepository{
+	repo := &SQLAggregationRepository{
 		db:             db,
 		tableName:      tableName,
 		UseDollarParam: opts.UseDollarParam,
 	}
+	// SECURITY: the table name is spliced into every statement (identifiers
+	// cannot be bound as parameters). It comes from developer configuration, but
+	// validating it here prevents a bad or multi-tenant-derived name from being
+	// interpolated into SQL.
+	if !tableNamePattern.MatchString(tableName) {
+		repo.initErr = fmt.Errorf("invalid aggregation table name %q: must match %s", tableName, tableNamePattern)
+	}
+	return repo
 }
 
 // InitDB creates the table if it doesn't exist.
 func (r *SQLAggregationRepository) InitDB(ctx context.Context) error {
+	if r.initErr != nil {
+		return r.initErr
+	}
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			correlation_key VARCHAR(255) PRIMARY KEY,
@@ -59,6 +80,9 @@ func (r *SQLAggregationRepository) InitDB(ctx context.Context) error {
 
 // Add adds or updates an exchange in the repository.
 func (r *SQLAggregationRepository) Add(ctx context.Context, key string, exchange *Exchange) error {
+	if r.initErr != nil {
+		return r.initErr
+	}
 	data := ExchangeData{
 		Body:       exchange.GetIn().GetBody(),
 		Headers:    exchange.GetIn().GetHeaders(),
@@ -94,6 +118,9 @@ func (r *SQLAggregationRepository) Add(ctx context.Context, key string, exchange
 
 // Get retrieves an exchange by its correlation key.
 func (r *SQLAggregationRepository) Get(ctx context.Context, key string) (*Exchange, error) {
+	if r.initErr != nil {
+		return nil, r.initErr
+	}
 	var query string
 	if r.UseDollarParam {
 		query = fmt.Sprintf("SELECT exchange_data FROM %s WHERE correlation_key = $1", r.tableName)
@@ -129,6 +156,9 @@ func (r *SQLAggregationRepository) Get(ctx context.Context, key string) (*Exchan
 
 // Remove removes an exchange from the repository.
 func (r *SQLAggregationRepository) Remove(ctx context.Context, key string) error {
+	if r.initErr != nil {
+		return r.initErr
+	}
 	var query string
 	if r.UseDollarParam {
 		query = fmt.Sprintf("DELETE FROM %s WHERE correlation_key = $1", r.tableName)

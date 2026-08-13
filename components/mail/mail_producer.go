@@ -75,6 +75,15 @@ func (p *MailProducer) Send(exchange *gocamel.Exchange) error {
 func (p *MailProducer) buildMessage(from, to, cc, subject, contentType string, body []byte, exchange *gocamel.Exchange) ([]byte, error) {
 	var buf bytes.Buffer
 
+	// Headers are written verbatim into the message text, so any CR or LF in a
+	// header value would let an attacker inject arbitrary SMTP headers. Strip
+	// them before writing (SECURITY).
+	from = sanitizeHeaderValue(from)
+	to = sanitizeHeaderValue(to)
+	cc = sanitizeHeaderValue(cc)
+	subject = sanitizeHeaderValue(subject)
+	contentType = sanitizeHeaderValue(contentType)
+
 	// Required headers
 	fmt.Fprintf(&buf, "From: %s\r\n", from)
 	if to != "" {
@@ -107,7 +116,7 @@ func (p *MailProducer) buildMessage(from, to, cc, subject, contentType string, b
 		for name, data := range attachments {
 			fmt.Fprintf(&buf, "--%s\r\n", boundary)
 			fmt.Fprintf(&buf, "Content-Type: application/octet-stream\r\n")
-			fmt.Fprintf(&buf, "Content-Disposition: attachment; filename=\"%s\"\r\n", name)
+			fmt.Fprintf(&buf, "Content-Disposition: attachment; filename=\"%s\"\r\n", sanitizeHeaderValue(name))
 			fmt.Fprintf(&buf, "Content-Transfer-Encoding: base64\r\n\r\n")
 
 			encoded := base64.StdEncoding.EncodeToString(data)
@@ -284,6 +293,21 @@ func getMailHeader(exchange *gocamel.Exchange, header, defaultVal string) string
 		}
 	}
 	return defaultVal
+}
+
+// sanitizeHeaderValue strips carriage returns and line feeds from a value that
+// is about to be written into an SMTP message header, preventing header
+// injection (SECURITY).
+func sanitizeHeaderValue(v string) string {
+	if !strings.ContainsAny(v, "\r\n") {
+		return v
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' {
+			return -1
+		}
+		return r
+	}, v)
 }
 
 func parseAddresses(s string) []string {

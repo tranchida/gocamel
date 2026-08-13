@@ -117,8 +117,8 @@ func TestSQLStoredProducer_ProcedureHeaderOverride(t *testing.T) {
 	comp := NewSQLStoredComponent()
 	comp.RegisterDataSource("testdb", db)
 
-	// Create endpoint with one procedure name
-	uri := "sql-stored://testdb?procedure=sp_endpoint_procedure&noop=true"
+	// Create endpoint with one procedure name and header override enabled
+	uri := "sql-stored://testdb?procedure=sp_endpoint_procedure&noop=true&allowHeaderOverride=true"
 	endpoint, err := comp.CreateEndpoint(uri)
 	require.NoError(t, err)
 
@@ -139,6 +139,49 @@ func TestSQLStoredProducer_ProcedureHeaderOverride(t *testing.T) {
 	result, ok := exchange.GetOut().GetBody().(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "sp_header_procedure", result["procedure"])
+}
+
+func TestSQLStoredProducer_HeaderIgnoredWithoutOptIn(t *testing.T) {
+	db := newTestDB(t)
+	comp := NewSQLStoredComponent()
+	comp.RegisterDataSource("testdb", db)
+
+	// allowHeaderOverride defaults to false: the header must be ignored.
+	uri := "sql-stored://testdb?procedure=sp_endpoint_procedure&noop=true"
+	endpoint, err := comp.CreateEndpoint(uri)
+	require.NoError(t, err)
+
+	producer, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	exchange := NewExchange(context.Background())
+	exchange.GetIn().SetHeader(SqlStoredProcedureName, "sp_attacker")
+	err = producer.Send(exchange)
+	require.NoError(t, err)
+
+	result, ok := exchange.GetOut().GetBody().(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "sp_endpoint_procedure", result["procedure"])
+}
+
+func TestSQLStoredProducer_RejectsInvalidProcedureName(t *testing.T) {
+	db := newTestDB(t)
+	comp := NewSQLStoredComponent()
+	comp.RegisterDataSource("testdb", db)
+
+	// Even with header override enabled, a malicious name must be rejected.
+	uri := "sql-stored://testdb?procedure=sp_test&noop=true&allowHeaderOverride=true"
+	endpoint, err := comp.CreateEndpoint(uri)
+	require.NoError(t, err)
+
+	producer, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	exchange := NewExchange(context.Background())
+	exchange.GetIn().SetHeader(SqlStoredProcedureName, "sp_test; DROP TABLE users; --")
+	err = producer.Send(exchange)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid stored procedure name")
 }
 
 func TestSQLStoredEndpoint_ConsumerNotSupported(t *testing.T) {

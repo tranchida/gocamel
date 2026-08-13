@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,16 +13,33 @@ import (
 // SqlStoredProcedureName is the header key for the stored procedure name.
 const SqlStoredProcedureName = "CamelSqlStoredProcedureName"
 
+// storedProcedureNamePattern is the allowlist for stored procedure identifiers.
+// Procedure names are spliced into a CALL statement and cannot be bound as a
+// parameter, so they must be a strict identifier (optionally schema-qualified).
+var storedProcedureNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+
+// validateStoredProcedureName rejects procedure names that are not a plain
+// identifier (optionally schema-qualified with dots). This is the SQL-injection
+// boundary for the sql-stored component, where the name is interpolated into
+// the CALL statement text.
+func validateStoredProcedureName(procedure string) error {
+	if procedure == "" || !storedProcedureNamePattern.MatchString(procedure) {
+		return fmt.Errorf("invalid stored procedure name: %q", procedure)
+	}
+	return nil
+}
+
 // SQLStoredEndpoint represents a configured stored procedure endpoint.
 // Full implementation with methods will be in Task 3.
 type SQLStoredEndpoint struct {
-	uri        string
-	name       string
-	procedure  string
-	outputType SQLOutputType
-	transacted bool
-	noop       bool
-	db         *sql.DB
+	uri                 string
+	name                string
+	procedure           string
+	outputType          SQLOutputType
+	transacted          bool
+	noop                bool
+	allowHeaderOverride bool
+	db                  *sql.DB
 }
 
 // URI returns the endpoint URI.
@@ -106,10 +124,15 @@ func (c *SQLStoredComponent) lookup(name string) (*sql.DB, bool) {
 //
 // Optional options:
 //
-//	dataSourceRef  Reference to a datasource name (overrides URI host)
-//	outputType     SelectList (default) or SelectOne
-//	transacted     true to wrap procedure call in transaction (default: false)
-//	noop           true to consume message without calling procedure (default: false)
+//	dataSourceRef       Reference to a datasource name (overrides URI host)
+//	outputType          SelectList (default) or SelectOne
+//	transacted          true to wrap procedure call in transaction (default: false)
+//	noop                true to consume message without calling procedure (default: false)
+//	allowHeaderOverride true to honor the CamelSqlStoredProcedureName header
+//	                    (default: false). SECURITY: when enabled the header is
+//	                    attacker-controlled if the exchange carries untrusted
+//	                    headers (e.g. HTTP), so it is validated against a strict
+//	                    identifier allowlist and never interpolated.
 func (c *SQLStoredComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -130,6 +153,9 @@ func (c *SQLStoredComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	procedure := GetConfigValue(u, "procedure")
 	if procedure == "" {
 		return nil, fmt.Errorf("required option 'procedure' missing in sql-stored URI: %s", uri)
+	}
+	if err := validateStoredProcedureName(procedure); err != nil {
+		return nil, fmt.Errorf("invalid sql-stored URI: %w", err)
 	}
 
 	db, ok := c.lookup(name)
@@ -156,14 +182,22 @@ func (c *SQLStoredComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 
+	allowHeaderOverride := false
+	if v := GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
 	return &SQLStoredEndpoint{
-		uri:        uri,
-		name:       name,
-		procedure:  procedure,
-		outputType: outputType,
-		transacted: transacted,
-		noop:       noop,
-		db:         db,
+		uri:                 uri,
+		name:                name,
+		procedure:           procedure,
+		outputType:          outputType,
+		transacted:          transacted,
+		noop:                noop,
+		allowHeaderOverride: allowHeaderOverride,
+		db:                  db,
 	}, nil
 }
 
@@ -180,16 +214,25 @@ func (p *SQLStoredProducer) Stop() error { return nil }
 
 // Send executes the stored procedure with the given exchange.
 func (p *SQLStoredProducer) Send(exchange *Exchange) error {
-	// Get procedure name from endpoint or header
+	// The procedure name defaults to the trusted URI configuration. The header
+	// is only honored when the endpoint opted in with allowHeaderOverride, so
+	// an untrusted exchange cannot smuggle a procedure name by default.
 	procedure := p.endpoint.procedure
-	if v, ok := exchange.GetIn().GetHeader(SqlStoredProcedureName); ok {
-		if s, ok := v.(string); ok && s != "" {
-			procedure = s
+	if p.endpoint.allowHeaderOverride {
+		if v, ok := exchange.GetIn().GetHeader(SqlStoredProcedureName); ok {
+			if s, ok := v.(string); ok && s != "" {
+				procedure = s
+			}
 		}
 	}
 
-	// Interpolate procedure name
-	procedure = Interpolate(procedure, exchange)
+	// The procedure name is an identifier spliced into the CALL statement text:
+	// it is never interpolated with exchange data (which would allow SQL via
+	// ${body}/${header.X}), and it is validated against a strict identifier
+	// allowlist before use.
+	if err := validateStoredProcedureName(procedure); err != nil {
+		return err
+	}
 
 	// Get context from exchange or create Background
 	ctx := exchange.Context

@@ -59,6 +59,13 @@ func ValidateRemotePath(path string) error {
 //
 // Only ';' characters that fall OUTSIDE string literals are considered, so a
 // semicolon inside a quoted value does not trip the check.
+//
+// IMPORTANT: this is NOT a security boundary. When an endpoint opts in with
+// allowHeaderOverride=true, the CamelSqlQuery header replaces the statement
+// wholesale and is fully attacker-controlled if the exchange carries untrusted
+// headers: a single data-modifying statement such as "DELETE FROM users" passes
+// this check unchanged. The real boundary is the opt-in flag, which defaults to
+// false — do not enable it where headers can be influenced by untrusted input.
 func validateSQLQuery(query string) error {
 	if hasNonTrailingSemicolonOutsideStrings(query) {
 		return fmt.Errorf("query contains stacked SQL statements: %s", query)
