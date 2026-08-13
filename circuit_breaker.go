@@ -109,8 +109,11 @@ func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 	}
 	cb.mu.Unlock()
 
-	// Try to execute the main processor
-	err := cb.processor.Process(exchange)
+	// Try to execute the main processor. safeProcess turns a panic in the
+	// protected processor into an error so the post-call bookkeeping below
+	// (which clears halfOpenProbe) always runs — otherwise a panic would leave
+	// the breaker stuck in Half-Open diverting every request to the fallback.
+	err := safeProcess(func() error { return cb.processor.Process(exchange) })
 
 	cb.mu.Lock()
 	if state == StateHalfOpen {

@@ -128,8 +128,11 @@ func (p *ChanProducer) Send(exchange *Exchange) error {
 		ctx = context.Background()
 	}
 
-	// We copy the exchange to decouple the sender from downstream updates
-	copy := exchange.Copy()
+	// Deep-copy the exchange: the consumer runs on its own goroutine and may
+	// mutate the body/headers concurrently with the sender. A shallow Copy()
+	// would share mutable bodies ([]byte, map, ...) between the two goroutines
+	// — a data race. DeepCopy duplicates the common mutable container types.
+	copy := exchange.DeepCopy()
 
 	select {
 	case p.endpoint.queue <- copy:

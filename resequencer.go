@@ -136,6 +136,22 @@ func (r *Resequencer) onTimeout(gen uint64) {
 	}
 }
 
+// Stop cancels the pending completion timer so no callback fires after the
+// route has stopped (and its downstream producers are gone). The timer
+// generation is advanced so an already-in-flight callback observes a mismatch
+// and returns without delivering. Buffered exchanges that have not yet reached
+// their sequence are intentionally not flushed.
+func (r *Resequencer) Stop() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.timerGen++
+	if r.timer != nil {
+		r.timer.Stop()
+		r.timer = nil
+	}
+	return nil
+}
+
 // ResequencerDefinition provides a fluent API for configuring a Resequencer.
 type ResequencerDefinition struct {
 	parent      *RouteBuilder

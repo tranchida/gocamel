@@ -94,8 +94,16 @@ func (r *RoutingSlip) Process(exchange *Exchange) error {
 		exchange.SetProperty(CamelRoutingSlipSize, len(uris))
 		exchange.SetProperty(CamelRoutingSlipComplete, i == len(uris)-1)
 
-		processor := newLazyProducer(r.context, uri)
-		if err := processor.Process(exchange); err != nil {
+		// Resolve a started producer from the CamelContext producer cache
+		// (created once per URI, reused across messages, stopped with the
+		// context) instead of constructing a new lazyProducer per message, which
+		// leaked a producer (and its connection) on every slip step.
+		producer, err := r.context.GetProducer(uri)
+		if err != nil {
+			return fmt.Errorf("routing slip producer error for %s: %w", uri, err)
+		}
+		exchange.PropagateOutToIn()
+		if err := producer.Send(exchange); err != nil {
 			if errors.Is(err, ErrStopRouting) {
 				return err
 			}

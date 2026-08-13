@@ -60,6 +60,12 @@ func (p *LoadBalancerProcessor) AddProcessor(processor Processor) {
 	p.processors = append(p.processors, processor)
 }
 
+// childProcessors exposes the nested destination processors so the route can
+// wire completion timeouts for aggregators nested inside this load balancer.
+func (p *LoadBalancerProcessor) childProcessors() []Processor {
+	return p.processors
+}
+
 // Process implements the Processor interface.
 func (p *LoadBalancerProcessor) Process(exchange *Exchange) error {
 	p.mu.RLock()
@@ -112,7 +118,11 @@ func (d *LoadBalancerDefinition) Custom(strategy LoadBalancerStrategy) *LoadBala
 // To adds one or more destination endpoints to the load balancer.
 func (d *LoadBalancerDefinition) To(uris ...string) *LoadBalancerDefinition {
 	for _, uri := range uris {
-		d.loadBalancer.AddProcessor(newLazyProducer(d.parent.context, uri))
+		lp := newLazyProducer(d.parent.context, uri)
+		// Register the producer with the route so it is stopped at Route.Stop(),
+		// otherwise its underlying connection leaks for the lifetime of the process.
+		d.parent.route.lazyProducers = append(d.parent.route.lazyProducers, lp)
+		d.loadBalancer.AddProcessor(lp)
 	}
 	return d
 }

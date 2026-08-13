@@ -68,8 +68,10 @@ func (d *Delayer) Process(exchange *Exchange) error {
 		return nil
 	}
 
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
 	select {
-	case <-time.After(duration):
+	case <-timer.C:
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("delay: context cancelled: %w", ctx.Err())
