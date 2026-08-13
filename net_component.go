@@ -40,6 +40,9 @@ func NewNetComponent() *NetComponent {
 //   - bufferSize: maximum message size in bytes (default 8192)
 //   - timeout:    producer dial/reply timeout in ms (default 30000, 0 = none)
 //   - keepAlive:  TCP keepalive on connections (default false)
+//   - readTimeout: consumer read deadline in ms (default 60000, 0 = none).
+//     Bounds how long a connection may stay idle before it is closed, so a
+//     slowloris-style client cannot hold a goroutine open indefinitely.
 func (c *NetComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -52,13 +55,14 @@ func (c *NetComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	endpoint := &NetEndpoint{
-		uri:        uri,
-		protocol:   protocol,
-		address:    address,
-		sync:       true,
-		textline:   true,
-		bufferSize: 8192,
-		timeout:    30 * time.Second,
+		uri:         uri,
+		protocol:    protocol,
+		address:     address,
+		sync:        true,
+		textline:    true,
+		bufferSize:  8192,
+		timeout:     30 * time.Second,
+		readTimeout: 60 * time.Second,
 	}
 
 	if val := GetConfigValue(u, "sync"); val != "" {
@@ -94,6 +98,13 @@ func (c *NetComponent) CreateEndpoint(uri string) (Endpoint, error) {
 			endpoint.keepAlive = v
 		} else {
 			LogWarn("net: invalid keepAlive value; using default", "value", val, "default", endpoint.keepAlive)
+		}
+	}
+	if val := GetConfigValue(u, "readTimeout"); val != "" {
+		if v, err := strconv.ParseInt(val, 10, 64); err == nil && v >= 0 {
+			endpoint.readTimeout = time.Duration(v) * time.Millisecond
+		} else {
+			LogWarn("net: invalid readTimeout; using default", "value", val, "default", endpoint.readTimeout)
 		}
 	}
 
@@ -141,14 +152,15 @@ func netTarget(u *url.URL) (string, string, error) {
 
 // NetEndpoint represents a TCP or UDP endpoint.
 type NetEndpoint struct {
-	uri        string
-	protocol   string
-	address    string
-	sync       bool
-	textline   bool
-	bufferSize int
-	timeout    time.Duration
-	keepAlive  bool
+	uri         string
+	protocol    string
+	address     string
+	sync        bool
+	textline    bool
+	bufferSize  int
+	timeout     time.Duration
+	keepAlive   bool
+	readTimeout time.Duration
 }
 
 // URI returns the endpoint URI.
@@ -401,6 +413,14 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn) {
 		case <-c.stop:
 			return
 		default:
+		}
+
+		// Bound the idle time on each read so a client that opens a connection
+		// and then goes silent (slowloris) cannot pin a goroutine forever.
+		if c.endpoint.readTimeout > 0 {
+			if err := conn.SetReadDeadline(time.Now().Add(c.endpoint.readTimeout)); err != nil {
+				return
+			}
 		}
 
 		var msg []byte

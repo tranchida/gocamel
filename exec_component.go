@@ -45,6 +45,19 @@ func validateExecPath(executable string) error {
 	return nil
 }
 
+// validateExecOverride applies an extra restriction to an executable taken from
+// the CamelExecCommandExecutable header: only a bare command name (resolved via
+// PATH) is allowed, never a path. The endpoint URI can legitimately pin an
+// absolute path like /usr/bin/ffmpeg, but a header-controlled executable must
+// not — combined with attacker-chosen args, an absolute path (e.g. /bin/sh)
+// would turn allowHeaderOverride into arbitrary command execution.
+func validateExecOverride(executable string) error {
+	if strings.ContainsAny(executable, "/\\") {
+		return fmt.Errorf("executable from header must be a bare command name (no path): %s", executable)
+	}
+	return nil
+}
+
 // validateExecArgs validates command arguments.
 //
 // Arguments are passed to exec.CommandContext, which invokes the executable
@@ -87,7 +100,8 @@ func NewExecComponent() *ExecComponent {
 // timeout are fixed by the URI. Set allowHeaderOverride=true to let the
 // CamelExecCommand* headers override them per message — only do this when
 // headers cannot be influenced by untrusted input (they would allow running
-// an arbitrary binary).
+// an arbitrary binary). When enabled, the executable may only be a bare
+// command name, never a path (see validateExecOverride).
 func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	parsedURL, err := ParseURI(uri)
 	if err != nil {
@@ -189,10 +203,12 @@ func (p *ExecProducer) Stop() error {
 func (p *ExecProducer) Send(exchange *Exchange) error {
 	// Executable resolution (header > URI, when allowHeaderOverride is set)
 	executable := p.endpoint.executable
+	fromHeader := false
 	if p.endpoint.allowHeaderOverride {
 		if v, ok := exchange.GetHeader(CamelExecCommandExecutable); ok {
 			if s, ok := v.(string); ok && s != "" {
 				executable = s
+				fromHeader = true
 			}
 		}
 	}
@@ -200,6 +216,11 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 	// Security: validate executable path
 	if err := validateExecPath(executable); err != nil {
 		return fmt.Errorf("exec: invalid executable: %w", err)
+	}
+	if fromHeader {
+		if err := validateExecOverride(executable); err != nil {
+			return fmt.Errorf("exec: %w", err)
+		}
 	}
 
 	// Arguments resolution (header > URI, when allowHeaderOverride is set)

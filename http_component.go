@@ -42,6 +42,16 @@ func isHopByHopHeader(key string) bool {
 	return hopByHopHeaders[http.CanonicalHeaderKey(key)]
 }
 
+// authorizationHeaders are request headers that carry a client's credentials
+// (cookie, bearer token). When the HTTP producer is configured with
+// SetSkipAuthorizationHeaders(true), these are not forwarded to the upstream,
+// so a producer sitting downstream of the HTTP consumer does not leak a
+// client's credentials to a third-party upstream.
+var authorizationHeaders = map[string]bool{
+	"Authorization": true,
+	"Cookie":        true,
+}
+
 // HTTPComponent represents the HTTP component.
 //
 // The optional consumer-side Middleware is applied to every incoming request
@@ -49,10 +59,11 @@ func isHopByHopHeader(key string) bool {
 // TLS termination, rate limiting, or request logging — features the HTTP
 // consumer does not provide out of the box.
 type HTTPComponent struct {
-	client                  *http.Client
-	middleware              func(http.Handler) http.Handler
-	maxBodySize             int64
-	throwExceptionOnFailure bool
+	client                   *http.Client
+	middleware               func(http.Handler) http.Handler
+	maxBodySize              int64
+	throwExceptionOnFailure  bool
+	skipAuthorizationHeaders bool
 }
 
 // NewHTTPComponent creates a new HTTPComponent instance with default timeouts.
@@ -98,6 +109,15 @@ func (c *HTTPComponent) SetThrowExceptionOnFailure(v bool) {
 	c.throwExceptionOnFailure = v
 }
 
+// SetSkipAuthorizationHeaders controls whether the producer strips
+// Authorization and Cookie headers before sending. Disabled by default to
+// preserve the ability to call an authenticated upstream; enable it when the
+// producer sits downstream of the HTTP consumer so a client's credentials are
+// not forwarded to a third-party upstream.
+func (c *HTTPComponent) SetSkipAuthorizationHeaders(v bool) {
+	c.skipAuthorizationHeaders = v
+}
+
 // CreateEndpoint creates a new HTTP endpoint
 func (c *HTTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	if _, err := ParseURI(uri); err != nil {
@@ -105,21 +125,23 @@ func (c *HTTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	return &HTTPEndpoint{
-		uri:                     uri,
-		client:                  c.client,
-		middleware:              c.middleware,
-		maxBodySize:             c.maxBodySize,
-		throwExceptionOnFailure: c.throwExceptionOnFailure,
+		uri:                      uri,
+		client:                   c.client,
+		middleware:               c.middleware,
+		maxBodySize:              c.maxBodySize,
+		throwExceptionOnFailure:  c.throwExceptionOnFailure,
+		skipAuthorizationHeaders: c.skipAuthorizationHeaders,
 	}, nil
 }
 
 // HTTPEndpoint represents an HTTP endpoint
 type HTTPEndpoint struct {
-	uri                     string
-	client                  *http.Client
-	middleware              func(http.Handler) http.Handler
-	maxBodySize             int64
-	throwExceptionOnFailure bool
+	uri                      string
+	client                   *http.Client
+	middleware               func(http.Handler) http.Handler
+	maxBodySize              int64
+	throwExceptionOnFailure  bool
+	skipAuthorizationHeaders bool
 }
 
 // URI returns the endpoint URI
@@ -130,10 +152,11 @@ func (e *HTTPEndpoint) URI() string {
 // CreateProducer creates an HTTP producer
 func (e *HTTPEndpoint) CreateProducer() (Producer, error) {
 	return &HTTPProducer{
-		uri:                     e.uri,
-		client:                  e.client,
-		maxBodySize:             e.maxBodySize,
-		throwExceptionOnFailure: e.throwExceptionOnFailure,
+		uri:                      e.uri,
+		client:                   e.client,
+		maxBodySize:              e.maxBodySize,
+		throwExceptionOnFailure:  e.throwExceptionOnFailure,
+		skipAuthorizationHeaders: e.skipAuthorizationHeaders,
 	}, nil
 }
 
@@ -149,10 +172,11 @@ func (e *HTTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 
 // HTTPProducer represents an HTTP producer
 type HTTPProducer struct {
-	uri                     string
-	client                  *http.Client
-	maxBodySize             int64
-	throwExceptionOnFailure bool
+	uri                      string
+	client                   *http.Client
+	maxBodySize              int64
+	throwExceptionOnFailure  bool
+	skipAuthorizationHeaders bool
 }
 
 // Start starts the HTTP producer
@@ -199,6 +223,9 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 		if isHopByHopHeader(key) {
 			continue
 		}
+		if p.skipAuthorizationHeaders && authorizationHeaders[http.CanonicalHeaderKey(key)] {
+			continue
+		}
 		if strValue, ok := value.(string); ok {
 			if err := setSafeHTTPHeader(req.Header, key, strValue); err != nil {
 				return fmt.Errorf("error setting HTTP request header: %w", err)
@@ -215,7 +242,7 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 
 	// Reading the response body, bounded so a hostile or malfunctioning
 	// upstream cannot exhaust memory.
-	body, err := readLimited(resp.Body, p.maxBodySize)
+	body, err := ReadLimited(resp.Body, p.maxBodySize)
 	if err != nil {
 		return fmt.Errorf("error reading HTTP response: %w", err)
 	}
@@ -245,9 +272,11 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 // populated on the Out message.
 var ErrHTTPStatus = errors.New("http status error")
 
-// readLimited reads at most max bytes from r, returning an error if the source
-// has more to give. max <= 0 disables the limit.
-func readLimited(r io.Reader, max int64) ([]byte, error) {
+// ReadLimited reads at most max bytes from r, returning an error if the source
+// has more to give. max <= 0 disables the limit. It is the shared bound for
+// every component that reads a remote body (HTTP, mail, FTP, SFTP, SMB) so a
+// hostile or oversized payload cannot exhaust process memory.
+func ReadLimited(r io.Reader, max int64) ([]byte, error) {
 	if max <= 0 {
 		return io.ReadAll(r)
 	}
@@ -364,7 +393,12 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			if !ok {
 				continue
 			}
-			if prev, echoed := requestHeaders[key]; echoed && prev == strValue {
+			// Compare canonically: SetHeader does not canonicalize keys, so a
+			// route that re-sets a header under a non-canonical key
+			// (e.g. "authorization" vs the "Authorization" recorded in
+			// requestHeaders) must still be recognized as unchanged rather than
+			// bypassing the echo guard and leaking the credential.
+			if prev, echoed := requestHeaders[http.CanonicalHeaderKey(key)]; echoed && prev == strValue {
 				continue
 			}
 			if err := setSafeHTTPHeader(w.Header(), key, strValue); err != nil {
@@ -404,6 +438,12 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		Handler: handler,
 		// Bound the time a client may take to send its headers (slowloris).
 		ReadHeaderTimeout: 10 * time.Second,
+		// Bound the total time to read the whole request (headers + body) and
+		// the idle time of a keep-alive connection, so a client that sends its
+		// headers promptly then trickles the body cannot pin a handler
+		// goroutine (and its MaxBytesReader) open indefinitely (slow body DoS).
+		ReadTimeout: 60 * time.Second,
+		IdleTimeout: 60 * time.Second,
 		// BaseContext ties every inbound request to the consumer's parent ctx
 		// so that CamelContext.Stop() cancels in-flight requests.
 		BaseContext: func(net.Listener) context.Context { return ctx },
