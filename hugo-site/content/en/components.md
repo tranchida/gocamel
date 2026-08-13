@@ -103,12 +103,13 @@ builder.To("ftp://host:21/outgoing?binary=true")
 - `FTP_USERNAME` - Username
 - `FTP_PASSWORD` - Password
 
-| Option        | Type   | Default | Description          |
-|---------------|--------|---------|----------------------|
-| `username`    | string | `""`    | FTP username         |
-| `password`    | string | `""`    | FTP password         |
-| `binary`      | bool   | `true`  | Binary transfer mode |
-| `passiveMode` | bool   | `true`  | Use passive mode     |
+| Option           | Type   | Default | Description                                        |
+|------------------|--------|---------|----------------------------------------------------|
+| `username`       | string | `""`    | FTP username                                       |
+| `password`       | string | `""`    | FTP password                                       |
+| `binary`         | bool   | `true`  | Binary transfer mode                               |
+| `passiveMode`    | bool   | `true`  | Use passive mode                                   |
+| `maxMessageSize` | int    | `0`     | Max bytes a polled file may hold (0 = unlimited)   |
 
 ---
 
@@ -131,6 +132,7 @@ builder.From("sftp://host:22/data?username=scott")
 | `password`             | string | `""`    | SSH password           |
 | `privateKeyFile`       | string | `""`    | Path to private key    |
 | `privateKeyPassphrase` | string | `""`    | Private key passphrase |
+| `maxMessageSize`       | int    | `0`     | Max bytes a polled file may hold (0 = unlimited) |
 
 ---
 
@@ -142,11 +144,12 @@ Windows/Samba share access.
 builder.From("smb://server/share/folder?username=user")
 ```
 
-| Option     | Type   | Default  | Description     |
-|------------|--------|----------|-----------------|
-| `username` | string | `""`     | Domain username |
-| `password` | string | `""`     | Domain password |
-| `share`    | string | required | Share name      |
+| Option           | Type   | Default  | Description                                        |
+|------------------|--------|----------|----------------------------------------------------|
+| `username`       | string | `""`     | Domain username                                    |
+| `password`       | string | `""`     | Domain password                                    |
+| `share`          | string | required | Share name                                         |
+| `maxMessageSize` | int    | `0`      | Max bytes a polled file may hold (0 = unlimited)   |
 
 ---
 
@@ -225,6 +228,20 @@ The same hop-by-hop filter applies to the producer, so a `From(http://...)`
 → `To(http://...)` bridge does not forward the inbound `Content-Length` or
 `Host` to the upstream.
 
+The producer forwards every other inbound header by default, including
+`Cookie` and `Authorization` — the normal behaviour for a generic HTTP client
+that calls an authenticated upstream. In a proxy/bridge scenario where that
+would leak a downstream client's credentials to a third-party upstream, strip
+them explicitly:
+
+```go
+http := gocamel.NewHTTPComponent()
+http.SetSkipAuthorizationHeaders(true)
+```
+
+When enabled, `Authorization` and `Cookie` are dropped from every outbound
+request produced by this component.
+
 #### Response status
 
 A route sets the status code with the `CamelHttpResponseCode` header on the
@@ -266,8 +283,9 @@ The producer also sets `CamelHttpResponseCode` (int) and
 
 #### Hardening
 
-- The embedded server sets a 10-second `ReadHeaderTimeout` to mitigate
-  slowloris-style attacks.
+- The embedded server sets a 10-second `ReadHeaderTimeout` (slow header
+  attacks), a 60-second `ReadTimeout` (slow body attacks) and a 60-second
+  `IdleTimeout` (idle keep-alive connections).
 - Request and response bodies are read through a size limit —
   `DefaultMaxBodySize` (32 MiB) — so a single oversized payload cannot exhaust
   process memory (CWE-400). An oversized request is answered with
@@ -315,6 +333,7 @@ builder.To("net:tcp://localhost:9090")
 | `bufferSize` | int    | `8192`   | Maximum message/datagram size in bytes         |
 | `timeout`    | int    | `30000`  | Producer dial/reply timeout in ms (0 = none)   |
 | `keepAlive`  | bool   | `false`  | TCP keepalive on connections                   |
+| `readTimeout`| int    | `60000`  | Consumer read deadline in ms (0 = none)        |
 
 **URI forms** — both `net:tcp://host:port` and `net:tcp:host:port` are
 accepted; the same applies to `udp`. An omitted host defaults to `localhost`.
@@ -348,6 +367,9 @@ builder.From("net:tcp://localhost:9090").
 - The producer's reply read in sync mode is bounded by `bufferSize` and by
   the `timeout` read deadline, so a silent peer cannot hang the route
   forever.
+- The consumer sets a `readTimeout` (default 60 s) on each connection so a
+  slowloris-style client cannot pin a goroutine open indefinitely; set it to
+  `0` to disable.
 - Panics in route processors are contained (`ProcessSafely`): a misbehaving
   route fails its exchange, never the consumer.
 
@@ -604,16 +626,17 @@ Receive emails via IMAP with IDLE support.
 builder.From("imaps://imap.gmail.com:993?folderName=INBOX&idle=true")
 ```
 
-| Option       | Type   | Default   | Description             |
-|--------------|--------|-----------|-------------------------|
-| `username`   | string | `""`      | IMAP username           |
-| `password`   | string | `""`      | IMAP password           |
-| `folderName` | string | `"INBOX"` | Folder to poll          |
-| `unseen`     | bool   | `true`    | Only unread messages    |
-| `idle`       | bool   | `false`   | Use IMAP IDLE mode      |
-| `delete`     | bool   | `false`   | Delete after processing |
-| `fetchSize`  | int    | `-1`      | Messages per poll       |
-| `pollDelay`  | int    | `60000`   | Poll interval (ms)      |
+| Option           | Type   | Default   | Description             |
+|------------------|--------|-----------|-------------------------|
+| `username`       | string | `""`      | IMAP username           |
+| `password`       | string | `""`      | IMAP password           |
+| `folderName`     | string | `"INBOX"` | Folder to poll          |
+| `unseen`         | bool   | `true`    | Only unread messages    |
+| `idle`           | bool   | `false`   | Use IMAP IDLE mode      |
+| `delete`         | bool   | `false`   | Delete after processing |
+| `fetchSize`      | int    | `-1`      | Messages per poll       |
+| `pollDelay`      | int    | `60000`   | Poll interval (ms)      |
+| `maxMessageSize` | int    | `0`       | Max message size in bytes (0 = unlimited) |
 
 ---
 
@@ -624,6 +647,9 @@ Receive emails via POP3.
 ```go
 builder.From("pop3s://pop.gmail.com:995?username=user&password=pass")
 ```
+
+The POP3 consumer honours the same `maxMessageSize` option as IMAP (default
+`0` = unlimited) to bound the size of a downloaded message.
 
 ---
 
@@ -763,13 +789,22 @@ sql-stored://datasourceName?procedure=NAME
 sql-stored://logical?dataSourceRef=dsName&procedure=NAME
 ```
 
-| Option          | Type   | Default      | Description                 |
-|-----------------|--------|--------------|-----------------------------|
-| `procedure`     | string | required     | Stored procedure name       |
-| `dataSourceRef` | string | host path    | Datasource name             |
-| `outputType`    | string | `SelectList` | `SelectList` or `SelectOne` |
-| `transacted`    | bool   | `false`      | Execute in transaction      |
-| `noop`          | bool   | `false`      | Test mode (no execution)    |
+| Option                | Type   | Default      | Description                                            |
+|-----------------------|--------|--------------|--------------------------------------------------------|
+| `procedure`           | string | required     | Stored procedure name                                  |
+| `dataSourceRef`       | string | host path    | Datasource name                                        |
+| `outputType`          | string | `SelectList` | `SelectList` or `SelectOne`                            |
+| `transacted`          | bool   | `false`      | Execute in transaction                                 |
+| `noop`                | bool   | `false`      | Test mode (no execution)                               |
+| `allowHeaderOverride` | bool   | `false`      | Allow `CamelSqlStoredProcedureName` to replace the name |
+
+> [!caution] Procedure name is a trusted identifier
+> The procedure name is spliced into the `CALL` statement and is **never**
+> interpolated with exchange data. The `CamelSqlStoredProcedureName` header is
+> ignored unless the endpoint opts in with `allowHeaderOverride=true`; when it
+> is enabled, the header value is validated against a strict identifier pattern
+> (`[A-Za-z_][A-Za-z0-9_.]*`). Only enable the override where headers cannot be
+> influenced by untrusted input.
 
 **Parameter Directions:**
 
@@ -976,7 +1011,10 @@ When `allowHeaderOverride=true`, these headers override the URI settings for a s
 > HTTP or mail consumer).
 >
 > The **executable** and the **working directory** are validated against shell
-> metacharacters and path traversal. **Arguments are not**: commands run
+> metacharacters and path traversal. A header-supplied executable must
+> additionally be a **bare command name** (no path) — it is resolved via `PATH`,
+> never an absolute path — so an attacker cannot smuggle `/bin/sh` plus
+> arbitrary arguments. **Arguments are not validated**: commands run
 > through `execve` without a shell, so `|`, `&`, `$`, `<` and `>` carry no
 > special meaning and reach the child process verbatim — which is the intent.
 > Rejecting them blocked legitimate values (a JSON document, a password

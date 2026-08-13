@@ -104,12 +104,13 @@ builder.To("ftp://host:21/outgoing?binary=true")
 - `FTP_USERNAME` - Nom d'utilisateur
 - `FTP_PASSWORD` - Mot de passe
 
-| Option        | Type   | Défaut | Description           |
-|---------------|--------|--------|-----------------------|
-| `username`    | string | `""`   | Nom d'utilisateur FTP |
-| `password`    | string | `""`   | Mot de passe FTP      |
-| `binary`      | bool   | `true` | Mode de transfert binaire |
-| `passiveMode` | bool   | `true` | Utiliser le mode passif |
+| Option           | Type   | Défaut | Description                                        |
+|------------------|--------|--------|----------------------------------------------------|
+| `username`       | string | `""`   | Nom d'utilisateur FTP                              |
+| `password`       | string | `""`   | Mot de passe FTP                                   |
+| `binary`         | bool   | `true` | Mode de transfert binaire                          |
+| `passiveMode`    | bool   | `true` | Utiliser le mode passif                            |
+| `maxMessageSize` | int    | `0`    | Taille max d'un fichier pollé en octets (0 = illimité) |
 
 ---
 
@@ -132,6 +133,7 @@ builder.From("sftp://host:22/data?username=scott")
 | `password`             | string | `""`   | Mot de passe SSH         |
 | `privateKeyFile`       | string | `""`   | Chemin vers la clé privée |
 | `privateKeyPassphrase` | string | `""`   | Phrase secrète de la clé privée |
+| `maxMessageSize`       | int    | `0`    | Taille max d'un fichier pollé en octets (0 = illimité) |
 
 ---
 
@@ -143,11 +145,12 @@ Accès aux partages Windows/Samba.
 builder.From("smb://server/share/folder?username=user")
 ```
 
-| Option     | Type   | Défaut    | Description           |
-|------------|--------|-----------|-----------------------|
-| `username` | string | `""`      | Nom d'utilisateur du domaine |
-| `password` | string | `""`      | Mot de passe du domaine |
-| `share`    | string | requis    | Nom du partage        |
+| Option           | Type   | Défaut    | Description                                        |
+|------------------|--------|-----------|----------------------------------------------------|
+| `username`       | string | `""`      | Nom d'utilisateur du domaine                       |
+| `password`       | string | `""`      | Mot de passe du domaine                            |
+| `share`          | string | requis    | Nom du partage                                     |
+| `maxMessageSize` | int    | `0`       | Taille max d'un fichier pollé en octets (0 = illimité) |
 
 ---
 
@@ -227,6 +230,20 @@ Le même filtre s'applique au producer : un pont `From(http://...)` →
 `To(http://...)` ne transmet donc pas le `Content-Length` ni le `Host` entrants
 au service amont.
 
+Le producer transmet par défaut tous les autres headers entrants, y compris
+`Cookie` et `Authorization` — le comportement normal d'un client HTTP générique
+qui appelle un service amont authentifié. Dans un scénario de pont/proxy où cela
+fuirait les identifiants d'un client vers un amont tiers, supprimez-les
+explicitement :
+
+```go
+http := gocamel.NewHTTPComponent()
+http.SetSkipAuthorizationHeaders(true)
+```
+
+Une fois activée, `Authorization` et `Cookie` sont retirés de toute requête
+sortante produite par ce composant.
+
 #### Statut de la réponse
 
 Une route fixe le code de statut via le header `CamelHttpResponseCode` sur le
@@ -268,8 +285,9 @@ Le producer renseigne également `CamelHttpResponseCode` (int) et
 
 #### Durcissement
 
-- Le serveur embarqué définit un `ReadHeaderTimeout` de 10 secondes pour limiter
-  les attaques de type slowloris.
+- Le serveur embarqué définit un `ReadHeaderTimeout` de 10 secondes (attaques
+  d'en-têtes lents), un `ReadTimeout` de 60 secondes (attaques de corps lents)
+  et un `IdleTimeout` de 60 secondes (connexions keep-alive inactives).
 - Les corps de requête et de réponse sont lus au travers d'une limite de taille
   — `DefaultMaxBodySize` (32 Mio) — afin qu'une charge utile surdimensionnée ne
   puisse pas épuiser la mémoire du processus (CWE-400). Une requête trop
@@ -319,6 +337,7 @@ builder.To("net:tcp://localhost:9090")
 | `bufferSize` | int    | `8192`  | Taille maximale d'un message/datagramme en octets |
 | `timeout`    | int    | `30000` | Délai d'attente de connexion/réponse du producer en ms (0 = aucun) |
 | `keepAlive`  | bool   | `false` | Keepalive TCP sur les connexions                 |
+| `readTimeout`| int    | `60000` | Délai de lecture du consumer en ms (0 = aucun)    |
 
 **Formes d'URI** — `net:tcp://hôte:port` et `net:tcp:hôte:port` sont acceptées ;
 idem pour `udp`. Un hôte omis prend la valeur `localhost`. Le port `0` demande
@@ -353,6 +372,9 @@ builder.From("net:tcp://localhost:9090").
 - La lecture de la réponse du producer en mode sync est bornée par
   `bufferSize` et par le délai `timeout`, afin qu'un pair muet ne puisse pas
   bloquer la route indéfiniment.
+- Le consumer fixe un `readTimeout` (défaut 60 s) sur chaque connexion afin
+  qu'un client de type slowloris ne puisse pas monopoliser une goroutine
+  indéfiniment ; mettez-le à `0` pour le désactiver.
 - Les paniques dans les processeurs de route sont contenues
   (`ProcessSafely`) : une route défectueuse échoue son exchange, jamais le
   consumer.
@@ -611,16 +633,17 @@ Réception d'emails via IMAP avec support IDLE.
 builder.From("imaps://imap.gmail.com:993?folderName=INBOX&idle=true")
 ```
 
-| Option       | Type   | Défaut   | Description               |
-|--------------|--------|----------|---------------------------|
-| `username`   | string | `""`     | Nom d'utilisateur IMAP    |
-| `password`   | string | `""`     | Mot de passe IMAP         |
-| `folderName` | string | `"INBOX"`| Dossier à surveiller      |
-| `unseen`     | bool   | `true`   | Messages non lus uniquement |
-| `idle`       | bool   | `false`  | Utiliser le mode IMAP IDLE |
-| `delete`     | bool   | `false`  | Supprimer après traitement |
-| `fetchSize`  | int    | `-1`     | Messages par interrogation |
-| `pollDelay`  | int    | `60000`  | Intervalle d'interrogation (ms) |
+| Option           | Type   | Défaut   | Description               |
+|------------------|--------|----------|---------------------------|
+| `username`       | string | `""`     | Nom d'utilisateur IMAP    |
+| `password`       | string | `""`     | Mot de passe IMAP         |
+| `folderName`     | string | `"INBOX"`| Dossier à surveiller      |
+| `unseen`         | bool   | `true`   | Messages non lus uniquement |
+| `idle`           | bool   | `false`  | Utiliser le mode IMAP IDLE |
+| `delete`         | bool   | `false`  | Supprimer après traitement |
+| `fetchSize`      | int    | `-1`     | Messages par interrogation |
+| `pollDelay`      | int    | `60000`  | Intervalle d'interrogation (ms) |
+| `maxMessageSize` | int    | `0`      | Taille max d'un message en octets (0 = illimité) |
 
 ---
 
@@ -631,6 +654,9 @@ Réception d'emails via POP3.
 ```go
 builder.From("pop3s://pop.gmail.com:995?username=user&password=pass")
 ```
+
+Le consumer POP3 accepte la même option `maxMessageSize` qu'IMAP (défaut `0` =
+illimité) pour borner la taille d'un message téléchargé.
 
 ---
 
@@ -772,13 +798,23 @@ sql-stored://datasourceName?procedure=NAME
 sql-stored://logical?dataSourceRef=dsName&procedure=NAME
 ```
 
-| Option          | Type   | Défaut       | Description                   |
-|-----------------|--------|--------------|-------------------------------|
-| `procedure`     | string | requis       | Nom de la procédure stockée   |
-| `dataSourceRef` | string | chemin hôte  | Nom de la datasource          |
-| `outputType`    | string | `SelectList` | `SelectList` ou `SelectOne`   |
-| `transacted`    | bool   | `false`      | Exécuter dans une transaction |
-| `noop`          | bool   | `false`      | Mode test (pas d'exécution)   |
+| Option                | Type   | Défaut       | Description                                                  |
+|-----------------------|--------|--------------|--------------------------------------------------------------|
+| `procedure`           | string | requis       | Nom de la procédure stockée                                  |
+| `dataSourceRef`       | string | chemin hôte  | Nom de la datasource                                         |
+| `outputType`          | string | `SelectList` | `SelectList` ou `SelectOne`                                  |
+| `transacted`          | bool   | `false`      | Exécuter dans une transaction                                |
+| `noop`                | bool   | `false`      | Mode test (pas d'exécution)                                  |
+| `allowHeaderOverride` | bool   | `false`      | Autoriser `CamelSqlStoredProcedureName` à remplacer le nom   |
+
+> [!caution] Le nom de procédure est un identifiant de confiance
+> Le nom de procédure est inséré dans la requête `CALL` et n'est **jamais**
+> interpolé avec les données de l'exchange. Le header
+> `CamelSqlStoredProcedureName` est ignoré sauf si l'endpoint opte avec
+> `allowHeaderOverride=true` ; dans ce cas, la valeur est validée contre un
+> motif d'identifiant strict (`[A-Za-z_][A-Za-z0-9_.]*`). N'activez la
+> surcharge que là où les headers ne peuvent pas être influencés par une entrée
+> non fiable.
 
 **Directions des paramètres :**
 
@@ -986,7 +1022,10 @@ Quand `allowHeaderOverride=true`, ces headers surchargent les paramètres URI po
 > HTTP ou mail).
 >
 > L'**exécutable** et le **répertoire de travail** sont validés contre les
-> métacaractères shell et le path traversal. Les **arguments ne le sont
+> métacaractères shell et le path traversal. Un exécutable fourni par header
+> doit en outre être un **nom de commande simple** (sans chemin) — il est résolu
+> via `PATH`, jamais par un chemin absolu — afin qu'un attaquant ne puisse pas
+> injecter `/bin/sh` avec des arguments arbitraires. Les **arguments ne le sont
 > pas** : les commandes sont lancées via `execve`, sans shell, donc `|`, `&`,
 > `$`, `<` et `>` n'ont aucune signification particulière et parviennent
 > verbatim au processus fils — c'est précisément l'intention. Les rejeter
