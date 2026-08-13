@@ -77,6 +77,12 @@ func (l *LoopProcessor) AddProcessor(processor Processor) {
 	l.processors = append(l.processors, processor)
 }
 
+// childProcessors exposes the nested processors so the route can wire
+// completion timeouts for aggregators nested inside this loop.
+func (l *LoopProcessor) childProcessors() []Processor {
+	return l.processors
+}
+
 // Process runs the loop pipeline for the resolved number of times.
 // In accordance with standard Camel Loop EIP, it routes the same exchange
 // sequentially through the iterations (allowing updates to body/headers to carry over).

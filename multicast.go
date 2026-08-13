@@ -26,6 +26,12 @@ func (m *Multicast) AddProcessor(processor Processor) {
 	m.processors = append(m.processors, processor)
 }
 
+// childProcessors exposes the nested branch processors so the route can wire
+// completion timeouts for aggregators nested inside this multicast.
+func (m *Multicast) childProcessors() []Processor {
+	return m.processors
+}
+
 // SetAggregationStrategy sets the aggregation strategy for collecting results
 func (m *Multicast) SetAggregationStrategy(strategy AggregationStrategy) *Multicast {
 	m.AggregationStrategy = strategy

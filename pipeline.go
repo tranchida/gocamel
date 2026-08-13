@@ -19,6 +19,12 @@ func (p *Pipeline) AddProcessor(processor Processor) {
 	p.processors = append(p.processors, processor)
 }
 
+// childProcessors exposes the nested processors so the route can wire
+// completion timeouts for aggregators nested inside this pipeline.
+func (p *Pipeline) childProcessors() []Processor {
+	return p.processors
+}
+
 // Process executes all processors in sequence, propagating Out→In between steps.
 // Errors (including the ErrStopRouting control signal) are returned immediately.
 func (p *Pipeline) Process(exchange *Exchange) error {

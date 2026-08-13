@@ -147,7 +147,11 @@ func (lp *lazyProducer) Process(exchange *Exchange) error {
 			lp.mu.Unlock()
 			return err
 		}
-		if err := p.Start(exchange.Context); err != nil {
+		// Start with the CamelContext's lifecycle context, not the exchange's
+		// (which may be nil or a short-lived request context). The producer is
+		// a route-level resource stopped by Route.Stop, so it should observe the
+		// context shutdown like the producers in ProducerCache do.
+		if err := p.Start(lp.context.GetContext()); err != nil {
 			lp.mu.Unlock()
 			return err
 		}
@@ -439,27 +443,73 @@ func (r *Route) Stop() error {
 
 func (r *Route) configureAggregatorTimeouts(ctx context.Context) {
 	for i, processor := range r.processors {
-		aggregator, ok := processor.(*Aggregator)
-		if !ok || aggregator.CompletionTimeout <= 0 {
-			continue
+		r.wireAggregatorTimeouts(ctx, processor, i)
+	}
+}
+
+// childProcessorContainer is implemented by processors that nest other
+// processors (Pipeline, Multicast, Splitter, Loop, LoadBalancer, Choice). It
+// lets the route walk nested containers so completion timeouts are wired for
+// aggregators that are not top-level route processors (e.g. an aggregator
+// inside a Split).
+type childProcessorContainer interface {
+	childProcessors() []Processor
+}
+
+// wireAggregatorTimeouts wires the completion timeout for an aggregator found
+// at topIndex in the route's top-level pipeline, then recurses into any nested
+// container. A nested aggregator resumes at the route level just past the
+// top-level container that holds it, so a group that times out is emitted
+// downstream rather than silently dropped.
+func (r *Route) wireAggregatorTimeouts(ctx context.Context, processor Processor, topIndex int) {
+	if aggregator, ok := processor.(*Aggregator); ok {
+		if aggregator.CompletionTimeout <= 0 {
+			return
 		}
-		next := i + 1
+		next := topIndex + 1
 		aggregator.configureTimeout(ctx, ProcessorFunc(func(exchange *Exchange) error {
 			return r.processFrom(exchange, next)
 		}))
+		return
+	}
+
+	container, ok := processor.(childProcessorContainer)
+	if !ok {
+		return
+	}
+	for _, child := range container.childProcessors() {
+		r.wireAggregatorTimeouts(ctx, child, topIndex)
 	}
 }
 
 func (r *Route) stopAggregatorTimeouts() error {
 	var errs []error
+	r.forEachAggregator(func(aggregator *Aggregator) {
+		if err := aggregator.Stop(); err != nil {
+			errs = append(errs, err)
+		}
+	})
+	return errors.Join(errs...)
+}
+
+// forEachAggregator visits every aggregator in the route, including those
+// nested inside containers, so that Stop() joins their timeout goroutines.
+func (r *Route) forEachAggregator(visit func(*Aggregator)) {
 	for _, processor := range r.processors {
-		if aggregator, ok := processor.(*Aggregator); ok {
-			if err := aggregator.Stop(); err != nil {
-				errs = append(errs, err)
-			}
+		r.walkAggregators(processor, visit)
+	}
+}
+
+func (r *Route) walkAggregators(processor Processor, visit func(*Aggregator)) {
+	if aggregator, ok := processor.(*Aggregator); ok {
+		visit(aggregator)
+		return
+	}
+	if container, ok := processor.(childProcessorContainer); ok {
+		for _, child := range container.childProcessors() {
+			r.walkAggregators(child, visit)
 		}
 	}
-	return errors.Join(errs...)
 }
 
 func (r *Route) IsStarted() bool {

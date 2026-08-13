@@ -59,6 +59,22 @@ func (cp *ChoiceProcessor) OtherwiseFunc(f func(*Exchange) error) *ChoiceProcess
 	return cp.Otherwise(ProcessorFunc(f))
 }
 
+// childProcessors exposes the processors of every When clause and the
+// Otherwise clause so the route can wire completion timeouts for aggregators
+// nested inside a Choice branch.
+func (cp *ChoiceProcessor) childProcessors() []Processor {
+	var out []Processor
+	for _, when := range cp.whens {
+		if when.processor != nil {
+			out = append(out, when.processor)
+		}
+	}
+	if cp.otherwise != nil {
+		out = append(out, cp.otherwise)
+	}
+	return out
+}
+
 // Validate pre-parses every When-clause expression so a malformed Simple
 // template is reported at build time (typically from Route.Validate) instead
 // of at the first matching message. Returns the first parse failure.
@@ -77,8 +93,7 @@ func (cp *ChoiceProcessor) Validate() error {
 }
 
 // Process implements the Processor interface
-func (cp *ChoiceProcessor) Process(exchange *Exchange) error {
-	// Evaluate When clauses in order
+func (cp *ChoiceProcessor) Process(exchange *Exchange) error { // Evaluate When clauses in order
 	for _, when := range cp.whens {
 		// Parse template if not already done
 		if when.template == nil {
@@ -122,6 +137,11 @@ func (cp *compositeProcessor) Process(exchange *Exchange) error {
 		}
 	}
 	return nil
+}
+
+// childProcessors exposes the nested processors of a When/Otherwise branch.
+func (cp *compositeProcessor) childProcessors() []Processor {
+	return cp.processors
 }
 
 // ChoiceBuilder provides a fluent API for building Choice/When/Otherwise patterns.

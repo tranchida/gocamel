@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -34,7 +35,11 @@ type idempotentSynchronization struct {
 func (s *idempotentSynchronization) OnComplete(exchange *Exchange) {}
 
 func (s *idempotentSynchronization) OnFailure(exchange *Exchange) {
-	if err := s.repo.Remove(exchange.Context, s.key); err != nil {
+	ctx := exchange.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := s.repo.Remove(ctx, s.key); err != nil {
 		LogError("idempotent consumer: failed to remove key after exchange failure; "+
 			"future redeliveries of this message will be treated as duplicates",
 			"key", s.key, "error", err)
@@ -48,7 +53,14 @@ func (p *IdempotentConsumer) Process(exchange *Exchange) error {
 		return fmt.Errorf("idempotent consumer: failed to evaluate expression: %w", err)
 	}
 
-	added, err := p.repo.Add(exchange.Context, key)
+	// A nil exchange context must not be passed to the repository: user-supplied
+	// repositories may call ctx.Done()/ctx.Err()/ctx.Value() and panic on nil.
+	ctx := exchange.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	added, err := p.repo.Add(ctx, key)
 	if err != nil {
 		return fmt.Errorf("idempotent consumer: repository error: %w", err)
 	}

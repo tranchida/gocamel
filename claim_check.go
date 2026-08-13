@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -32,6 +33,13 @@ func NewClaimCheck(operation ClaimCheckOperation, key string, repo ClaimCheckRep
 
 // Process implements the Processor interface.
 func (p *ClaimCheck) Process(exchange *Exchange) error {
+	// A nil exchange context must not be passed to the repository: user-supplied
+	// repositories may call ctx.Done()/ctx.Err()/ctx.Value() and panic on nil.
+	ctx := exchange.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	resolvedKey := p.key
 	if resolvedKey != "" {
 		resolvedKey = Interpolate(resolvedKey, exchange)
@@ -43,10 +51,10 @@ func (p *ClaimCheck) Process(exchange *Exchange) error {
 		var key string
 		var err error
 		if resolvedKey != "" {
-			err = p.repo.Set(exchange.Context, resolvedKey, body)
+			err = p.repo.Set(ctx, resolvedKey, body)
 			key = resolvedKey
 		} else {
-			key, err = p.repo.Add(exchange.Context, body)
+			key, err = p.repo.Add(ctx, body)
 		}
 		if err != nil {
 			return fmt.Errorf("claim check push error: %w", err)
@@ -67,9 +75,9 @@ func (p *ClaimCheck) Process(exchange *Exchange) error {
 		var data any
 		var err error
 		if p.operation == ClaimCheckPop {
-			data, err = p.repo.Remove(exchange.Context, resolvedKey)
+			data, err = p.repo.Remove(ctx, resolvedKey)
 		} else {
-			data, err = p.repo.Get(exchange.Context, resolvedKey)
+			data, err = p.repo.Get(ctx, resolvedKey)
 		}
 
 		if err != nil {
@@ -88,7 +96,7 @@ func (p *ClaimCheck) Process(exchange *Exchange) error {
 				return fmt.Errorf("claim check discard error: no key provided")
 			}
 		}
-		_, err := p.repo.Remove(exchange.Context, resolvedKey)
+		_, err := p.repo.Remove(ctx, resolvedKey)
 		if err != nil {
 			return fmt.Errorf("claim check discard error: %w", err)
 		}

@@ -27,6 +27,12 @@ func (s *Splitter) AddProcessor(processor Processor) {
 	s.processors = append(s.processors, processor)
 }
 
+// childProcessors exposes the nested processors so the route can wire
+// completion timeouts for aggregators nested inside this splitter.
+func (s *Splitter) childProcessors() []Processor {
+	return s.processors
+}
+
 // SetAggregationStrategy sets the aggregation strategy for collecting results
 func (s *Splitter) SetAggregationStrategy(strategy AggregationStrategy) *Splitter {
 	s.AggregationStrategy = strategy
