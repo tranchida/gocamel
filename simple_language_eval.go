@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"regexp"
 	"strconv"
@@ -84,6 +85,9 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		max, err := strconv.Atoi(randomMatch[1])
 		if err != nil {
 			return nil, fmt.Errorf("invalid random argument: %s", randomMatch[1])
+		}
+		if max <= 0 {
+			return nil, fmt.Errorf("random argument must be positive, got %d", max)
 		}
 		// Deliberately non-cryptographic: this is the Camel-compatible
 		// ${random(n)} helper for test/demo values, not a secret source
@@ -322,7 +326,7 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 			if r == 0 {
 				return 0, fmt.Errorf("modulo by zero")
 			}
-			return float64(int(l) % int(r)), nil
+			return math.Mod(l, r), nil
 		}
 	}
 
@@ -543,16 +547,43 @@ func splitLogicalOr(expr string) []string {
 }
 
 // splitByOperator splits expression by an operator while respecting parentheses
+// and quoted string literals. Tracking quotes prevents a && or || inside a
+// quoted value (e.g. ${body == 'a&&b'}) from being mistaken for a logical
+// operator — which would otherwise break the literal and could let a
+// user-controlled value escape its quotes (expression injection).
 func splitByOperator(expr string, op string) []string {
 	var result []string
 	var current strings.Builder
 	depth := 0
 	opLen := len(op)
+	inSingle := false
+	inDouble := false
 
 	for i := 0; i < len(expr); i++ {
 		ch := expr[i]
 
+		if inSingle {
+			current.WriteByte(ch)
+			if ch == '\'' {
+				inSingle = false
+			}
+			continue
+		}
+		if inDouble {
+			current.WriteByte(ch)
+			if ch == '"' {
+				inDouble = false
+			}
+			continue
+		}
+
 		switch ch {
+		case '\'':
+			inSingle = true
+			current.WriteByte(ch)
+		case '"':
+			inDouble = true
+			current.WriteByte(ch)
 		case '(':
 			depth++
 			current.WriteByte(ch)

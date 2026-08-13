@@ -557,12 +557,11 @@ func accessValueAtIndex(container interface{}, index interface{}) (interface{}, 
 			// Try to convert to string
 			keyStr = fmt.Sprintf("%v", index)
 		}
-		keyVal := reflect.ValueOf(keyStr)
-		val := v.MapIndex(keyVal)
-		if !val.IsValid() {
+		val, found := mapLookup(v, keyStr)
+		if !found {
 			return nil, nil // Key not found, return nil
 		}
-		return val.Interface(), nil
+		return val, nil
 
 	case reflect.Slice, reflect.Array:
 		// For slices/arrays, index must be numeric
@@ -614,12 +613,11 @@ func accessProperty(container interface{}, propName string) (interface{}, error)
 	switch v.Kind() {
 	case reflect.Map:
 		// Map access
-		keyVal := reflect.ValueOf(propName)
-		val := v.MapIndex(keyVal)
-		if !val.IsValid() {
+		val, found := mapLookup(v, propName)
+		if !found {
 			return nil, nil // Key not found
 		}
-		return val.Interface(), nil
+		return val, nil
 
 	case reflect.Struct:
 		// Struct field access
@@ -644,6 +642,55 @@ func accessProperty(container interface{}, propName string) (interface{}, error)
 			return nil, nil
 		}
 		return nil, fmt.Errorf("cannot access property on type %v", v.Kind())
+	}
+}
+
+// mapLookup looks up keyStr in a reflect.Value of a map without panicking when
+// the map's key type is not string (e.g. map[int]any). reflect.Value.MapIndex
+// panics if the lookup key is not assignable to the map's key type, so the key
+// string is converted to the map's key type where possible. It returns
+// (nil, false) when the key is absent or cannot be represented in the map's
+// key type.
+func mapLookup(v reflect.Value, keyStr string) (interface{}, bool) {
+	keyType := v.Type().Key()
+	if keyType.Kind() == reflect.String {
+		val := v.MapIndex(reflect.ValueOf(keyStr))
+		if !val.IsValid() {
+			return nil, false
+		}
+		return val.Interface(), true
+	}
+
+	keyVal, err := convertToKeyType(keyStr, keyType)
+	if err != nil {
+		return nil, false
+	}
+	val := v.MapIndex(keyVal)
+	if !val.IsValid() {
+		return nil, false
+	}
+	return val.Interface(), true
+}
+
+// convertToKeyType converts a string to a reflect.Value assignable to the given
+// map key type. Supported key types are the signed and unsigned integer kinds;
+// anything else returns an error.
+func convertToKeyType(s string, t reflect.Type) (reflect.Value, error) {
+	switch t.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n, err := strconv.ParseInt(s, 10, t.Bits())
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		return reflect.ValueOf(n).Convert(t), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		n, err := strconv.ParseUint(s, 10, t.Bits())
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		return reflect.ValueOf(n).Convert(t), nil
+	default:
+		return reflect.Value{}, fmt.Errorf("unsupported map key type %v", t)
 	}
 }
 

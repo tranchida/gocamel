@@ -121,6 +121,9 @@ func applyStringFunction(funcName string, val interface{}, args []interface{}) (
 		if len(strVal) >= targetLen {
 			return strVal, nil
 		}
+		if targetLen > MaxSimpleInputBytes {
+			return nil, fmt.Errorf("padstart target length %d exceeds MaxSimpleInputBytes (%d)", targetLen, MaxSimpleInputBytes)
+		}
 		padding := strings.Repeat(padChar, targetLen-len(strVal))
 		return padding + strVal, nil
 	case "padend":
@@ -134,6 +137,9 @@ func applyStringFunction(funcName string, val interface{}, args []interface{}) (
 		}
 		if len(strVal) >= targetLen {
 			return strVal, nil
+		}
+		if targetLen > MaxSimpleInputBytes {
+			return nil, fmt.Errorf("padend target length %d exceeds MaxSimpleInputBytes (%d)", targetLen, MaxSimpleInputBytes)
 		}
 		padding := strings.Repeat(padChar, targetLen-len(strVal))
 		return strVal + padding, nil
