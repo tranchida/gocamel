@@ -4,5 +4,5 @@ go 1.25.0
 
 require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	gitlab.com/tranchida/gocamel v0.2.0
+	gitlab.com/tranchida/gocamel v0.3.0
 )
