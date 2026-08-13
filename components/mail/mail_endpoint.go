@@ -36,6 +36,7 @@ type MailEndpoint struct {
 	skipFailedMessage   bool
 	handleFailedMessage bool
 	debugMode           bool
+	maxMessageSize      int64
 	component           *MailComponent
 }
 

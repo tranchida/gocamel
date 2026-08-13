@@ -42,6 +42,10 @@ func (c *FTPComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		// disconnect=true: disconnect after each operation.
 		// disconnect=false (default): maintain the connection between polls.
 		disconnect: strings.EqualFold(gocamel.GetConfigValue(u, "disconnect"), "true"),
+		// maxMessageSize bounds how many bytes a single polled file may hold
+		// (0 = unlimited). Overriding the default lets a consumer read an
+		// oversized remote file without exhausting process memory.
+		maxMessageSize: gocamel.ParseInt64Option(gocamel.GetConfigValue(u, "maxMessageSize")),
 	}, nil
 }
 
@@ -53,6 +57,7 @@ type FTPEndpoint struct {
 	connectTimeout time.Duration
 	passiveMode    bool
 	disconnect     bool
+	maxMessageSize int64
 }
 
 // URI returns the endpoint URI
@@ -383,7 +388,7 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 			gocamel.LogError("FTP file retrieval error", "file", f.path, "error", err)
 			continue
 		}
-		content, err := io.ReadAll(resp)
+		content, err := gocamel.ReadLimited(resp, c.endpoint.maxMessageSize)
 		resp.Close()
 		if err != nil {
 			gocamel.LogError("FTP file read error", "file", f.path, "error", err)

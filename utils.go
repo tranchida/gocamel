@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +25,20 @@ func ParseURI(uri string) (*url.URL, error) {
 		return nil, fmt.Errorf("invalid URI: %w", err)
 	}
 	return u, nil
+}
+
+// ParseInt64Option parses a URI option value as a non-negative int64, returning
+// 0 (and no error) when the value is empty. It is used by components to parse
+// byte-size options such as maxMessageSize.
+func ParseInt64Option(value string) int64 {
+	if value == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 var interpolateRegex = regexp.MustCompile(`\${(header|property|body)(?:\.([^}]+))?}`)

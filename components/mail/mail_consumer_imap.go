@@ -351,7 +351,10 @@ func (c *MailConsumer) connect(ctx context.Context) error {
 		if err := noopCmd.Wait(); err == nil {
 			return nil
 		}
-		// Reconnection needed
+		// Reconnection needed: close the stale connection so its socket and
+		// server-side session are released rather than leaked on every
+		// reconnect cycle.
+		c.client.Close()
 		c.client = nil
 	}
 
@@ -489,17 +492,46 @@ func (c *MailConsumer) fetchMessage(uid imap.UID, options *imap.FetchOptions) (*
 func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selected *imap.SelectData) error {
 	ep := c.endpoint
 
-	// Fetch message with all required info
-	fetchOptions := &imap.FetchOptions{
-		UID:         true,
-		Flags:       true,
-		Envelope:    true,
-		BodySection: []*imap.FetchItemBodySection{{}}, // full body
-	}
+	var msg *imapclient.FetchMessageBuffer
 
-	msg, err := c.fetchMessage(uid, fetchOptions)
-	if err != nil {
-		return fmt.Errorf("message retrieval error: %w", err)
+	if ep.maxMessageSize > 0 {
+		// Fetch metadata (envelope, flags, size) first so an oversized message
+		// is rejected before its — potentially large — body is downloaded.
+		meta, err := c.fetchMessage(uid, &imap.FetchOptions{
+			UID:        true,
+			Flags:      true,
+			Envelope:   true,
+			RFC822Size: true,
+		})
+		if err != nil {
+			return fmt.Errorf("message metadata retrieval error: %w", err)
+		}
+
+		if meta.RFC822Size > ep.maxMessageSize {
+			return fmt.Errorf("message %d exceeds maxMessageSize (%d > %d bytes)", uid, meta.RFC822Size, ep.maxMessageSize)
+		}
+
+		// Fetch the body and merge it into the metadata buffer for parsing.
+		body, err := c.fetchMessage(uid, &imap.FetchOptions{
+			BodySection: []*imap.FetchItemBodySection{{}}, // full body
+		})
+		if err != nil {
+			return fmt.Errorf("message body retrieval error: %w", err)
+		}
+		meta.BodySection = body.BodySection
+		msg = meta
+	} else {
+		// Fetch message with all required info in a single round-trip.
+		var err error
+		msg, err = c.fetchMessage(uid, &imap.FetchOptions{
+			UID:         true,
+			Flags:       true,
+			Envelope:    true,
+			BodySection: []*imap.FetchItemBodySection{{}}, // full body
+		})
+		if err != nil {
+			return fmt.Errorf("message retrieval error: %w", err)
+		}
 	}
 
 	// Parse the message

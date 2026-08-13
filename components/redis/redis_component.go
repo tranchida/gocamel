@@ -79,6 +79,18 @@ type RedisEndpoint struct {
 	subscribe bool
 	consumer  *RedisConsumer
 	mu        sync.Mutex
+	closeOnce sync.Once // guards client.Close: producer and consumer share the client
+}
+
+// closeClient closes the shared Redis client exactly once. Both the producer
+// and the consumer may call Stop() on the same endpoint, and closing the client
+// twice (or racing a Close against in-flight commands) is undefined.
+func (e *RedisEndpoint) closeClient() error {
+	var err error
+	e.closeOnce.Do(func() {
+		err = e.client.Close()
+	})
+	return err
 }
 
 // URI returns the endpoint URI.
@@ -120,7 +132,7 @@ func (p *RedisProducer) Start(ctx context.Context) error {
 
 // Stop stops the producer and closes the Redis client.
 func (p *RedisProducer) Stop() error {
-	return p.endpoint.client.Close()
+	return p.endpoint.closeClient()
 }
 
 // Send executes commands (SET, GET, DEL, PUBLISH) based on parameters or exchange headers.
@@ -261,7 +273,7 @@ func (c *RedisConsumer) Stop() error {
 		_ = c.pubSub.Close()
 	}
 	c.wg.Wait()
-	return c.endpoint.client.Close()
+	return c.endpoint.closeClient()
 }
 
 func (c *RedisConsumer) run(ctx context.Context) {

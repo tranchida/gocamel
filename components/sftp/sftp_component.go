@@ -40,6 +40,9 @@ func (c *SFTPComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		comp:           c,
 		connectTimeout: gocamel.ParseConnectTimeout(u),
 		disconnect:     strings.EqualFold(gocamel.GetConfigValue(u, "disconnect"), "true"),
+		// maxMessageSize bounds how many bytes a single polled file may hold
+		// (0 = unlimited).
+		maxMessageSize: gocamel.ParseInt64Option(gocamel.GetConfigValue(u, "maxMessageSize")),
 	}, nil
 }
 
@@ -50,6 +53,7 @@ type SFTPEndpoint struct {
 	comp           *SFTPComponent
 	connectTimeout time.Duration
 	disconnect     bool
+	maxMessageSize int64
 }
 
 // URI returns the endpoint URI
@@ -455,7 +459,7 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 			gocamel.LogError("Erreur lors de l'ouverture du fichier SFTP", "file", f.path, "error", err)
 			continue
 		}
-		content, err := io.ReadAll(file)
+		content, err := gocamel.ReadLimited(file, c.endpoint.maxMessageSize)
 		file.Close()
 		if err != nil {
 			gocamel.LogError("Erreur lors de la lecture du fichier SFTP", "file", f.path, "error", err)

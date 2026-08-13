@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -165,6 +166,8 @@ type TelegramConsumer struct {
 	endpoint  *TelegramEndpoint
 	processor gocamel.Processor
 	cancel    context.CancelFunc
+	bot       *tgbotapi.BotAPI
+	wg        sync.WaitGroup
 }
 
 func (c *TelegramConsumer) Start(ctx context.Context) error {
@@ -175,13 +178,16 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+	c.bot = bot
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 
 	updates := bot.GetUpdatesChan(u)
 
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
@@ -215,5 +221,12 @@ func (c *TelegramConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	// Stop the library's long-polling goroutine and close its updates channel
+	// so the consumer goroutine exits (it would otherwise keep polling Telegram
+	// and block sending on the now-unread channel after Stop returns).
+	if c.bot != nil {
+		c.bot.StopReceivingUpdates()
+	}
+	c.wg.Wait()
 	return nil
 }

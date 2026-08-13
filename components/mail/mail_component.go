@@ -194,6 +194,7 @@ func (c *MailComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		skipFailedMessage:   q.Get("skipFailedMessage") == "true",
 		handleFailedMessage: q.Get("handleFailedMessage") == "true",
 		debugMode:           q.Get("debugMode") == "true",
+		maxMessageSize:      gocamel.ParseInt64Option(q.Get("maxMessageSize")),
 		component:           c,
 	}, nil
 }

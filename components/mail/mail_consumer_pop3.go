@@ -3,7 +3,6 @@ package mail
 import (
 	"context"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -234,8 +233,9 @@ func (c *Pop3Consumer) parsePop3Message(msgData *message.Entity) (*MailMessage, 
 	}
 
 	// Parse MIME with go-message
-	// Read full body from msgData.Body
-	bodyData, err := io.ReadAll(msgData.Body)
+	// Read full body from msgData.Body, bounded so an oversized email cannot
+	// exhaust memory (maxMessageSize, 0 = unlimited).
+	bodyData, err := gocamel.ReadLimited(msgData.Body, c.endpoint.maxMessageSize)
 	if err != nil {
 		return nil, fmt.Errorf("error reading body: %w", err)
 	}

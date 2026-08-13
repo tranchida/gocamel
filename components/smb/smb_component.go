@@ -38,6 +38,9 @@ func (c *SMBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		comp:           c,
 		connectTimeout: gocamel.ParseConnectTimeout(u),
 		disconnect:     strings.EqualFold(gocamel.GetConfigValue(u, "disconnect"), "true"),
+		// maxMessageSize bounds how many bytes a single polled file may hold
+		// (0 = unlimited).
+		maxMessageSize: gocamel.ParseInt64Option(gocamel.GetConfigValue(u, "maxMessageSize")),
 	}, nil
 }
 
@@ -48,6 +51,7 @@ type SMBEndpoint struct {
 	comp           *SMBComponent
 	connectTimeout time.Duration
 	disconnect     bool
+	maxMessageSize int64
 }
 
 // URI returns the endpoint URI
@@ -156,12 +160,15 @@ func (e *SMBEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consu
 type SMBProducer struct {
 	endpoint  *SMBEndpoint
 	fileExist gocamel.FileExistBehavior
+	mu        sync.Mutex
 	sc        *smbConn // connexion persistante (disconnect=false)
 }
 
 func (p *SMBProducer) Start(ctx context.Context) error { return nil }
 
 func (p *SMBProducer) Stop() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.sc != nil {
 		p.sc.close()
 		p.sc = nil
@@ -173,6 +180,8 @@ func (p *SMBProducer) getConn() (*smbConn, error) {
 	if p.endpoint.disconnect {
 		return p.endpoint.connect()
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.sc != nil {
 		if _, err := p.sc.share.Stat("."); err == nil {
 			return p.sc, nil
@@ -424,7 +433,7 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 			gocamel.LogError("Erreur lors de l'ouverture du fichier SMB", "file", f.path, "error", err)
 			continue
 		}
-		content, err := io.ReadAll(file)
+		content, err := gocamel.ReadLimited(file, c.endpoint.maxMessageSize)
 		file.Close()
 		if err != nil {
 			gocamel.LogError("Erreur lors de la lecture du fichier SMB", "file", f.path, "error", err)
