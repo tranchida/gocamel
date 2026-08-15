@@ -30,31 +30,20 @@ context.Start()
 
 ### Modèle de Message
 
-```
-┌───────────────────────────────────────────────┐
-│                    Exchange                     │
-│  ┌─────────────────────────────────────────┐  │
-│  │               Propriétés                │  │
-│  │  correlationId: "abc-123"              │  │
-│  │  routeId: "route-1"                    │  │
-│  └─────────────────────────────────────────┘  │
-│  ┌─────────────────────────────────────────┐  │
-│  │                  In                     │  │
-│  │  Headers: map[string]any                │  │
-│  │    Content-Type: "application/json"    │  │
-│  │                                        │  │
-│  │  Body: any                              │  │
-│  │    {"name": "John", "age": 30}         │  │
-│  └─────────────────────────────────────────┘  │
-│  ┌─────────────────────────────────────────┐  │
-│  │                  Out                    │  │
-│  │  Headers: map[string]any                │  │
-│  │    X-Processed: "true"                 │  │
-│  │                                        │  │
-│  │  Body: any                              │  │
-│  │    {"name": "John", "age": 31}         │  │
-│  └─────────────────────────────────────────┘  │
-└───────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Exchange["Exchange"]
+        direction TB
+        subgraph Properties["Propriétés"]
+            P["correlationId: 'abc-123'<br/>routeId: 'route-1'"]
+        end
+        subgraph In["In (Message entrant)"]
+            I["<b>Headers :</b> map[string]any<br/>Content-Type: 'application/json'<br/><br/><b>Body :</b> any<br/>{'name': 'John', 'age': 30}"]
+        end
+        subgraph Out["Out (Message sortant)"]
+            O["<b>Headers :</b> map[string]any<br/>X-Processed: 'true'<br/><br/><b>Body :</b> any<br/>{'name': 'John', 'age': 31}"]
+        end
+    end
 ```
 
 ### Simple Language
