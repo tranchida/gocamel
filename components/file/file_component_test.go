@@ -234,3 +234,77 @@ func TestFileConsumer_DeliversCompleteFile(t *testing.T) {
 		t.Fatal("timed out waiting for the file exchange")
 	}
 }
+
+func TestFileConsumer_SetsCamelHeaders(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "testfile.txt")
+	if err := os.WriteFile(filePath, []byte("camel-test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	received := make(chan *gocamel.Exchange, 1)
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		received <- ex
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer consumer.Stop()
+
+	select {
+	case ex := <-received:
+		name, ok := ex.GetIn().GetHeader(gocamel.CamelFileName)
+		if !ok || name != "testfile.txt" {
+			t.Errorf("expected CamelFileName 'testfile.txt', got %v", name)
+		}
+		path, ok := ex.GetIn().GetHeader(gocamel.CamelFilePath)
+		if !ok || path != filePath {
+			t.Errorf("expected CamelFilePath %q, got %v", filePath, path)
+		}
+		length, ok := ex.GetIn().GetHeader(gocamel.CamelFileLength)
+		if !ok || length != int64(len("camel-test")) {
+			t.Errorf("expected CamelFileLength %d, got %v", len("camel-test"), length)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for consumer")
+	}
+}
+
+func TestFileProducer_WritesWithCamelFileNameHeader(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prod, err := ep.CreateProducer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.GetIn().SetHeader(gocamel.CamelFileName, "nested.txt")
+	ex.SetBody("dynamic filename content")
+	if err := prod.Send(ex); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(dir, "nested.txt")
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "dynamic filename content" {
+		t.Errorf("got %q, want 'dynamic filename content'", string(got))
+	}
+}

@@ -160,6 +160,7 @@ builder.From("direct:start").
 
 | Data Format | Description                                                       |
 |-------------|-------------------------------------------------------------------|
+| **CSV**     | Marshal/unmarshal CSV avec `MarshalCSV()` / `UnmarshalCSV()` ou `Marshal(NewCSVDataFormat(...))` |
 | **RSS**     | Marshal/unmarshal XML RSS avec `Marshal(NewRSSDataFormat())` et `Unmarshal(NewRSSDataFormat())` |
 
 ## 🔒 Sécurité

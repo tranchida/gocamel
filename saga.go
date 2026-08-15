@@ -33,6 +33,21 @@ func (s *SagaProcessor) AddStep(action, compensation Processor) {
 	})
 }
 
+// childProcessors exposes the nested action and compensation processors so the
+// route can wire completion timeouts for aggregators nested inside this saga.
+func (s *SagaProcessor) childProcessors() []Processor {
+	procs := make([]Processor, 0, len(s.steps)*2)
+	for _, step := range s.steps {
+		if step.Action != nil {
+			procs = append(procs, step.Action)
+		}
+		if step.Compensation != nil {
+			procs = append(procs, step.Compensation)
+		}
+	}
+	return procs
+}
+
 // Process runs the Saga.
 // If an action fails, it catches the error, triggers compensating steps for all
 // completed actions in reverse order (LIFO), and returns the action error.
@@ -48,9 +63,9 @@ func (s *SagaProcessor) Process(exchange *Exchange) error {
 				comp := completedCompensations[i]
 				// We run compensation on a copy of the exchange to avoid contaminating the failure state
 				compExchange := exchange.Copy()
-				// A failing compensation must not prevent the remaining ones from
+				// A failing or panicking compensation must not prevent the remaining ones from
 				// running, but it MUST be visible to operators.
-				if compErr := comp.Process(compExchange); compErr != nil {
+				if compErr := safeProcess(func() error { return comp.Process(compExchange) }); compErr != nil {
 					LogError("saga: compensation failed",
 						"compensation_index", i,
 						"error", compErr,

@@ -110,10 +110,16 @@ func (p *FileProducer) Stop() error {
 // FileExistFail and FileExistIgnore use O_EXCL for an atomic existence check,
 // avoiding the TOCTOU race that a separate os.Stat + os.OpenFile would introduce.
 func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
-	// Re-validate the endpoint path before any filesystem access. The path is
-	// already checked in CreateEndpoint (null byte + traversal); validating
-	// again here keeps this write path self-contained (gosec G304).
-	if err := gocamel.ValidatePath(p.path); err != nil {
+	targetPath := p.path
+	info, statErr := os.Stat(targetPath)
+	if (statErr == nil && info.IsDir()) || (statErr != nil && strings.HasSuffix(targetPath, string(filepath.Separator))) {
+		if fileName, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
+			targetPath = filepath.Join(targetPath, fmt.Sprintf("%v", fileName))
+		}
+	}
+
+	// Re-validate the target path before any filesystem access.
+	if err := gocamel.ValidatePath(targetPath); err != nil {
 		return err
 	}
 
@@ -121,7 +127,7 @@ func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 	// produced files reachable by other users/processes (same rationale as the
 	// 0644 file mode below) and the effective mode still respects the umask.
 	// #nosec G301
-	if err := os.MkdirAll(filepath.Dir(p.path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 		return fmt.Errorf("error creating directory: %v", err)
 	}
 
@@ -143,16 +149,16 @@ func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 		flags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
 	}
 
-	// p.path was validated above via ValidatePath. 0644 is the deliberate
+	// targetPath was validated above via ValidatePath. 0644 is the deliberate
 	// default: produced files are meant to be read by other processes, and the
 	// effective mode still respects the process umask.
-	file, err := os.OpenFile(p.path, flags, 0644) // #nosec G302,G304
+	file, err := os.OpenFile(targetPath, flags, 0644) // #nosec G302,G304
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			if p.fileExist == gocamel.FileExistIgnore {
 				return nil
 			}
-			return fmt.Errorf("file already exists: %s", p.path)
+			return fmt.Errorf("file already exists: %s", targetPath)
 		}
 		return fmt.Errorf("error opening file: %v", err)
 	}
@@ -298,6 +304,11 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 
 				exchange := gocamel.NewExchange(ctx)
 				exchange.SetBody(content)
+				exchange.SetHeader(gocamel.CamelFileName, filename)
+				exchange.SetHeader(gocamel.CamelFilePath, event.Name)
+				exchange.SetHeader(gocamel.CamelFileLength, info.Size())
+				exchange.SetHeader(gocamel.CamelFileLastModified, info.ModTime())
+				// Compatibility alias
 				exchange.SetHeader("FileName", filename)
 				exchange.SetHeader("FilePath", event.Name)
 
@@ -334,6 +345,7 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 		return nil
 	}
 
+	info, statErr := os.Stat(c.path)
 	content, err := os.ReadFile(c.path)
 	if err != nil {
 		return fmt.Errorf("error reading file: %v", err)
@@ -341,6 +353,13 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 
 	exchange := gocamel.NewExchange(ctx)
 	exchange.SetBody(content)
+	exchange.SetHeader(gocamel.CamelFileName, filename)
+	exchange.SetHeader(gocamel.CamelFilePath, c.path)
+	if statErr == nil {
+		exchange.SetHeader(gocamel.CamelFileLength, info.Size())
+		exchange.SetHeader(gocamel.CamelFileLastModified, info.ModTime())
+	}
+	// Compatibility alias
 	exchange.SetHeader("FileName", filename)
 	exchange.SetHeader("FilePath", c.path)
 

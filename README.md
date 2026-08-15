@@ -159,6 +159,7 @@ EndChoice()
 
 | Data Format | Description                                                        |
 |-------------|--------------------------------------------------------------------|
+| **CSV**     | Marshal/unmarshal CSV with `MarshalCSV()` / `UnmarshalCSV()` or `Marshal(NewCSVDataFormat(...))` |
 | **RSS**     | Marshal/unmarshal RSS XML with `Marshal(NewRSSDataFormat())` and `Unmarshal(NewRSSDataFormat())` |
 
 ## 🔒 Security

@@ -82,14 +82,40 @@ func (e *TelegramEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.
 // TelegramProducer represents a Telegram producer.
 type TelegramProducer struct {
 	endpoint *TelegramEndpoint
+	bot      *tgbotapi.BotAPI
+	mu       sync.Mutex
 }
 
 func (p *TelegramProducer) Start(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	bot, err := p.endpoint.getBot()
+	if err != nil {
+		return err
+	}
+	p.bot = bot
 	return nil
 }
 
 func (p *TelegramProducer) Stop() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.bot = nil
 	return nil
+}
+
+func (p *TelegramProducer) getBot() (*tgbotapi.BotAPI, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bot != nil {
+		return p.bot, nil
+	}
+	bot, err := p.endpoint.getBot()
+	if err != nil {
+		return nil, err
+	}
+	p.bot = bot
+	return bot, nil
 }
 
 func (p *TelegramProducer) Send(exchange *gocamel.Exchange) error {
@@ -104,7 +130,7 @@ func (p *TelegramProducer) Send(exchange *gocamel.Exchange) error {
 
 	text := messageText(exchange.GetIn().GetBody())
 
-	bot, err := p.endpoint.getBot()
+	bot, err := p.getBot()
 	if err != nil {
 		return err
 	}

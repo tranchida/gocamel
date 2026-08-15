@@ -234,3 +234,11 @@ func TestCronComponent_SharedScheduler(t *testing.T) {
 		return count1.Load() >= 2 && count2.Load() >= 2
 	}, 2*time.Second, 50*time.Millisecond)
 }
+
+func TestCronComponent_Stop(t *testing.T) {
+	comp := NewCronComponent()
+	comp.ensureStarted()
+	assert.True(t, comp.started)
+	require.NoError(t, comp.Stop())
+	assert.False(t, comp.started)
+}

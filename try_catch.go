@@ -42,6 +42,24 @@ func (p *TryProcessor) SetFinallyBlock(processor Processor) {
 	p.finallyBlock = processor
 }
 
+// childProcessors exposes the nested try, catch and finally processors so the
+// route can wire completion timeouts for aggregators nested inside this try block.
+func (p *TryProcessor) childProcessors() []Processor {
+	var procs []Processor
+	if p.tryBlock != nil {
+		procs = append(procs, p.tryBlock)
+	}
+	for _, clause := range p.catchClauses {
+		if clause.Processor != nil {
+			procs = append(procs, clause.Processor)
+		}
+	}
+	if p.finallyBlock != nil {
+		procs = append(procs, p.finallyBlock)
+	}
+	return procs
+}
+
 // Process implements the Processor interface.
 func (p *TryProcessor) Process(exchange *Exchange) error {
 	var tryErr error

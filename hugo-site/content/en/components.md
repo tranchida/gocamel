@@ -63,6 +63,18 @@ builder.To("file://output")
 | `preMove`    | string | `""`    | Move file before processing |
 | `move`       | string | `""`    | Move file after processing  |
 | `moveFailed` | string | `""`    | Move file on failure        |
+| `fileExist`  | string | `Override` | Behavior if destination file exists (`Override`, `Append`, `Fail`, `Ignore`) |
+
+#### Headers
+
+##### Set on Consumer Exchanges
+- `CamelFileName`: The relative file name
+- `CamelFilePath`: The full path of the file
+- `CamelFileLength`: The file size in bytes
+- `CamelFileLastModified`: Last modification timestamp (`time.Time`)
+
+##### Consumed by Producer
+- `CamelFileName`: Overrides destination file name when the producer URI points to a directory
 
 #### Read lock
 

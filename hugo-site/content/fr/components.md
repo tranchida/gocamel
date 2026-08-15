@@ -63,6 +63,18 @@ builder.To("file://output")
 | `preMove`    | string | `""`    | Déplacer le fichier avant traitement |
 | `move`       | string | `""`    | Déplacer le fichier après traitement |
 | `moveFailed` | string | `""`    | Déplacer le fichier en cas d'échec |
+| `fileExist`  | string | `Override` | Comportement si le fichier destination existe (`Override`, `Append`, `Fail`, `Ignore`) |
+
+#### En-têtes
+
+##### Définis par le Consumer
+- `CamelFileName` : Nom relatif du fichier
+- `CamelFilePath` : Chemin absolu ou complet du fichier
+- `CamelFileLength` : Taille du fichier en octets
+- `CamelFileLastModified` : Date et heure de dernière modification (`time.Time`)
+
+##### Consommés par le Producer
+- `CamelFileName` : Surcharge le nom du fichier lorsque l'URI cible pointe vers un répertoire
 
 #### Verrou de lecture
 

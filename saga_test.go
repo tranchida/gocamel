@@ -199,3 +199,55 @@ func TestSagaProcessor_LIFORollback(t *testing.T) {
 		t.Errorf("Expected LIFO compensation order ['second', 'first'], got %v", compensationOrder)
 	}
 }
+
+func TestSagaProcessor_PanickingCompensationDoesNotAbortRemaining(t *testing.T) {
+	camelCtx := NewCamelContext()
+	camelCtx.AddComponent("direct", NewDirectComponent())
+
+	var firstCompensated bool
+
+	_, err := camelCtx.CreateRouteBuilder().
+		From("direct:start").
+		Saga().
+		ActionFunc(
+			func(e *Exchange) error { return nil },
+			func(e *Exchange) error {
+				firstCompensated = true
+				return nil
+			},
+		).
+		ActionFunc(
+			func(e *Exchange) error { return nil },
+			func(e *Exchange) error {
+				panic("boom in second compensation")
+			},
+		).
+		ActionFunc(
+			func(e *Exchange) error { return errors.New("third step failure") },
+			nil,
+		).
+		End().
+		Build()
+
+	if err != nil {
+		t.Fatalf("Failed to build route: %v", err)
+	}
+
+	if err := camelCtx.Start(); err != nil {
+		t.Fatalf("Failed to start context: %v", err)
+	}
+	defer camelCtx.Stop()
+
+	exchange := NewExchange(context.Background())
+	endpoint, _ := camelCtx.CreateEndpoint("direct:start")
+	producer, _ := endpoint.CreateProducer()
+
+	err = producer.Send(exchange)
+	if err == nil {
+		t.Fatal("expected saga to return failure error")
+	}
+
+	if !firstCompensated {
+		t.Error("expected first compensation to execute even if second compensation panicked")
+	}
+}

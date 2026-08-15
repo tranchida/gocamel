@@ -71,6 +71,19 @@ func (cb *CircuitBreaker) SetOpenTimeout(timeout time.Duration) {
 	cb.openTimeout = timeout
 }
 
+// childProcessors exposes the nested processors so the route can wire
+// completion timeouts for aggregators nested inside this circuit breaker.
+func (cb *CircuitBreaker) childProcessors() []Processor {
+	var procs []Processor
+	if cb.processor != nil {
+		procs = append(procs, cb.processor)
+	}
+	if cb.fallbackProcessor != nil {
+		procs = append(procs, cb.fallbackProcessor)
+	}
+	return procs
+}
+
 // Process implements the Processor interface.
 func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 	// Guard the zero-configuration case: NewCircuitBreaker() leaves the main

@@ -41,6 +41,15 @@ func (r *Resequencer) SetProcessor(p Processor) {
 	r.processor = p
 }
 
+// childProcessors exposes the nested processor so the route can wire
+// completion timeouts for aggregators nested inside this resequencer.
+func (r *Resequencer) childProcessors() []Processor {
+	if r.processor != nil {
+		return []Processor{r.processor}
+	}
+	return nil
+}
+
 // Process implements the Processor interface.
 //
 // The incoming exchange is copied into the buffer and delivered downstream

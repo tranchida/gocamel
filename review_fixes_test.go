@@ -322,6 +322,38 @@ func TestReturnsRows(t *testing.T) {
 	}
 }
 
+func TestChildProcessorContainers_ImplementInterface(t *testing.T) {
+	cb := NewCircuitBreaker()
+	p1 := NewPipeline()
+	p2 := NewPipeline()
+	cb.SetProcessor(p1)
+	cb.SetFallbackProcessor(p2)
+	cbContainer, ok := interface{}(cb).(childProcessorContainer)
+	require.True(t, ok, "CircuitBreaker must implement childProcessorContainer")
+	assert.Equal(t, []Processor{p1, p2}, cbContainer.childProcessors())
+
+	res := NewResequencer(func(e *Exchange) (int64, error) { return 0, nil }, 0, time.Second)
+	res.SetProcessor(p1)
+	resContainer, ok := interface{}(res).(childProcessorContainer)
+	require.True(t, ok, "Resequencer must implement childProcessorContainer")
+	assert.Equal(t, []Processor{p1}, resContainer.childProcessors())
+
+	saga := NewSagaProcessor()
+	saga.AddStep(p1, p2)
+	sagaContainer, ok := interface{}(saga).(childProcessorContainer)
+	require.True(t, ok, "SagaProcessor must implement childProcessorContainer")
+	assert.Equal(t, []Processor{p1, p2}, sagaContainer.childProcessors())
+
+	tryProc := NewTryProcessor()
+	tryProc.SetTryBlock(p1)
+	tryProc.AddCatchClause("err", p2)
+	p3 := NewPipeline()
+	tryProc.SetFinallyBlock(p3)
+	tryContainer, ok := interface{}(tryProc).(childProcessorContainer)
+	require.True(t, ok, "TryProcessor must implement childProcessorContainer")
+	assert.Equal(t, []Processor{p1, p2, p3}, tryContainer.childProcessors())
+}
+
 func waitForHTTP(t *testing.T, url string) {
 	t.Helper()
 	for i := 0; i < 100; i++ {

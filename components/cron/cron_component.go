@@ -66,6 +66,19 @@ func (c *CronComponent) ensureStarted() {
 	}
 }
 
+// Stop stops the shared scheduler if it was started.
+func (c *CronComponent) Stop() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		ctx := c.scheduler.Stop()
+		<-ctx.Done()
+		c.started = false
+		c.scheduler = cron.New(cron.WithSeconds())
+	}
+	return nil
+}
+
 // CreateEndpoint creates a CronEndpoint from a URI.
 //
 // Supported formats:
