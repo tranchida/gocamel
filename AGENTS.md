@@ -1,180 +1,336 @@
-# AGENTS.md — GoCamel
+# AGENT.md / AGENTS.md — GoCamel Development & Go Best Practices Guide
 
-Guidance for AI coding agents working in this repository. Assumes no prior knowledge of the project.
+Guidance for AI coding agents and LLMs working in the **GoCamel** repository. Assumes no prior knowledge of the project.
 
-## Project overview
+---
 
-**GoCamel** is an enterprise integration framework for Go, inspired by
-[Apache Camel](https://camel.apache.org/). It provides a fluent DSL for building
-integration routes that connect systems and services, plus implementations of the
-classic Enterprise Integration Patterns (EIPs).
+## 1. Project Overview & Core Architecture
 
-- Module path: `gitlab.com/tranchida/gocamel`
-- Language: Go 1.25 (see `go.mod`, `go.work`)
-- License: Apache 2.0
-- Hosted on GitLab; CI is GitLab CI (`.gitlab-ci.yml`)
-- All code comments and documentation are written in **English** — keep it that way.
-  User-facing docs exist in both English and French (see "Documentation" below).
+**GoCamel** is an enterprise integration framework for Go, inspired by [Apache Camel](https://camel.apache.org/). It provides a fluent DSL for building integration routes that connect heterogeneous systems, plus implementations of the classic Enterprise Integration Patterns (EIPs).
 
-### Core concepts (all in package `gocamel`, repo root)
+- **Module path**: `gitlab.com/tranchida/gocamel`
+- **Language**: Go 1.25 (see `go.mod`, `go.work`)
+- **License**: Apache 2.0
+- **Language / Naming Policy**: All code, comments, docstrings, variable names, error messages, logs, and commit messages **MUST be written in English**. (User-facing docs are bilingual EN/FR).
 
-- `CamelContext` (`context.go`) — container for routes, components and the registry;
-  manages lifecycle (`Start`/`Stop`).
-- `Route` / `RouteBuilder` (`route.go`, `route_builder*.go`) — a route is a pipeline of
-  processors; `RouteBuilder` is the fluent DSL (`From("timer:tick?period=5s").SetBody(...).To(...)`).
-  DSL construction errors are accumulated and surfaced at `Build()` time.
-- `Exchange` (`exchange.go`) — in-flight container with `In`/`Out` messages, properties,
-  and the well-known `Camel*` header constants (e.g. `CamelFileName`, `CamelHttpResponseCode`).
-- `Message` (`message.go`) — body (`any`) + headers, with typed accessors
-  (`GetBodyAsString`, `GetHeaderAsInt`, ...).
-- `Processor` (`route.go`) — the single-method interface `Process(*Exchange) error` that
-  everything in a route implements. `ProcessorFunc` adapts plain functions.
-- `Component` / `Endpoint` / `Producer` / `Consumer` (`endpoint.go`) — a Component creates
-  Endpoints from URIs; an Endpoint creates Producers (sinks) and Consumers (sources).
-- `ComponentRegistry` (`registry.go`) — name → object registry; also used for bean lookup
-  (`ProcessRef`).
-- `ProcessSafely` (`route.go`) — wraps processor invocation so a panic in user code fails
-  the exchange (error wrapping `ErrProcessorPanic`) instead of crashing the process.
-  Consumers that run user code on their own goroutine must use it.
+### Core Concepts (package `gocamel`, repo root)
 
-## Repository layout
+- `CamelContext` (`context.go`): Container for routes, components, and registry; manages lifecycle (`Start`/`Stop`).
+- `Route` / `RouteBuilder` (`route.go`, `route_builder*.go`): A route is a pipeline of processors; `RouteBuilder` is the fluent DSL (`From("timer:tick?period=5s").SetBody(...).To(...)`).
+- `Exchange` (`exchange.go`): In-flight message container holding `In` and `Out` `Message`s, properties, and `Camel*` header constants.
+- `Message` (`message.go`): Payload body (`any`) + headers (`map[string]any`) with typed accessors (`GetBodyAsString`, `GetHeaderAsInt`, etc.).
+- `Processor` (`route.go`): Single-method interface `Process(*Exchange) error`. Everything in a route pipeline implements `Processor`.
+- `Component` / `Endpoint` / `Producer` / `Consumer` (`endpoint.go`):
+  - `Component`: Factory for endpoints (`CreateEndpoint(uri string)`).
+  - `Endpoint`: Factory for producers (sinks) and consumers (sources).
+  - `Producer`: Sends exchanges to external targets (`Process(*Exchange) error`).
+  - `Consumer`: Sources exchanges and pushes them into the route pipeline (`Start(ctx)` / `Stop()`).
+- `ComponentRegistry` (`registry.go`): Name-to-object registry for beans and components (`ProcessRef`).
+- `ProcessSafely` (`route.go`): Safely executes processors, catching panics and converting them into `ErrProcessorPanic` errors.
 
-This is a **multi-module Go workspace** (`go.work`). Each directory with a `go.mod` is an
-independent module and must build, vet and test on its own:
+---
 
-- `.` (root module `gitlab.com/tranchida/gocamel`) — the core: routing engine, EIPs,
-  Simple language, data formats, and the **stdlib-only components**: `direct`, `seda`,
-  `chan`, `timer`, `http`, `exec`, `template`, `sql`, `sql-stored`, `net` (raw TCP/UDP
-  sockets).
-- `components/*` — components with third-party dependencies, one module each:
-  `cron`, `file`, `ftp`, `grpc`, `kafka`, `mail`, `mongodb`, `nats`, `openai`, `redis`, `sftp`, `smb`,
-  `telegram`. Users pull in only what they need. Keep it that way: **never add a
-  third-party dependency to the core module for an optional component** — put it in
-  `components/<name>/` with its own `go.mod` instead.
-- `observability/prometheus`, `observability/otel` — metrics and tracing, exposed as
-  route interceptors (`Intercept(gocamelprom.Metrics())`).
-- `hugo-site/` — Hugo documentation site (Relearn theme), deployed to
-  https://gocamel.tranchida.cloud/. See `hugo-site/` for build instructions.
+## 2. Workspace & Multi-Module Layout (`go.work`)
 
-The core module is intentionally near-dependency-free. Its only direct requirements are
-`github.com/stretchr/testify` (tests) and `github.com/mattn/go-sqlite3` (the `sql`
-component, which requires **CGO** to build/test).
+GoCamel is structured as a **multi-module Go workspace** (`go.work`). Each module must build, vet, and test independently:
 
-### EIPs implemented (root package)
-
-Aggregator, Splitter, Multicast, Choice, Filter, Recipient List, Routing Slip, Wire Tap,
-Loop, Stop, ToD, Saga, Transform, Enricher, PollEnrich, Validate, Resequencer, Throttle, Delay, Circuit Breaker,
-Idempotent Consumer, Claim Check, Load Balancer, Dynamic Router, Message History, Dead
-Letter Channel / error handlers, plus repositories (memory / SQL / Redis-backed) for
-aggregation and idempotency state.
-
-### Simple language & Expressions
-
-Camel's Simple expression language and JSONPath evaluator are implemented across `simple_language*.go`
-and `jsonpath.go` (`${body}`, `${header.name}`, `${jsonpath:$.path}`, comparisons, functions like `${date:now}`, `${uuid}`).
-Predicates in the DSL (`When(...)`, `Validate(...)`, completion conditions, etc.) are Simple or JSONPath expressions.
-
-## Build and test commands
-
-Always run from the directory of the module you changed. There is no Makefile.
-
-```bash
-# Core module (repo root) — needs CGO for go-sqlite3
-go build ./...
-go vet ./...
-go test ./...
-
-# Any other module, e.g. components/redis
-cd components/redis && go build ./... && go vet ./... && go test ./...
-
-# CI parity: build/vet/test EVERY module in the workspace (what .gitlab-ci.yml does)
-for mod in $(find . -name go.mod -not -path '*/.*'); do
-  dir=$(dirname "$mod")
-  (cd "$dir" && go build ./... && go vet ./... && go test ./...)
-done
+```text
+gocamel/
+├── go.work / go.work.sum
+├── go.mod / go.sum                 # Root core module (gitlab.com/tranchida/gocamel)
+├── *.go / *_test.go               # Core routing engine, EIPs, Simple language, DataFormats, stdlib components
+├── components/                    # Standalone optional component modules
+│   ├── cron/                      # Cron component (robfig/cron)
+│   ├── file/                      # File component (fsnotify)
+│   ├── ftp/                       # FTP component (jlaffaye/ftp)
+│   ├── grpc/                      # gRPC component (google.golang.org/grpc)
+│   ├── kafka/                     # Kafka component (segmentio/kafka-go)
+│   ├── mail/                      # Mail component (emersion/go-smtp, go-imap)
+│   ├── mongodb/                   # MongoDB component (go.mongodb.org/mongo-driver)
+│   ├── nats/                      # NATS component (nats-io/nats.go)
+│   ├── openai/                    # OpenAI component (sashabaranov/go-openai)
+│   ├── redis/                     # Redis component (redis/go-redis)
+│   ├── sftp/                      # SFTP component (pkg/sftp)
+│   ├── smb/                       # SMB component (hirochachacha/go-smb2)
+│   └── telegram/                  # Telegram component (go-telegram-bot-api)
+├── observability/                 # Metrics & Tracing modules
+│   ├── prometheus/                # Prometheus metrics interceptor
+│   └── otel/                      # OpenTelemetry tracing interceptor
+└── hugo-site/                     # Bilingual documentation website (Hugo + Relearn theme)
 ```
 
-Run a single test: `go test -run TestName ./...` from the module directory.
+### ⚠️ Strict Dependency Rules
 
-Do not use `go work sync` casually or add `replace` directives; the workspace file already
-wires the local modules together.
+1. **Zero Third-Party Dependencies in Core**: The root module (`.`) is strictly stdlib-only.
+   - Allowed exceptions in root `go.mod`: `github.com/stretchr/testify` (tests only) and `github.com/mattn/go-sqlite3` (requires **CGO**).
+   - **NEVER** add third-party libraries to the root `go.mod` for optional components or formats.
+2. **Component Isolation**: Any component requiring an external package **must** live in `components/<name>/` with its own independent `go.mod` referencing `gitlab.com/tranchida/gocamel`.
+3. **Stdlib-only Components**: Reside directly in the core root module: `direct`, `seda`, `chan`, `timer`, `http`, `exec`, `template`, `sql`, `sql-stored`, `net` (TCP/UDP).
 
-## Code style guidelines
+---
 
-- Standard Go idioms: `gofmt`-formatted, effective-Go naming. Comments/doc comments in English.
-- Flat package layout in the root: one concept per file (`aggregator.go`,
-  `circuit_breaker.go`, ...), with its tests in the sibling `*_test.go` file.
-  New EIPs/components follow the same naming: `<name>.go` + `<name>_test.go`.
-- Public API is Camel-flavoured: fluent builder methods returning `*RouteBuilder`,
-  `Camel*` header/property constants, interfaces `Component`/`Endpoint`/`Producer`/`Consumer`/`Processor`.
-- Errors: return wrapped errors (`fmt.Errorf("...: %w", err)`); sentinel errors such as
-  `ErrStopRouting`, `ErrProcessorPanic`, `ErrHTTPStatus` are checked with `errors.Is`.
-- Concurrency: contexts/structs document which mutex guards which field; consumers and
-  async EIPs run their own goroutines and must honour `context.Context` cancellation and
-  call `ProcessSafely` when invoking user processors.
-- Route validation: processors may implement the optional `Validator` interface so
-  misconfiguration surfaces at `Build()`/`Validate()` time, not on the first message.
-- Optional behaviour on builders uses `SetX(...)` chainable methods
-  (e.g. `SetCompletionSize`, `SetCompletionTimeout`).
+## 3. Go Coding Idioms & Project Standards
 
-## Testing instructions
+### Flat Package Layout in Core
+- The core module uses a flat structure in package `gocamel`.
+- One concept per file: `<feature>.go` with tests in sibling `<feature>_test.go` (e.g. `aggregator.go` + `aggregator_test.go`).
+- Do not create unnecessary subpackages in core; keep the public API cohesive and discoverable.
 
-- Tests use [`stretchr/testify`](https://github.com/stretchr/testify) (`assert` / `require`)
-  and live in `*_test.go` next to the code, in the same package.
-- Most tests are pure unit/integration tests over in-memory components (`direct`, `seda`,
-  `chan`, `timer`) — no external services needed for the core module.
-- Component tests avoid real infrastructure where possible: the Redis component tests spin
-  up an in-memory [`miniredis`](https://github.com/alicebob/miniredis) server. Prefer this
-  style (fakes/in-memory servers) over tests that need real Redis/NATS/MongoDB/etc.
-- Core module tests require CGO (go-sqlite3). On macOS/Linux with a C toolchain this works
-  out of the box.
-- CI (GitLab) runs per module: `go build`, `go vet`, `go test -coverprofile=...`, aggregates
-  coverage (no enforced threshold), and runs a **non-blocking** lint job with
-  `staticcheck` (pinned 2025.1.1) and `gosec` (pinned v2.22.4, tests excluded). Lint
-  failures don't gate merges today, but don't add new findings.
+### Naming Conventions
+- Standard Go conventions: camelCase for unexported identifiers, PascalCase for exported identifiers.
+- Well-known Camel headers and exchange properties use the `Camel*` prefix constant format:
+  ```go
+  const (
+      CamelFileName         = "CamelFileName"
+      CamelHttpResponseCode = "CamelHttpResponseCode"
+      CamelRedisCommand     = "CamelRedisCommand"
+  )
+  ```
+- Factory functions use `New<Type>()` (e.g., `NewCamelContext()`, `NewRouteBuilder()`).
 
-## Security considerations
+### Fluent DSL & Error Accumulation
+- DSL methods on `*RouteBuilder` must be chainable and return `*RouteBuilder`.
+- **Never panic** during route building. If an invalid argument or malformed expression is passed to a DSL method, record the error in `rb.errors` and return `rb`.
+- Surfaced errors at `Build()` / `Validate()` time:
+  ```go
+  // Validate checks the route pipeline and all processor validations
+  func (r *Route) Validate() error {
+      var errs []error
+      for _, p := range r.processors {
+          if v, ok := p.(Validator); ok {
+              if err := v.Validate(); err != nil {
+                  errs = append(errs, err)
+              }
+          }
+      }
+      return errors.Join(errs...)
+  }
+  ```
 
-Security is a first-class concern in this codebase (`security.go`, plus review-driven
-hardening). When touching I/O, HTTP, SQL or file paths, preserve these guarantees:
+---
 
-- **Path traversal protection** — `ValidatePath`, `ValidatePathInDir`, `ValidateRemotePath`,
-  `IsSafePath` must be applied to any path derived from message/user data; symlink escapes
-  are resolved.
-- **SQL** — queries are trusted configuration, never interpolated with exchange data;
-  dynamic values go through positional `?` parameter binding. The `CamelSqlQuery` header is
-  ignored unless the endpoint opts in with `allowHeaderOverride=true`. Keep it that way.
-- **HTTP** — the consumer never reflects inbound request headers (`Cookie`,
-  `Authorization`, ...) into responses; request/response bodies are size-bounded
-  (32 MiB default); the producer treats status ≥ 300 as an error wrapping `ErrHTTPStatus`
-  (opt-out via `SetThrowExceptionOnFailure(false)`).
-- **Panic containment** — a panicking processor fails its exchange, never the process
-  (use `ProcessSafely` from consumer goroutines).
-- **Input sanitization** — `SanitizeInput` strips null bytes/control characters.
-- Never execute unsanitized external commands; the `exec` component is for trusted config only.
-- The HTTP consumer ships with no authentication — routes exposed to untrusted networks are
-  expected to add middleware via `SetMiddleware`.
+## 4. Concurrency, Goroutines & Panic Safety
 
-## Documentation and CI/deployment
+### 1. Panic Containment with `ProcessSafely`
+Processors execute arbitrary user-defined code. When invoked from library-owned background goroutines (SEDA workers, async Multicast branches, Splitter parallel threads, WireTap, polling consumers, Timers), an unrecovered panic would crash the entire host process.
 
-- Docs are built with **Hugo** + the [Relearn](https://github.com/McShelby/hugo-theme-relearn)
-  theme, sources in `hugo-site/` (`hugo.toml`, content in `hugo-site/content/en/` and
-  `hugo-site/content/fr/`).
-- Documentation is bilingual: `README.md`/`README.fr.md`, `hugo-site/content/en/`,
-  `hugo-site/content/fr/`. **When you change documented behaviour, update both languages.**
-- The live site is self-hosted on a VPS with Caddy at
-  https://gocamel.tranchida.cloud/. Build and deploy with `hugo-site/deploy.sh`.
-- The `convert_docs.py` script in `hugo-site/` converts MkDocs Markdown to Hugo format
-  (admonitions → GitHub callouts, front matter, weights).
-- There is no binary release process — this is a library; users `go get` the modules.
+- **Rule**: Always call `ProcessSafely(processor, exchange)` from background goroutines.
+- `ProcessSafely` recovers panics, logs the stack trace, and returns an error wrapping `ErrProcessorPanic`.
+- The route's `ErrorHandler` can then process the error gracefully.
 
-## Commit conventions
+```go
+// In consumer or background worker:
+if err := ProcessSafely(c.processor, exchange); err != nil {
+    LogError("processing failed", "error", err)
+}
+```
 
-Recent history uses conventional-commit-style messages (`fix:`, `fix(security):`,
-`docs:`, ...). Follow that style.
+### 2. Exchange Cloning for Concurrent Branches
+The `Exchange` struct is mutable. Sharing the same `Exchange` instance across multiple concurrent goroutines causes data races on headers, properties, and messages.
 
-## Code intelligence tooling
+- **Rule**: When routing an exchange across concurrent paths (e.g., `Multicast` with parallel processing, `Splitter` with worker pools, `WireTap`), **always clone the exchange** using `exchange.Copy()` or `exchange.CopyWithoutProperties()`.
 
-This repository is indexed by **CodeGraph** (see `.codegraph/`). Prefer `codegraph_explore`
-for exploring flows, understanding architecture, and assessing blast radius before
-editing exported symbols. The index auto-syncs via a file watcher.
+```go
+// Safe parallel dispatch:
+copyExchange := exchange.Copy()
+go func(ex *Exchange) {
+    _ = ProcessSafely(branchProcessor, ex)
+}(copyExchange)
+```
+
+### 3. Mutex Discipline & Documentation
+- Document which fields are guarded by which mutexes:
+  ```go
+  type CamelContext struct {
+      routesLock    sync.RWMutex // Protects routes slice and routeCounter
+      routes        []*Route
+      startLock     sync.RWMutex // Protects started lifecycle state
+      started       bool
+  }
+  ```
+- Use `sync.RWMutex` for read-heavy state and `sync.Mutex` for exclusive mutations.
+- Minimize critical section duration; never perform blocking I/O or call external processors while holding a lock.
+
+### 4. Idempotent Resource Teardown with `sync.Once`
+When an endpoint's client/connection is shared between a Producer and a Consumer, both might attempt to close it upon `Stop()`.
+- **Rule**: Guard client closure with `sync.Once` to prevent double-close panics or connection races:
+  ```go
+  func (e *RedisEndpoint) closeClient() error {
+      var err error
+      e.closeOnce.Do(func() {
+          err = e.client.Close()
+      })
+      return err
+  }
+  ```
+
+### 5. Goroutine Lifecycle & Leak Prevention
+- Always respect `ctx.Done()` in all loops, channel selections, and polling consumers.
+- Use `sync.WaitGroup` to wait for all background workers during `Stop()`.
+- Use a dedicated `done` channel or context cancellation to trigger worker exit.
+
+---
+
+## 5. Error Handling Guidelines
+
+### Wrapped Errors
+- Always wrap underlying errors with descriptive context:
+  ```go
+  return fmt.Errorf("failed to connect to redis host %s: %w", addr, err)
+  ```
+
+### Sentinel Errors
+- Check sentinel errors using `errors.Is(err, Target)`:
+  - `ErrStopRouting`: Signals normal routing cessation (e.g., Filter rejected message, Aggregation completed) without marking the exchange as failed.
+  - `ErrProcessorPanic`: Identifies a caught panic from user code.
+  - `ErrHTTPStatus`: Identifies HTTP responses with status code ≥ 300.
+
+### Error Propagation
+- Do not swallow errors silently. Allow errors to propagate so that route-level error handlers (`ErrorHandler`, `DeadLetterChannel`, `OnException`) can apply retry policies and fallbacks.
+
+---
+
+## 6. Security & Hardening Rules (Critical)
+
+Security is a primary concern in GoCamel (`security.go`). Follow these non-negotiable rules:
+
+### 1. Path Traversal Protection
+Whenever file paths, directory names, or file names are derived from message headers (such as `CamelFileName`) or user-supplied URI parameters:
+- **Rule**: Validate paths using `gocamel.ValidatePath()`, `gocamel.ValidatePathInDir()`, `gocamel.ValidateRemotePath()`, or `gocamel.IsSafePath()`.
+- Never trust raw path strings. Reject paths escaping the root (`..`), containing embedded null bytes (`\x00`), or escaping via symbolic links.
+
+### 2. SQL Injection Prevention
+- SQL queries in endpoints are trusted configuration.
+- **Rule**: Dynamic values must strictly use parameter binding with `?` placeholders.
+- The `CamelSqlQuery` header override is ignored by default and is only permitted if the endpoint explicitly opts in with `allowHeaderOverride=true`.
+
+### 3. Input Sanitization
+- External strings used in file systems or headers must be sanitized via `gocamel.SanitizeInput(s)` to strip null bytes and unwanted control characters.
+
+### 4. HTTP & Resource Limits
+- **Header Isolation**: The HTTP consumer must never echo inbound security headers (`Cookie`, `Authorization`, etc.) into outbound responses.
+- **Bounded Buffers**: HTTP request/response bodies are size-bounded (default 32 MiB) to prevent memory exhaustion (DoS).
+- **Exec Safety**: The `exec` component is strictly for trusted configuration. Never concatenate unvalidated user headers into shell commands.
+
+---
+
+## 7. Component & Endpoint Implementation Pattern
+
+When implementing or modifying a GoCamel component, adhere to the 4-pillar contract:
+
+```go
+// 1. Component
+type MyComponent struct{}
+func (c *MyComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
+    u, err := gocamel.ParseURI(uri)
+    if err != nil {
+        return nil, fmt.Errorf("invalid URI: %w", err)
+    }
+    timeout := gocamel.GetConfigDuration(u, "timeout", 5*time.Second)
+    return &MyEndpoint{uri: uri, timeout: timeout}, nil
+}
+
+// 2. Endpoint
+type MyEndpoint struct {
+    uri     string
+    timeout time.Duration
+}
+func (e *MyEndpoint) URI() string { return e.uri }
+func (e *MyEndpoint) CreateProducer() (gocamel.Producer, error) { return &MyProducer{endpoint: e}, nil }
+func (e *MyEndpoint) CreateConsumer(p gocamel.Processor) (gocamel.Consumer, error) {
+    return &MyConsumer{endpoint: e, processor: p}, nil
+}
+
+// 3. Producer
+type MyProducer struct{ endpoint *MyEndpoint }
+func (p *MyProducer) Start(ctx context.Context) error { return nil }
+func (p *MyProducer) Stop() error { return nil }
+func (p *MyProducer) Process(exchange *gocamel.Exchange) error {
+    // Process exchange and populate In/Out message
+    return nil
+}
+
+// 4. Consumer
+type MyConsumer struct {
+    endpoint  *MyEndpoint
+    processor gocamel.Processor
+    cancel    context.CancelFunc
+    wg        sync.WaitGroup
+}
+func (c *MyConsumer) Start(ctx context.Context) error {
+    ctx, c.cancel = context.WithCancel(ctx)
+    c.wg.Add(1)
+    go c.run(ctx)
+    return nil
+}
+func (c *MyConsumer) Stop() error {
+    if c.cancel != nil { c.cancel() }
+    c.wg.Wait()
+    return nil
+}
+func (c *MyConsumer) run(ctx context.Context) {
+    defer c.wg.Done()
+    // Polling / listening loop respecting ctx.Done() and using gocamel.ProcessSafely
+}
+```
+
+---
+
+## 8. Testing Standards & Guidelines
+
+- **Testing Library**: Use `github.com/stretchr/testify` (`assert` and `require`).
+  - Use `require.*` for setup preconditions (e.g. `require.NoError(t, err)`).
+  - Use `assert.*` for actual outcome assertions.
+- **In-Memory First**:
+  - Core module tests must run in memory using `direct`, `seda`, `chan`, `timer`, or stdlib test servers (`httptest.Server`, `net.Pipe`).
+  - Component tests must avoid external live infrastructure where possible (e.g. use `miniredis` for Redis tests, ephemeral temporary directories for File/SFTP tests).
+- **Race Detector**: All tests **must pass with the race detector enabled**:
+  ```bash
+  go test -race ./...
+  ```
+- **Asynchronous Testing**:
+  - Do not use arbitrary `time.Sleep` to wait for async messages.
+  - Use `assert.Eventually(t, func() bool { ... }, timeout, interval)` or channel receives with a `select` + `time.After` timeout.
+- **Cleanup**: Always clean up resources using `t.Cleanup()` or `defer` (stop contexts, close servers, delete temp files).
+
+---
+
+## 9. Build, Test & CI Commands
+
+Always run commands from the specific module directory you modified:
+
+```bash
+# Core module (repo root) — requires CGO for go-sqlite3
+go build ./...
+go vet ./...
+go test -race ./...
+
+# Specific component module, e.g. components/redis
+cd components/redis
+go build ./...
+go vet ./...
+go test -race ./...
+
+# CI Parity: build, vet, and test every module in the workspace
+for mod in $(find . -name go.mod -not -path '*/.*'); do
+  dir=$(dirname "$mod")
+  echo "==> Testing module in $dir"
+  (cd "$dir" && go build ./... && go vet ./... && go test -race ./...)
+done
+
+# Linting (matches GitLab CI non-blocking jobs)
+staticcheck ./...
+gosec -exclude-dir=hugo-site ./...
+```
+
+---
+
+## 10. Documentation & Commit Conventions
+
+- **Conventional Commits**: Use semantic commit prefixes: `feat:`, `fix:`, `fix(security):`, `docs:`, `test:`, `refactor:`, `perf:`, `chore:`.
+- **Bilingual Documentation Policy**:
+  - All user-facing documentation is maintained in both **English** and **French**.
+  - When adding or changing documented behavior, update both:
+    1. Root READMEs: `README.md` and `README.fr.md`.
+    2. Hugo site: `hugo-site/content/en/` and `hugo-site/content/fr/`.
+- **Code Intelligence**: The repository is indexed with **CodeGraph** (`.codegraph/`). Use `codegraph_explore` to inspect symbol definitions, call hierarchies, and blast radius before modifying core interfaces.
