@@ -405,8 +405,8 @@ func (c *GRPCConsumer) handler(srv any, stream grpc.ServerStream) error {
 			"exchange_id", exchange.ID,
 		)
 		code := codes.Internal
-		if cCode, ok := exchange.GetHeaderAsInt(CamelGrpcStatusCode); ok {
-			code = codes.Code(cCode)
+		if cCode, ok := exchange.GetHeaderAsInt(CamelGrpcStatusCode); ok && cCode >= 0 && cCode <= int(codes.Unauthenticated) {
+			code = codes.Code(cCode) // #nosec G115
 		}
 		return status.Errorf(code, "route error: %v", err)
 	}
