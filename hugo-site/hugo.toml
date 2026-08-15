@@ -39,6 +39,10 @@ defaultContentLanguageInSubdir = true
 
 [languages]
   [languages.en]
+    languageName = 'English'
+    languageCode = 'en-US'
+    label = 'English'
+    locale = 'en-US'
     title = 'GoCamel'
     weight = 1
     contentDir = 'content/en'
@@ -54,6 +58,10 @@ defaultContentLanguageInSubdir = true
         identifier = 'relearn-dark'
         name = 'Dark'
   [languages.fr]
+    languageName = 'Français'
+    languageCode = 'fr-FR'
+    label = 'Français'
+    locale = 'fr-FR'
     title = 'GoCamel'
     weight = 2
     contentDir = 'content/fr'
