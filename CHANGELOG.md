@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.4.0] - 2026-08-15
+
+Read lock mechanism across file/remote file components and route builder enhancements.
+
+### Core (`gitlab.com/tranchida/gocamel`)
+
+- **Read lock support** — Added `ReadLockStrategy` (`none`, `changed`, `rename`, `markerFile`) and common polling options (`readLockTimeout`, `readLockCheckInterval` / `readLockInterval`, `readLockMinLength`, `readLockMinAge`, `readLockMarkerFile`).
+- **New exported helper** — `WaitForStable` to poll file metadata until stable and satisfying minimum constraints.
+- **Route builder** — Wire nested child processors correctly and standardize file headers.
+
+### Components
+
+- `file`, `ftp`, `sftp`, `smb` — Full support for `readLock` strategies (`changed`, `rename`, `markerFile`, `none`) with automatic lock management and synchronization cleanup.
+
 ## [v0.3.0] - 2026-08-13
 
 Security hardening and bug fixes across the core and several components.
