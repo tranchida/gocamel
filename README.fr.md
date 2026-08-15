@@ -36,7 +36,8 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 
 Le module core (moteur de routage, EIPs, Simple Language et tous les
 composants sans dépendance externe : direct, seda, chan, timer, http, exec,
-template, sql) n'a **aucune dépendance externe** :
+template, sql) n'a **aucune dépendance externe à l'exécution** et se compile sans
+CGO (les tests utilisent le driver pure-Go `modernc.org/sqlite`) :
 
 ```bash
 go get gitlab.com/tranchida/gocamel

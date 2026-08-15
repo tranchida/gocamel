@@ -62,7 +62,7 @@ gocamel/
 ### ⚠️ Strict Dependency Rules
 
 1. **Zero Third-Party Dependencies in Core**: The root module (`.`) is strictly stdlib-only.
-   - Allowed exceptions in root `go.mod`: `github.com/stretchr/testify` (tests only) and `github.com/mattn/go-sqlite3` (requires **CGO**).
+   - Allowed exceptions in root `go.mod`: `github.com/stretchr/testify` and `modernc.org/sqlite` (pure-Go SQLite driver used in tests, **no CGO required**).
    - **NEVER** add third-party libraries to the root `go.mod` for optional components or formats.
 2. **Component Isolation**: Any component requiring an external package **must** live in `components/<name>/` with its own independent `go.mod` referencing `gitlab.com/tranchida/gocamel`.
 3. **Stdlib-only Components**: Reside directly in the core root module: `direct`, `seda`, `chan`, `timer`, `http`, `exec`, `template`, `sql`, `sql-stored`, `net` (TCP/UDP).
@@ -300,7 +300,7 @@ func (c *MyConsumer) run(ctx context.Context) {
 Always run commands from the specific module directory you modified:
 
 ```bash
-# Core module (repo root) — requires CGO for go-sqlite3
+# Core module (repo root) — CGO-free (pure-Go modernc.org/sqlite)
 go build ./...
 go vet ./...
 go test -race ./...

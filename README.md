@@ -35,7 +35,8 @@ provides a powerful DSL for creating integration routes to connect different sys
 
 The core module (routing engine, EIPs, Simple Language and all stdlib-only
 components: direct, seda, chan, timer, http, exec, template, sql) has **zero
-external dependencies**:
+external runtime dependencies** and builds without CGO (tests use the pure-Go
+`modernc.org/sqlite` driver):
 
 ```bash
 go get gitlab.com/tranchida/gocamel

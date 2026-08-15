@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSQLAggregationRepository_AddGetRemove(t *testing.T) {
 	// Create an in-memory SQLite database
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
 	defer db.Close()
 

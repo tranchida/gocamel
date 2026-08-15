@@ -761,10 +761,10 @@ Exécution de requêtes SQL via `database/sql`.
 ```go
 import (
     "database/sql"
-    _ "github.com/mattn/go-sqlite3"
+    _ "modernc.org/sqlite"
 )
 
-db, _ := sql.Open("sqlite3", "./app.db")
+db, _ := sql.Open("sqlite", "./app.db")
 
 sqlComp := gocamel.NewSQLComponent()
 sqlComp.RegisterDataSource("appdb", db)
@@ -865,7 +865,7 @@ Exécution de procédures stockées avec support des paramètres IN, OUT et INOU
 ```go
 import (
     "database/sql"
-    _ "github.com/mattn/go-sqlite3"
+    _ "modernc.org/sqlite"
 )
 
 db, _ := sql.Open("mysql", "user:pass@/mydb")

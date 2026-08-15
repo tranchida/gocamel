@@ -517,12 +517,12 @@ route := ctx.CreateRouteBuilder().
 ```go
 import (
     "database/sql"
-    _ "github.com/mattn/go-sqlite3"
+    _ "modernc.org/sqlite"
     "gitlab.com/tranchida/gocamel"
 )
 
 func main() {
-    db, _ := sql.Open("sqlite3", "app.db")
+    db, _ := sql.Open("sqlite", "app.db")
     defer db.Close()
 
     ctx := gocamel.NewCamelContext()

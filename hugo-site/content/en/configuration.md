@@ -131,9 +131,9 @@ ctx.AddComponent("openai", gocamel.NewOpenAIComponent())
 
 ```go
 import "database/sql"
-import _ "github.com/mattn/go-sqlite3"
+import _ "modernc.org/sqlite"
 
-db, _ := sql.Open("sqlite3", "./app.db")
+db, _ := sql.Open("sqlite", "./app.db")
 
 sqlComp := gocamel.NewSQLComponent()
 sqlComp.RegisterDataSource("appdb", db)
