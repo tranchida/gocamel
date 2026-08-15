@@ -12,6 +12,6 @@ require github.com/kr/text v0.2.0 // indirect
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	gitlab.com/tranchida/gocamel v0.3.0
+	gitlab.com/tranchida/gocamel v0.4.0
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
