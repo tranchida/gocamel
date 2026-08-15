@@ -46,6 +46,8 @@ propres modules Go — vous ne récupérez que les dépendances de ce que vous
 utilisez réellement :
 
 ```bash
+go get gitlab.com/tranchida/gocamel/components/kafka     # segmentio/kafka-go
+go get gitlab.com/tranchida/gocamel/components/grpc      # google.golang.org/grpc
 go get gitlab.com/tranchida/gocamel/components/redis    # go-redis
 go get gitlab.com/tranchida/gocamel/components/nats     # nats.go
 go get gitlab.com/tranchida/gocamel/components/mongodb  # mongo-driver
@@ -139,6 +141,8 @@ builder.From("direct:start").
 |----------------|--------------------------------|
 | **HTTP**       | Serveur et client HTTP         |
 | **Net**        | Sockets TCP/UDP bruts          |
+| **Kafka**      | Messagerie Apache Kafka        |
+| **gRPC**       | Client et serveur gRPC         |
 | **File**       | Opérations système de fichiers |
 | **FTP/SFTP**   | Transfert via FTP/SSH          |
 | **SMB**        | Partages Windows/Samba         |
@@ -160,6 +164,8 @@ builder.From("direct:start").
 
 | Data Format | Description                                                       |
 |-------------|-------------------------------------------------------------------|
+| **JSON**    | Marshal/unmarshal JSON avec `MarshalJson()` / `UnmarshalJson()` ou `Marshal(NewJSONDataFormat(...))` |
+| **XML**     | Marshal/unmarshal XML avec `MarshalXml()` / `UnmarshalXml()` ou `Marshal(NewXMLDataFormat(...))` |
 | **CSV**     | Marshal/unmarshal CSV avec `MarshalCSV()` / `UnmarshalCSV()` ou `Marshal(NewCSVDataFormat(...))` |
 | **RSS**     | Marshal/unmarshal XML RSS avec `Marshal(NewRSSDataFormat())` et `Unmarshal(NewRSSDataFormat())` |
 

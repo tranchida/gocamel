@@ -92,11 +92,17 @@ Accessible via `ctx.GetComponentRegistry()` :
 |-------------------------|------------------------------------------------------------------------------------|
 | `Marshal(df)`           | Sérialiser le corps avec un data format                                            |
 | `Unmarshal(df)`         | Désérialiser le corps avec un data format                                          |
+| `MarshalJson(opts...)`  | Sérialiser un corps structuré en chaîne JSON                                       |
+| `UnmarshalJson(opts...)`| Désérialiser un corps JSON vers une structure typée, une map ou une slice          |
+| `MarshalXml(opts...)`   | Sérialiser un corps structuré en chaîne XML                                        |
+| `UnmarshalXml(opts...)` | Désérialiser un corps XML vers une structure typée ou un document XML générique    |
 | `MarshalCSV(opts...)`   | Écrire un corps structuré en chaîne CSV                                            |
 | `UnmarshalCSV(opts...)` | Lire un corps CSV en `[][]string` ou `[]map[string]string` avec `CSVUseMaps(true)` |
 
 Options CSV principales : `CSVDelimiter`, `CSVHeader`, `CSVSkipHeaderRecord`, `CSVCaptureHeaderRecord`, `CSVUseMaps`,
 `CSVTrim`, `CSVIgnoreEmptyLines`.
+Options JSON principales : `JSONPrettyPrint`, `JSONIndent`, `JSONUnmarshalType`, `JSONUseNumber`.
+Options XML principales : `XMLPrettyPrint`, `XMLIndent`, `XMLUnmarshalType`, `XMLHeader`.
 
 ### Builder
 

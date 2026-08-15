@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.5.0] - 2026-08-15
+
+New Kafka and gRPC components, alongside JSON and XML DataFormats.
+
+### Core (`gitlab.com/tranchida/gocamel`)
+
+- **JSON DataFormat** — Added `JSONDataFormat` (`MarshalJson`, `UnmarshalJson`), supporting pretty-printing, typed target unmarshalling (`JSONUnmarshalType`), generic map/slice unmarshalling, and `json.Number`.
+- **XML DataFormat** — Added `XMLDataFormat` (`MarshalXml`, `UnmarshalXml`), supporting XML declaration headers, indentation, typed struct unmarshalling, and DoS mitigation rejecting recursive `<!DOCTYPE>` entity declarations.
+
+### Components
+
+- `kafka` (`gitlab.com/tranchida/gocamel/components/kafka`) — New Apache Kafka component using `segmentio/kafka-go`, supporting producers with dynamic partition key / topic headers, consumers with consumer groups / partition assignments, and header propagation.
+- `grpc` (`gitlab.com/tranchida/gocamel/components/grpc`) — New gRPC component using `google.golang.org/grpc`, supporting client producers with status code / metadata mapping, and server consumers with dynamic RPC dispatch.
+
 ## [v0.4.0] - 2026-08-15
 
 Read lock mechanism across file/remote file components and route builder enhancements.

@@ -5,6 +5,8 @@ use (
 	./components/cron
 	./components/file
 	./components/ftp
+	./components/grpc
+	./components/kafka
 	./components/mail
 	./components/mongodb
 	./components/nats

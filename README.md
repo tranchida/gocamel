@@ -45,6 +45,8 @@ Components that rely on third-party libraries live in their own Go modules —
 you only pull the dependencies of what you actually use:
 
 ```bash
+go get gitlab.com/tranchida/gocamel/components/kafka     # segmentio/kafka-go
+go get gitlab.com/tranchida/gocamel/components/grpc      # google.golang.org/grpc
 go get gitlab.com/tranchida/gocamel/components/redis    # go-redis
 go get gitlab.com/tranchida/gocamel/components/nats     # nats.go
 go get gitlab.com/tranchida/gocamel/components/mongodb  # mongo-driver
@@ -138,6 +140,8 @@ EndChoice()
 |----------------|-------------------------------|
 | **HTTP**       | HTTP server and client        |
 | **Net**        | Raw TCP/UDP sockets           |
+| **Kafka**      | Apache Kafka messaging        |
+| **gRPC**       | gRPC client and server        |
 | **File**       | Local file system operations  |
 | **FTP/SFTP**   | File transfer via FTP/SSH     |
 | **SMB**        | Windows/Samba shares          |
@@ -159,6 +163,8 @@ EndChoice()
 
 | Data Format | Description                                                        |
 |-------------|--------------------------------------------------------------------|
+| **JSON**    | Marshal/unmarshal JSON with `MarshalJson()` / `UnmarshalJson()` or `Marshal(NewJSONDataFormat(...))` |
+| **XML**     | Marshal/unmarshal XML with `MarshalXml()` / `UnmarshalXml()` or `Marshal(NewXMLDataFormat(...))` |
 | **CSV**     | Marshal/unmarshal CSV with `MarshalCSV()` / `UnmarshalCSV()` or `Marshal(NewCSVDataFormat(...))` |
 | **RSS**     | Marshal/unmarshal RSS XML with `Marshal(NewRSSDataFormat())` and `Unmarshal(NewRSSDataFormat())` |
 

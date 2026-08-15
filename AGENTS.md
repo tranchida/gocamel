@@ -47,7 +47,7 @@ independent module and must build, vet and test on its own:
   `chan`, `timer`, `http`, `exec`, `template`, `sql`, `sql-stored`, `net` (raw TCP/UDP
   sockets).
 - `components/*` — components with third-party dependencies, one module each:
-  `cron`, `file`, `ftp`, `mail`, `mongodb`, `nats`, `openai`, `redis`, `sftp`, `smb`,
+  `cron`, `file`, `ftp`, `grpc`, `kafka`, `mail`, `mongodb`, `nats`, `openai`, `redis`, `sftp`, `smb`,
   `telegram`. Users pull in only what they need. Keep it that way: **never add a
   third-party dependency to the core module for an optional component** — put it in
   `components/<name>/` with its own `go.mod` instead.
