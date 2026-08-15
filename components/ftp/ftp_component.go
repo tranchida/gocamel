@@ -302,22 +302,41 @@ func (c *FTPConsumer) releaseConn(conn *ftp.ServerConn) {
 type ftpSynchronization struct {
 	conn       *ftp.ServerConn
 	path       string
+	lockPath   string
+	markerPath string
 	noop       bool
 	delete     bool
 	move       string
 	moveFailed string
 }
 
+func (s *ftpSynchronization) cleanupLock() {
+	if s.markerPath != "" {
+		_ = s.conn.Delete(s.markerPath)
+	}
+}
+
 func (s *ftpSynchronization) OnComplete(exchange *gocamel.Exchange) {
+	defer s.cleanupLock()
+	effectivePath := s.path
+	if s.lockPath != "" {
+		effectivePath = s.lockPath
+	}
+
 	if s.noop {
+		if s.lockPath != "" {
+			_ = s.conn.Rename(s.lockPath, s.path)
+		}
 		return
 	}
 	if s.move != "" {
-		moveFTPFile(s.conn, s.path, s.move)
+		moveFTPFile(s.conn, effectivePath, s.move)
 	} else if s.delete {
-		if err := s.conn.Delete(s.path); err != nil {
-			gocamel.LogError("FTP file deletion error", "file", s.path, "error", err)
+		if err := s.conn.Delete(effectivePath); err != nil {
+			gocamel.LogError("FTP file deletion error", "file", effectivePath, "error", err)
 		}
+	} else if s.lockPath != "" {
+		_ = s.conn.Rename(s.lockPath, s.path)
 	}
 }
 
@@ -326,9 +345,17 @@ func (s *ftpSynchronization) OnFailure(exchange *gocamel.Exchange) {
 		s.OnComplete(exchange)
 		return
 	}
+	defer s.cleanupLock()
+
+	effectivePath := s.path
+	if s.lockPath != "" {
+		effectivePath = s.lockPath
+	}
 
 	if !s.noop && s.moveFailed != "" {
-		moveFTPFile(s.conn, s.path, s.moveFailed)
+		moveFTPFile(s.conn, effectivePath, s.moveFailed)
+	} else if s.lockPath != "" {
+		_ = s.conn.Rename(s.lockPath, s.path)
 	}
 }
 
@@ -369,6 +396,9 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 					listDir(fullPath)
 				}
 			case ftp.EntryTypeFile:
+				if strings.HasSuffix(entry.Name, ".camelLock") || strings.HasSuffix(entry.Name, ".camelExclusiveReadLock") {
+					continue
+				}
 				if gocamel.MatchFileName(entry.Name, c.opts.Include, c.opts.Exclude) {
 					files = append(files, ftpFile{name: entry.Name, path: fullPath})
 				}
@@ -383,15 +413,72 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 			break
 		}
 
-		resp, err := conn.Retr(f.path)
+		var lockPath string
+		var markerPath string
+
+		switch c.opts.ReadLock {
+		case gocamel.ReadLockChanged:
+			statFn := func() (int64, time.Time, error) {
+				size, err := conn.FileSize(f.path)
+				if err != nil {
+					return 0, time.Time{}, err
+				}
+				modTime, _ := conn.GetTime(f.path)
+				return size, modTime, nil
+			}
+			if !gocamel.WaitForStable(ctx, statFn, c.opts.ReadLockTimeout, c.opts.ReadLockCheckInterval, c.opts.ReadLockMinAge, c.opts.ReadLockMinLength) {
+				gocamel.LogWarn("FTP file did not stabilise before read lock timeout; skipping",
+					"file", f.path, "timeout", c.opts.ReadLockTimeout)
+				continue
+			}
+
+		case gocamel.ReadLockRename:
+			targetLockPath := f.path + ".camelExclusiveReadLock"
+			if err := conn.Rename(f.path, targetLockPath); err != nil {
+				gocamel.LogWarn("could not acquire FTP rename read lock; skipping", "file", f.path, "error", err)
+				continue
+			}
+			lockPath = targetLockPath
+
+		case gocamel.ReadLockMarkerFile:
+			targetMarkerPath := f.path + ".camelLock"
+			if size, err := conn.FileSize(targetMarkerPath); err == nil && size >= 0 {
+				// Marker exists: file is locked
+				continue
+			}
+			if err := conn.Stor(targetMarkerPath, bytes.NewReader([]byte{})); err != nil {
+				gocamel.LogWarn("could not create marker file for FTP read lock; skipping", "file", f.path, "error", err)
+				continue
+			}
+			markerPath = targetMarkerPath
+		}
+
+		readPath := f.path
+		if lockPath != "" {
+			readPath = lockPath
+		}
+
+		resp, err := conn.Retr(readPath)
 		if err != nil {
-			gocamel.LogError("FTP file retrieval error", "file", f.path, "error", err)
+			gocamel.LogError("FTP file retrieval error", "file", readPath, "error", err)
+			if markerPath != "" {
+				_ = conn.Delete(markerPath)
+			}
+			if lockPath != "" {
+				_ = conn.Rename(lockPath, f.path)
+			}
 			continue
 		}
 		content, err := gocamel.ReadLimited(resp, c.endpoint.maxMessageSize)
 		resp.Close()
 		if err != nil {
-			gocamel.LogError("FTP file read error", "file", f.path, "error", err)
+			gocamel.LogError("FTP file read error", "file", readPath, "error", err)
+			if markerPath != "" {
+				_ = conn.Delete(markerPath)
+			}
+			if lockPath != "" {
+				_ = conn.Rename(lockPath, f.path)
+			}
 			continue
 		}
 
@@ -403,6 +490,8 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 		exchange.AddSynchronization(&ftpSynchronization{
 			conn:       conn,
 			path:       f.path,
+			lockPath:   lockPath,
+			markerPath: markerPath,
 			noop:       c.opts.Noop,
 			delete:     c.opts.Delete,
 			move:       c.opts.Move,
@@ -431,7 +520,9 @@ func (c *FTPConsumer) Stop() error {
 
 // moveFTPFile renames/moves a file on the FTP server.
 func moveFTPFile(conn *ftp.ServerConn, srcPath, destDir string) {
-	destPath := destDir + "/" + filepath.Base(srcPath)
+	filename := filepath.Base(srcPath)
+	filename = strings.TrimSuffix(filename, ".camelExclusiveReadLock")
+	destPath := destDir + "/" + filename
 	if err := conn.Rename(srcPath, destPath); err != nil {
 		gocamel.LogError("FTP move error", "src", srcPath, "dest", destPath, "error", err)
 	}

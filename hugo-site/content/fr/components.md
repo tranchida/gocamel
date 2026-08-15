@@ -54,16 +54,21 @@ builder.From("file://input?delete=true")
 builder.To("file://output")
 ```
 
-| Option       | Type   | Défaut  | Description                       |
-|--------------|--------|---------|-----------------------------------|
-| `delete`     | bool   | `false` | Supprimer après traitement        |
-| `noop`       | bool   | `false` | Ne pas déplacer/supprimer le fichier |
-| `include`    | string | `""`    | Motif d'inclusion de fichiers     |
-| `exclude`    | string | `""`    | Motif d'exclusion de fichiers     |
-| `preMove`    | string | `""`    | Déplacer le fichier avant traitement |
-| `move`       | string | `""`    | Déplacer le fichier après traitement |
-| `moveFailed` | string | `""`    | Déplacer le fichier en cas d'échec |
-| `fileExist`  | string | `Override` | Comportement si le fichier destination existe (`Override`, `Append`, `Fail`, `Ignore`) |
+| Option                  | Type     | Défaut     | Description                                                                           |
+|-------------------------|----------|------------|---------------------------------------------------------------------------------------|
+| `delete`                | bool     | `false`    | Supprimer après traitement                                                            |
+| `noop`                  | bool     | `false`    | Ne pas déplacer/supprimer le fichier                                                  |
+| `include`               | string   | `""`       | Motif d'inclusion de fichiers                                                         |
+| `exclude`               | string   | `""`       | Motif d'exclusion de fichiers                                                         |
+| `preMove`               | string   | `""`       | Déplacer le fichier avant traitement                                                  |
+| `move`                  | string   | `""`       | Déplacer le fichier après traitement                                                  |
+| `moveFailed`            | string   | `""`       | Déplacer le fichier en cas d'échec                                                    |
+| `readLock`              | string   | `changed`  | Stratégie de verrouillage (`none`, `changed`, `rename`, `markerFile`)                 |
+| `readLockTimeout`       | Duration | `10s`      | Délai maximal d'attente pour acquérir le verrou                                       |
+| `readLockCheckInterval` | Duration | `100ms`    | Intervalle entre les vérifications du verrou                                          |
+| `readLockMinLength`     | int64    | `0`        | Taille minimale du fichier en octets                                                  |
+| `readLockMinAge`        | Duration | `0`        | Âge minimal du fichier                                                                |
+| `fileExist`             | string   | `Override` | Comportement si le fichier destination existe (`Override`, `Append`, `Fail`, `Ignore`) |
 
 #### En-têtes
 
@@ -76,21 +81,17 @@ builder.To("file://output")
 ##### Consommés par le Producer
 - `CamelFileName` : Surcharge le nom du fichier lorsque l'URI cible pointe vers un répertoire
 
-#### Verrou de lecture
+#### Verrou de lecture (Read Lock)
 
-Lorsqu'il surveille un répertoire, le consumer attend qu'un fichier nouvellement
-créé cesse de changer avant de le lire. `fsnotify` signale `Create` dès que
-l'inode existe — bien avant que l'écrivain ait terminé — si bien qu'une lecture
-immédiate livrait un corps tronqué (souvent vide) pour tout fichier non écrit
-de façon atomique : une redirection shell, une copie, un upload.
+GoCamel fournit plusieurs stratégies de verrou de lecture pour s'assurer que les fichiers sont complètement écrits et exclusifs avant traitement :
 
-Le consumer échantillonne la taille et la date de modification toutes les
-100 ms et lit dès que deux échantillons consécutifs coïncident, en abandonnant
-au bout de 10 secondes (le fichier est ignoré et un avertissement journalisé).
-C'est l'équivalent du `readLock=changed` de Camel.
+- `readLock=changed` : Le consumer échantillonne la taille et la date de modification sur `readLockCheckInterval` et lit dès que deux échantillons consécutifs coïncident dans la limite de `readLockTimeout`.
+- `readLock=rename` : Renomme temporairement le fichier sous un nom exclusif (`.camelExclusiveReadLock`) pendant le traitement.
+- `readLock=markerFile` : Crée un fichier marqueur `.camelLock` pendant le traitement et le supprime une fois terminé.
+- `readLock=none` : Désactive toute vérification de verrou.
 
 > [!tip] Préférez un passage de relais atomique
-> Le verrou de lecture est une heuristique : un écrivain qui s'interrompt plus
+> Le verrou de lecture `changed` est une heuristique : un écrivain qui s'interrompt plus
 > longtemps que l'intervalle d'échantillonnage en cours d'écriture peut encore
 > être observé comme stable. Pour un passage de relais garanti, faites écrire
 > le producteur sous un nom temporaire puis effectuez un `rename` vers le
@@ -105,7 +106,7 @@ Transfert de fichiers via le protocole FTP.
 
 ```go
 // Consumer
-builder.From("ftp://host:21/incoming?username=admin")
+builder.From("ftp://host:21/incoming?username=admin&readLock=changed")
 
 // Producer
 builder.To("ftp://host:21/outgoing?binary=true")
@@ -116,13 +117,18 @@ builder.To("ftp://host:21/outgoing?binary=true")
 - `FTP_USERNAME` - Nom d'utilisateur
 - `FTP_PASSWORD` - Mot de passe
 
-| Option           | Type   | Défaut | Description                                        |
-|------------------|--------|--------|----------------------------------------------------|
-| `username`       | string | `""`   | Nom d'utilisateur FTP                              |
-| `password`       | string | `""`   | Mot de passe FTP                                   |
-| `binary`         | bool   | `true` | Mode de transfert binaire                          |
-| `passiveMode`    | bool   | `true` | Utiliser le mode passif                            |
-| `maxMessageSize` | int    | `0`    | Taille max d'un fichier pollé en octets (0 = illimité) |
+| Option                  | Type     | Défaut | Description                                                        |
+|-------------------------|----------|--------|--------------------------------------------------------------------|
+| `username`              | string   | `""`   | Nom d'utilisateur FTP                                              |
+| `password`              | string   | `""`   | Mot de passe FTP                                                   |
+| `binary`                | bool     | `true` | Mode de transfert binaire                                          |
+| `passiveMode`           | bool     | `true` | Utiliser le mode passif                                            |
+| `maxMessageSize`        | int      | `0`    | Taille max d'un fichier pollé en octets (0 = illimité)             |
+| `readLock`              | string   | `none` | Stratégie de verrou (`none`, `changed`, `rename`, `markerFile`)    |
+| `readLockTimeout`       | Duration | `10s`  | Délai maximal d'attente pour acquérir le verrou                    |
+| `readLockCheckInterval` | Duration | `1s`   | Intervalle entre les vérifications du verrou                       |
+| `readLockMinLength`     | int64    | `0`    | Taille minimale du fichier en octets                               |
+| `readLockMinAge`        | Duration | `0`    | Âge minimal du fichier                                             |
 
 ---
 
@@ -131,7 +137,7 @@ builder.To("ftp://host:21/outgoing?binary=true")
 Transfert de fichiers sécurisé via SSH.
 
 ```go
-builder.From("sftp://host:22/data?username=scott")
+builder.From("sftp://host:22/data?username=scott&readLock=changed&readLockTimeout=15s")
 ```
 
 **Méthodes d'authentification :**
@@ -139,13 +145,18 @@ builder.From("sftp://host:22/data?username=scott")
 - Par mot de passe : via le paramètre `password` ou la variable d'environnement `SFTP_PASSWORD`
 - Par clé : via le paramètre `privateKeyFile` ou `SFTP_PRIVATE_KEY_FILE`
 
-| Option                 | Type   | Défaut | Description              |
-|------------------------|--------|--------|--------------------------|
-| `username`             | string | `""`   | Nom d'utilisateur SSH    |
-| `password`             | string | `""`   | Mot de passe SSH         |
-| `privateKeyFile`       | string | `""`   | Chemin vers la clé privée |
-| `privateKeyPassphrase` | string | `""`   | Phrase secrète de la clé privée |
-| `maxMessageSize`       | int    | `0`    | Taille max d'un fichier pollé en octets (0 = illimité) |
+| Option                  | Type     | Défaut | Description                                                        |
+|-------------------------|----------|--------|--------------------------------------------------------------------|
+| `username`              | string   | `""`   | Nom d'utilisateur SSH                                              |
+| `password`              | string   | `""`   | Mot de passe SSH                                                   |
+| `privateKeyFile`        | string   | `""`   | Chemin vers la clé privée                                          |
+| `privateKeyPassphrase`  | string   | `""`   | Phrase secrète de la clé privée                                    |
+| `maxMessageSize`        | int      | `0`    | Taille max d'un fichier pollé en octets (0 = illimité)             |
+| `readLock`              | string   | `none` | Stratégie de verrou (`none`, `changed`, `rename`, `markerFile`)    |
+| `readLockTimeout`       | Duration | `10s`  | Délai maximal d'attente pour acquérir le verrou                    |
+| `readLockCheckInterval` | Duration | `1s`   | Intervalle entre les vérifications du verrou                       |
+| `readLockMinLength`     | int64    | `0`    | Taille minimale du fichier en octets                               |
+| `readLockMinAge`        | Duration | `0`    | Âge minimal du fichier                                             |
 
 ---
 
@@ -154,15 +165,20 @@ builder.From("sftp://host:22/data?username=scott")
 Accès aux partages Windows/Samba.
 
 ```go
-builder.From("smb://server/share/folder?username=user")
+builder.From("smb://server/share/folder?username=user&readLock=changed")
 ```
 
-| Option           | Type   | Défaut    | Description                                        |
-|------------------|--------|-----------|----------------------------------------------------|
-| `username`       | string | `""`      | Nom d'utilisateur du domaine                       |
-| `password`       | string | `""`      | Mot de passe du domaine                            |
-| `share`          | string | requis    | Nom du partage                                     |
-| `maxMessageSize` | int    | `0`       | Taille max d'un fichier pollé en octets (0 = illimité) |
+| Option                  | Type     | Défaut    | Description                                                        |
+|-------------------------|----------|-----------|--------------------------------------------------------------------|
+| `username`              | string   | `""`      | Nom d'utilisateur du domaine                                       |
+| `password`              | string   | `""`      | Mot de passe du domaine                                            |
+| `share`                 | string   | requis    | Nom du partage                                                     |
+| `maxMessageSize`        | int      | `0`       | Taille max d'un fichier pollé en octets (0 = illimité)             |
+| `readLock`              | string   | `none`    | Stratégie de verrou (`none`, `changed`, `rename`, `markerFile`)    |
+| `readLockTimeout`       | Duration | `10s`     | Délai maximal d'attente pour acquérir le verrou                    |
+| `readLockCheckInterval` | Duration | `1s`      | Intervalle entre les vérifications du verrou                       |
+| `readLockMinLength`     | int64    | `0`       | Taille minimale du fichier en octets                               |
+| `readLockMinAge`        | Duration | `0`       | Âge minimal du fichier                                             |
 
 ---
 

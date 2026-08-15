@@ -308,3 +308,103 @@ func TestFileProducer_WritesWithCamelFileNameHeader(t *testing.T) {
 		t.Errorf("got %q, want 'dynamic filename content'", string(got))
 	}
 }
+
+type testDoneSync struct {
+	done chan struct{}
+}
+
+func (s *testDoneSync) OnComplete(e *gocamel.Exchange) { close(s.done) }
+func (s *testDoneSync) OnFailure(e *gocamel.Exchange)  { close(s.done) }
+
+func TestFileConsumer_ReadLockRename(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir + "?readLock=rename")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		body := string(ex.GetIn().GetBody().([]byte))
+		if body != "rename-data" {
+			t.Errorf("got %q, want 'rename-data'", body)
+		}
+		ex.AddSynchronization(&testDoneSync{done: done})
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer consumer.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	filePath := filepath.Join(dir, "renametest.txt")
+	if err := os.WriteFile(filePath, []byte("rename-data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for exchange with readLock=rename")
+	}
+
+	// Ensure lock file is cleaned up and original file is restored
+	time.Sleep(50 * time.Millisecond)
+	if _, err := os.Stat(filePath + ".camelExclusiveReadLock"); !os.IsNotExist(err) {
+		t.Errorf("lock file was not cleaned up: %v", err)
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		t.Errorf("original file was not restored: %v", err)
+	}
+}
+
+func TestFileConsumer_ReadLockMarkerFile(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir + "?readLock=markerFile")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		body := string(ex.GetIn().GetBody().([]byte))
+		if body != "marker-data" {
+			t.Errorf("got %q, want 'marker-data'", body)
+		}
+		ex.AddSynchronization(&testDoneSync{done: done})
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer consumer.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	filePath := filepath.Join(dir, "markertest.txt")
+	if err := os.WriteFile(filePath, []byte("marker-data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for exchange with readLock=markerFile")
+	}
+
+	// Ensure marker file was deleted after processing
+	time.Sleep(50 * time.Millisecond)
+	if _, err := os.Stat(filePath + ".camelLock"); !os.IsNotExist(err) {
+		t.Errorf("marker file was not deleted: %v", err)
+	}
+}

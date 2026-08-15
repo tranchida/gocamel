@@ -364,22 +364,41 @@ func (c *SFTPConsumer) releaseClients(sshClient *ssh.Client, sftpClient *sftp.Cl
 type sftpSynchronization struct {
 	client     *sftp.Client
 	path       string
+	lockPath   string
+	markerPath string
 	noop       bool
 	delete     bool
 	move       string
 	moveFailed string
 }
 
+func (s *sftpSynchronization) cleanupLock() {
+	if s.markerPath != "" {
+		_ = s.client.Remove(s.markerPath)
+	}
+}
+
 func (s *sftpSynchronization) OnComplete(exchange *gocamel.Exchange) {
+	defer s.cleanupLock()
+	effectivePath := s.path
+	if s.lockPath != "" {
+		effectivePath = s.lockPath
+	}
+
 	if s.noop {
+		if s.lockPath != "" {
+			_ = s.client.PosixRename(s.lockPath, s.path)
+		}
 		return
 	}
 	if s.move != "" {
-		moveSFTPFile(s.client, s.path, s.move)
+		moveSFTPFile(s.client, effectivePath, s.move)
 	} else if s.delete {
-		if err := s.client.Remove(s.path); err != nil {
-			gocamel.LogError("SFTP file deletion error", "file", s.path, "error", err)
+		if err := s.client.Remove(effectivePath); err != nil {
+			gocamel.LogError("SFTP file deletion error", "file", effectivePath, "error", err)
 		}
+	} else if s.lockPath != "" {
+		_ = s.client.PosixRename(s.lockPath, s.path)
 	}
 }
 
@@ -388,9 +407,17 @@ func (s *sftpSynchronization) OnFailure(exchange *gocamel.Exchange) {
 		s.OnComplete(exchange)
 		return
 	}
+	defer s.cleanupLock()
+
+	effectivePath := s.path
+	if s.lockPath != "" {
+		effectivePath = s.lockPath
+	}
 
 	if !s.noop && s.moveFailed != "" {
-		moveSFTPFile(s.client, s.path, s.moveFailed)
+		moveSFTPFile(s.client, effectivePath, s.moveFailed)
+	} else if s.lockPath != "" {
+		_ = s.client.PosixRename(s.lockPath, s.path)
 	}
 }
 
@@ -423,6 +450,9 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 				continue
 			}
 			name := filepath.Base(walker.Path())
+			if strings.HasSuffix(name, ".camelLock") || strings.HasSuffix(name, ".camelExclusiveReadLock") {
+				continue
+			}
 			if gocamel.MatchFileName(name, c.opts.Include, c.opts.Exclude) {
 				files = append(files, sftpFile{name: name, path: walker.Path()})
 			}
@@ -434,7 +464,13 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 			return
 		}
 		for _, entry := range entries {
-			if entry.IsDir() || !gocamel.MatchFileName(entry.Name(), c.opts.Include, c.opts.Exclude) {
+			if entry.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(entry.Name(), ".camelLock") || strings.HasSuffix(entry.Name(), ".camelExclusiveReadLock") {
+				continue
+			}
+			if !gocamel.MatchFileName(entry.Name(), c.opts.Include, c.opts.Exclude) {
 				continue
 			}
 			sep := "/"
@@ -454,15 +490,73 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 			break
 		}
 
-		file, err := sftpClient.Open(f.path)
+		var lockPath string
+		var markerPath string
+
+		switch c.opts.ReadLock {
+		case gocamel.ReadLockChanged:
+			statFn := func() (int64, time.Time, error) {
+				info, err := sftpClient.Stat(f.path)
+				if err != nil {
+					return 0, time.Time{}, err
+				}
+				return info.Size(), info.ModTime(), nil
+			}
+			if !gocamel.WaitForStable(ctx, statFn, c.opts.ReadLockTimeout, c.opts.ReadLockCheckInterval, c.opts.ReadLockMinAge, c.opts.ReadLockMinLength) {
+				gocamel.LogWarn("SFTP file did not stabilise before read lock timeout; skipping",
+					"file", f.path, "timeout", c.opts.ReadLockTimeout)
+				continue
+			}
+
+		case gocamel.ReadLockRename:
+			targetLockPath := f.path + ".camelExclusiveReadLock"
+			if err := sftpClient.PosixRename(f.path, targetLockPath); err != nil {
+				gocamel.LogWarn("could not acquire SFTP rename read lock; skipping", "file", f.path, "error", err)
+				continue
+			}
+			lockPath = targetLockPath
+
+		case gocamel.ReadLockMarkerFile:
+			targetMarkerPath := f.path + ".camelLock"
+			if _, err := sftpClient.Stat(targetMarkerPath); err == nil {
+				// Marker exists: file is locked by another process
+				continue
+			}
+			mf, err := sftpClient.Create(targetMarkerPath)
+			if err != nil {
+				gocamel.LogWarn("could not create marker file for SFTP read lock; skipping", "file", f.path, "error", err)
+				continue
+			}
+			mf.Close()
+			markerPath = targetMarkerPath
+		}
+
+		readPath := f.path
+		if lockPath != "" {
+			readPath = lockPath
+		}
+
+		file, err := sftpClient.Open(readPath)
 		if err != nil {
-			gocamel.LogError("Erreur lors de l'ouverture du fichier SFTP", "file", f.path, "error", err)
+			gocamel.LogError("Erreur lors de l'ouverture du fichier SFTP", "file", readPath, "error", err)
+			if markerPath != "" {
+				_ = sftpClient.Remove(markerPath)
+			}
+			if lockPath != "" {
+				_ = sftpClient.PosixRename(lockPath, f.path)
+			}
 			continue
 		}
 		content, err := gocamel.ReadLimited(file, c.endpoint.maxMessageSize)
 		file.Close()
 		if err != nil {
-			gocamel.LogError("Erreur lors de la lecture du fichier SFTP", "file", f.path, "error", err)
+			gocamel.LogError("Erreur lors de la lecture du fichier SFTP", "file", readPath, "error", err)
+			if markerPath != "" {
+				_ = sftpClient.Remove(markerPath)
+			}
+			if lockPath != "" {
+				_ = sftpClient.PosixRename(lockPath, f.path)
+			}
 			continue
 		}
 
@@ -474,6 +568,8 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 		exchange.AddSynchronization(&sftpSynchronization{
 			client:     sftpClient,
 			path:       f.path,
+			lockPath:   lockPath,
+			markerPath: markerPath,
 			noop:       c.opts.Noop,
 			delete:     c.opts.Delete,
 			move:       c.opts.Move,
@@ -506,7 +602,9 @@ func (c *SFTPConsumer) Stop() error {
 
 // moveSFTPFile renames/moves a file on the SFTP server.
 func moveSFTPFile(client *sftp.Client, srcPath, destDir string) {
-	destPath := destDir + "/" + filepath.Base(srcPath)
+	filename := filepath.Base(srcPath)
+	filename = strings.TrimSuffix(filename, ".camelExclusiveReadLock")
+	destPath := destDir + "/" + filename
 	if err := client.MkdirAll(destDir); err == nil || strings.Contains(err.Error(), "exist") {
 		if err := client.PosixRename(srcPath, destPath); err != nil {
 			gocamel.LogError("Erreur déplacement SFTP", "src", srcPath, "dest", destPath, "error", err)

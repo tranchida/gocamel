@@ -178,6 +178,29 @@ type FileConsumer struct {
 	watcher   *fsnotify.Watcher
 	stopChan  chan struct{}
 	wg        sync.WaitGroup
+	mu        sync.Mutex
+	ignored   map[string]struct{}
+}
+
+func (c *FileConsumer) ignoreNext(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ignored == nil {
+		c.ignored = make(map[string]struct{})
+	}
+	c.ignored[path] = struct{}{}
+}
+
+func (c *FileConsumer) checkAndClearIgnored(path string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ignored != nil {
+		if _, ok := c.ignored[path]; ok {
+			delete(c.ignored, path)
+			return true
+		}
+	}
+	return false
 }
 
 // Start starts the File consumer
@@ -193,21 +216,47 @@ func (c *FileConsumer) Start(ctx context.Context) error {
 }
 
 type fileSynchronization struct {
+	consumer   *FileConsumer
 	path       string
+	lockPath   string
+	markerPath string
 	noop       bool
 	delete     bool
 	move       string
 	moveFailed string
 }
 
+func (s *fileSynchronization) cleanupLock() {
+	if s.markerPath != "" {
+		_ = os.Remove(s.markerPath)
+	}
+}
+
 func (s *fileSynchronization) OnComplete(exchange *gocamel.Exchange) {
+	defer s.cleanupLock()
+	effectivePath := s.path
+	if s.lockPath != "" {
+		effectivePath = s.lockPath
+	}
+
 	if s.noop {
+		if s.lockPath != "" {
+			if s.consumer != nil {
+				s.consumer.ignoreNext(s.path)
+			}
+			_ = os.Rename(s.lockPath, s.path)
+		}
 		return
 	}
 	if s.move != "" {
-		moveFilelocal(s.path, s.move)
+		moveFilelocal(effectivePath, s.move)
 	} else if s.delete {
-		os.Remove(s.path)
+		os.Remove(effectivePath)
+	} else if s.lockPath != "" {
+		if s.consumer != nil {
+			s.consumer.ignoreNext(s.path)
+		}
+		_ = os.Rename(s.lockPath, s.path)
 	}
 }
 
@@ -216,9 +265,20 @@ func (s *fileSynchronization) OnFailure(exchange *gocamel.Exchange) {
 		s.OnComplete(exchange)
 		return
 	}
+	defer s.cleanupLock()
+
+	effectivePath := s.path
+	if s.lockPath != "" {
+		effectivePath = s.lockPath
+	}
 
 	if !s.noop && s.moveFailed != "" {
-		moveFilelocal(s.path, s.moveFailed)
+		moveFilelocal(effectivePath, s.moveFailed)
+	} else if s.lockPath != "" {
+		if s.consumer != nil {
+			s.consumer.ignoreNext(s.path)
+		}
+		_ = os.Rename(s.lockPath, s.path)
 	}
 }
 
@@ -231,20 +291,23 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	c.watcher = watcher
 	c.stopChan = make(chan struct{})
 
-	include := gocamel.GetConfigValue(c.url, "include")
-	exclude := gocamel.GetConfigValue(c.url, "exclude")
-	noop := strings.EqualFold(gocamel.GetConfigValue(c.url, "noop"), "true")
-	delete_ := strings.EqualFold(gocamel.GetConfigValue(c.url, "delete"), "true")
-	move := gocamel.GetConfigValue(c.url, "move")
-	moveFailed := gocamel.GetConfigValue(c.url, "moveFailed")
-	recursive := strings.EqualFold(gocamel.GetConfigValue(c.url, "recursive"), "true")
+	opts := gocamel.ParsePollingOptions(c.url)
+	// For local file watching, default interval is 100ms if not explicitly overridden
+	if gocamel.GetConfigValue(c.url, "readLockCheckInterval") == "" && gocamel.GetConfigValue(c.url, "readLockInterval") == "" {
+		opts.ReadLockCheckInterval = 100 * time.Millisecond
+	}
+	// For file component watcher, default strategy is "changed" unless explicitly set to "none"
+	readLockParam := gocamel.GetConfigValue(c.url, "readLock")
+	if readLockParam == "" {
+		opts.ReadLock = gocamel.ReadLockChanged
+	}
 
 	if err := watcher.Add(c.path); err != nil {
 		return fmt.Errorf("error adding path to watcher: %v", err)
 	}
 
 	// If recursive, also add all existing subdirectories
-	if recursive {
+	if opts.Recursive {
 		filepath.Walk(c.path, func(path string, info os.FileInfo, err error) error {
 			if err != nil || path == c.path {
 				return nil
@@ -268,37 +331,82 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				if event.Op&fsnotify.Create != fsnotify.Create {
 					continue
 				}
+				if c.checkAndClearIgnored(event.Name) {
+					continue
+				}
 				info, statErr := os.Stat(event.Name)
 				if statErr != nil {
 					continue
 				}
 				// New directory: add to watcher if recursive
 				if info.IsDir() {
-					if recursive {
+					if opts.Recursive {
 						watcher.Add(event.Name)
 					}
 					continue
 				}
 				filename := filepath.Base(event.Name)
-				if !gocamel.MatchFileName(filename, include, exclude) {
+				if strings.HasSuffix(filename, ".camelLock") || strings.HasSuffix(filename, ".camelExclusiveReadLock") {
+					continue
+				}
+				if !gocamel.MatchFileName(filename, opts.Include, opts.Exclude) {
 					continue
 				}
 
-				// fsnotify reports Create as soon as the inode exists, long
-				// before the writer has finished. Reading immediately yields a
-				// truncated (often empty) body for anything not written
-				// atomically — a shell redirect, a copy, an upload. Wait for
-				// the size to stop changing first; this is the equivalent of
-				// Camel's readLock=changed.
-				if !waitForStableFile(ctx, event.Name, readLockTimeout, readLockInterval) {
-					gocamel.LogWarn("file did not stabilise before the read lock timeout; skipping",
-						"file", event.Name, "timeout", readLockTimeout)
-					continue
+				var lockPath string
+				var markerPath string
+
+				switch opts.ReadLock {
+				case gocamel.ReadLockChanged:
+					statFn := func() (int64, time.Time, error) {
+						fi, err := os.Stat(event.Name)
+						if err != nil {
+							return 0, time.Time{}, err
+						}
+						return fi.Size(), fi.ModTime(), nil
+					}
+					if !gocamel.WaitForStable(ctx, statFn, opts.ReadLockTimeout, opts.ReadLockCheckInterval, opts.ReadLockMinAge, opts.ReadLockMinLength) {
+						gocamel.LogWarn("file did not stabilise before the read lock timeout; skipping",
+							"file", event.Name, "timeout", opts.ReadLockTimeout)
+						continue
+					}
+
+				case gocamel.ReadLockRename:
+					targetLockPath := event.Name + ".camelExclusiveReadLock"
+					if err := os.Rename(event.Name, targetLockPath); err != nil {
+						gocamel.LogWarn("could not acquire file rename read lock; skipping", "file", event.Name, "error", err)
+						continue
+					}
+					lockPath = targetLockPath
+
+				case gocamel.ReadLockMarkerFile:
+					targetMarkerPath := event.Name + ".camelLock"
+					if _, err := os.Stat(targetMarkerPath); err == nil {
+						continue
+					}
+					mf, err := os.OpenFile(targetMarkerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+					if err != nil {
+						gocamel.LogWarn("could not create marker file for file read lock; skipping", "file", event.Name, "error", err)
+						continue
+					}
+					mf.Close()
+					markerPath = targetMarkerPath
 				}
 
-				content, err := os.ReadFile(event.Name)
+				readPath := event.Name
+				if lockPath != "" {
+					readPath = lockPath
+				}
+
+				content, err := os.ReadFile(readPath)
 				if err != nil {
-					gocamel.LogError("error reading file", "file", event.Name, "error", err)
+					gocamel.LogError("error reading file", "file", readPath, "error", err)
+					if markerPath != "" {
+						_ = os.Remove(markerPath)
+					}
+					if lockPath != "" {
+						_ = os.Rename(lockPath, event.Name)
+					}
 					continue
 				}
 
@@ -313,11 +421,14 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				exchange.SetHeader("FilePath", event.Name)
 
 				exchange.AddSynchronization(&fileSynchronization{
+					consumer:   c,
 					path:       event.Name,
-					noop:       noop,
-					delete:     delete_,
-					move:       move,
-					moveFailed: moveFailed,
+					lockPath:   lockPath,
+					markerPath: markerPath,
+					noop:       opts.Noop,
+					delete:     opts.Delete,
+					move:       opts.Move,
+					moveFailed: opts.MoveFailed,
 				})
 
 				_ = gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
@@ -338,10 +449,9 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 
 // watchFile reads and processes a single file, then applies post-processing options.
 func (c *FileConsumer) watchFile(ctx context.Context) error {
+	opts := gocamel.ParsePollingOptions(c.url)
 	filename := filepath.Base(c.path)
-	include := gocamel.GetConfigValue(c.url, "include")
-	exclude := gocamel.GetConfigValue(c.url, "exclude")
-	if !gocamel.MatchFileName(filename, include, exclude) {
+	if !gocamel.MatchFileName(filename, opts.Include, opts.Exclude) {
 		return nil
 	}
 
@@ -363,17 +473,12 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 	exchange.SetHeader("FileName", filename)
 	exchange.SetHeader("FilePath", c.path)
 
-	noop := strings.EqualFold(gocamel.GetConfigValue(c.url, "noop"), "true")
-	delete_ := strings.EqualFold(gocamel.GetConfigValue(c.url, "delete"), "true")
-	move := gocamel.GetConfigValue(c.url, "move")
-	moveFailed := gocamel.GetConfigValue(c.url, "moveFailed")
-
 	exchange.AddSynchronization(&fileSynchronization{
 		path:       c.path,
-		noop:       noop,
-		delete:     delete_,
-		move:       move,
-		moveFailed: moveFailed,
+		noop:       opts.Noop,
+		delete:     opts.Delete,
+		move:       opts.Move,
+		moveFailed: opts.MoveFailed,
 	})
 
 	_ = gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
@@ -401,38 +506,14 @@ const (
 // waitForStableFile blocks until path's size and modification time stop
 // changing between two consecutive samples, and reports whether the file
 // settled before timeout elapsed (or the context was cancelled).
-//
-// This is a heuristic, not a lock: a writer that pauses longer than interval
-// mid-write can still be observed as stable. It removes the common truncated
-// read without requiring cooperation from the producer. For strict handoff,
-// have the writer create the file under a temporary name and rename it into
-// the watched directory — rename is atomic.
 func waitForStableFile(ctx context.Context, path string, timeout, interval time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	lastSize, lastMod := info.Size(), info.ModTime()
-
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(interval):
-		}
-
+	return gocamel.WaitForStable(ctx, func() (int64, time.Time, error) {
 		info, err := os.Stat(path)
 		if err != nil {
-			return false // removed or replaced while we waited
+			return 0, time.Time{}, err
 		}
-		if info.Size() == lastSize && info.ModTime().Equal(lastMod) {
-			return true
-		}
-		lastSize, lastMod = info.Size(), info.ModTime()
-	}
-	return false
+		return info.Size(), info.ModTime(), nil
+	}, timeout, interval, 0, 0)
 }
 
 // moveFilelocal moves src to destDir, creating the directory if needed.
@@ -443,7 +524,9 @@ func moveFilelocal(src, destDir string) {
 		gocamel.LogError("error creating directory", "directory", destDir, "error", err)
 		return
 	}
-	dest := filepath.Join(destDir, filepath.Base(src))
+	filename := filepath.Base(src)
+	filename = strings.TrimSuffix(filename, ".camelExclusiveReadLock")
+	dest := filepath.Join(destDir, filename)
 	if err := os.Rename(src, dest); err != nil {
 		gocamel.LogError("error moving file", "src", src, "dest", dest, "error", err)
 	}

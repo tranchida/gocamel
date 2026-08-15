@@ -54,16 +54,21 @@ builder.From("file://input?delete=true")
 builder.To("file://output")
 ```
 
-| Option       | Type   | Default | Description                 |
-|--------------|--------|---------|-----------------------------|
-| `delete`     | bool   | `false` | Delete after processing     |
-| `noop`       | bool   | `false` | Do not move/delete file     |
-| `include`    | string | `""`    | Include file pattern        |
-| `exclude`    | string | `""`    | Exclude file pattern        |
-| `preMove`    | string | `""`    | Move file before processing |
-| `move`       | string | `""`    | Move file after processing  |
-| `moveFailed` | string | `""`    | Move file on failure        |
-| `fileExist`  | string | `Override` | Behavior if destination file exists (`Override`, `Append`, `Fail`, `Ignore`) |
+| Option                  | Type     | Default    | Description                                                                   |
+|-------------------------|----------|------------|-------------------------------------------------------------------------------|
+| `delete`                | bool     | `false`    | Delete after processing                                                       |
+| `noop`                  | bool     | `false`    | Do not move/delete file                                                       |
+| `include`               | string   | `""`       | Include file pattern                                                          |
+| `exclude`               | string   | `""`       | Exclude file pattern                                                          |
+| `preMove`               | string   | `""`       | Move file before processing                                                   |
+| `move`                  | string   | `""`       | Move file after processing                                                    |
+| `moveFailed`            | string   | `""`       | Move file on failure                                                          |
+| `readLock`              | string   | `changed`  | Read lock strategy (`none`, `changed`, `rename`, `markerFile`)                |
+| `readLockTimeout`       | Duration | `10s`      | Timeout waiting to acquire read lock                                          |
+| `readLockCheckInterval` | Duration | `100ms`    | Interval between read lock checks                                             |
+| `readLockMinLength`     | int64    | `0`        | Minimum file size in bytes                                                    |
+| `readLockMinAge`        | Duration | `0`        | Minimum file age                                                              |
+| `fileExist`             | string   | `Override` | Behavior if destination file exists (`Override`, `Append`, `Fail`, `Ignore`) |
 
 #### Headers
 
@@ -78,19 +83,15 @@ builder.To("file://output")
 
 #### Read lock
 
-When watching a directory, the consumer waits for a newly created file to
-stop changing before reading it. `fsnotify` signals `Create` as soon as the
-inode exists — long before a writer has finished — so reading immediately
-delivered a truncated (often empty) body for anything not written atomically:
-a shell redirect, a copy, an upload.
+GoCamel provides multiple read lock strategies to ensure files are fully written and exclusive before processing:
 
-The consumer samples size and mtime every 100 ms and reads once two
-consecutive samples match, giving up after 10 seconds (the file is skipped
-and a warning is logged). This is the equivalent of Camel's
-`readLock=changed`.
+- `readLock=changed`: The consumer samples file size and modification time over `readLockCheckInterval` and reads once two consecutive samples match within `readLockTimeout`.
+- `readLock=rename`: Renames the file to an exclusive temporary name (`.camelExclusiveReadLock`) during processing.
+- `readLock=markerFile`: Creates a `.camelLock` marker file while processing and deletes it upon completion.
+- `readLock=none`: Disables read lock verification.
 
 > [!tip] Prefer an atomic handoff
-> The read lock is a heuristic: a writer that stalls for longer than the
+> The `changed` read lock is a heuristic: a writer that stalls for longer than the
 > sampling interval mid-write can still be observed as stable. For a
 > guaranteed handoff, have the producer write to a temporary name and
 > `rename` it into the watched directory — rename is atomic.
@@ -104,7 +105,7 @@ File transfer via FTP protocol.
 
 ```go
 // Consumer
-builder.From("ftp://host:21/incoming?username=admin")
+builder.From("ftp://host:21/incoming?username=admin&readLock=changed")
 
 // Producer
 builder.To("ftp://host:21/outgoing?binary=true")
@@ -115,13 +116,18 @@ builder.To("ftp://host:21/outgoing?binary=true")
 - `FTP_USERNAME` - Username
 - `FTP_PASSWORD` - Password
 
-| Option           | Type   | Default | Description                                        |
-|------------------|--------|---------|----------------------------------------------------|
-| `username`       | string | `""`    | FTP username                                       |
-| `password`       | string | `""`    | FTP password                                       |
-| `binary`         | bool   | `true`  | Binary transfer mode                               |
-| `passiveMode`    | bool   | `true`  | Use passive mode                                   |
-| `maxMessageSize` | int    | `0`     | Max bytes a polled file may hold (0 = unlimited)   |
+| Option                  | Type     | Default | Description                                                        |
+|-------------------------|----------|---------|--------------------------------------------------------------------|
+| `username`              | string   | `""`    | FTP username                                                       |
+| `password`              | string   | `""`    | FTP password                                                       |
+| `binary`                | bool     | `true`  | Binary transfer mode                                               |
+| `passiveMode`           | bool     | `true`  | Use passive mode                                                   |
+| `maxMessageSize`        | int      | `0`     | Max bytes a polled file may hold (0 = unlimited)                   |
+| `readLock`              | string   | `none`  | Read lock strategy (`none`, `changed`, `rename`, `markerFile`)     |
+| `readLockTimeout`       | Duration | `10s`   | Timeout waiting to acquire read lock                               |
+| `readLockCheckInterval` | Duration | `1s`    | Interval between read lock checks                                  |
+| `readLockMinLength`     | int64    | `0`     | Minimum file size in bytes                                         |
+| `readLockMinAge`        | Duration | `0`     | Minimum file age                                                   |
 
 ---
 
@@ -130,7 +136,7 @@ builder.To("ftp://host:21/outgoing?binary=true")
 Secure file transfer via SSH.
 
 ```go
-builder.From("sftp://host:22/data?username=scott")
+builder.From("sftp://host:22/data?username=scott&readLock=changed&readLockTimeout=15s")
 ```
 
 **Authentication Methods:**
@@ -138,13 +144,18 @@ builder.From("sftp://host:22/data?username=scott")
 - Password: via `password` parameter or `SFTP_PASSWORD` env var
 - Key-based: via `privateKeyFile` parameter or `SFTP_PRIVATE_KEY_FILE`
 
-| Option                 | Type   | Default | Description            |
-|------------------------|--------|---------|------------------------|
-| `username`             | string | `""`    | SSH username           |
-| `password`             | string | `""`    | SSH password           |
-| `privateKeyFile`       | string | `""`    | Path to private key    |
-| `privateKeyPassphrase` | string | `""`    | Private key passphrase |
-| `maxMessageSize`       | int    | `0`     | Max bytes a polled file may hold (0 = unlimited) |
+| Option                  | Type     | Default | Description                                                        |
+|-------------------------|----------|---------|--------------------------------------------------------------------|
+| `username`              | string   | `""`    | SSH username                                                       |
+| `password`              | string   | `""`    | SSH password                                                       |
+| `privateKeyFile`        | string   | `""`    | Path to private key                                                |
+| `privateKeyPassphrase`  | string   | `""`    | Private key passphrase                                             |
+| `maxMessageSize`        | int      | `0`     | Max bytes a polled file may hold (0 = unlimited)                   |
+| `readLock`              | string   | `none`  | Read lock strategy (`none`, `changed`, `rename`, `markerFile`)     |
+| `readLockTimeout`       | Duration | `10s`   | Timeout waiting to acquire read lock                               |
+| `readLockCheckInterval` | Duration | `1s`    | Interval between read lock checks                                  |
+| `readLockMinLength`     | int64    | `0`     | Minimum file size in bytes                                         |
+| `readLockMinAge`        | Duration | `0`     | Minimum file age                                                   |
 
 ---
 
@@ -153,15 +164,20 @@ builder.From("sftp://host:22/data?username=scott")
 Windows/Samba share access.
 
 ```go
-builder.From("smb://server/share/folder?username=user")
+builder.From("smb://server/share/folder?username=user&readLock=changed")
 ```
 
-| Option           | Type   | Default  | Description                                        |
-|------------------|--------|----------|----------------------------------------------------|
-| `username`       | string | `""`     | Domain username                                    |
-| `password`       | string | `""`     | Domain password                                    |
-| `share`          | string | required | Share name                                         |
-| `maxMessageSize` | int    | `0`      | Max bytes a polled file may hold (0 = unlimited)   |
+| Option                  | Type     | Default  | Description                                                        |
+|-------------------------|----------|----------|--------------------------------------------------------------------|
+| `username`              | string   | `""`     | Domain username                                                    |
+| `password`              | string   | `""`     | Domain password                                                    |
+| `share`                 | string   | required | Share name                                                         |
+| `maxMessageSize`        | int      | `0`      | Max bytes a polled file may hold (0 = unlimited)                   |
+| `readLock`              | string   | `none`   | Read lock strategy (`none`, `changed`, `rename`, `markerFile`)     |
+| `readLockTimeout`       | Duration | `10s`    | Timeout waiting to acquire read lock                               |
+| `readLockCheckInterval` | Duration | `1s`     | Interval between read lock checks                                  |
+| `readLockMinLength`     | int64    | `0`      | Minimum file size in bytes                                         |
+| `readLockMinAge`        | Duration | `0`      | Minimum file age                                                   |
 
 ---
 

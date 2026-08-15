@@ -43,3 +43,37 @@ func TestGetHostKeyCallback(t *testing.T) {
 		t.Error("Expected callback to be non-nil for strictHostKeyChecking=true with knownHostsFile")
 	}
 }
+
+func TestSFTPConsumer_ReadLockOptions(t *testing.T) {
+	c := NewSFTPComponent()
+	ep, err := c.CreateEndpoint("sftp://example.com/incoming?readLock=changed&readLockTimeout=20s&readLockCheckInterval=500ms&readLockMinLength=512&readLockMinAge=3s")
+	if err != nil {
+		t.Fatalf("unexpected error creating endpoint: %v", err)
+	}
+
+	consumer, err := ep.CreateConsumer(nil)
+	if err != nil {
+		t.Fatalf("unexpected error creating consumer: %v", err)
+	}
+
+	sftpConsumer, ok := consumer.(*SFTPConsumer)
+	if !ok {
+		t.Fatalf("expected *SFTPConsumer, got %T", consumer)
+	}
+
+	if sftpConsumer.opts.ReadLock != "changed" {
+		t.Errorf("expected readLock=changed, got %v", sftpConsumer.opts.ReadLock)
+	}
+	if sftpConsumer.opts.ReadLockTimeout != 20*1000*1000*1000 { // 20s
+		t.Errorf("expected readLockTimeout=20s, got %v", sftpConsumer.opts.ReadLockTimeout)
+	}
+	if sftpConsumer.opts.ReadLockCheckInterval != 500*1000*1000 { // 500ms
+		t.Errorf("expected readLockCheckInterval=500ms, got %v", sftpConsumer.opts.ReadLockCheckInterval)
+	}
+	if sftpConsumer.opts.ReadLockMinLength != 512 {
+		t.Errorf("expected readLockMinLength=512, got %v", sftpConsumer.opts.ReadLockMinLength)
+	}
+	if sftpConsumer.opts.ReadLockMinAge != 3*1000*1000*1000 { // 3s
+		t.Errorf("expected readLockMinAge=3s, got %v", sftpConsumer.opts.ReadLockMinAge)
+	}
+}

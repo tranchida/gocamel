@@ -367,6 +367,9 @@ func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile 
 			}
 			continue
 		}
+		if strings.HasSuffix(entry.Name(), ".camelLock") || strings.HasSuffix(entry.Name(), ".camelExclusiveReadLock") {
+			continue
+		}
 		if gocamel.MatchFileName(entry.Name(), c.opts.Include, c.opts.Exclude) {
 			result = append(result, smbFile{name: entry.Name(), path: entryPath})
 		}
@@ -377,22 +380,41 @@ func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile 
 type smbSynchronization struct {
 	share      *smb2.Share
 	path       string
+	lockPath   string
+	markerPath string
 	noop       bool
 	delete     bool
 	move       string
 	moveFailed string
 }
 
+func (s *smbSynchronization) cleanupLock() {
+	if s.markerPath != "" {
+		_ = s.share.Remove(s.markerPath)
+	}
+}
+
 func (s *smbSynchronization) OnComplete(exchange *gocamel.Exchange) {
+	defer s.cleanupLock()
+	effectivePath := s.path
+	if s.lockPath != "" {
+		effectivePath = s.lockPath
+	}
+
 	if s.noop {
+		if s.lockPath != "" {
+			_ = s.share.Rename(s.lockPath, s.path)
+		}
 		return
 	}
 	if s.move != "" {
-		moveSMBFile(s.share, s.path, s.move)
+		moveSMBFile(s.share, effectivePath, s.move)
 	} else if s.delete {
-		if err := s.share.Remove(s.path); err != nil {
-			gocamel.LogError("Erreur lors de la suppression du fichier SMB", "file", s.path, "error", err)
+		if err := s.share.Remove(effectivePath); err != nil {
+			gocamel.LogError("Erreur lors de la suppression du fichier SMB", "file", effectivePath, "error", err)
 		}
+	} else if s.lockPath != "" {
+		_ = s.share.Rename(s.lockPath, s.path)
 	}
 }
 
@@ -401,9 +423,17 @@ func (s *smbSynchronization) OnFailure(exchange *gocamel.Exchange) {
 		s.OnComplete(exchange)
 		return
 	}
+	defer s.cleanupLock()
+
+	effectivePath := s.path
+	if s.lockPath != "" {
+		effectivePath = s.lockPath
+	}
 
 	if !s.noop && s.moveFailed != "" {
-		moveSMBFile(s.share, s.path, s.moveFailed)
+		moveSMBFile(s.share, effectivePath, s.moveFailed)
+	} else if s.lockPath != "" {
+		_ = s.share.Rename(s.lockPath, s.path)
 	}
 }
 
@@ -428,15 +458,73 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 			break
 		}
 
-		file, err := sc.share.Open(f.path)
+		var lockPath string
+		var markerPath string
+
+		switch c.opts.ReadLock {
+		case gocamel.ReadLockChanged:
+			statFn := func() (int64, time.Time, error) {
+				info, err := sc.share.Stat(f.path)
+				if err != nil {
+					return 0, time.Time{}, err
+				}
+				return info.Size(), info.ModTime(), nil
+			}
+			if !gocamel.WaitForStable(ctx, statFn, c.opts.ReadLockTimeout, c.opts.ReadLockCheckInterval, c.opts.ReadLockMinAge, c.opts.ReadLockMinLength) {
+				gocamel.LogWarn("SMB file did not stabilise before read lock timeout; skipping",
+					"file", f.path, "timeout", c.opts.ReadLockTimeout)
+				continue
+			}
+
+		case gocamel.ReadLockRename:
+			targetLockPath := f.path + ".camelExclusiveReadLock"
+			if err := sc.share.Rename(f.path, targetLockPath); err != nil {
+				gocamel.LogWarn("could not acquire SMB rename read lock; skipping", "file", f.path, "error", err)
+				continue
+			}
+			lockPath = targetLockPath
+
+		case gocamel.ReadLockMarkerFile:
+			targetMarkerPath := f.path + ".camelLock"
+			if _, err := sc.share.Stat(targetMarkerPath); err == nil {
+				// Marker exists: file is locked
+				continue
+			}
+			mf, err := sc.share.Create(targetMarkerPath)
+			if err != nil {
+				gocamel.LogWarn("could not create marker file for SMB read lock; skipping", "file", f.path, "error", err)
+				continue
+			}
+			mf.Close()
+			markerPath = targetMarkerPath
+		}
+
+		readPath := f.path
+		if lockPath != "" {
+			readPath = lockPath
+		}
+
+		file, err := sc.share.Open(readPath)
 		if err != nil {
-			gocamel.LogError("Erreur lors de l'ouverture du fichier SMB", "file", f.path, "error", err)
+			gocamel.LogError("Erreur lors de l'ouverture du fichier SMB", "file", readPath, "error", err)
+			if markerPath != "" {
+				_ = sc.share.Remove(markerPath)
+			}
+			if lockPath != "" {
+				_ = sc.share.Rename(lockPath, f.path)
+			}
 			continue
 		}
 		content, err := gocamel.ReadLimited(file, c.endpoint.maxMessageSize)
 		file.Close()
 		if err != nil {
-			gocamel.LogError("Erreur lors de la lecture du fichier SMB", "file", f.path, "error", err)
+			gocamel.LogError("Erreur lors de la lecture du fichier SMB", "file", readPath, "error", err)
+			if markerPath != "" {
+				_ = sc.share.Remove(markerPath)
+			}
+			if lockPath != "" {
+				_ = sc.share.Rename(lockPath, f.path)
+			}
 			continue
 		}
 
@@ -448,6 +536,8 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 		exchange.AddSynchronization(&smbSynchronization{
 			share:      sc.share,
 			path:       f.path,
+			lockPath:   lockPath,
+			markerPath: markerPath,
 			noop:       c.opts.Noop,
 			delete:     c.opts.Delete,
 			move:       c.opts.Move,
@@ -478,7 +568,9 @@ func (c *SMBConsumer) Stop() error {
 func moveSMBFile(share *smb2.Share, srcPath, destDir string) {
 	destDir = strings.ReplaceAll(destDir, "/", "\\")
 	smbMkdirAll(share, destDir)
-	destPath := strings.ReplaceAll(filepath.Join(destDir, filepath.Base(srcPath)), "/", "\\")
+	filename := filepath.Base(srcPath)
+	filename = strings.TrimSuffix(filename, ".camelExclusiveReadLock")
+	destPath := strings.ReplaceAll(filepath.Join(destDir, filename), "/", "\\")
 	if err := share.Rename(srcPath, destPath); err != nil {
 		gocamel.LogError("Erreur déplacement SMB", "src", srcPath, "dest", destPath, "error", err)
 	}
