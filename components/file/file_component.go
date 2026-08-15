@@ -496,13 +496,6 @@ func (c *FileConsumer) Stop() error {
 	return nil
 }
 
-// Read-lock defaults: how long to wait for a file to stop growing before
-// giving up, and how often to sample its size.
-const (
-	readLockTimeout  = 10 * time.Second
-	readLockInterval = 100 * time.Millisecond
-)
-
 // waitForStableFile blocks until path's size and modification time stop
 // changing between two consecutive samples, and reports whether the file
 // settled before timeout elapsed (or the context was cancelled).

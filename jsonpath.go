@@ -140,9 +140,7 @@ type pathToken struct {
 }
 
 func tokenizePath(path string) ([]pathToken, error) {
-	if strings.HasPrefix(path, "$") {
-		path = path[1:]
-	}
+	path = strings.TrimPrefix(path, "$")
 
 	var tokens []pathToken
 	i := 0

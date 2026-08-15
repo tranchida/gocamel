@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -436,15 +435,4 @@ func (c *GRPCConsumer) handler(srv any, stream grpc.ServerStream) error {
 	}
 
 	return nil
-}
-
-// ParseIntOption is a helper to parse integer options.
-func parseIntOption(val string, defaultVal int) int {
-	if val == "" {
-		return defaultVal
-	}
-	if i, err := strconv.Atoi(val); err == nil {
-		return i
-	}
-	return defaultVal
 }
