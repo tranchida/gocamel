@@ -171,6 +171,48 @@ builder.From("direct:start").
 3. `AggregationStrategy.Aggregate(original, response)` merges the two
 4. If no strategy is provided, the response body replaces the original body
 
+### PollEnrich
+
+Poll on-demand from a consumer endpoint (with timeout and optional aggregation strategy).
+
+```go
+// Poll from a queue with 2 seconds timeout and custom merge strategy
+builder.From("direct:start").
+    PollEnrich("seda:pending-orders", &MergeStrategy{}, 2*time.Second).
+    To("direct:process")
+
+// Non-blocking poll (timeout 0) replacing body
+builder.From("direct:start").
+    PollEnrichWithTimeout("chan:updates", 0).
+    To("direct:process")
+```
+
+---
+
+### Message Validator
+
+Validate in-flight messages against a predicate, failing the exchange with `ErrValidationFailed` if the condition is not met.
+
+```go
+// Validate using Simple Language
+builder.From("direct:start").
+    Validate("${header.priority == 'high'}").
+    To("direct:urgent")
+
+// Validate using JSONPath
+builder.From("direct:start").
+    Validate(gocamel.JsonPath("$.user.active")).
+    To("direct:active-users")
+
+// Validate using custom function
+builder.From("direct:start").
+    ValidateFunc(func(e *gocamel.Exchange) bool {
+        body, _ := e.GetBodyAsString()
+        return len(body) > 0
+    }).
+    To("direct:output")
+```
+
 ---
 
 ### Idempotent Consumer

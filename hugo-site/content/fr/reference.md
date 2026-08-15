@@ -62,14 +62,16 @@ Accessible via `ctx.GetComponentRegistry()` :
 | `Lookup(name)`      | Récupérer un objet par nom                   |
 | `Remove(name)`      | Supprimer un objet du registre               |
 
-### Méthodes EIP
-
-| Méthode        | Description            |
-|----------------|------------------------|
-| `Choice()`     | Routeur par contenu    |
-| `Split(fn)`    | Séparateur de messages |
-| `Aggregate(a)` | Agrégateur de messages |
-| `Multicast()`  | Multi-destinations     |
+| Méthode                                | Description            |
+|----------------------------------------|------------------------|
+| `Choice()`                             | Routeur par contenu    |
+| `Split(fn)`                            | Séparateur de messages |
+| `Aggregate(a)`                         | Agrégateur de messages |
+| `Multicast()`                          | Multi-destinations     |
+| `Enrich(uri, strategy)`                | Enrichisseur de contenu via producteur |
+| `PollEnrich(uri, strategy, timeout)`   | Enrichisseur à la demande via consommateur |
+| `Validate(predicate)`                  | Valider le message selon un prédicat |
+| `ValidateFunc(fn)`                     | Valider le message avec une fonction prédicat |
 
 ### Headers
 

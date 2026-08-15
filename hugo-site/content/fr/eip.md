@@ -383,6 +383,50 @@ builder.From("direct:start").
 
 ---
 
+## PollEnrich
+
+Consommation ponctuelle à la demande depuis un endpoint consommateur (avec timeout et stratégie d'agrégation).
+
+```go
+// Consommation depuis une file d'attente avec timeout de 2 secondes
+builder.From("direct:start").
+    PollEnrich("seda:pending-orders", &FusionStrategy{}, 2*time.Second).
+    To("direct:process")
+
+// Consommation non-bloquante (timeout 0) remplaçant le corps
+builder.From("direct:start").
+    PollEnrichWithTimeout("chan:updates", 0).
+    To("direct:process")
+```
+
+---
+
+## Message Validator
+
+Valide les messages en cours de transit selon un prédicat, interrompant l'échange avec `ErrValidationFailed` si la condition n'est pas remplie.
+
+```go
+// Validation via Simple Language
+builder.From("direct:start").
+    Validate("${header.priority == 'high'}").
+    To("direct:urgent")
+
+// Validation via JSONPath
+builder.From("direct:start").
+    Validate(gocamel.JsonPath("$.user.active")).
+    To("direct:active-users")
+
+// Validation via fonction personnalisée
+builder.From("direct:start").
+    ValidateFunc(func(e *gocamel.Exchange) bool {
+        body, _ := e.GetBodyAsString()
+        return len(body) > 0
+    }).
+    To("direct:output")
+```
+
+---
+
 ## Idempotent Consumer
 
 Empêche le traitement de messages en double.

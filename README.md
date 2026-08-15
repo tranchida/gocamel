@@ -24,9 +24,9 @@ provides a powerful DSL for creating integration routes to connect different sys
 - 📦 **Registry & Beans** - Register and lookup custom processors and beans by name
 - ⚙️ **Processors** - Custom logic implementation with `Processor` interface and `ProcessRef`
 - ⚖️ **Transactional Routes** - Unit of Work pattern for reliable message processing
-- 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Recipient List, Routing Slip, Wire Tap,
-  Stop, ToD, Loop, Saga, Transform, Message History
-- 📝 **Simple Language** - Dynamic expressions (`${body}`, `${header.name}`, functions)
+- 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Filter, Recipient List, Routing Slip, Wire Tap,
+  Stop, ToD, Loop, Saga, Transform, Enrich, PollEnrich, Validate, Message History
+- 📝 **Simple Language & JSONPath** - Dynamic expressions (`${body}`, `${header.name}`, `${jsonpath:$.path}`, functions)
 - 🔌 **Multiple Components** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, Redis, NATS, Go Channel (chan), TCP/UDP (net), etc.
 - 🛠️ **REST Management API** - JMX-like monitoring and control
 - 🔒 **Security Utilities** - Path traversal protection, SQL injection prevention, input sanitization

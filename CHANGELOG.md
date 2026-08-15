@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.6.0] - 2026-08-15
+
+JSONPath expressions, PollEnrich, and Validate EIPs.
+
+### Core (`gitlab.com/tranchida/gocamel`)
+
+- **JSONPath Expression** — Added pure-Go `EvaluateJSONPath`, `JsonPath(...)`, `JsonPathHeader(...)`, and Simple Language function `${jsonpath:...}` for query navigation across JSON bodies, headers, maps, and structs without third-party dependencies.
+- **PollEnrich EIP** — Added `PollEnrich` and `PollEnrichWithTimeout` processors allowing on-demand polling consumption of messages from external endpoints with timeout and aggregation strategies.
+- **Validate EIP** — Added `Validate` and `ValidateFunc` processors validating messages in-flight and failing with `ErrValidationFailed` when predicates evaluate to false.
+
 ## [v0.5.0] - 2026-08-15
 
 New Kafka and gRPC components, alongside JSON and XML DataFormats.

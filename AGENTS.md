@@ -63,16 +63,16 @@ component, which requires **CGO** to build/test).
 ### EIPs implemented (root package)
 
 Aggregator, Splitter, Multicast, Choice, Filter, Recipient List, Routing Slip, Wire Tap,
-Loop, Stop, ToD, Saga, Transform, Enricher, Resequencer, Throttle, Delay, Circuit Breaker,
+Loop, Stop, ToD, Saga, Transform, Enricher, PollEnrich, Validate, Resequencer, Throttle, Delay, Circuit Breaker,
 Idempotent Consumer, Claim Check, Load Balancer, Dynamic Router, Message History, Dead
 Letter Channel / error handlers, plus repositories (memory / SQL / Redis-backed) for
 aggregation and idempotency state.
 
-### Simple language
+### Simple language & Expressions
 
-Camel's Simple expression language is implemented across `simple_language*.go`
-(`${body}`, `${header.name}`, comparisons, functions like `${date:now}`, `${uuid}`).
-Predicates in the DSL (`When(...)`, completion conditions, etc.) are Simple expressions.
+Camel's Simple expression language and JSONPath evaluator are implemented across `simple_language*.go`
+and `jsonpath.go` (`${body}`, `${header.name}`, `${jsonpath:$.path}`, comparisons, functions like `${date:now}`, `${uuid}`).
+Predicates in the DSL (`When(...)`, `Validate(...)`, completion conditions, etc.) are Simple or JSONPath expressions.
 
 ## Build and test commands
 

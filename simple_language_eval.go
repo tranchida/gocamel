@@ -340,6 +340,11 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		return evaluateDotNotationRegex(match, exchange)
 	}
 
+	// Check for jsonpath function
+	if jpMatch := jsonpathFunctionRegex.FindStringSubmatch(expr); jpMatch != nil {
+		return evaluateJSONPathFunction(jpMatch[1], exchange)
+	}
+
 	// Check if it's a boolean literal
 	if expr == "true" || expr == "TRUE" {
 		return true, nil

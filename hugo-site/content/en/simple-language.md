@@ -45,6 +45,28 @@ Expressions are enclosed in `${...}`:
 - `h`: Hours (e.g., `+12h`)
 - `d`: Days (e.g., `-7d`)
 
+## JSONPath Language
+
+GoCamel includes built-in support for JSONPath queries to navigate and extract data from JSON payloads without third-party dependencies.
+
+| Function | Description | Example |
+|---|---|---|
+| `${jsonpath:$.path}` | Query exchange body JSON | `${jsonpath:$.user.name}` |
+| `${jsonpath:$.store.book[0].title}` | Array index | `${jsonpath:$.store.book[0].title}` |
+| `${jsonpath:$.store.book[*].author}` | Array wildcard | `${jsonpath:$.store.book[*].author}` |
+| `${jsonpath:$..price}` | Recursive descent search | `${jsonpath:$..price}` |
+| `${jsonpath:header.name:$.path}` | Query specific header JSON | `${jsonpath:header.Payload:$.id}` |
+
+```go
+builder.From("direct:orders").
+    Choice().
+        When("${jsonpath:$.order.total > 1000}").
+            To("direct:high-value").
+        Otherwise().
+            To("direct:standard").
+    EndChoice()
+```
+
 ---
 
 ## File Language

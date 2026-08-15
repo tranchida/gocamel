@@ -110,11 +110,17 @@ When("${date:now:yyyy-MM-dd}")
 #### Network
 
 - **HTTP** — HTTP server/client
+- **Net** — Raw TCP/UDP sockets
+- **gRPC** — High-performance RPC client/server
 
 #### Messaging
 
+- **Kafka** — Apache Kafka distributed event streaming
+- **NATS** — High-performance event messaging
+- **Redis** — Commands and Pub/Sub
 - **Telegram** — Bot API
 - **Mail** — SMTP/IMAP/POP3
+- **Go Channel** — In-memory buffered channels
 
 #### AI
 
@@ -146,6 +152,9 @@ When("${date:now:yyyy-MM-dd}")
 | Multicast   | Multiple destinations  | ✅      |
 | Filter      | Conditional filtering  | ✅      |
 | Transform   | Message transformation | ✅      |
+| Enrich      | Content enricher       | ✅      |
+| PollEnrich  | On-demand enricher     | ✅      |
+| Validate    | Message validator      | ✅      |
 | ToD         | Dynamic endpoint       | ✅      |
 | Stop        | Stop routing           | ✅      |
 | Pipeline    | Sequential branches    | ✅      |

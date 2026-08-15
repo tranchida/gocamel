@@ -465,6 +465,70 @@ exchange.In.SetHeader(gocamel.CamelNATSSubject, "urgent-orders")
 
 - `CamelNATSSubject` - Subject of the received message or target subject for publishing.
 
+### Kafka
+
+High-throughput distributed event streaming with Apache Kafka via `segmentio/kafka-go` (pure Go).
+
+```go
+import "gitlab.com/tranchida/gocamel/components/kafka"
+
+ctx.AddComponent("kafka", kafka.NewKafkaComponent())
+
+// Consumer with consumer group
+builder.From("kafka:orders?brokers=localhost:9092&groupId=billing-service").
+    Log("Received message: ${body}")
+
+// Producer with dynamic partition key
+builder.From("direct:publish").
+    SetHeader("CamelKafkaPartitionKey", "key-123").
+    To("kafka:orders?brokers=localhost:9092")
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `brokers` | string | `localhost:9092` | Comma-separated list of Kafka broker addresses |
+| `groupId` | string | `""` | Kafka consumer group ID |
+| `partition` | int | `-1` | Target partition (when not using consumer group) |
+| `clientId` | string | `""` | Client identifier |
+
+**Headers:**
+- `CamelKafkaTopic` - Overrides or reads the target topic.
+- `CamelKafkaPartitionKey` / `CamelKafkaKey` - Partition key for Kafka partitioning.
+- `CamelKafkaPartition` - Partition index.
+- `CamelKafkaOffset` - Message offset.
+- `CamelKafkaTimestamp` - Message timestamp.
+
+---
+
+### gRPC
+
+High-performance RPC client and server integration powered by `google.golang.org/grpc`.
+
+```go
+import "gitlab.com/tranchida/gocamel/components/grpc"
+
+ctx.AddComponent("grpc", grpc.NewGRPCComponent())
+
+// Server Consumer: routes RPC calls through GoCamel
+builder.From("grpc://0.0.0.0:50051/helloworld.Greeter/SayHello").
+    SetBody("Hello from GoCamel gRPC Server")
+
+// Client Producer: invokes remote RPC methods
+builder.From("direct:invoke").
+    To("grpc://localhost:50051/helloworld.Greeter/SayHello?insecure=true")
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `service` | string | parsed from path | Full gRPC service name |
+| `method` | string | parsed from path | Method name to call or expose |
+| `insecure` | bool | `true` | Use plaintext transport without TLS |
+
+**Headers:**
+- `CamelGrpcMethod` - Method name invoked.
+- `CamelGrpcStatusCode` - gRPC status code (e.g. 0 for OK).
+- `CamelGrpcStatusDescription` - gRPC status description message.
+
 ---
 
 ### Redis
@@ -1105,6 +1169,8 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | SMB        | File       | ✅        | ✅        | `smb://host/share`        |
 | HTTP       | Network    | ✅        | ✅        | `http://host:port/path`   |
 | Net        | Network    | ✅        | ✅        | `net:tcp://host:port`     |
+| Kafka      | Messaging  | ✅        | ✅        | `kafka:topic`             |
+| gRPC       | Network    | ✅        | ✅        | `grpc://host:port/Service/Method` |
 | Telegram   | Messaging  | ✅        | ✅        | `telegram:bots`           |
 | OpenAI     | AI         | ❌        | ✅        | `openai:chat`             |
 | Cron       | Scheduling | ✅        | ❌        | `cron://group/job`        |

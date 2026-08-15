@@ -91,6 +91,9 @@ var (
 	// Matches base64:command:target
 	base64FunctionRegex = regexp.MustCompile(`^base64:(encode|decode):(.+)$`)
 
+	// Matches jsonpath:path or jsonpath:header.name:path
+	jsonpathFunctionRegex = regexp.MustCompile(`^jsonpath:(.+)$`)
+
 	// Matches uuid
 	uuidFunctionRegex = regexp.MustCompile(`^uuid$`)
 

@@ -62,14 +62,16 @@ Accessible via `ctx.GetComponentRegistry()`:
 | `Lookup(name)`      | Retrieve an object by name              |
 | `Remove(name)`      | Remove an object from registry          |
 
-### EIP Methods
-
-| Method                          | Description        |
-|---------------------------------|--------------------|
-| `Choice() *ChoiceBuilder`       | Content router     |
-| `Split(fn) *SplitBuilder`       | Message splitter   |
-| `Aggregate(a) *RouteBuilder`    | Message aggregator |
-| `Multicast() *MulticastBuilder` | Multi-destination  |
+| Method                                         | Description        |
+|------------------------------------------------|--------------------|
+| `Choice() *ChoiceBuilder`                      | Content router     |
+| `Split(fn) *SplitBuilder`                      | Message splitter   |
+| `Aggregate(a) *RouteBuilder`                   | Message aggregator |
+| `Multicast() *MulticastBuilder`                | Multi-destination  |
+| `Enrich(uri, strategy) *RouteBuilder`          | Content enricher via producer |
+| `PollEnrich(uri, strategy, timeout) *RouteBuilder` | On-demand content enricher via consumer |
+| `Validate(predicate) *RouteBuilder`            | Validate message against predicate |
+| `ValidateFunc(fn) *RouteBuilder`               | Validate message against function predicate |
 
 ### Headers
 

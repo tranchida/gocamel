@@ -24,8 +24,9 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 - 📦 **Registre & Beans** - Enregistrez et recherchez des processeurs et beans personnalisés par nom
 - ⚙️ **Processeurs** - Implémentation de logique personnalisée via l'interface `Processor` et `ProcessRef`
 - ⚖️ **Routes Transactionnelles** - Pattern Unit of Work pour un traitement fiable
-- 🧩 **Patterns d'Intégration** - Split, Aggregate, Multicast, Choice, Recipient List, Routing Slip, Wire Tap, Stop, ToD, Loop, Saga, Transform, Message History
-- 📝 **Simple Language** - Expressions dynamiques (`${body}`, `${header.name}`, fonctions)
+- 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Filter, Recipient List, Routing Slip, Wire Tap,
+  Stop, ToD, Loop, Saga, Transform, Enrich, PollEnrich, Validate, Message History
+- 📝 **Simple Language & JSONPath** - Expressions dynamiques (`${body}`, `${header.name}`, `${jsonpath:$.path}`, fonctions)
 - 🔌 **Composants Multiples** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, Redis, NATS, Go Channel (chan), TCP/UDP (net), etc.
 - 🛠️ **API REST de Management** - Monitoring et contrôle inspiré de JMX
 - 🔒 **Utilitaires de Sécurité** - Protection contre les traversées de répertoire, prévention des injections SQL,
