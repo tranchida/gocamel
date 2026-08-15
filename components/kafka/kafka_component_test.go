@@ -67,6 +67,70 @@ func TestKafkaComponent_ProducerLifecycle(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestKafkaComponent_AllowHeaderOverrideParsing(t *testing.T) {
+	component := NewKafkaComponent()
+
+	// Default: allowHeaderOverride is false.
+	endpoint, err := component.CreateEndpoint("kafka:orders?brokers=localhost:9092")
+	require.NoError(t, err)
+	assert.False(t, endpoint.(*KafkaEndpoint).allowHeaderOverride)
+
+	// Explicit opt-in.
+	endpoint, err = component.CreateEndpoint("kafka:orders?brokers=localhost:9092&allowHeaderOverride=true")
+	require.NoError(t, err)
+	assert.True(t, endpoint.(*KafkaEndpoint).allowHeaderOverride)
+}
+
+func TestKafkaProducer_TopicHeaderRequiresOptIn(t *testing.T) {
+	tests := []struct {
+		name                string
+		allowHeaderOverride bool
+		wantTopic           string
+	}{
+		{name: "without flag the URI topic is used", allowHeaderOverride: false, wantTopic: "orders"},
+		{name: "with flag the header topic is used", allowHeaderOverride: true, wantTopic: "payments"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			producer := &KafkaProducer{endpoint: &KafkaEndpoint{
+				topic:               "orders",
+				allowHeaderOverride: tt.allowHeaderOverride,
+			}}
+
+			exchange := gocamel.NewExchange(context.Background())
+			exchange.In.SetHeader(CamelKafkaTopic, "payments")
+
+			assert.Equal(t, tt.wantTopic, producer.resolveTopic(exchange))
+		})
+	}
+}
+
+func TestKafkaProducer_KeyHeadersRequireOptIn(t *testing.T) {
+	tests := []struct {
+		name                string
+		allowHeaderOverride bool
+		wantKey             []byte
+	}{
+		{name: "without flag the key headers are ignored", allowHeaderOverride: false, wantKey: nil},
+		{name: "with flag the partition key header is used", allowHeaderOverride: true, wantKey: []byte("key123")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			producer := &KafkaProducer{endpoint: &KafkaEndpoint{
+				allowHeaderOverride: tt.allowHeaderOverride,
+			}}
+
+			exchange := gocamel.NewExchange(context.Background())
+			exchange.In.SetHeader(CamelKafkaPartitionKey, "key123")
+			exchange.In.SetHeader(CamelKafkaKey, "other")
+
+			assert.Equal(t, tt.wantKey, producer.resolveKey(exchange))
+		})
+	}
+}
+
 func TestKafkaConsumer_StopReleasesEndpointRegistration(t *testing.T) {
 	component := NewKafkaComponent()
 	endpoint, err := component.CreateEndpoint("kafka:test-topic?brokers=localhost:9092")

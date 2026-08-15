@@ -1,8 +1,10 @@
 package mail
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -304,6 +306,170 @@ func TestGetMailHeader(t *testing.T) {
 
 	// Header absent
 	assert.Equal(t, "Default", getMailHeader(ex, "Missing", "Default"))
+}
+
+// TestMailComponent_AllowHeaderOverride tests that From/To headers are
+// ignored by default and only applied when the endpoint opts in with
+// allowHeaderOverride=true.
+func TestMailComponent_AllowHeaderOverride(t *testing.T) {
+	comp := NewMailComponent()
+
+	tests := []struct {
+		name     string
+		uri      string
+		wantFrom string
+		wantTo   string
+	}{
+		{
+			name:     "without flag the URI config is used, headers are ignored",
+			uri:      "smtp://localhost:25?from=uri@example.com&to=dest@example.com",
+			wantFrom: "uri@example.com",
+			wantTo:   "dest@example.com",
+		},
+		{
+			name:     "with flag the From/To headers override the URI config",
+			uri:      "smtp://localhost:25?from=uri@example.com&to=dest@example.com&allowHeaderOverride=true",
+			wantFrom: "header@example.com",
+			wantTo:   "header-dest@example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint, err := comp.CreateEndpoint(tt.uri)
+			require.NoError(t, err)
+			mailEp := endpoint.(*MailEndpoint)
+
+			ex := gocamel.NewExchange(context.Background())
+			ex.SetHeader("From", "header@example.com")
+			ex.SetHeader("To", "header-dest@example.com")
+
+			from, to, _, _, _, _ := effectiveMailHeaders(mailEp, ex)
+			assert.Equal(t, tt.wantFrom, from)
+			assert.Equal(t, tt.wantTo, to)
+		})
+	}
+}
+
+// TestMailComponent_RequireStartTLS_Option tests parsing of the
+// requireStartTLS option (default false, opt-in true).
+func TestMailComponent_RequireStartTLS_Option(t *testing.T) {
+	comp := NewMailComponent()
+
+	endpoint, err := comp.CreateEndpoint("smtp://localhost:25?to=test@example.com")
+	require.NoError(t, err)
+	assert.False(t, endpoint.(*MailEndpoint).requireStartTLS)
+
+	endpoint, err = comp.CreateEndpoint("smtp://localhost:25?to=test@example.com&requireStartTLS=true")
+	require.NoError(t, err)
+	assert.True(t, endpoint.(*MailEndpoint).requireStartTLS)
+}
+
+// TestMailProducer_RequireStartTLS_RefusesPlainServer verifies that a producer
+// configured with requireStartTLS=true refuses to send when the SMTP server
+// does not advertise STARTTLS, using an in-process stub SMTP server.
+func TestMailProducer_RequireStartTLS_RefusesPlainServer(t *testing.T) {
+	// In-process stub SMTP server without STARTTLS support.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { ln.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				reader := bufio.NewReader(conn)
+				fmt.Fprintf(conn, "220 stub.example.com ESMTP\r\n")
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						return
+					}
+					switch {
+					case strings.HasPrefix(strings.ToUpper(line), "EHLO"):
+						fmt.Fprintf(conn, "250-stub.example.com\r\n250 8BITMIME\r\n")
+					case strings.HasPrefix(strings.ToUpper(line), "QUIT"):
+						fmt.Fprintf(conn, "221 Bye\r\n")
+						return
+					default:
+						fmt.Fprintf(conn, "250 OK\r\n")
+					}
+				}
+			}(conn)
+		}
+	}()
+	// Unblock Accept when the test is done.
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+
+	comp := NewMailComponent()
+	// connectionTimeout is short: the "STARTTLS not advertised" error string
+	// does not match isNonRetryableError, so the producer retries with
+	// backoff before surfacing the failure.
+	endpoint, err := comp.CreateEndpoint(fmt.Sprintf("smtp://%s?from=src@example.com&to=dest@example.com&requireStartTLS=true&connectionTimeout=100", ln.Addr().String()))
+	require.NoError(t, err)
+	producer, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.SetBody("hello")
+
+	err = producer.Send(ex)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "STARTTLS")
+}
+
+// TestPopulateExchange_HeadersPrefixed verifies that raw envelope headers of
+// a received email are stored under the CamelMailHeader_ prefix so they
+// cannot collide with the producer-side From/To headers.
+func TestPopulateExchange_HeadersPrefixed(t *testing.T) {
+	msg := &MailMessage{
+		From:    "sender@example.com",
+		To:      []string{"dest@example.com"},
+		Subject: "Hello",
+		Date:    time.Now(),
+		Headers: map[string]string{
+			"X-Spam-Score": "5.0",
+		},
+	}
+
+	consumers := []struct {
+		name     string
+		populate func(exchange *gocamel.Exchange, msg *MailMessage)
+	}{
+		{"imap", (&MailConsumer{}).populateExchange},
+		{"pop3", (&Pop3Consumer{}).populateExchange},
+	}
+
+	for _, c := range consumers {
+		t.Run(c.name, func(t *testing.T) {
+			ex := gocamel.NewExchange(context.Background())
+			c.populate(ex, msg)
+
+			// Raw envelope headers are prefixed.
+			v, ok := ex.GetIn().GetHeader(MailHeaderPrefix + "X-Spam-Score")
+			assert.True(t, ok)
+			assert.Equal(t, "5.0", v)
+
+			// The unprefixed header does not exist.
+			_, ok = ex.GetIn().GetHeader("X-Spam-Score")
+			assert.False(t, ok)
+
+			// Well-known headers use the dedicated constants.
+			from, ok := ex.GetIn().GetHeader(MailFrom)
+			assert.True(t, ok)
+			assert.Equal(t, "sender@example.com", from)
+		})
+	}
 }
 
 // TestParseMimeMessageSimple tests the parsing of a simple MIME message.

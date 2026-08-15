@@ -484,10 +484,10 @@ ctx.AddComponent("kafka", kafka.NewKafkaComponent())
 builder.From("kafka:orders?brokers=localhost:9092&groupId=billing-service").
     Log("Message reçu : ${body}")
 
-// Producteur avec partition key dynamique
+// Producteur avec partition key dynamique (nécessite allowHeaderOverride=true)
 builder.From("direct:publish").
     SetHeader("CamelKafkaPartitionKey", "key-123").
-    To("kafka:orders?brokers=localhost:9092")
+    To("kafka:orders?brokers=localhost:9092&allowHeaderOverride=true")
 ```
 
 | Option | Type | Défaut | Description |
@@ -496,13 +496,19 @@ builder.From("direct:publish").
 | `groupId` | string | `""` | Identifiant du consumer group Kafka |
 | `partition` | int | `-1` | Partition cible (hors consumer group) |
 | `clientId` | string | `""` | Identifiant client |
+| `allowHeaderOverride` | bool | `false` | Autorise `CamelKafkaTopic`, `CamelKafkaPartitionKey` et `CamelKafkaKey` à remplacer l'URI en production |
 
 **Headers d'Exchange :**
-- `CamelKafkaTopic` - Surcharge ou lecture du topic cible.
-- `CamelKafkaPartitionKey` / `CamelKafkaKey` - Clé de partitionnement Kafka.
+- `CamelKafkaTopic` - Surcharge (avec `allowHeaderOverride=true`) ou lecture du topic cible.
+- `CamelKafkaPartitionKey` / `CamelKafkaKey` - Clé de partitionnement Kafka (honorée avec `allowHeaderOverride=true`).
 - `CamelKafkaPartition` - Index de la partition.
 - `CamelKafkaOffset` - Offset du message.
 - `CamelKafkaTimestamp` - Horodatage du message.
+
+> ⚠️ Sécurité : le topic et la clé configurés dans l'URI constituent une
+> configuration de confiance. Les surcharges par headers sont ignorées sauf si
+> l'endpoint active explicitement `allowHeaderOverride=true`. Ne l'activez que
+> si les headers ne peuvent pas être influencés par une entrée non fiable.
 
 ---
 
@@ -947,10 +953,18 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 | `operation`     | string | Oui    | Opération : find, findOne, insert, insertOne, save, update, remove, count |
 | `connectionRef` | string | Non    | Référence de connexion enregistrée                                      |
 | `allowDeleteAll` | bool   | Non    | Autorise `remove` avec un filtre vide (défaut : `false`)                 |
+| `allowHeaderOverride` | bool | Non | Autorise `CamelMongoDbDatabase`, `CamelMongoDbCollection`, `CamelMongoDbOperation` et `CamelMongoDbCriteria` à remplacer la configuration de l'URI (défaut : `false`) |
 
 Par sécurité, `remove` refuse les filtres nuls ou vides. Définissez
 `allowDeleteAll=true` explicitement uniquement si la suppression de toute la
 collection est intentionnelle.
+
+> ⚠️ Sécurité : la base, la collection et l'opération configurées dans l'URI
+> constituent une configuration de confiance. Les headers
+> `CamelMongoDbDatabase`, `CamelMongoDbCollection`, `CamelMongoDbOperation` et
+> `CamelMongoDbCriteria` sont ignorés sauf si l'endpoint active explicitement
+> `allowHeaderOverride=true`. Ne l'activez que si les headers ne peuvent pas
+> être influencés par une entrée non fiable.
 
 #### Headers d'entrée
 

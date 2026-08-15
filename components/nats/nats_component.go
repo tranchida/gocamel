@@ -3,6 +3,8 @@ package nats
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/nats-io/nats.go"
@@ -28,6 +30,13 @@ func NewNATSComponent() *NATSComponent {
 //
 //	nats:news?servers=nats://localhost:4222
 //	nats:orders
+//
+// Options:
+//
+//	subject             Default subject (otherwise taken from host + path)
+//	servers             Comma-separated NATS server URLs (default: nats.DefaultURL)
+//	allowHeaderOverride true to let the CamelNATSSubject header replace the
+//	                    configured subject (default: false — see NATSProducer.Send)
 func (c *NATSComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -48,21 +57,30 @@ func (c *NATSComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		servers = nats.DefaultURL // "nats://127.0.0.1:4222"
 	}
 
+	allowHeaderOverride := false
+	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
 	return &NATSEndpoint{
-		uri:     uri,
-		servers: servers,
-		subject: subject,
+		uri:                 uri,
+		servers:             servers,
+		subject:             subject,
+		allowHeaderOverride: allowHeaderOverride,
 	}, nil
 }
 
 // NATSEndpoint represents a NATS endpoint.
 type NATSEndpoint struct {
-	uri      string
-	servers  string
-	subject  string
-	conn     *nats.Conn
-	consumer *NATSConsumer
-	mu       sync.Mutex
+	uri                 string
+	servers             string
+	subject             string
+	allowHeaderOverride bool // opt-in: the CamelNATSSubject header may override the subject
+	conn                *nats.Conn
+	consumer            *NATSConsumer
+	mu                  sync.Mutex
 }
 
 // URI returns the endpoint URI.
@@ -136,10 +154,22 @@ func (p *NATSProducer) Send(exchange *gocamel.Exchange) error {
 		return fmt.Errorf("nats producer is not started or connected")
 	}
 
-	// Determine NATS subject
+	// Determine NATS subject. The CamelNATSSubject header replaces the
+	// configured subject wholesale, so it is honoured only when the endpoint
+	// opts in with allowHeaderOverride=true. Enable it only where headers
+	// cannot be influenced by untrusted input: any component that maps
+	// external metadata onto headers would otherwise give an attacker control
+	// of the publish target.
 	subject := p.endpoint.subject
-	if hSubject, ok := exchange.GetHeaderAsString(CamelNATSSubject); ok {
-		subject = hSubject
+	if p.endpoint.allowHeaderOverride {
+		if hSubject, ok := exchange.GetHeaderAsString(CamelNATSSubject); ok {
+			// Lightweight validation: NATS subjects must be non-empty tokens
+			// separated by dots and cannot contain spaces.
+			if hSubject == "" || strings.Contains(hSubject, " ") {
+				return fmt.Errorf("nats: invalid subject %q in CamelNATSSubject header: must be non-empty and contain no spaces", hSubject)
+			}
+			subject = hSubject
+		}
 	}
 
 	if subject == "" {

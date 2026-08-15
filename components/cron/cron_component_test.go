@@ -65,6 +65,61 @@ func TestCronComponent_CreateEndpoint_MissingName(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestCronComponent_CreateEndpoint_InvalidCron(t *testing.T) {
+	comp := NewCronComponent()
+
+	tests := []struct {
+		name string
+		uri  string
+	}{
+		{"not enough fields", "cron://myTimer?cron=0+*+*+*"},
+		{"too many fields", "cron://myTimer?cron=0+*+*+*+*+*+*"},
+		{"invalid value", "cron://myTimer?cron=99+*+*+*+*+*"},
+		{"garbage", "cron://myTimer?cron=notacron"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := comp.CreateEndpoint(tt.uri)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid cron expression")
+		})
+	}
+}
+
+func TestCronComponent_CreateEndpoint_InvalidTimeZone(t *testing.T) {
+	comp := NewCronComponent()
+
+	_, err := comp.CreateEndpoint("cron://myTimer?cron=0+*+*+*+*+*&trigger.timeZone=Not/AZone")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid trigger.timeZone")
+
+	// A timezone with a space would corrupt the "TZ=<tz> <spec>" expression.
+	_, err = comp.CreateEndpoint("cron://myTimer?cron=0+*+*+*+*+*&trigger.timeZone=Europe%20Paris")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "whitespace not allowed")
+}
+
+func TestCronComponent_CreateEndpoint_ValidCronAndTimeZone(t *testing.T) {
+	comp := NewCronComponent()
+
+	tests := []string{
+		"cron://myTimer?cron=0/5+*+*+*+*+*",
+		"cron://myTimer?cron=0+0+12+*+*+?",
+		"cron://myTimer?cron=@hourly",
+		"cron://myTimer?cron=0+*+*+*+*+*&trigger.timeZone=Europe/Paris",
+		"cron://myTimer?trigger.repeatInterval=5000", // SimpleTrigger: no cron to validate
+	}
+
+	for _, uri := range tests {
+		t.Run(uri, func(t *testing.T) {
+			ep, err := comp.CreateEndpoint(uri)
+			require.NoError(t, err)
+			assert.NotNil(t, ep)
+		})
+	}
+}
+
 func TestCronEndpoint_NoProducer(t *testing.T) {
 	comp := NewCronComponent()
 	ep, _ := comp.CreateEndpoint("cron://myTimer?cron=0+*+*+*+*+*")

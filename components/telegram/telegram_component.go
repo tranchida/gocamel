@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	// TelegramChatId overrides the chatId URI parameter. Honoured ONLY when
+	// the endpoint sets allowHeaderOverride=true — see TelegramProducer.resolveChatID.
 	TelegramChatId = "CamelTelegramChatId"
 )
 
@@ -25,24 +27,44 @@ func NewTelegramComponent() *TelegramComponent {
 }
 
 // CreateEndpoint creates a new endpoint Telegram
+//
+// Format:
+//
+//	telegram://bots?authorizationToken=TOKEN&chatId=42
+//
+// Options:
+//
+//	authorizationToken  Telegram bot token (required)
+//	chatId              Destination chat ID
+//	allowHeaderOverride true to let the CamelTelegramChatId header replace the
+//	                    configured chatId (default: false — see TelegramProducer.resolveChatID)
 func (c *TelegramComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
 		return nil, err
 	}
 
+	allowHeaderOverride := false
+	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
 	return &TelegramEndpoint{
-		uri:  uri,
-		url:  u,
-		comp: c,
+		uri:                 uri,
+		url:                 u,
+		comp:                c,
+		allowHeaderOverride: allowHeaderOverride,
 	}, nil
 }
 
 // TelegramEndpoint represents a Telegram endpoint
 type TelegramEndpoint struct {
-	uri  string
-	url  *url.URL
-	comp *TelegramComponent
+	uri                 string
+	url                 *url.URL
+	comp                *TelegramComponent
+	allowHeaderOverride bool // opt-in: the CamelTelegramChatId header may replace the chatId URI parameter
 }
 
 // URI returns the URI de l'endpoint
@@ -142,10 +164,13 @@ func (p *TelegramProducer) Send(exchange *gocamel.Exchange) error {
 	return nil
 }
 
-// resolveChatID reads the destination chat from the TelegramChatId header,
-// falling back to the chatId URI parameter.
+// resolveChatID reads the destination chat from the chatId URI parameter.
+// The TelegramChatId header takes precedence ONLY when the endpoint opts in
+// with allowHeaderOverride=true: the consumer sets that header on inbound
+// exchanges, so an attacker who can trigger a route towards telegram: could
+// otherwise redirect messages to an arbitrary chat.
 func (p *TelegramProducer) resolveChatID(exchange *gocamel.Exchange) (int64, error) {
-	if val, ok := exchange.GetIn().GetHeader(TelegramChatId); ok {
+	if val, ok := exchange.GetIn().GetHeader(TelegramChatId); ok && p.endpoint.allowHeaderOverride {
 		switch v := val.(type) {
 		case int64:
 			return v, nil

@@ -56,6 +56,13 @@ func NewCronComponent() *CronComponent {
 	}
 }
 
+// specParser matches the parser used by the shared scheduler
+// (cron.WithSeconds()): 6 fields with mandatory seconds, plus descriptors.
+// Used to validate cron expressions eagerly at endpoint creation time instead
+// of failing open at job registration.
+var specParser = cron.NewParser(cron.Second | cron.Minute | cron.Hour |
+	cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+
 // ensureStarted starts the shared scheduler if it has not been started yet.
 func (c *CronComponent) ensureStarted() {
 	c.mu.Lock()
@@ -143,12 +150,34 @@ func (c *CronComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	// Spaces in cron expressions are encoded as "+" in URIs
 	cronExpr := strings.ReplaceAll(q.Get("cron"), "+", " ")
 
+	// Validate the cron expression eagerly so an invalid schedule fails the
+	// route at Build time instead of silently failing when the job is added
+	// to the scheduler (fail-fast, no fail-open).
+	if cronExpr != "" {
+		if _, err := specParser.Parse(cronExpr); err != nil {
+			return nil, fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
+		}
+	}
+
+	// Validate the timezone eagerly. Whitespace is rejected explicitly: the
+	// timezone is later prepended to the cron spec as "TZ=<tz> <spec>", where
+	// a space would corrupt the expression.
+	timezone := q.Get("trigger.timeZone")
+	if timezone != "" {
+		if strings.ContainsAny(timezone, " \t") {
+			return nil, fmt.Errorf("invalid trigger.timeZone %q: whitespace not allowed", timezone)
+		}
+		if _, err := time.LoadLocation(timezone); err != nil {
+			return nil, fmt.Errorf("invalid trigger.timeZone %q: %w", timezone, err)
+		}
+	}
+
 	return &CronEndpoint{
 		uri:               uri,
 		group:             group,
 		name:              name,
 		cronExpr:          cronExpr,
-		timezone:          q.Get("trigger.timeZone"),
+		timezone:          timezone,
 		repeatInterval:    repeatInterval,
 		repeatCount:       repeatCount,
 		triggerStartDelay: triggerStartDelay,

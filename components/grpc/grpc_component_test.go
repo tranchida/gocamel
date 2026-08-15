@@ -98,6 +98,115 @@ func TestGRPCComponent_ClientServerIntegration(t *testing.T) {
 	assert.Equal(t, 0, statusCode) // codes.OK == 0
 }
 
+func TestGRPCComponent_AllowHeaderOverrideParsing(t *testing.T) {
+	component := NewGRPCComponent()
+
+	endpoint, err := component.CreateEndpoint("grpc://localhost:9090/Svc/Mth")
+	require.NoError(t, err)
+	assert.False(t, endpoint.(*GRPCEndpoint).allowHeaderOverride, "allowHeaderOverride must default to false")
+
+	endpoint, err = component.CreateEndpoint("grpc://localhost:9090/Svc/Mth?allowHeaderOverride=true")
+	require.NoError(t, err)
+	assert.True(t, endpoint.(*GRPCEndpoint).allowHeaderOverride)
+}
+
+// startEchoServer hosts a gRPC server returning the invoked full method name.
+func startEchoServer(t *testing.T, component *GRPCComponent, ctx context.Context) (string, *GRPCConsumer) {
+	t.Helper()
+
+	serverEndpoint, err := component.CreateEndpoint("grpc://127.0.0.1:0/test.EchoService/Echo")
+	require.NoError(t, err)
+
+	consumer, err := serverEndpoint.CreateConsumer(gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
+		method, _ := e.GetHeaderAsString(CamelGrpcMethod)
+		e.Out.SetBody(method)
+		return nil
+	}))
+	require.NoError(t, err)
+	require.NoError(t, consumer.Start(ctx))
+	t.Cleanup(func() { _ = consumer.Stop() })
+
+	time.Sleep(50 * time.Millisecond)
+	serverConsumer := consumer.(*GRPCConsumer)
+	require.NotEmpty(t, serverConsumer.Address())
+	return serverConsumer.Address(), serverConsumer
+}
+
+func newStartedProducer(t *testing.T, component *GRPCComponent, ctx context.Context, uri string) gocamel.Producer {
+	t.Helper()
+	endpoint, err := component.CreateEndpoint(uri)
+	require.NoError(t, err)
+	producer, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, producer.Start(ctx))
+	t.Cleanup(func() { _ = producer.Stop() })
+	return producer
+}
+
+func sendAndGetMethod(t *testing.T, producer gocamel.Producer, ctx context.Context, headerMethod string) (string, error) {
+	t.Helper()
+	exchange := gocamel.NewExchange(ctx)
+	exchange.In.SetBody([]byte("ping"))
+	if headerMethod != "" {
+		exchange.In.SetHeader(CamelGrpcMethod, headerMethod)
+	}
+	err := producer.Send(exchange)
+	if err != nil {
+		return "", err
+	}
+	return string(exchange.Out.GetBody().([]byte)), nil
+}
+
+func TestGRPCProducer_HeaderOverrideIgnoredByDefault(t *testing.T) {
+	component := NewGRPCComponent()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	addr, _ := startEchoServer(t, component, ctx)
+	producer := newStartedProducer(t, component, ctx, "grpc://"+addr+"/test.EchoService/Echo?insecure=true")
+
+	// Without allowHeaderOverride, CamelGrpcMethod must be ignored.
+	method, err := sendAndGetMethod(t, producer, ctx, "/test.OtherService/Other")
+	require.NoError(t, err)
+	assert.Equal(t, "/test.EchoService/Echo", method)
+}
+
+func TestGRPCProducer_HeaderOverrideApplied(t *testing.T) {
+	component := NewGRPCComponent()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	addr, _ := startEchoServer(t, component, ctx)
+	producer := newStartedProducer(t, component, ctx,
+		"grpc://"+addr+"/test.EchoService/Echo?insecure=true&allowHeaderOverride=true")
+
+	// With allowHeaderOverride=true, CamelGrpcMethod replaces the configured method.
+	method, err := sendAndGetMethod(t, producer, ctx, "/helloworld.Greeter/SayHello")
+	require.NoError(t, err)
+	assert.Equal(t, "/helloworld.Greeter/SayHello", method)
+
+	// The "Service/Method" notation (without leading slash) is also accepted.
+	method, err = sendAndGetMethod(t, producer, ctx, "helloworld.Greeter/SayHello")
+	require.NoError(t, err)
+	assert.Equal(t, "/helloworld.Greeter/SayHello", method)
+}
+
+func TestGRPCProducer_HeaderOverrideRejectsMalformedMethod(t *testing.T) {
+	component := NewGRPCComponent()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	addr, _ := startEchoServer(t, component, ctx)
+	producer := newStartedProducer(t, component, ctx,
+		"grpc://"+addr+"/test.EchoService/Echo?insecure=true&allowHeaderOverride=true")
+
+	for _, bad := range []string{"no-slash", "9bad/Method", "/Service/", "Service/Method/", "Service//Method", "//Service/Method"} {
+		_, err := sendAndGetMethod(t, producer, ctx, bad)
+		require.Error(t, err, "malformed method %q must be rejected", bad)
+		assert.Contains(t, err.Error(), "malformed method")
+	}
+}
+
 func TestGRPCConsumer_StopReleasesEndpointRegistration(t *testing.T) {
 	component := NewGRPCComponent()
 	endpoint, err := component.CreateEndpoint("grpc://127.0.0.1:50059/Service/Method")

@@ -85,11 +85,14 @@ func (c *MongoDBComponent) lookup(name string) (*MongoDBConnection, bool) {
 //
 // Options:
 //
-//	database       Name of the database
-//	collection     Name of the collection
-//	operation      Default operation (find, findOne, insert, insertOne, save, update, remove, count)
-//	connectionRef  Name of a registered connection
-//	allowDeleteAll Permit remove with an empty filter (default false)
+//	database            Name of the database
+//	collection          Name of the collection
+//	operation           Default operation (find, findOne, insert, insertOne, save, update, remove, count)
+//	connectionRef       Name of a registered connection
+//	allowDeleteAll      Permit remove with an empty filter (default false)
+//	allowHeaderOverride true to let the CamelMongoDbDatabase, CamelMongoDbCollection,
+//	                    CamelMongoDbOperation and CamelMongoDbCriteria headers replace
+//	                    the corresponding URI configuration (default false)
 func (c *MongoDBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -127,26 +130,35 @@ func (c *MongoDBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) 
 		}
 	}
 
+	allowHeaderOverride := false
+	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
 	return &MongoDBEndpoint{
-		uri:            uri,
-		connName:       name,
-		dbConfig:       dbConfig,
-		collConfig:     collConfig,
-		operation:      operation,
-		allowDeleteAll: allowDeleteAll,
-		connection:     conn,
+		uri:                 uri,
+		connName:            name,
+		dbConfig:            dbConfig,
+		collConfig:          collConfig,
+		operation:           operation,
+		allowDeleteAll:      allowDeleteAll,
+		allowHeaderOverride: allowHeaderOverride,
+		connection:          conn,
 	}, nil
 }
 
 // MongoDBEndpoint represents a configured MongoDB endpoint.
 type MongoDBEndpoint struct {
-	uri            string
-	connName       string
-	dbConfig       string
-	collConfig     string
-	operation      string
-	allowDeleteAll bool
-	connection     *MongoDBConnection
+	uri                 string
+	connName            string
+	dbConfig            string
+	collConfig          string
+	operation           string
+	allowDeleteAll      bool
+	allowHeaderOverride bool // opt-in: CamelMongoDb* headers may override URI settings
+	connection          *MongoDBConnection
 }
 
 // URI returns the endpoint URI.
@@ -194,15 +206,20 @@ func (p *MongoDBProducer) getCollection(exchange *gocamel.Exchange) (*mongo.Coll
 	}
 	collName := p.endpoint.collConfig
 
-	// Override via headers if present
-	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbDatabase); ok {
-		if s, ok := v.(string); ok && s != "" {
-			dbName = s
+	// SECURITY: header overrides are honoured only when the endpoint opts in
+	// with allowHeaderOverride=true. Enable it only where headers cannot be
+	// influenced by untrusted input: they select which database and
+	// collection are accessed.
+	if p.endpoint.allowHeaderOverride {
+		if v, ok := exchange.GetIn().GetHeader(CamelMongoDbDatabase); ok {
+			if s, ok := v.(string); ok && s != "" {
+				dbName = s
+			}
 		}
-	}
-	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbCollection); ok {
-		if s, ok := v.(string); ok && s != "" {
-			collName = s
+		if v, ok := exchange.GetIn().GetHeader(CamelMongoDbCollection); ok {
+			if s, ok := v.(string); ok && s != "" {
+				collName = s
+			}
 		}
 	}
 
@@ -217,11 +234,14 @@ func (p *MongoDBProducer) getCollection(exchange *gocamel.Exchange) (*mongo.Coll
 }
 
 // getOperation returns the operation to execute.
+// The CamelMongoDbOperation header is honoured only when the endpoint opts in
+// with allowHeaderOverride=true.
 func (p *MongoDBProducer) getOperation(exchange *gocamel.Exchange) string {
-	// Header takes priority
-	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbOperation); ok {
-		if s, ok := v.(string); ok && s != "" {
-			return strings.ToLower(s)
+	if p.endpoint.allowHeaderOverride {
+		if v, ok := exchange.GetIn().GetHeader(CamelMongoDbOperation); ok {
+			if s, ok := v.(string); ok && s != "" {
+				return strings.ToLower(s)
+			}
 		}
 	}
 	return strings.ToLower(p.endpoint.operation)
@@ -451,10 +471,12 @@ func (p *MongoDBProducer) execSave(ctx context.Context, exchange *gocamel.Exchan
 func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *gocamel.Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
 
-	// Get the filter — header takes priority, then body
+	// Get the filter — header takes priority (with allowHeaderOverride), then body
 	var filter interface{}
-	if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
-		filter = crit
+	if p.endpoint.allowHeaderOverride {
+		if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
+			filter = crit
+		}
 	}
 
 	// Get the update from the body
@@ -564,13 +586,16 @@ func (p *MongoDBProducer) execCount(ctx context.Context, exchange *gocamel.Excha
 }
 
 // extractFilter extracts the filter from the Exchange body.
-// The CamelMongoDbCriteria header takes priority; the body is used as fallback.
+// The CamelMongoDbCriteria header takes priority when the endpoint opts in
+// with allowHeaderOverride=true; the body is used as fallback.
 // If the body is nil or an empty string, bson.M{} (all documents) is returned.
 // If the body is an invalid JSON string or an unsupported type, an error is returned.
 func (p *MongoDBProducer) extractFilter(exchange *gocamel.Exchange) (interface{}, error) {
-	// Criteria header takes priority
-	if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
-		return crit, nil
+	// Criteria header takes priority (opt-in via allowHeaderOverride)
+	if p.endpoint.allowHeaderOverride {
+		if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
+			return crit, nil
+		}
 	}
 
 	body := exchange.GetIn().GetBody()

@@ -93,6 +93,69 @@ func TestNATSComponent_PubSub(t *testing.T) {
 	}
 }
 
+// Default (secure) behavior: without allowHeaderOverride=true, the
+// CamelNATSSubject header is ignored and only the URI subject applies.
+func TestNATSComponent_HeaderOverrideIgnoredByDefault(t *testing.T) {
+	ns := runEmbeddedNatsServer(t)
+	defer ns.Shutdown()
+
+	clientURL := ns.ClientURL()
+
+	camelCtx := gocamel.NewCamelContext()
+	camelCtx.AddComponent("direct", gocamel.NewDirectComponent())
+	camelCtx.AddComponent("nats", NewNATSComponent())
+
+	done := make(chan string, 1)
+
+	// Consumer subscribing to subject 'alerts'
+	_, err := camelCtx.CreateRouteBuilder().
+		From("nats://alerts?servers=" + clientURL).
+		ProcessFunc(func(e *gocamel.Exchange) error {
+			bodyBytes, ok := e.GetBody().([]byte)
+			if ok {
+				done <- string(bodyBytes)
+			} else {
+				str, _ := e.GetBodyAsString()
+				done <- str
+			}
+			return nil
+		}).
+		Build()
+	assert.NoError(t, err)
+
+	// Producer bound to fixed subject 'alerts' — no opt-in.
+	_, err = camelCtx.CreateRouteBuilder().
+		From("direct:publish").
+		To("nats://alerts?servers=" + clientURL).
+		Build()
+	assert.NoError(t, err)
+
+	err = camelCtx.Start()
+	assert.NoError(t, err)
+	defer camelCtx.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	pubEndpoint, _ := camelCtx.CreateEndpoint("direct:publish")
+	pubProducer, _ := pubEndpoint.CreateProducer()
+
+	// The header attempts to redirect the publish to another subject,
+	// but it must be ignored: the message lands on the URI subject.
+	pubExchange := gocamel.NewExchange(context.Background())
+	pubExchange.In.SetHeader(CamelNATSSubject, "other.subject")
+	pubExchange.In.SetBody("Delivered To URI Subject")
+
+	err = pubProducer.Send(pubExchange)
+	assert.NoError(t, err)
+
+	select {
+	case val := <-done:
+		assert.Equal(t, "Delivered To URI Subject", val)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for NATS message in HeaderOverrideIgnoredByDefault test")
+	}
+}
+
 func TestNATSComponent_DynamicSubject(t *testing.T) {
 	ns := runEmbeddedNatsServer(t)
 	defer ns.Shutdown()
@@ -121,10 +184,10 @@ func TestNATSComponent_DynamicSubject(t *testing.T) {
 		Build()
 	assert.NoError(t, err)
 
-	// Generic producer route
+	// Generic producer route opting in to header-based subject override
 	_, err = camelCtx.CreateRouteBuilder().
 		From("direct:publish").
-		To("nats://?servers=" + clientURL).
+		To("nats://?servers=" + clientURL + "&allowHeaderOverride=true").
 		Build()
 	assert.NoError(t, err)
 
@@ -152,6 +215,19 @@ func TestNATSComponent_DynamicSubject(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timed out waiting for NATS message in DynamicSubject test")
 	}
+
+	// Invalid overridden subjects (empty or containing a space) are rejected.
+	emptyExchange := gocamel.NewExchange(context.Background())
+	emptyExchange.In.SetHeader(CamelNATSSubject, "")
+	emptyExchange.In.SetBody("data")
+	err = pubProducer.Send(emptyExchange)
+	assert.ErrorContains(t, err, "invalid subject")
+
+	spacedExchange := gocamel.NewExchange(context.Background())
+	spacedExchange.In.SetHeader(CamelNATSSubject, "bad subject")
+	spacedExchange.In.SetBody("data")
+	err = pubProducer.Send(spacedExchange)
+	assert.ErrorContains(t, err, "invalid subject")
 }
 
 func TestNATSConsumer_StopReleasesEndpointRegistration(t *testing.T) {

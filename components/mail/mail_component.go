@@ -47,6 +47,11 @@ const (
 	// Attachment headers
 	MailAttachmentPrefix = "CamelMailAttachment"
 
+	// MailHeaderPrefix prefixes raw envelope headers of a received email so
+	// that they cannot collide with (or spoof) the well-known producer-side
+	// headers such as "From" or "To" (SECURITY).
+	MailHeaderPrefix = "CamelMailHeader_"
+
 	// Control headers
 	MailDeleteHeader = "CamelMailDelete"
 	MailMoveToHeader = "CamelMailMoveTo"
@@ -130,6 +135,11 @@ func (c *MailComponent) SetDefaultSubject(subject string) {
 //	fetchSize          : Max messages to retrieve per poll (default: -1 = unlimited)
 //	skipFailedMessage  : Skip messages that fail (consumer)
 //	handleFailedMessage: Route errors through the processor (consumer)
+//	allowHeaderOverride: Opt-in: From/To/Cc/Bcc/Subject/Content-Type exchange
+//	                     headers may override the URI configuration (producer,
+//	                     default: false)
+//	requireStartTLS    : Refuse to send when the SMTP server does not advertise
+//	                     STARTTLS (producer, default: false; recommended: true)
 func (c *MailComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -195,6 +205,8 @@ func (c *MailComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		handleFailedMessage: q.Get("handleFailedMessage") == "true",
 		debugMode:           q.Get("debugMode") == "true",
 		maxMessageSize:      gocamel.ParseInt64Option(q.Get("maxMessageSize")),
+		allowHeaderOverride: parseBool(q.Get("allowHeaderOverride"), false),
+		requireStartTLS:     parseBool(q.Get("requireStartTLS"), false),
 		component:           c,
 	}, nil
 }
@@ -240,6 +252,17 @@ func parseInt(s string, defaultVal int) int {
 		return defaultVal
 	}
 	return v
+}
+
+func parseBool(s string, defaultVal bool) bool {
+	if s == "" {
+		return defaultVal
+	}
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return defaultVal
+	}
+	return b
 }
 
 func parseDurationMs(s string, defaultVal time.Duration) time.Duration {

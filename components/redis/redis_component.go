@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -31,6 +32,16 @@ func NewRedisComponent() *RedisComponent {
 //
 //	redis://localhost:6379?command=SET&key=mykey
 //	redis://localhost:6379?subscribe=true&channel=mychannel
+//
+// Options:
+//
+//	command             Default command (SET, GET, DEL, PUBLISH) (default: SET)
+//	key                 Default Redis key
+//	channel             Default Pub/Sub channel
+//	subscribe           true to create a consumer endpoint (default: false)
+//	allowHeaderOverride true to let the CamelRedisCommand, CamelRedisKey and
+//	                    CamelRedisChannel headers replace the configured
+//	                    command, key and channel (default: false)
 func (c *RedisComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -55,31 +66,40 @@ func (c *RedisComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		subscribe = true
 	}
 
+	allowHeaderOverride := false
+	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
 	client := redis.NewClient(&redis.Options{
 		Addr: addr,
 	})
 
 	return &RedisEndpoint{
-		uri:       uri,
-		client:    client,
-		command:   command,
-		key:       key,
-		channel:   channel,
-		subscribe: subscribe,
+		uri:                 uri,
+		client:              client,
+		command:             command,
+		key:                 key,
+		channel:             channel,
+		subscribe:           subscribe,
+		allowHeaderOverride: allowHeaderOverride,
 	}, nil
 }
 
 // RedisEndpoint represents a Redis connection endpoint.
 type RedisEndpoint struct {
-	uri       string
-	client    *redis.Client
-	command   string
-	key       string
-	channel   string
-	subscribe bool
-	consumer  *RedisConsumer
-	mu        sync.Mutex
-	closeOnce sync.Once // guards client.Close: producer and consumer share the client
+	uri                 string
+	client              *redis.Client
+	command             string
+	key                 string
+	channel             string
+	subscribe           bool
+	allowHeaderOverride bool // opt-in: CamelRedisCommand/CamelRedisKey/CamelRedisChannel headers may override URI settings
+	consumer            *RedisConsumer
+	mu                  sync.Mutex
+	closeOnce           sync.Once // guards client.Close: producer and consumer share the client
 }
 
 // closeClient closes the shared Redis client exactly once. Both the producer
@@ -136,29 +156,43 @@ func (p *RedisProducer) Stop() error {
 }
 
 // Send executes commands (SET, GET, DEL, PUBLISH) based on parameters or exchange headers.
+//
+// The CamelRedisCommand, CamelRedisKey and CamelRedisChannel headers replace
+// the configured settings wholesale, so they are honoured only when the
+// endpoint opts in with allowHeaderOverride=true. Enable it only where
+// headers cannot be influenced by untrusted input: any component that maps
+// external metadata onto headers would otherwise hand an attacker control of
+// the target key, channel and command.
 func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 	ctx := exchange.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	// Determine command
+	// Determine command (header override honoured only when opted in)
 	cmd := p.endpoint.command
-	if hCmd, ok := exchange.GetHeaderAsString(CamelRedisCommand); ok {
-		cmd = hCmd
+	if p.endpoint.allowHeaderOverride {
+		if hCmd, ok := exchange.GetHeaderAsString(CamelRedisCommand); ok {
+			cmd = hCmd
+		}
 	}
 	cmd = strings.ToUpper(cmd)
 
-	// Determine key
+	// Determine key (header override honoured only when opted in)
 	key := p.endpoint.key
-	if hKey, ok := exchange.GetHeaderAsString(CamelRedisKey); ok {
-		key = hKey
+	if p.endpoint.allowHeaderOverride {
+		if hKey, ok := exchange.GetHeaderAsString(CamelRedisKey); ok {
+			key = hKey
+		}
 	}
 
-	// Determine channel (specifically for PUBLISH)
+	// Determine channel specifically for PUBLISH (header override honoured
+	// only when opted in)
 	channel := p.endpoint.channel
-	if hChannel, ok := exchange.GetHeaderAsString(CamelRedisChannel); ok {
-		channel = hChannel
+	if p.endpoint.allowHeaderOverride {
+		if hChannel, ok := exchange.GetHeaderAsString(CamelRedisChannel); ok {
+			channel = hChannel
+		}
 	}
 
 	body := exchange.In.GetBody()

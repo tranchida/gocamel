@@ -38,6 +38,17 @@ func NewKafkaComponent() *KafkaComponent {
 //
 //	kafka:orders?brokers=localhost:9092&groupId=billing
 //	kafka://orders?brokers=broker1:9092,broker2:9092&partition=0
+//
+// Options:
+//
+//	brokers             Comma-separated list of Kafka brokers (default: localhost:9092)
+//	groupId             Consumer group ID
+//	partition           Partition to consume from (when no groupId is set)
+//	clientId            Kafka client ID
+//	topic               Topic name (alternative to the URI host/path)
+//	allowHeaderOverride true to let the CamelKafkaTopic, CamelKafkaPartitionKey and
+//	                    CamelKafkaKey headers replace the corresponding URI
+//	                    configuration when producing (default: false)
 func (c *KafkaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -75,24 +86,33 @@ func (c *KafkaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 
 	clientID := gocamel.GetConfigValue(u, "clientId")
 
+	allowHeaderOverride := false
+	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
 	return &KafkaEndpoint{
-		uri:       uri,
-		topic:     topic,
-		brokers:   brokers,
-		groupID:   groupID,
-		partition: partition,
-		clientID:  clientID,
+		uri:                 uri,
+		topic:               topic,
+		brokers:             brokers,
+		groupID:             groupID,
+		partition:           partition,
+		clientID:            clientID,
+		allowHeaderOverride: allowHeaderOverride,
 	}, nil
 }
 
 // KafkaEndpoint represents a Kafka topic endpoint.
 type KafkaEndpoint struct {
-	uri       string
-	topic     string
-	brokers   []string
-	groupID   string
-	partition int
-	clientID  string
+	uri                 string
+	topic               string
+	brokers             []string
+	groupID             string
+	partition           int
+	clientID            string
+	allowHeaderOverride bool // opt-in: CamelKafkaTopic/CamelKafkaKey headers may override URI settings
 
 	writer   *kafka.Writer
 	consumer *KafkaConsumer
@@ -162,6 +182,40 @@ func (p *KafkaProducer) Stop() error {
 	return nil
 }
 
+// resolveTopic returns the topic to publish to.
+// The CamelKafkaTopic header is honoured only when the endpoint opts in with
+// allowHeaderOverride=true: headers can be influenced by untrusted input and
+// would otherwise let a caller publish to arbitrary topics.
+func (p *KafkaProducer) resolveTopic(exchange *gocamel.Exchange) string {
+	if p.endpoint.allowHeaderOverride {
+		if hTopic, ok := exchange.GetHeaderAsString(CamelKafkaTopic); ok && hTopic != "" {
+			return hTopic
+		}
+	}
+	return p.endpoint.topic
+}
+
+// resolveKey returns the message key to publish with.
+// The CamelKafkaPartitionKey and CamelKafkaKey headers are honoured only when
+// the endpoint opts in with allowHeaderOverride=true.
+func (p *KafkaProducer) resolveKey(exchange *gocamel.Exchange) []byte {
+	if !p.endpoint.allowHeaderOverride {
+		return nil
+	}
+	if keyStr, ok := exchange.GetHeaderAsString(CamelKafkaPartitionKey); ok {
+		return []byte(keyStr)
+	}
+	if keyStr, ok := exchange.GetHeaderAsString(CamelKafkaKey); ok {
+		return []byte(keyStr)
+	}
+	if key, exists := exchange.In.GetHeader(CamelKafkaKey); exists {
+		if kb, ok := key.([]byte); ok {
+			return kb
+		}
+	}
+	return nil
+}
+
 // Send publishes the exchange body to Kafka.
 func (p *KafkaProducer) Send(exchange *gocamel.Exchange) error {
 	p.endpoint.mu.Lock()
@@ -172,25 +226,13 @@ func (p *KafkaProducer) Send(exchange *gocamel.Exchange) error {
 		return fmt.Errorf("kafka producer is not started")
 	}
 
-	targetTopic := p.endpoint.topic
-	if hTopic, ok := exchange.GetHeaderAsString(CamelKafkaTopic); ok && hTopic != "" {
-		targetTopic = hTopic
-	}
+	targetTopic := p.resolveTopic(exchange)
 
 	if targetTopic == "" {
 		return fmt.Errorf("kafka: topic is required to publish a message")
 	}
 
-	var keyBytes []byte
-	if keyStr, ok := exchange.GetHeaderAsString(CamelKafkaPartitionKey); ok {
-		keyBytes = []byte(keyStr)
-	} else if keyStr, ok := exchange.GetHeaderAsString(CamelKafkaKey); ok {
-		keyBytes = []byte(keyStr)
-	} else if key, exists := exchange.In.GetHeader(CamelKafkaKey); exists {
-		if kb, ok := key.([]byte); ok {
-			keyBytes = kb
-		}
-	}
+	keyBytes := p.resolveKey(exchange)
 
 	body := exchange.In.GetBody()
 	var valueBytes []byte

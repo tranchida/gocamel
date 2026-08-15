@@ -37,6 +37,8 @@ type MailEndpoint struct {
 	handleFailedMessage bool
 	debugMode           bool
 	maxMessageSize      int64
+	allowHeaderOverride bool // opt-in: From/To/Cc/Bcc/Subject/Content-Type headers may override URI settings
+	requireStartTLS     bool // refuse to send when the SMTP server does not advertise STARTTLS
 	component           *MailComponent
 }
 

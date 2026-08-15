@@ -306,7 +306,9 @@ func (c *Pop3Consumer) populateExchange(exchange *gocamel.Exchange, msg *MailMes
 
 	for k, v := range msg.Headers {
 		if k != MailFrom && k != MailTo && k != MailSubject && k != MailDate && k != MailContentType {
-			exchange.SetHeader(k, v)
+			// SECURITY: prefix raw envelope headers so they cannot collide
+			// with the well-known producer-side headers ("From", "To", ...).
+			exchange.SetHeader(MailHeaderPrefix+k, v)
 		}
 	}
 

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/smtp"
 	"strings"
 	"time"
@@ -33,13 +34,8 @@ func (p *MailProducer) Stop() error {
 func (p *MailProducer) Send(exchange *gocamel.Exchange) error {
 	ep := p.endpoint
 
-	// Build headers
-	from := getMailHeader(exchange, "From", ep.from)
-	to := getMailHeader(exchange, "To", ep.to)
-	cc := getMailHeader(exchange, "Cc", ep.cc)
-	bcc := getMailHeader(exchange, "Bcc", ep.bcc)
-	subject := getMailHeader(exchange, "Subject", ep.subject)
-	contentType := getMailHeader(exchange, "Content-Type", ep.contentType)
+	// Build headers.
+	from, to, cc, bcc, subject, contentType := effectiveMailHeaders(ep, exchange)
 
 	// Validate required addresses
 	if from == "" {
@@ -165,6 +161,11 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 			if delay > maxDelay {
 				delay = maxDelay
 			}
+			// Cap the backoff by the connection timeout when it is
+			// shorter, so misconfigured endpoints fail fast.
+			if ep.connectionTimeout > 0 && delay > ep.connectionTimeout {
+				delay = ep.connectionTimeout
+			}
 			if ep.debugMode {
 				gocamel.LogInfo("Mail retry", "attempt", attempt+1, "max", maxRetries, "error", lastErr, "delay", delay)
 			}
@@ -248,14 +249,82 @@ func (p *MailProducer) trySendMail(addr string, auth smtp.Auth, from string, rec
 		return client.Quit()
 	}
 
-	// Standard SMTP with STARTTLS if available.
-	// SECURITY: smtp.SendMail attempts STARTTLS but silently falls back to
-	// cleartext if the server does not advertise it. Credentials and the
-	// message body may travel unencrypted. Use ProtocolSMTPS or a server that
-	// requires STARTTLS to guarantee encryption.
+	// Standard SMTP. By default smtp.SendMail is used, which attempts STARTTLS
+	// but silently falls back to cleartext if the server does not advertise it
+	// (SECURITY). When requireStartTLS=true, the client is driven manually and
+	// the send fails if STARTTLS is not available, guaranteeing encryption.
+	// Use ProtocolSMTPS or requireStartTLS=true to guarantee encryption.
+	if ep.requireStartTLS {
+		return p.trySendMailWithStartTLS(addr, auth, from, recipients, message)
+	}
 	gocamel.LogError("SMTP cleartext: STARTTLS is opportunistic — credentials may travel unencrypted. "+
-		"Use smtps:// for guaranteed TLS.", "host", ep.host, "port", ep.port)
+		"Use smtps:// or requireStartTLS=true for guaranteed TLS.", "host", ep.host, "port", ep.port)
 	return smtp.SendMail(addr, auth, from, recipients, message)
+}
+
+// trySendMailWithStartTLS performs a single SMTP send attempt that requires
+// the server to advertise and successfully negotiate STARTTLS before any
+// credentials or message data are transmitted (SECURITY).
+func (p *MailProducer) trySendMailWithStartTLS(addr string, auth smtp.Auth, from string, recipients []string, message []byte) error {
+	ep := p.endpoint
+
+	dialer := &net.Dialer{Timeout: ep.connectionTimeout}
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("SMTP connection error: %w", err)
+	}
+
+	client, err := smtp.NewClient(conn, ep.host)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("SMTP client creation error: %w", err)
+	}
+	defer client.Close()
+
+	if ok, _ := client.Extension("STARTTLS"); !ok {
+		return fmt.Errorf("requireStartTLS=true but server %s does not advertise STARTTLS: refusing to send", addr)
+	}
+	tlsConfig := &tls.Config{
+		ServerName: ep.host,
+		MinVersion: tls.VersionTLS12,
+	}
+	if err := client.StartTLS(tlsConfig); err != nil {
+		return fmt.Errorf("STARTTLS negotiation error: %w", err)
+	}
+
+	// Bound all subsequent I/O with the connection timeout so a stalled
+	// server cannot block the sender indefinitely.
+	if ep.connectionTimeout > 0 {
+		_ = conn.SetDeadline(time.Now().Add(ep.connectionTimeout))
+	}
+
+	if auth != nil {
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("authentication error: %w", err)
+		}
+	}
+
+	if err := client.Mail(from); err != nil {
+		return fmt.Errorf("MAIL FROM error: %w", err)
+	}
+	for _, rcpt := range recipients {
+		if err := client.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("RCPT TO %s error: %w", rcpt, err)
+		}
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("DATA error: %w", err)
+	}
+	if _, err := w.Write(message); err != nil {
+		return fmt.Errorf("message write error: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("DATA close error: %w", err)
+	}
+
+	return client.Quit()
 }
 
 // isNonRetryableError determines whether an error should not be retried.
@@ -282,6 +351,23 @@ func isNonRetryableError(err error) bool {
 // ---------------------------------------------------------------------------
 // Producer-side helpers
 // ---------------------------------------------------------------------------
+
+// effectiveMailHeaders resolves the From/To/Cc/Bcc/Subject/Content-Type values
+// used to build the outgoing email. SECURITY: exchange headers only override
+// the URI configuration when the endpoint explicitly opts in with
+// allowHeaderOverride=true. Headers can be influenced by untrusted input, so
+// by default the trusted endpoint configuration is used.
+func effectiveMailHeaders(ep *MailEndpoint, exchange *gocamel.Exchange) (from, to, cc, bcc, subject, contentType string) {
+	if ep.allowHeaderOverride {
+		return getMailHeader(exchange, "From", ep.from),
+			getMailHeader(exchange, "To", ep.to),
+			getMailHeader(exchange, "Cc", ep.cc),
+			getMailHeader(exchange, "Bcc", ep.bcc),
+			getMailHeader(exchange, "Subject", ep.subject),
+			getMailHeader(exchange, "Content-Type", ep.contentType)
+	}
+	return ep.from, ep.to, ep.cc, ep.bcc, ep.subject, ep.contentType
+}
 
 func getMailHeader(exchange *gocamel.Exchange, header, defaultVal string) string {
 	if v, exists := exchange.GetIn().GetHeader(header); exists {

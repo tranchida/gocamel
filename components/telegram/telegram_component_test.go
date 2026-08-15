@@ -24,6 +24,15 @@ func TestCreateEndpoint(t *testing.T) {
 	}
 }
 
+func TestAllowHeaderOverrideParsing(t *testing.T) {
+	if newEndpoint(t, "telegram://bots?chatId=42").allowHeaderOverride {
+		t.Error("allowHeaderOverride must default to false")
+	}
+	if !newEndpoint(t, "telegram://bots?chatId=42&allowHeaderOverride=true").allowHeaderOverride {
+		t.Error("allowHeaderOverride=true must be parsed from the URI")
+	}
+}
+
 func TestGetBot_RequiresToken(t *testing.T) {
 	ep := newEndpoint(t, "telegram://bots?chatId=42")
 	if _, err := ep.getBot(); err == nil {
@@ -40,11 +49,12 @@ func TestResolveChatID(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "from URI", uri: "telegram://bots?chatId=42", want: 42},
-		{name: "int64 header wins", uri: "telegram://bots?chatId=42", header: int64(7), want: 7},
-		{name: "int header", uri: "telegram://bots?chatId=42", header: 7, want: 7},
-		{name: "string header", uri: "telegram://bots?chatId=42", header: "7", want: 7},
-		{name: "unparseable header", uri: "telegram://bots?chatId=42", header: "abc", wantErr: true},
-		{name: "unsupported header type", uri: "telegram://bots?chatId=42", header: 1.5, wantErr: true},
+		{name: "header ignored without allowHeaderOverride", uri: "telegram://bots?chatId=42", header: int64(7), want: 42},
+		{name: "int64 header wins", uri: "telegram://bots?chatId=42&allowHeaderOverride=true", header: int64(7), want: 7},
+		{name: "int header", uri: "telegram://bots?chatId=42&allowHeaderOverride=true", header: 7, want: 7},
+		{name: "string header", uri: "telegram://bots?chatId=42&allowHeaderOverride=true", header: "7", want: 7},
+		{name: "unparseable header", uri: "telegram://bots?chatId=42&allowHeaderOverride=true", header: "abc", wantErr: true},
+		{name: "unsupported header type", uri: "telegram://bots?chatId=42&allowHeaderOverride=true", header: 1.5, wantErr: true},
 		{name: "missing everywhere", uri: "telegram://bots", wantErr: true},
 		{name: "unparseable URI value", uri: "telegram://bots?chatId=abc", wantErr: true},
 	}

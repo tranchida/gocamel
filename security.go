@@ -170,15 +170,15 @@ func hasNonTrailingSemicolonOutsideStrings(query string) bool {
 	return false
 }
 
-// sanitizer is a regex-based sanitizer for common patterns
+// sanitizer is a regex-based sanitizer for common patterns.
+// Traversal detection ('..') is handled by containsTraversal, not regexes:
+// a fixed pattern cannot weigh '..' against the actual depth of the path.
 var sanitizer = struct {
-	pathTraversal *regexp.Regexp
-	nullBytes     *regexp.Regexp
-	controlChars  *regexp.Regexp
+	nullBytes    *regexp.Regexp
+	controlChars *regexp.Regexp
 }{
-	pathTraversal: regexp.MustCompile(`\.\.[\/\\]`),
-	nullBytes:     regexp.MustCompile(`\x00`),
-	controlChars:  regexp.MustCompile(`[\x00-\x1f\x7f]`),
+	nullBytes:    regexp.MustCompile(`\x00`),
+	controlChars: regexp.MustCompile(`[\x00-\x1f\x7f]`),
 }
 
 // SanitizeInput removes dangerous characters from user input for use in file paths

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -17,8 +19,15 @@ import (
 	gocamel "gitlab.com/tranchida/gocamel"
 )
 
+// grpcFullMethodPattern validates a full gRPC method path, accepting both
+// "/Service/Method" and "Service/Method" notations (the service part may be
+// package-qualified, e.g. "helloworld.Greeter").
+var grpcFullMethodPattern = regexp.MustCompile(`^/?[A-Za-z_][\w.]*/[A-Za-z_]\w*$`)
+
 // Well-known Camel gRPC headers
 const (
+	// CamelGrpcMethod overrides the method configured in the URI. Honoured ONLY
+	// when the endpoint sets allowHeaderOverride=true — see GRPCProducer.Send.
 	CamelGrpcMethod            = "CamelGrpcMethod"
 	CamelGrpcService           = "CamelGrpcService"
 	CamelGrpcStatusCode        = "CamelGrpcStatusCode"
@@ -83,6 +92,14 @@ func NewGRPCComponent() *GRPCComponent {
 //	grpc://localhost:50051/helloworld.Greeter/SayHello?insecure=true
 //	grpc://0.0.0.0:50051/helloworld.Greeter/SayHello
 //	grpc://localhost:50051?service=Greeter&method=SayHello
+//
+// Options:
+//
+//	service             Service name (overrides the URI path)
+//	method              Method name (overrides the URI path)
+//	insecure            true to use insecure transport credentials (default: true)
+//	allowHeaderOverride true to let the CamelGrpcMethod header replace the
+//	                    configured method (default: false — see GRPCProducer.Send)
 func (c *GRPCComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -118,22 +135,31 @@ func (c *GRPCComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		isInsecure = strings.EqualFold(secStr, "true")
 	}
 
+	allowHeaderOverride := false
+	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
 	return &GRPCEndpoint{
-		uri:      uri,
-		target:   host,
-		service:  service,
-		method:   method,
-		insecure: isInsecure,
+		uri:                 uri,
+		target:              host,
+		service:             service,
+		method:              method,
+		insecure:            isInsecure,
+		allowHeaderOverride: allowHeaderOverride,
 	}, nil
 }
 
 // GRPCEndpoint represents a gRPC client or server endpoint.
 type GRPCEndpoint struct {
-	uri      string
-	target   string
-	service  string
-	method   string
-	insecure bool
+	uri                 string
+	target              string
+	service             string
+	method              string
+	insecure            bool
+	allowHeaderOverride bool // opt-in: the CamelGrpcMethod header may replace the configured method
 
 	clientConn *grpc.ClientConn
 	consumer   *GRPCConsumer
@@ -231,12 +257,22 @@ func (p *GRPCProducer) Send(exchange *gocamel.Exchange) error {
 		return fmt.Errorf("grpc producer is not started or connected")
 	}
 
+	// The CamelGrpcMethod header replaces the configured method, so it is
+	// honoured only when the endpoint opts in with allowHeaderOverride=true.
+	// Enable it only where headers cannot be influenced by untrusted input:
+	// any component that maps external metadata onto headers would otherwise
+	// hand an attacker control over which remote procedure gets invoked.
 	fullMethod := p.endpoint.FullMethod()
-	if hMethod, ok := exchange.GetHeaderAsString(CamelGrpcMethod); ok && hMethod != "" {
-		if strings.HasPrefix(hMethod, "/") {
-			fullMethod = hMethod
-		} else {
-			fullMethod = "/" + hMethod
+	if p.endpoint.allowHeaderOverride {
+		if hMethod, ok := exchange.GetHeaderAsString(CamelGrpcMethod); ok && hMethod != "" {
+			if !grpcFullMethodPattern.MatchString(hMethod) {
+				return fmt.Errorf("grpc: malformed method in header %s: %q", CamelGrpcMethod, hMethod)
+			}
+			if strings.HasPrefix(hMethod, "/") {
+				fullMethod = hMethod
+			} else {
+				fullMethod = "/" + hMethod
+			}
 		}
 	}
 

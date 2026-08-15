@@ -240,11 +240,9 @@ func TestValidateSQLQuery(t *testing.T) {
 
 // TestSanitizerRegexes documents the behaviour of the package-level sanitizer
 // regexes so regressions in a pattern are caught even where a helper wraps it.
+// Traversal detection lives in containsTraversal (see TestContainsTraversal):
+// a fixed regex cannot weigh '..' against the effective path depth.
 func TestSanitizerRegexes(t *testing.T) {
-	assert.True(t, sanitizer.pathTraversal.MatchString("../foo"))
-	assert.True(t, sanitizer.pathTraversal.MatchString(`..\bar`))
-	assert.False(t, sanitizer.pathTraversal.MatchString("report..v2.txt"))
-
 	assert.True(t, sanitizer.nullBytes.MatchString("a\x00b"))
 	assert.False(t, sanitizer.nullBytes.MatchString("ab"))
 

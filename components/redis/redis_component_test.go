@@ -67,7 +67,10 @@ func TestRedisComponent_Producer(t *testing.T) {
 	assert.Equal(t, "World", getExchange.Out.GetBody())
 }
 
-func TestRedisComponent_ProducerHeaders(t *testing.T) {
+// Default (secure) behavior: without allowHeaderOverride=true, the
+// CamelRedisCommand/CamelRedisKey/CamelRedisChannel headers are ignored and
+// only the URI parameters apply.
+func TestRedisComponent_ProducerHeadersIgnoredByDefault(t *testing.T) {
 	s, _ := miniredis.Run()
 	defer s.Close()
 
@@ -75,10 +78,47 @@ func TestRedisComponent_ProducerHeaders(t *testing.T) {
 	camelCtx.AddComponent("direct", gocamel.NewDirectComponent())
 	camelCtx.AddComponent("redis", NewRedisComponent())
 
-	// Generic route where command and key are dynamic via headers
+	// Route with fixed URI config (command=SET, key=fixed) — no opt-in.
 	_, err := camelCtx.CreateRouteBuilder().
 		From("direct:start").
-		To("redis://" + s.Addr()).
+		To("redis://" + s.Addr() + "?command=SET&key=fixed").
+		Build()
+	assert.NoError(t, err)
+
+	_ = camelCtx.Start()
+	defer camelCtx.Stop()
+
+	endpoint, _ := camelCtx.CreateEndpoint("direct:start")
+	producer, _ := endpoint.CreateProducer()
+
+	// Headers attempt to override command and key, but must be ignored.
+	ex := gocamel.NewExchange(context.Background())
+	ex.In.SetHeader(CamelRedisCommand, "GET")
+	ex.In.SetHeader(CamelRedisKey, "other")
+	ex.In.SetBody("Value")
+	err = producer.Send(ex)
+	assert.NoError(t, err)
+
+	// The fixed URI key was written, not the header-provided one.
+	val, err := s.Get("fixed")
+	assert.NoError(t, err)
+	assert.Equal(t, "Value", val)
+	assert.False(t, s.Exists("other"))
+	assert.Equal(t, "OK", ex.Out.GetBody())
+}
+
+func TestRedisComponent_ProducerHeadersOverrideAllowed(t *testing.T) {
+	s, _ := miniredis.Run()
+	defer s.Close()
+
+	camelCtx := gocamel.NewCamelContext()
+	camelCtx.AddComponent("direct", gocamel.NewDirectComponent())
+	camelCtx.AddComponent("redis", NewRedisComponent())
+
+	// Generic route where command and key are dynamic via headers (opt-in).
+	_, err := camelCtx.CreateRouteBuilder().
+		From("direct:start").
+		To("redis://" + s.Addr() + "?allowHeaderOverride=true").
 		Build()
 	assert.NoError(t, err)
 
