@@ -384,12 +384,12 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 					if _, err := os.Stat(targetMarkerPath); err == nil {
 						continue
 					}
-					mf, err := os.OpenFile(targetMarkerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+					mf, err := os.OpenFile(targetMarkerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600) // #nosec G302,G304
 					if err != nil {
 						gocamel.LogWarn("could not create marker file for file read lock; skipping", "file", event.Name, "error", err)
 						continue
 					}
-					mf.Close()
+					_ = mf.Close()
 					markerPath = targetMarkerPath
 				}
 
@@ -398,7 +398,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 					readPath = lockPath
 				}
 
-				content, err := os.ReadFile(readPath)
+				content, err := os.ReadFile(readPath) // #nosec G304
 				if err != nil {
 					gocamel.LogError("error reading file", "file", readPath, "error", err)
 					if markerPath != "" {
