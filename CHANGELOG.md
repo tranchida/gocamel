@@ -135,5 +135,8 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.6.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.6.0
+[v0.5.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.5.0
+[v0.4.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.4.0
 [v0.3.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.3.0
 [v0.2.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.2.0
