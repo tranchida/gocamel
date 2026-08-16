@@ -220,7 +220,10 @@ func transportCredentials(target, caCertPath string) (credentials.TransportCrede
 
 	var pool *x509.CertPool
 	if caCertPath != "" {
-		pemBytes, err := os.ReadFile(caCertPath)
+		// caCertPath is trusted operator configuration from the endpoint URI
+		// (like the SFTP private key path), never influenced by exchange data:
+		// reading the file it names is the intended behaviour.
+		pemBytes, err := os.ReadFile(caCertPath) // #nosec G304
 		if err != nil {
 			return nil, fmt.Errorf("failed to read caCert file %q: %w", caCertPath, err)
 		}
