@@ -131,6 +131,11 @@ func TestWaitForStableFile_TimesOut(t *testing.T) {
 	}
 	defer f.Close()
 
+	// Writer appends far more frequently than the poller samples: with a 1ms
+	// write period against a 50ms poll interval, every sample is guaranteed to
+	// observe a change regardless of filesystem mtime resolution. Using a
+	// 10ms writer with a 50ms poll is flaky on CI runners whose overlay
+	// filesystems batch or coarsen metadata updates.
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -143,7 +148,7 @@ func TestWaitForStableFile_TimesOut(t *testing.T) {
 			default:
 				f.Write([]byte("x"))
 				f.Sync()
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(1 * time.Millisecond)
 			}
 		}
 	}()
