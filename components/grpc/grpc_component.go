@@ -2,8 +2,11 @@ package grpc
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -11,6 +14,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -34,6 +38,37 @@ const (
 	CamelGrpcStatusDescription = "CamelGrpcStatusDescription"
 	CamelGrpcMetadata          = "CamelGrpcMetadata"
 )
+
+// sensitiveOutboundHeaders are exchange headers carrying credentials or
+// session state. They are never forwarded as outgoing RPC metadata (matching
+// is case-insensitive), so a producer sitting downstream of a consumer does
+// not leak a client's credentials to the remote server.
+var sensitiveOutboundHeaders = map[string]bool{
+	"authorization":       true,
+	"cookie":              true,
+	"proxy-authorization": true,
+	"set-cookie":          true,
+	"www-authenticate":    true,
+}
+
+// parseForwardHeaders builds the case-insensitive header allowlist from the
+// forwardHeaders URI option. It returns nil when the option is unset or
+// empty, meaning "forward all non-Camel, non-sensitive headers".
+func parseForwardHeaders(value string) map[string]bool {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	allow := make(map[string]bool)
+	for _, name := range strings.Split(value, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			allow[strings.ToLower(name)] = true
+		}
+	}
+	if len(allow) == 0 {
+		return nil
+	}
+	return allow
+}
 
 // RawBytesCodec encodes and decodes raw bytes or proto.Message values.
 type RawBytesCodec struct{}
@@ -97,7 +132,16 @@ func NewGRPCComponent() *GRPCComponent {
 //
 //	service             Service name (overrides the URI path)
 //	method              Method name (overrides the URI path)
-//	insecure            true to use insecure transport credentials (default: true)
+//	insecure            true to use insecure transport credentials (default: true).
+//	                    When false, TLS with a minimum version of 1.2 is used.
+//	caCert              Path to a PEM-encoded CA certificate trusted for server
+//	                    verification when insecure=false (default: system pool)
+//	forwardHeaders      Comma-separated allowlist of exchange headers the
+//	                    producer forwards as outgoing RPC metadata. When set,
+//	                    ONLY these headers are propagated. When unset, all
+//	                    non-Camel headers except sensitive credentials
+//	                    (Authorization, Cookie, Proxy-Authorization, Set-Cookie,
+//	                    WWW-Authenticate) are forwarded.
 //	allowHeaderOverride true to let the CamelGrpcMethod header replace the
 //	                    configured method (default: false — see GRPCProducer.Send)
 func (c *GRPCComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
@@ -135,6 +179,16 @@ func (c *GRPCComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		isInsecure = strings.EqualFold(secStr, "true")
 	}
 
+	caCert := gocamel.GetConfigValue(u, "caCert")
+	if caCert != "" && isInsecure {
+		return nil, fmt.Errorf("invalid gRPC URI: caCert requires insecure=false")
+	}
+	if !isInsecure {
+		if _, err := transportCredentials(host, caCert); err != nil {
+			return nil, fmt.Errorf("invalid gRPC URI: %w", err)
+		}
+	}
+
 	allowHeaderOverride := false
 	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -148,8 +202,39 @@ func (c *GRPCComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		service:             service,
 		method:              method,
 		insecure:            isInsecure,
+		caCert:              caCert,
 		allowHeaderOverride: allowHeaderOverride,
+		forwardHeaders:      parseForwardHeaders(gocamel.GetConfigValue(u, "forwardHeaders")),
 	}, nil
+}
+
+// transportCredentials builds the TLS transport credentials for a secure
+// (insecure=false) client connection. serverName is derived from the target
+// host; when caCertPath is set, the PEM file is loaded into a dedicated
+// certificate pool, otherwise the system pool is used.
+func transportCredentials(target, caCertPath string) (credentials.TransportCredentials, error) {
+	serverName, _, err := net.SplitHostPort(target)
+	if err != nil {
+		serverName = target
+	}
+
+	var pool *x509.CertPool
+	if caCertPath != "" {
+		pemBytes, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read caCert file %q: %w", caCertPath, err)
+		}
+		pool = x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemBytes) {
+			return nil, fmt.Errorf("caCert file %q does not contain a valid PEM certificate", caCertPath)
+		}
+	}
+
+	return credentials.NewTLS(&tls.Config{
+		ServerName: serverName,
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    pool,
+	}), nil
 }
 
 // GRPCEndpoint represents a gRPC client or server endpoint.
@@ -159,7 +244,12 @@ type GRPCEndpoint struct {
 	service             string
 	method              string
 	insecure            bool
+	caCert              string
 	allowHeaderOverride bool // opt-in: the CamelGrpcMethod header may replace the configured method
+	// forwardHeaders is the optional header allowlist: when non-nil, ONLY the
+	// listed headers are forwarded as outgoing metadata; when nil, every
+	// non-Camel, non-sensitive header is forwarded.
+	forwardHeaders map[string]bool
 
 	clientConn *grpc.ClientConn
 	consumer   *GRPCConsumer
@@ -223,6 +313,12 @@ func (p *GRPCProducer) Start(ctx context.Context) error {
 	var opts []grpc.DialOption
 	if p.endpoint.insecure {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		creds, err := transportCredentials(p.endpoint.target, p.endpoint.caCert)
+		if err != nil {
+			return err
+		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
 	}
 
 	conn, err := grpc.NewClient(p.endpoint.target, opts...)
@@ -285,12 +381,23 @@ func (p *GRPCProducer) Send(exchange *gocamel.Exchange) error {
 		ctx = context.Background()
 	}
 
-	// Propagate metadata headers
+	// Propagate metadata headers: Camel-prefixed internal headers and
+	// sensitive credential headers are never forwarded; when an explicit
+	// forwardHeaders allowlist is configured, only the listed headers remain
+	// (sensitive ones stay blocked).
 	md := metadata.MD{}
-	for k, v := range exchange.In.GetHeaders() {
-		if !strings.HasPrefix(k, "Camel") {
-			md.Append(k, fmt.Sprintf("%v", v))
+	for name, value := range exchange.In.GetHeaders() {
+		if strings.HasPrefix(name, "Camel") {
+			continue
 		}
+		lower := strings.ToLower(name)
+		if sensitiveOutboundHeaders[lower] {
+			continue
+		}
+		if p.endpoint.forwardHeaders != nil && !p.endpoint.forwardHeaders[lower] {
+			continue
+		}
+		md.Append(lower, fmt.Sprintf("%v", value))
 	}
 	if len(md) > 0 {
 		ctx = metadata.NewOutgoingContext(ctx, md)

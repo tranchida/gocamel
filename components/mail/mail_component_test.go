@@ -132,6 +132,17 @@ func TestMailEndpoint_URI(t *testing.T) {
 	assert.True(t, strings.HasPrefix(endpoint.URI(), "smtp://localhost:25"))
 }
 
+func TestMailEndpoint_URI_RedactsCredentials(t *testing.T) {
+	comp := NewMailComponent()
+	endpoint, err := comp.CreateEndpoint("smtps://smtp.gmail.com:465?username=user@gmail.com&password=super-secret-password&to=dest@example.com")
+	require.NoError(t, err)
+
+	uri := endpoint.URI()
+	assert.NotContains(t, uri, "super-secret-password", "URI() must not leak the password")
+	assert.Contains(t, uri, "password=xxxxx", "URI() must mask the password with xxxxx")
+	assert.Contains(t, uri, "to=dest%40example.com", "URI() must preserve non-sensitive parameters")
+}
+
 func TestMailEndpoint_isProducerProtocol(t *testing.T) {
 	tests := []struct {
 		scheme   string

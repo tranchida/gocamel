@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -128,6 +129,64 @@ func TestKafkaProducer_KeyHeadersRequireOptIn(t *testing.T) {
 
 			assert.Equal(t, tt.wantKey, producer.resolveKey(exchange))
 		})
+	}
+}
+
+func headerKeys(headers []kafka.Header) []string {
+	keys := make([]string, 0, len(headers))
+	for _, h := range headers {
+		keys = append(keys, h.Key)
+	}
+	return keys
+}
+
+func TestKafkaProducer_SensitiveHeadersNotForwarded(t *testing.T) {
+	component := NewKafkaComponent()
+	endpoint, err := component.CreateEndpoint("kafka:orders?brokers=localhost:9092")
+	require.NoError(t, err)
+	producer := &KafkaProducer{endpoint: endpoint.(*KafkaEndpoint)}
+
+	exchange := gocamel.NewExchange(context.Background())
+	exchange.In.SetHeader("Authorization", "Bearer secret-token")
+	exchange.In.SetHeader("Cookie", "session=abc")
+	exchange.In.SetHeader("Proxy-Authorization", "Basic xyz")
+	exchange.In.SetHeader("Set-Cookie", "sid=42")
+	exchange.In.SetHeader("WWW-Authenticate", "Basic realm=app")
+	exchange.In.SetHeader("tenant-id", "acme")
+	exchange.In.SetHeader(CamelKafkaTopic, "payments")
+
+	keys := headerKeys(producer.filterHeaders(exchange))
+	assert.Contains(t, keys, "tenant-id")
+	assert.NotContains(t, keys, "Authorization")
+	assert.NotContains(t, keys, "Cookie")
+	assert.NotContains(t, keys, "Proxy-Authorization")
+	assert.NotContains(t, keys, "Set-Cookie")
+	assert.NotContains(t, keys, "WWW-Authenticate")
+	assert.NotContains(t, keys, CamelKafkaTopic, "Camel-prefixed headers must never be forwarded")
+}
+
+func TestKafkaProducer_ForwardHeadersAllowlist(t *testing.T) {
+	component := NewKafkaComponent()
+	endpoint, err := component.CreateEndpoint("kafka:orders?brokers=localhost:9092&forwardHeaders=tenant-id,%20trace-id")
+	require.NoError(t, err)
+	producer := &KafkaProducer{endpoint: endpoint.(*KafkaEndpoint)}
+
+	exchange := gocamel.NewExchange(context.Background())
+	exchange.In.SetHeader("tenant-id", "acme")
+	exchange.In.SetHeader("trace-id", "t-1")
+	exchange.In.SetHeader("X-Custom-Header", "custom-value")
+	exchange.In.SetHeader("Authorization", "Bearer secret-token")
+
+	headers := producer.filterHeaders(exchange)
+	keys := headerKeys(headers)
+	assert.Contains(t, keys, "tenant-id")
+	assert.Contains(t, keys, "trace-id")
+	assert.NotContains(t, keys, "X-Custom-Header", "headers outside the allowlist must be dropped")
+	assert.NotContains(t, keys, "Authorization", "sensitive headers stay blocked even in the allowlist")
+	for _, h := range headers {
+		if h.Key == "tenant-id" {
+			assert.Equal(t, "acme", string(h.Value))
+		}
 	}
 }
 

@@ -42,7 +42,9 @@ type MailEndpoint struct {
 	component           *MailComponent
 }
 
-func (e *MailEndpoint) URI() string { return e.uri }
+// URI returns the endpoint URI, with sensitive credentials (username,
+// password) masked for safe logging.
+func (e *MailEndpoint) URI() string { return gocamel.RedactURI(e.uri) }
 
 // isProducerProtocol returns true if the protocol is for sending (SMTP/SMTPS).
 func (e *MailEndpoint) isProducerProtocol() bool {

@@ -39,9 +39,10 @@ type OpenAIEndpoint struct {
 	comp *OpenAIComponent
 }
 
-// URI returns the endpoint URI.
+// URI returns the endpoint URI, with sensitive credentials
+// (authorizationToken, apiKey) masked for safe logging.
 func (e *OpenAIEndpoint) URI() string {
-	return e.uri
+	return gocamel.RedactURI(e.uri)
 }
 
 // CreateProducer creates an OpenAI producer.

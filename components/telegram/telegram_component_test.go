@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	gocamel "gitlab.com/tranchida/gocamel"
@@ -17,10 +18,23 @@ func newEndpoint(t *testing.T, uri string) *TelegramEndpoint {
 }
 
 func TestCreateEndpoint(t *testing.T) {
-	uri := "telegram://bots?authorizationToken=abc&chatId=42"
-	ep := newEndpoint(t, uri)
-	if ep.URI() != uri {
-		t.Errorf("URI() = %q, want %q", ep.URI(), uri)
+	ep := newEndpoint(t, "telegram://bots?chatId=42")
+	if ep.URI() != "telegram://bots?chatId=42" {
+		t.Errorf("URI() = %q, want URI unchanged when no secret is present", ep.URI())
+	}
+}
+
+func TestEndpointURI_RedactsAuthorizationToken(t *testing.T) {
+	ep := newEndpoint(t, "telegram://bots?authorizationToken=123456:SECRET-token&chatId=42")
+	uri := ep.URI()
+	if strings.Contains(uri, "123456:SECRET-token") {
+		t.Errorf("URI() leaks the bot token: %q", uri)
+	}
+	if !strings.Contains(uri, "authorizationToken=xxxxx") {
+		t.Errorf("URI() = %q, want authorizationToken masked with xxxxx", uri)
+	}
+	if !strings.Contains(uri, "chatId=42") {
+		t.Errorf("URI() = %q, want non-sensitive parameters preserved", uri)
 	}
 }
 

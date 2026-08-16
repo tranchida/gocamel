@@ -25,6 +25,37 @@ const (
 	CamelKafkaHeaders      = "CamelKafkaHeaders"
 )
 
+// sensitiveOutboundHeaders are exchange headers carrying credentials or
+// session state. They are never forwarded to the Kafka broker as record
+// headers (matching is case-insensitive), so a producer sitting downstream
+// of a consumer does not leak a client's credentials to the broker.
+var sensitiveOutboundHeaders = map[string]bool{
+	"authorization":       true,
+	"cookie":              true,
+	"proxy-authorization": true,
+	"set-cookie":          true,
+	"www-authenticate":    true,
+}
+
+// parseForwardHeaders builds the case-insensitive header allowlist from the
+// forwardHeaders URI option. It returns nil when the option is unset or
+// empty, meaning "forward all non-Camel, non-sensitive headers".
+func parseForwardHeaders(value string) map[string]bool {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	allow := make(map[string]bool)
+	for _, name := range strings.Split(value, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			allow[strings.ToLower(name)] = true
+		}
+	}
+	if len(allow) == 0 {
+		return nil
+	}
+	return allow
+}
+
 // KafkaComponent implements the Camel Kafka component.
 type KafkaComponent struct{}
 
@@ -49,6 +80,12 @@ func NewKafkaComponent() *KafkaComponent {
 //	allowHeaderOverride true to let the CamelKafkaTopic, CamelKafkaPartitionKey and
 //	                    CamelKafkaKey headers replace the corresponding URI
 //	                    configuration when producing (default: false)
+//	forwardHeaders      Comma-separated allowlist of exchange headers the
+//	                    producer forwards as Kafka record headers. When set,
+//	                    ONLY these headers are propagated. When unset, all
+//	                    non-Camel headers except sensitive credentials
+//	                    (Authorization, Cookie, Proxy-Authorization, Set-Cookie,
+//	                    WWW-Authenticate) are forwarded.
 func (c *KafkaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -101,6 +138,7 @@ func (c *KafkaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		partition:           partition,
 		clientID:            clientID,
 		allowHeaderOverride: allowHeaderOverride,
+		forwardHeaders:      parseForwardHeaders(gocamel.GetConfigValue(u, "forwardHeaders")),
 	}, nil
 }
 
@@ -113,6 +151,10 @@ type KafkaEndpoint struct {
 	partition           int
 	clientID            string
 	allowHeaderOverride bool // opt-in: CamelKafkaTopic/CamelKafkaKey headers may override URI settings
+	// forwardHeaders is the optional header allowlist: when non-nil, ONLY the
+	// listed headers are forwarded to the broker; when nil, every non-Camel,
+	// non-sensitive header is forwarded.
+	forwardHeaders map[string]bool
 
 	writer   *kafka.Writer
 	consumer *KafkaConsumer
@@ -216,6 +258,31 @@ func (p *KafkaProducer) resolveKey(exchange *gocamel.Exchange) []byte {
 	return nil
 }
 
+// filterHeaders returns the exchange headers allowed to be forwarded to the
+// Kafka broker: Camel-prefixed internal headers and sensitive credential
+// headers are never forwarded; when an explicit forwardHeaders allowlist is
+// configured, only the listed headers remain (sensitive ones stay blocked).
+func (p *KafkaProducer) filterHeaders(exchange *gocamel.Exchange) []kafka.Header {
+	var kafkaHeaders []kafka.Header
+	for name, value := range exchange.In.GetHeaders() {
+		if strings.HasPrefix(name, "Camel") {
+			continue
+		}
+		lower := strings.ToLower(name)
+		if sensitiveOutboundHeaders[lower] {
+			continue
+		}
+		if p.endpoint.forwardHeaders != nil && !p.endpoint.forwardHeaders[lower] {
+			continue
+		}
+		kafkaHeaders = append(kafkaHeaders, kafka.Header{
+			Key:   name,
+			Value: []byte(fmt.Sprintf("%v", value)),
+		})
+	}
+	return kafkaHeaders
+}
+
 // Send publishes the exchange body to Kafka.
 func (p *KafkaProducer) Send(exchange *gocamel.Exchange) error {
 	p.endpoint.mu.Lock()
@@ -247,16 +314,7 @@ func (p *KafkaProducer) Send(exchange *gocamel.Exchange) error {
 		valueBytes = []byte(fmt.Sprintf("%v", b))
 	}
 
-	var kafkaHeaders []kafka.Header
-	for k, v := range exchange.In.GetHeaders() {
-		if strings.HasPrefix(k, "Camel") {
-			continue
-		}
-		kafkaHeaders = append(kafkaHeaders, kafka.Header{
-			Key:   k,
-			Value: []byte(fmt.Sprintf("%v", v)),
-		})
-	}
+	kafkaHeaders := p.filterHeaders(exchange)
 
 	msg := kafka.Message{
 		Topic:   targetTopic,

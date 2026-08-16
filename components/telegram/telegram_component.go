@@ -67,9 +67,10 @@ type TelegramEndpoint struct {
 	allowHeaderOverride bool // opt-in: the CamelTelegramChatId header may replace the chatId URI parameter
 }
 
-// URI returns the URI de l'endpoint
+// URI returns the endpoint URI, with the authorizationToken masked for safe
+// logging.
 func (e *TelegramEndpoint) URI() string {
-	return e.uri
+	return gocamel.RedactURI(e.uri)
 }
 
 func (e *TelegramEndpoint) getBot() (*tgbotapi.BotAPI, error) {

@@ -95,3 +95,61 @@ func patternToRegex(pattern string) *regexp.Regexp {
 	re, _ := regexp.Compile(regexStr)
 	return re
 }
+
+// defaultSensitiveURIKeys are query parameter names whose values are masked
+// by RedactURI when no explicit list is provided. The match is
+// case-insensitive because components read options with mixed cases
+// (apiKey vs apikey, authorizationToken vs AuthorizationToken).
+var defaultSensitiveURIKeys = []string{
+	"password", "passwd", "secret", "token",
+	"apikey", "apitoken", "authorizationtoken", "accesstoken",
+	"privatekey", "clientsecret",
+}
+
+// RedactURI masks sensitive credentials in an endpoint URI so that it can be
+// safely logged, included in error messages or returned by Endpoint.URI()
+// without leaking secrets.
+//
+// Both the userinfo password (scheme://user:PASSWORD@host) and the values of
+// sensitive query parameters are replaced with "xxxxx". When keys is nil,
+// defaultSensitiveURIKeys is used; pass an explicit (case-insensitive) list
+// to override it. Non-parseable URIs are returned unchanged — an URI that
+// cannot be parsed was never accepted by a component in the first place.
+func RedactURI(uri string, keys ...string) string {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return uri
+	}
+
+	changed := false
+
+	if u.User != nil {
+		if _, hasPassword := u.User.Password(); hasPassword {
+			u.User = url.UserPassword(u.User.Username(), "xxxxx")
+			changed = true
+		}
+	}
+
+	sensitive := defaultSensitiveURIKeys
+	if len(keys) > 0 {
+		sensitive = keys
+	}
+	q := u.Query()
+	for name, values := range q {
+		for _, s := range sensitive {
+			if strings.EqualFold(name, s) {
+				for i, v := range values {
+					if v != "" {
+						values[i] = "xxxxx"
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	if changed {
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+	return uri
+}

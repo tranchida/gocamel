@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	sdkopenai "github.com/sashabaranov/go-openai"
@@ -50,9 +51,54 @@ func TestOpenAIProducer_Send_NotStarted(t *testing.T) {
 	}
 }
 
+func TestOpenAIEndpoint_URI_RedactsCredentials(t *testing.T) {
+	uri := "openai:chat?model=gpt-4&apiKey=sk-super-secret-key"
+	endpoint, err := NewOpenAIComponent().CreateEndpoint(uri)
+	if err != nil {
+		t.Fatalf("CreateEndpoint(%q): %v", uri, err)
+	}
+
+	got := endpoint.URI()
+	if strings.Contains(got, "sk-super-secret-key") {
+		t.Errorf("URI() leaks the API key: %q", got)
+	}
+	if !strings.Contains(got, "apiKey=xxxxx") {
+		t.Errorf("URI() = %q, want apiKey masked with xxxxx", got)
+	}
+	if !strings.Contains(got, "model=gpt-4") {
+		t.Errorf("URI() = %q, want non-sensitive parameters preserved", got)
+	}
+
+	// The authorizationToken alias must be masked as well.
+	uri = "openai:chat?authorizationToken=sk-another-secret"
+	endpoint, err = NewOpenAIComponent().CreateEndpoint(uri)
+	if err != nil {
+		t.Fatalf("CreateEndpoint(%q): %v", uri, err)
+	}
+	got = endpoint.URI()
+	if strings.Contains(got, "sk-another-secret") {
+		t.Errorf("URI() leaks the authorization token: %q", got)
+	}
+	if !strings.Contains(got, "authorizationToken=xxxxx") {
+		t.Errorf("URI() = %q, want authorizationToken masked with xxxxx", got)
+	}
+}
+
+func TestOpenAIEndpoint_URI_NoSecret(t *testing.T) {
+	uri := "openai:chat?model=gpt-4"
+	endpoint, err := NewOpenAIComponent().CreateEndpoint(uri)
+	if err != nil {
+		t.Fatalf("CreateEndpoint(%q): %v", uri, err)
+	}
+	if endpoint.URI() != uri {
+		t.Errorf("URI() = %q, want URI unchanged when no secret is present", endpoint.URI())
+	}
+}
+
 type contextRecordingDoer struct {
 	ctx context.Context
 }
+
 
 func (d *contextRecordingDoer) Do(req *http.Request) (*http.Response, error) {
 	d.ctx = req.Context()

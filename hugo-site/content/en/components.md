@@ -491,6 +491,7 @@ builder.From("direct:publish").
 | `partition` | int | `-1` | Target partition (when not using consumer group) |
 | `clientId` | string | `""` | Client identifier |
 | `allowHeaderOverride` | bool | `false` | Allow `CamelKafkaTopic`, `CamelKafkaPartitionKey` and `CamelKafkaKey` to override the URI when producing |
+| `forwardHeaders` | string | `""` | Comma-separated allowlist of exchange headers forwarded as Kafka record headers; when set, ONLY those headers are propagated |
 
 **Headers:**
 - `CamelKafkaTopic` - Overrides (with `allowHeaderOverride=true`) or reads the target topic.
@@ -503,6 +504,13 @@ builder.From("direct:publish").
 > configuration. Header overrides are ignored unless the endpoint opts in with
 > `allowHeaderOverride=true`. Enable it only where headers cannot be
 > influenced by untrusted input.
+>
+> Outbound exchange headers are filtered before they reach the broker:
+> `Authorization`, `Cookie`, `Proxy-Authorization`, `Set-Cookie` and
+> `WWW-Authenticate` (case-insensitive) are never forwarded, so a producer
+> sitting downstream of the HTTP consumer does not leak client credentials.
+> Set `forwardHeaders` for an explicit allowlist when you want stricter
+> control.
 
 ---
 
@@ -528,12 +536,21 @@ builder.From("direct:invoke").
 |---|---|---|---|
 | `service` | string | parsed from path | Full gRPC service name |
 | `method` | string | parsed from path | Method name to call or expose |
-| `insecure` | bool | `true` | Use plaintext transport without TLS |
+| `insecure` | bool | `true` | Use plaintext transport without TLS; when `false`, TLS 1.2+ is used with the system CA pool |
+| `caCert` | string | `""` | Path to a PEM CA certificate trusted for server verification when `insecure=false` (e.g. self-signed server) |
+| `forwardHeaders` | string | `""` | Comma-separated allowlist of exchange headers forwarded as outgoing RPC metadata; when set, ONLY those headers are propagated |
 
 **Headers:**
 - `CamelGrpcMethod` - Method name invoked.
 - `CamelGrpcStatusCode` - gRPC status code (e.g. 0 for OK).
-- `CamelGrpcStatusDescription` - gRPC status description message.
+- `CamelGrpcStatusDescription` - gRPC client status description message.
+
+> ⚠️ Security: outbound exchange headers are filtered before they are sent as
+> RPC metadata: `Authorization`, `Cookie`, `Proxy-Authorization`, `Set-Cookie`
+> and `WWW-Authenticate` (case-insensitive) are never forwarded, so a producer
+> sitting downstream of the HTTP consumer does not leak client credentials.
+> Set `forwardHeaders` for an explicit allowlist when you want stricter
+> control.
 
 ---
 

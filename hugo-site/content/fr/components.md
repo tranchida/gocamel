@@ -497,6 +497,7 @@ builder.From("direct:publish").
 | `partition` | int | `-1` | Partition cible (hors consumer group) |
 | `clientId` | string | `""` | Identifiant client |
 | `allowHeaderOverride` | bool | `false` | Autorise `CamelKafkaTopic`, `CamelKafkaPartitionKey` et `CamelKafkaKey` à remplacer l'URI en production |
+| `forwardHeaders` | string | `""` | Liste de noms de headers (séparés par des virgules) propagés comme headers de record Kafka ; si définie, SEULS ces headers sont propagés |
 
 **Headers d'Exchange :**
 - `CamelKafkaTopic` - Surcharge (avec `allowHeaderOverride=true`) ou lecture du topic cible.
@@ -509,6 +510,13 @@ builder.From("direct:publish").
 > configuration de confiance. Les surcharges par headers sont ignorées sauf si
 > l'endpoint active explicitement `allowHeaderOverride=true`. Ne l'activez que
 > si les headers ne peuvent pas être influencés par une entrée non fiable.
+>
+> Les headers sortants de l'exchange sont filtrés avant d'atteindre le broker :
+> `Authorization`, `Cookie`, `Proxy-Authorization`, `Set-Cookie` et
+> `WWW-Authenticate` (insensible à la casse) ne sont jamais propagés, afin
+> qu'un producteur en aval du consommateur HTTP ne fuite pas les identifiants
+> du client. Définissez `forwardHeaders` pour une liste explicite si vous
+> souhaitez un contrôle plus strict.
 
 ---
 
@@ -534,12 +542,22 @@ builder.From("direct:invoke").
 |---|---|---|---|
 | `service` | string | parsé depuis le chemin | Nom complet du service gRPC |
 | `method` | string | parsé depuis le chemin | Nom de la méthode RPC |
-| `insecure` | bool | `true` | Utiliser un transport texte en clair sans TLS |
+| `insecure` | bool | `true` | Utiliser un transport texte en clair sans TLS ; à `false`, TLS 1.2+ est utilisé avec le pool de CA système |
+| `caCert` | string | `""` | Chemin d'un certificat CA au format PEM approuvé pour la vérification du serveur quand `insecure=false` (ex. serveur auto-signé) |
+| `forwardHeaders` | string | `""` | Liste de noms de headers (séparés par des virgules) propagés comme métadonnées RPC sortantes ; si définie, SEULS ces headers sont propagés |
 
 **Headers d'Exchange :**
 - `CamelGrpcMethod` - Méthode gRPC invoquée.
 - `CamelGrpcStatusCode` - Code d'état gRPC (ex: 0 pour OK).
 - `CamelGrpcStatusDescription` - Message descriptif du statut gRPC.
+
+> ⚠️ Sécurité : les headers sortants de l'exchange sont filtrés avant d'être
+> envoyés comme métadonnées RPC : `Authorization`, `Cookie`,
+> `Proxy-Authorization`, `Set-Cookie` et `WWW-Authenticate` (insensible à la
+> casse) ne sont jamais propagés, afin qu'un producteur en aval du
+> consommateur HTTP ne fuite pas les identifiants du client. Définissez
+> `forwardHeaders` pour une liste explicite si vous souhaitez un contrôle plus
+> strict.
 
 ---
 
