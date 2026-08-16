@@ -18,7 +18,7 @@ require (
 	github.com/nats-io/nkeys v0.4.15 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	gitlab.com/tranchida/gocamel v0.4.0
+	gitlab.com/tranchida/gocamel v0.7.0
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

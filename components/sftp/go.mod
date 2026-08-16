@@ -9,6 +9,6 @@ require (
 
 require (
 	github.com/kr/fs v0.1.0 // indirect
-	gitlab.com/tranchida/gocamel v0.4.0
+	gitlab.com/tranchida/gocamel v0.7.0
 	golang.org/x/sys v0.44.0 // indirect
 )

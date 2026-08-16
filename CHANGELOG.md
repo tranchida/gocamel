@@ -2,6 +2,71 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.7.0] - 2026-08-16
+
+Security hardening release: header-override opt-in across all external
+components, credential redaction in endpoint URIs, and outbound header
+filtering for Kafka and gRPC.
+
+### ⚠️ Breaking changes
+
+All changes below are **secure-by-default behavioural changes**. Routes that
+relied on the previous permissive behaviour must add `allowHeaderOverride=true`
+to the endpoint URI to restore it. Only opt in when exchange headers can never
+be influenced by untrusted input.
+
+- `mongodb` — `CamelMongoDbDatabase`, `CamelMongoDbCollection`,
+  `CamelMongoDbOperation` and `CamelMongoDbCriteria` headers are now honored
+  only with `allowHeaderOverride=true`.
+- `kafka` — `CamelKafkaTopic`, `CamelKafkaPartitionKey` and `CamelKafkaKey`
+  headers are now honored only with `allowHeaderOverride=true`.
+- `redis` — `CamelRedisCommand`, `CamelRedisKey` and `CamelRedisChannel`
+  headers are now honored only with `allowHeaderOverride=true`.
+- `nats` — `CamelNATSSubject` header is now honored only with
+  `allowHeaderOverride=true`; overridden subjects containing spaces are
+  rejected.
+- `grpc` — `CamelGrpcMethod` header is now honored only with
+  `allowHeaderOverride=true` and must match `Service/Method` form.
+- `telegram` — `CamelTelegramChatId` header is now honored only with
+  `allowHeaderOverride=true`.
+- `mail` — `From`, `To`, `Cc`, `Bcc`, `Subject` and `Content-Type` exchange
+  headers are now honored only with `allowHeaderOverride=true`; inbound
+  IMAP/POP3 MIME headers are isolated under the `CamelMailHeader_` prefix to
+  prevent header confusion with downstream producers.
+- `cron` — invalid cron expressions and timezones now fail fast at
+  `CreateEndpoint` instead of failing silently at schedule time.
+- `grpc` — `insecure=false` now requires working TLS (previously it silently
+  configured no transport credentials and broke at runtime).
+
+### Core (`gitlab.com/tranchida/gocamel`)
+
+- **New exported helper `RedactURI`** — masks userinfo passwords and sensitive
+  query parameters (`password`, `token`, `apiKey`, `authorizationToken`, ...)
+  with `xxxxx` so endpoint URIs can be logged or introspected safely.
+- Removed the unused `sanitizer.pathTraversal` regex — traversal detection
+  lives in `containsTraversal`.
+- Added unit test coverage for `security.go` (path validation, symlink
+  containment, SQL stacked-statement parser, input sanitization).
+
+### Components
+
+- `openai`, `telegram`, `mail` — `Endpoint.URI()` now returns a redacted URI
+  via `RedactURI`; API keys, bot tokens and passwords no longer leak into
+  logs, error messages or management introspection. Authentication still reads
+  the original parsed URL.
+- `kafka`, `grpc` — outbound header propagation (Kafka headers, gRPC metadata)
+  now blocks sensitive headers by default (`Authorization`, `Cookie`,
+  `Proxy-Authorization`, `Set-Cookie`, `WWW-Authenticate`, case-insensitive).
+  New `forwardHeaders=a,b` URI option provides an explicit allowlist;
+  sensitive headers remain blocked even when listed.
+- `grpc` — the `insecure=false` branch now works: TLS 1.2+ with system root
+  CAs and `ServerName` derived from the target. New `caCert` URI option loads
+  a custom PEM CA (rejected in combination with `insecure=true`); certificate
+  file errors now fail at `CreateEndpoint` instead of at runtime.
+- `mail` — new `requireStartTLS` URI option refuses to send credentials to
+  SMTP servers that do not announce STARTTLS, with connection deadlines
+  against stalled servers.
+
 ## [v0.6.0] - 2026-08-15
 
 JSONPath expressions, PollEnrich, and Validate EIPs.
@@ -135,6 +200,7 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.7.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.7.0
 [v0.6.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.6.0
 [v0.5.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.5.0
 [v0.4.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.4.0
