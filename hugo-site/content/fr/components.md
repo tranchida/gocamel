@@ -653,7 +653,9 @@ builder.To("chan:orders")
 
 ### OpenAI
 
-Intégration de l'API OpenAI pour ChatGPT/GPT-4.
+Intégration de l'API OpenAI pour ChatGPT/GPT-4. Tout endpoint compatible
+OpenAI est pris en charge via l'option `baseURL` (OpenRouter, Groq, Together,
+Mistral, vLLM, LM Studio, couche de compatibilité OpenAI d'Ollama, ...).
 
 ```go
 ctx.AddComponent("openai", gocamel.NewOpenAIComponent())
@@ -669,14 +671,149 @@ producer.Send(exchange)
 fmt.Println(exchange.GetOut().GetBody()) // Réponse de l'IA
 ```
 
+Utiliser un fournisseur compatible OpenAI :
+
+```go
+// Exemple OpenRouter : router vers openai/gpt-4o via la passerelle OpenRouter
+endpoint, _ := ctx.CreateEndpoint(
+    "openai:chat?model=openai/gpt-4o" +
+        "&baseURL=https://openrouter.ai/api/v1" +
+        "&apiKey=$OPENROUTER_API_KEY")
+```
+
 **Variables d'environnement :**
 
 - `OPENAI_AUTHORIZATIONTOKEN` ou `OPENAI_API_KEY` - Clé API
 
-| Option               | Type   | Défaut          | Description     |
-|----------------------|--------|-----------------|-----------------|
-| `model`              | string | `gpt-3.5-turbo` | Modèle à utiliser |
-| `authorizationToken` | string | env var         | Clé API         |
+| Option               | Type   | Défaut               | Description                                                     |
+|----------------------|--------|----------------------|-----------------------------------------------------------------|
+| `model`              | string | `gpt-3.5-turbo`      | Modèle à utiliser                                               |
+| `authorizationToken` | string | variable d'env       | Clé API (alias : `apiKey`)                                      |
+| `baseURL`            | string | `https://api.openai.com/v1` | URL de base compatible OpenAI personnalisée (OpenRouter, Groq, ...) |
+
+### Anthropic
+
+Intégration native de l'API Messages d'Anthropic (Claude). Contrairement au
+composant OpenAI, c'est un connecteur dédié à la forme native de l'API
+Claude — paramètre `system` séparé, blocs de contenu, en-têtes de cache de
+prompt et raisons d'arrêt spécifiques.
+
+```go
+ctx.AddComponent("anthropic", gocamel.NewAnthropicComponent())
+
+// Producer uniquement - envoyer une requête Messages
+endpoint, _ := ctx.CreateEndpoint(
+    "anthropic:messages?model=claude-sonnet-4-5" +
+        "&apiKey=$ANTHROPIC_API_KEY" +
+        "&maxTokens=1024" +
+        "&system=Tu es un assistant concis")
+producer, _ := endpoint.CreateProducer()
+
+exchange := gocamel.NewExchange(context.Background())
+exchange.GetIn().SetBody("Explique EIP en une phrase.")
+producer.Send(exchange)
+
+fmt.Println(exchange.GetOut().GetBody()) // Réponse de Claude
+```
+
+**Variables d'environnement :**
+
+- `ANTHROPIC_API_KEY` - Clé API (recommandé plutôt que l'intégrer dans l'URI)
+
+| Option               | Type   | Défaut      | Description                                                    |
+|----------------------|--------|-------------|----------------------------------------------------------------|
+| `apiKey`             | string | variable d'env | Clé API (alias : `authorizationToken`). Masquée par `RedactURI`. |
+| `model`              | string | requis      | Nom du modèle, ex. `claude-sonnet-4-5`                         |
+| `maxTokens`          | int    | `1024`      | Nombre maximum de tokens à générer                             |
+| `system`             | string | `""`        | Prompt système                                                |
+| `temperature`         | float  | non défini  | Température d'échantillonnage (0.0-1.0)                       |
+| `baseURL`            | string | API Anthropic | URL de base personnalisée (proxies, passerelles). Doit être `http(s)`. |
+
+**En-têtes de surcharge par message** (message In) :
+
+| En-tête                   | Type   | Description                                |
+|---------------------------|--------|--------------------------------------------|
+| `AnthropicSystem`         | string | Surcharge le `system` de l'URI             |
+| `AnthropicModel`          | string | Surcharge le `model` de l'URI               |
+| `AnthropicMaxTokens`     | string | Surcharge le `maxTokens` de l'URI           |
+| `AnthropicTemperature`    | string | Surcharge le `temperature` de l'URI         |
+
+**En-têtes Out** (définis sur la réponse) :
+
+| En-tête                       | Type  | Description                   |
+|-------------------------------|-------|-------------------------------|
+| `AnthropicUsageInputTokens`  | int64 | Tokens d'entrée facturés      |
+| `AnthropicUsageOutputTokens`  | int64 | Tokens de sortie facturés     |
+| `AnthropicStopReason`        | string | `end_turn`, `max_tokens`, ... |
+| `AnthropicModel`              | string | Modèle ayant produit la réponse |
+
+### Ollama
+
+Intégration native avec un serveur [Ollama](https://ollama.com) local via son
+client Go officiel (`github.com/ollama/ollama/api`). Trois modes sont
+sélectionnés par le chemin de l'URI :
+
+- `ollama:chat` (défaut) — API de chat multi-tours (`/api/chat`)
+- `ollama:generate` — génération one-shot (`/api/generate`)
+- `ollama:embed` — embeddings (`/api/embed`)
+
+```go
+ctx.AddComponent("ollama", gocamel.NewOllamaComponent())
+
+// Discuter avec un modèle local
+endpoint, _ := ctx.CreateEndpoint(
+    "ollama:chat?model=llama3.1&host=http://localhost:11434")
+producer, _ := endpoint.CreateProducer()
+
+exchange := gocamel.NewExchange(context.Background())
+exchange.GetIn().SetBody("Résume EIP en une phrase.")
+producer.Send(exchange)
+
+fmt.Println(exchange.GetOut().GetBody()) // Réponse du modèle local
+```
+
+Générer des embeddings localement :
+
+```go
+endpoint, _ := ctx.CreateEndpoint(
+    "ollama:embed?model=nomic-embed-text&host=http://localhost:11434")
+// exchange.GetOut().GetBody() retourne []float32
+```
+
+**Variables d'environnement :**
+
+- `OLLAMA_HOST` - hôte par défaut lorsque l'option URI `host` est omise
+
+| Option       | Type    | Défaut                    | Description                                                  |
+|--------------|---------|---------------------------|--------------------------------------------------------------|
+| `model`      | string  | requis (chat/generate)    | Nom du modèle                                                |
+| `host`       | string  | `http://localhost:11434`  | URL de base du serveur Ollama (doit être `http(s)`)           |
+| `system`     | string  | `""`                      | Prompt système (mode generate uniquement)                   |
+| `keepAlive`  | durée   | non défini                | Rétention du modèle en mémoire (ex. `5m`, `30s`)             |
+| `think`      | string  | non défini                | Effort de raisonnement : `true`/`false`/`low`/`medium`/`high`/`max` |
+| `format`     | string  | non défini                | Format de sortie structuré (ex. `json`)                      |
+
+**En-têtes de surcharge par message** (message In) :
+
+| En-tête         | Type   | Description                                  |
+|-----------------|--------|----------------------------------------------|
+| `OllamaModel`   | string | Surcharge le `model` de l'URI                  |
+| `OllamaSystem`  | string | Surcharge le `system` de l'URI (chat/generate) |
+
+**En-têtes Out** (définis sur la réponse) :
+
+| En-tête                  | Type  | Description (chat/generate)         |
+|-------------------------|-------|------------------------------------|
+| `OllamaModel`           | string | Modèle ayant produit la réponse   |
+| `OllamaDoneReason`      | string | `stop`, `length`, ...              |
+| `OllamaTotalDuration`  | int64  | Durée totale (ns)                  |
+| `OllamaPromptEvalCount` | int    | Tokens d'entrée évalués           |
+| `OllamaEvalCount`       | int    | Tokens de sortie générés          |
+
+> Le composant Ollama **n'expose pas** les opérations de cycle de vie des
+> modèles (Pull/List/Delete). Utilisez la CLI `ollama` ou l'API HTTP
+> directement pour la gestion des modèles ; le producer GoCamel est limité
+> à l'inférence.
 
 ---
 
@@ -1217,6 +1354,8 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | gRPC       | Réseau     | ✅        | ✅        | `grpc://host:port/Service/Method` |
 | Telegram   | Messagerie   | ✅        | ✅        | `telegram:bots`          |
 | OpenAI     | IA           | ❌        | ✅        | `openai:chat`            |
+| Anthropic  | IA           | ❌        | ✅        | `anthropic:messages`     |
+| Ollama     | IA           | ❌        | ✅        | `ollama:chat`/`generate`/`embed` |
 | Cron       | Ordonnancement | ✅      | ❌        | `cron://group/job`       |
 | SMTP       | Mail         | ❌        | ✅        | `smtp://host:port`       |
 | IMAP       | Mail         | ✅        | ❌        | `imap://host:port`       |

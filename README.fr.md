@@ -59,6 +59,8 @@ go get gitlab.com/tranchida/gocamel/components/sftp
 go get gitlab.com/tranchida/gocamel/components/smb
 go get gitlab.com/tranchida/gocamel/components/telegram
 go get gitlab.com/tranchida/gocamel/components/openai
+go get gitlab.com/tranchida/gocamel/components/anthropic
+go get gitlab.com/tranchida/gocamel/components/ollama
 go get gitlab.com/tranchida/gocamel/components/cron     # robfig/cron
 go get gitlab.com/tranchida/gocamel/components/file     # watcher fsnotify
 go get gitlab.com/tranchida/gocamel/observability/prometheus
@@ -154,7 +156,9 @@ builder.From("direct:start").
 | **Go Channel** | Intégration de canal Go natif  |
 | **Timer/Cron** | Déclencheurs planifiés         |
 | **Telegram**   | Intégration Bot                |
-| **OpenAI**     | API ChatGPT/GPT-4              |
+| **OpenAI**     | ChatGPT/GPT-4 & fournisseurs compatibles OpenAI (OpenRouter, Groq, ...) |
+| **Anthropic**  | API Messages Claude (native)  |
+| **Ollama**     | LLMs locaux (chat/generate/embed, API native) |
 | **Mail**       | Email SMTP/IMAP/POP3           |
 | **SQL**        | Requêtes base de données       |
 | **MongoDB**    | Opérations CRUD MongoDB        |

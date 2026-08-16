@@ -49,6 +49,8 @@ gocamel/
 │   ├── mongodb/                   # MongoDB component (go.mongodb.org/mongo-driver)
 │   ├── nats/                      # NATS component (nats-io/nats.go)
 │   ├── openai/                    # OpenAI component (sashabaranov/go-openai)
+│   ├── anthropic/                 # Anthropic component (anthropic-sdk-go, Claude Messages API)
+│   ├── ollama/                    # Ollama component (ollama/api, local models)
 │   ├── redis/                     # Redis component (redis/go-redis)
 │   ├── sftp/                      # SFTP component (pkg/sftp)
 │   ├── smb/                       # SMB component (hirochachacha/go-smb2)

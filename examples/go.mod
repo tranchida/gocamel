@@ -4,7 +4,7 @@ go 1.25.0
 
 // Examples always build against the in-repo modules.
 require (
-	gitlab.com/tranchida/gocamel v0.2.0
+	gitlab.com/tranchida/gocamel v0.7.0
 	gitlab.com/tranchida/gocamel/components/file v0.0.0
 	gitlab.com/tranchida/gocamel/components/mail v0.0.0
 	gitlab.com/tranchida/gocamel/observability/otel v0.0.0
@@ -37,7 +37,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
 

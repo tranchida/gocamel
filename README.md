@@ -57,6 +57,8 @@ go get gitlab.com/tranchida/gocamel/components/sftp
 go get gitlab.com/tranchida/gocamel/components/smb
 go get gitlab.com/tranchida/gocamel/components/telegram
 go get gitlab.com/tranchida/gocamel/components/openai
+go get gitlab.com/tranchida/gocamel/components/anthropic
+go get gitlab.com/tranchida/gocamel/components/ollama
 go get gitlab.com/tranchida/gocamel/components/cron     # robfig/cron
 go get gitlab.com/tranchida/gocamel/components/file     # fsnotify watcher
 go get gitlab.com/tranchida/gocamel/observability/prometheus
@@ -152,7 +154,9 @@ EndChoice()
 | **Go Channel** | Native Go channel integration |
 | **Timer/Cron** | Scheduled triggers            |
 | **Telegram**   | Bot integration               |
-| **OpenAI**     | ChatGPT/GPT-4 API             |
+| **OpenAI**     | ChatGPT/GPT-4 & OpenAI-compatible providers (OpenRouter, Groq, ...) |
+| **Anthropic**  | Claude Messages API (native)  |
+| **Ollama**     | Local LLMs (chat/generate/embed, native API) |
 | **Mail**       | SMTP/IMAP/POP3 email          |
 | **SQL**        | Database queries              |
 | **MongoDB**    | MongoDB CRUD operations       |

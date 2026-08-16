@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -125,5 +126,82 @@ func TestOpenAIProducer_SendUsesExchangeContext(t *testing.T) {
 	}
 	if doer.ctx == nil || !errors.Is(doer.ctx.Err(), context.Canceled) {
 		t.Fatalf("request did not receive the exchange context: %v", doer.ctx)
+	}
+}
+
+// urlRecordingDoer captures the request URL and returns a canned chat
+// completion response so we can assert which baseURL the producer dialed.
+type urlRecordingDoer struct {
+	gotURL *url.URL
+}
+
+func (d *urlRecordingDoer) Do(req *http.Request) (*http.Response, error) {
+	d.gotURL = req.URL
+	body := `{"id":"chatcmpl-test","object":"chat.completion","model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Content-Type", "application/json")
+	return resp, nil
+}
+
+func TestOpenAIProducer_Start_DefaultBaseURL(t *testing.T) {
+	u, _ := url.Parse("openai:chat?model=gpt-4&apiKey=test-token")
+	endpoint := &OpenAIEndpoint{uri: "openai:chat?model=gpt-4", url: u}
+	producer := &OpenAIProducer{endpoint: endpoint}
+
+	if err := producer.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Replace the HTTP client with a recorder while keeping the baseURL that
+	// Start() derived from the URI (default https://api.openai.com/v1).
+	recorder := &urlRecordingDoer{}
+	cfg := sdkopenai.DefaultConfig("test-token")
+	cfg.HTTPClient = recorder
+	producer.client = sdkopenai.NewClientWithConfig(cfg)
+
+	exchange := gocamel.NewExchange(context.Background())
+	exchange.SetBody("hello")
+	if err := producer.Send(exchange); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if recorder.gotURL == nil {
+		t.Fatal("no request was captured")
+	}
+	if recorder.gotURL.String() != "https://api.openai.com/v1/chat/completions" {
+		t.Errorf("default baseURL: got %q, want https://api.openai.com/v1/chat/completions", recorder.gotURL.String())
+	}
+}
+
+func TestOpenAIProducer_Start_CustomBaseURL(t *testing.T) {
+	u, _ := url.Parse("openai:chat?model=gpt-4&apiKey=test-token&baseURL=https://openrouter.ai/api/v1")
+	endpoint := &OpenAIEndpoint{uri: "openai:chat?model=gpt-4", url: u}
+	producer := &OpenAIProducer{endpoint: endpoint}
+
+	if err := producer.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Replace the HTTP client with a recorder while preserving the custom
+	// baseURL that Start() applied to the producer's client config.
+	recorder := &urlRecordingDoer{}
+	cfg := sdkopenai.DefaultConfig("test-token")
+	cfg.BaseURL = "https://openrouter.ai/api/v1"
+	cfg.HTTPClient = recorder
+	producer.client = sdkopenai.NewClientWithConfig(cfg)
+
+	exchange := gocamel.NewExchange(context.Background())
+	exchange.SetBody("hello")
+	if err := producer.Send(exchange); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if recorder.gotURL == nil {
+		t.Fatal("no request was captured")
+	}
+	if recorder.gotURL.String() != "https://openrouter.ai/api/v1/chat/completions" {
+		t.Errorf("custom baseURL: got %q, want https://openrouter.ai/api/v1/chat/completions", recorder.gotURL.String())
 	}
 }

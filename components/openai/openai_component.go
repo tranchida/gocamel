@@ -78,7 +78,16 @@ func (p *OpenAIProducer) Start(ctx context.Context) error {
 		model = openai.GPT3Dot5Turbo // default model
 	}
 
-	p.client = openai.NewClient(token)
+	// baseURL is optional. When set, it redirects requests to an OpenAI-compatible
+	// provider (OpenRouter, Groq, Together, Mistral, vLLM, LM Studio, Ollama, ...).
+	// When empty, the SDK defaults to https://api.openai.com/v1.
+	if baseURL := gocamel.GetConfigValue(p.endpoint.url, "baseURL"); baseURL != "" {
+		cfg := openai.DefaultConfig(token)
+		cfg.BaseURL = baseURL
+		p.client = openai.NewClientWithConfig(cfg)
+	} else {
+		p.client = openai.NewClient(token)
+	}
 	p.model = model
 
 	return nil

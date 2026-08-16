@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Components
+
+- **New `ollama` component** — native integration with a local Ollama
+  server via the official `github.com/ollama/ollama/api` client. Dedicated
+  module `gitlab.com/tranchida/gocamel/components/ollama`. Three modes
+  selected by URI path:
+  - `ollama:chat` — multi-turn chat (`/api/chat`)
+  - `ollama:generate` — one-shot generation (`/api/generate`)
+  - `ollama:embed` — embeddings (`/api/embed`)
+  Supports `keepAlive`, `think` (reasoning effort), `format` (structured
+  output) options, and per-message override headers (`OllamaModel`,
+  `OllamaSystem`). Response headers expose token counts and timing.
+  Producer only; model lifecycle operations (Pull/List/Delete) are out
+  of scope.
+- **New `anthropic` component** — native integration with the Anthropic
+  Messages API (Claude). Dedicated module
+  `gitlab.com/tranchida/gocamel/components/anthropic` built on the official
+  `anthropic-sdk-go`. Supports a separate `system` parameter, per-message
+  override headers (`AnthropicSystem`, `AnthropicModel`, `AnthropicMaxTokens`,
+  `AnthropicTemperature`), response headers for token usage and stop reason,
+  and an optional `baseURL` (validated `http(s)`) for proxies. Producer only.
+- `openai` — new `baseURL` URI option lets the producer target any
+  OpenAI-compatible endpoint (OpenRouter, Groq, Together, Mistral, vLLM, LM
+  Studio, Ollama's OpenAI compatibility layer, ...). When unset, the SDK
+  defaults to `https://api.openai.com/v1`.
+
 ## [v0.7.0] - 2026-08-16
 
 Security hardening release: header-override opt-in across all external
