@@ -160,6 +160,31 @@ func TestCamelContext_GracefulStopTimeoutEventuallyStopsProducerCache(t *testing
 	}
 }
 
+func TestCamelContext_StartRejectedWhileGracefulStopInProgress(t *testing.T) {
+	ctx := NewCamelContext()
+	component := newGracefulStopTestComponent()
+	t.Cleanup(component.unblock)
+	ctx.AddComponent("shutdown-test", component)
+
+	ctx.CreateRoute().From("shutdown-test:source")
+	require.NoError(t, ctx.Start())
+
+	err := ctx.GracefulStop(10 * time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out")
+
+	err = ctx.Start()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "still stopping")
+
+	component.unblock()
+	require.Eventually(t, func() bool {
+		ctx.startLock.RLock()
+		defer ctx.startLock.RUnlock()
+		return !ctx.stopping
+	}, time.Second, 10*time.Millisecond)
+}
+
 // TestRoute_Validate_NoFrom surfaces missing source endpoint at validate time.
 func TestRoute_Validate_NoFrom(t *testing.T) {
 	ctx := NewCamelContext()

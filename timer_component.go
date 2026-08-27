@@ -110,6 +110,7 @@ type TimerConsumer struct {
 	stopChan  chan struct{}
 	running   bool
 	mu        sync.Mutex
+	wg        sync.WaitGroup
 }
 
 // Start begins message generation by the timer.
@@ -124,26 +125,31 @@ func (c *TimerConsumer) Start(ctx context.Context) error {
 	c.running = true
 	c.stopChan = make(chan struct{})
 
+	c.wg.Add(1)
 	go c.run(ctx)
 
 	return nil
 }
 
-// Stop stops the timer
+// Stop stops the timer and waits for the firing goroutine (and any in-flight
+// exchange) to finish, so a subsequent Start cannot overlap with the previous run.
 func (c *TimerConsumer) Stop() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if !c.running {
+		c.mu.Unlock()
 		return nil
 	}
 
 	c.running = false
 	close(c.stopChan)
+	c.mu.Unlock()
+	c.wg.Wait()
 	return nil
 }
 
 func (c *TimerConsumer) run(ctx context.Context) {
+	defer c.wg.Done()
+
 	// Initial wait (delay).
 	delayDuration := time.Duration(c.endpoint.delay) * time.Millisecond
 
@@ -183,7 +189,7 @@ func (c *TimerConsumer) run(ctx context.Context) {
 		exchange.SetProperty(CamelTimerCounter, counter)
 		exchange.GetIn().SetHeader(CamelTimerFiredTime, firedTime)
 
-		if err := CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+		if err := CompleteExchange(exchange, ProcessSafely(c.processor, exchange)); err != nil {
 			LogError("error processing timer event", "name", c.endpoint.timerName, "error", err)
 		}
 

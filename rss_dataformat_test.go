@@ -64,6 +64,7 @@ func TestRSSDataFormat_Marshal(t *testing.T) {
 
 func TestRSSDataFormat_RouteBuilderDSL(t *testing.T) {
 	ctx := NewCamelContext()
+	ctx.AddComponent("direct", NewDirectComponent())
 	route, err := ctx.CreateRouteBuilder().
 		From("direct:start").
 		Unmarshal(NewRSSDataFormat()).

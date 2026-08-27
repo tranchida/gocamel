@@ -497,6 +497,41 @@ func TestRouteBuilderSimpleSetHeader(t *testing.T) {
 	}
 }
 
+func TestRouteBuilder_BuildSurfacesFromError(t *testing.T) {
+	ctx := NewCamelContext()
+	_, err := ctx.CreateRouteBuilder().From("unknown:foo").Build()
+	if err == nil {
+		t.Fatal("expected Build to fail on an unknown component")
+	}
+}
+
+func TestSimpleSetBodyAddsToSplitContainer(t *testing.T) {
+	ctx := NewCamelContext()
+	ctx.AddComponent("direct", NewDirectComponent())
+
+	route, err := ctx.CreateRouteBuilder().
+		From("direct:start").
+		Split(func(e *Exchange) (any, error) {
+			return []string{"a", "b"}, nil
+		}).
+		SimpleSetBody("x-${body}").
+		End().
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(route.processors) != 1 {
+		t.Fatalf("expected 1 top-level processor (the splitter), got %d", len(route.processors))
+	}
+	split, ok := route.processors[0].(*Splitter)
+	if !ok {
+		t.Fatalf("expected *Splitter, got %T", route.processors[0])
+	}
+	if len(split.processors) != 1 {
+		t.Fatalf("expected SimpleSetBody inside the splitter, got %d nested processors", len(split.processors))
+	}
+}
+
 func TestComplexTemplateWithAllFeatures(t *testing.T) {
 	ctx := NewCamelContext()
 	ex := NewExchange(ctx.GetContext())

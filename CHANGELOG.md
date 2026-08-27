@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **file producer** — writes using `CamelFileName` are confined to the endpoint
+  directory (`ValidatePathInDir`). Absolute names and `../` traversal are rejected.
+- **timer / HTTP consumers** — route panics are recovered via `ProcessSafely` so
+  they fail the exchange instead of the process (timer) or skipping the error handler (HTTP).
+
+### Fixed
+
+- `SimpleSetBody` / `SimpleSetHeader` now attach to the current EIP container
+  (Split, Loop, …) instead of always the top-level route.
+- `RouteBuilder.Build()` surfaces `From()` endpoint resolution errors.
+- `TimerConsumer.Stop()` waits for the firing goroutine to exit.
+- `CamelContext.Start()` is rejected while a timed-out `GracefulStop` is still tearing down.
+- CI runs `go test -race` on every module.
+
 ### Components
 
 - **New `ollama` component** — native integration with a local Ollama

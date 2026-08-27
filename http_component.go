@@ -366,8 +366,10 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			}
 		}
 
-		// Processing the message
-		if err := CompleteExchange(exchange, c.processor.Process(exchange)); err != nil {
+		// Processing the message. ProcessSafely turns a panicking route into an
+		// ordinary error so the ErrorHandler / DLC can act on it (net/http would
+		// recover the panic, but then CompleteExchange never fires).
+		if err := CompleteExchange(exchange, ProcessSafely(c.processor, exchange)); err != nil {
 			// The error may carry internal detail (SQL text, file paths,
 			// driver errors); log it and return a generic message.
 			LogError("HTTP consumer: route processing failed",

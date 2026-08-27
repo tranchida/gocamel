@@ -27,8 +27,12 @@ func NewRouteBuilder(context *CamelContext) *RouteBuilder {
 }
 
 // From sets the source endpoint of the route.
+// Endpoint resolution errors are recorded and surfaced by Build().
 func (b *RouteBuilder) From(uri string) *RouteBuilder {
 	b.route.From(uri)
+	if b.route.err != nil {
+		b.err = b.route.err
+	}
 	return b
 }
 
@@ -237,10 +241,14 @@ func (b *RouteBuilder) DeadLetterChannel(deadLetterURI string, opts ...DeadLette
 }
 
 // Build finalizes route construction.
-// Returns the route or nil if an error occurred during DSL construction.
+// Returns the route or an error accumulated during DSL construction,
+// including From() endpoint resolution failures stored on the route.
 func (b *RouteBuilder) Build() (*Route, error) {
 	if b.err != nil {
 		return nil, b.err
+	}
+	if b.route.err != nil {
+		return nil, b.route.err
 	}
 	return b.route, nil
 }
@@ -253,7 +261,7 @@ func (b *RouteBuilder) SimpleSetBody(expression string) *RouteBuilder {
 		return b
 	}
 
-	b.route.AddProcessor(&SimpleLanguageProcessor{Template: template})
+	b.container.AddProcessor(&SimpleLanguageProcessor{Template: template})
 	return b
 }
 
@@ -265,7 +273,7 @@ func (b *RouteBuilder) SimpleSetHeader(headerName string, expression string) *Ro
 		return b
 	}
 
-	b.route.AddProcessor(&SimpleSetHeaderProcessor{
+	b.container.AddProcessor(&SimpleSetHeaderProcessor{
 		HeaderName: headerName,
 		Expression: template,
 	})

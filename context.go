@@ -15,7 +15,8 @@ type CamelContext struct {
 	routesLock    sync.RWMutex // Protects routes slice and routeCounter
 	registry      *ComponentRegistry
 	started       bool
-	startLock     sync.RWMutex // Protects started lifecycle state
+	stopping      bool         // true while Stop/GracefulStop is still tearing down
+	startLock     sync.RWMutex // Protects started and stopping lifecycle state
 	routeCounter  int
 	usedRouteIDs  map[string]bool // ids already assigned; guarded by routesLock
 	producerCache *ProducerCache
@@ -106,6 +107,9 @@ func (c *CamelContext) Start() error {
 	c.startLock.Lock()
 	defer c.startLock.Unlock()
 
+	if c.stopping {
+		return fmt.Errorf("context is still stopping")
+	}
 	if c.started {
 		return fmt.Errorf("context is already started")
 	}
@@ -142,9 +146,14 @@ func (c *CamelContext) Stop() error {
 	c.startLock.Lock()
 	defer c.startLock.Unlock()
 
+	if c.stopping {
+		return fmt.Errorf("context is still stopping")
+	}
 	if !c.started {
 		return nil
 	}
+
+	c.stopping = true
 
 	c.routesLock.RLock()
 	routes := make([]*Route, len(c.routes))
@@ -165,6 +174,8 @@ func (c *CamelContext) Stop() error {
 		errs = append(errs, err)
 	}
 
+	c.stopping = false
+
 	if len(errs) > 0 {
 		return fmt.Errorf("errors stopping routes: %v", errs)
 	}
@@ -181,6 +192,9 @@ func (c *CamelContext) GracefulStop(timeout time.Duration) error {
 	c.startLock.Lock()
 	defer c.startLock.Unlock()
 
+	if c.stopping {
+		return fmt.Errorf("context is still stopping")
+	}
 	if !c.started {
 		return nil
 	}
@@ -215,11 +229,19 @@ func (c *CamelContext) GracefulStop(timeout time.Duration) error {
 	select {
 	case err := <-done:
 		c.started = false
+		c.stopping = false
 		return err
 	case <-time.After(timeout):
-		// We mark the context as stopped to prevent re-entry, but the
-		// background goroutine keeps running until the slow route(s) yield.
+		// Mark stopped so IsStarted is false, but keep stopping=true until
+		// the background teardown finishes so Start() cannot race with it.
 		c.started = false
+		c.stopping = true
+		go func() {
+			<-done
+			c.startLock.Lock()
+			c.stopping = false
+			c.startLock.Unlock()
+		}()
 		return fmt.Errorf("graceful stop timed out after %s; one or more routes are still shutting down", timeout)
 	}
 }

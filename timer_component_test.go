@@ -165,3 +165,33 @@ func TestTimerConsumer_Stop(t *testing.T) {
 		t.Errorf("Consumer did not process any events before stopping")
 	}
 }
+
+func TestTimerConsumer_RecoversProcessorPanic(t *testing.T) {
+	component := NewTimerComponent()
+	endpoint, err := component.CreateEndpoint("timer:panic?delay=5&period=10&repeatCount=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var n atomic.Int32
+	consumer, err := endpoint.CreateConsumer(ProcessorFunc(func(*Exchange) error {
+		n.Add(1)
+		panic("boom")
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := consumer.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	<-ctx.Done()
+	if err := consumer.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if n.Load() != 2 {
+		t.Errorf("expected 2 ticks after panics, got %d", n.Load())
+	}
+}

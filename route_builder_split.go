@@ -102,6 +102,18 @@ func (d *SplitDefinition) SetHeader(key string, value interface{}) *SplitDefinit
 	return d
 }
 
+// SimpleSetBody sets the body via a Simple expression and stays in the split context.
+func (d *SplitDefinition) SimpleSetBody(expression string) *SplitDefinition {
+	d.RouteBuilder.SimpleSetBody(expression)
+	return d
+}
+
+// SimpleSetHeader sets a header via a Simple expression and stays in the split context.
+func (d *SplitDefinition) SimpleSetHeader(headerName, expression string) *SplitDefinition {
+	d.RouteBuilder.SimpleSetHeader(headerName, expression)
+	return d
+}
+
 // Marshal adds a dataformat marshal step and stays in the split context.
 func (d *SplitDefinition) Marshal(dataFormat DataFormat) *SplitDefinition {
 	d.RouteBuilder.Marshal(dataFormat)

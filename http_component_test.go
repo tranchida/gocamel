@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,34 @@ func TestHTTPConsumer_BindsConfiguredHost(t *testing.T) {
 	require.NoError(t, consumer.Start(context.Background()))
 	assert.Equal(t, "127.0.0.1:0", consumer.server.Addr)
 	require.NoError(t, consumer.Stop())
+}
+
+func TestHTTPConsumer_RecoversProcessorPanic(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+
+	consumer := &HTTPConsumer{
+		uri: "http://" + addr + "/",
+		processor: ProcessorFunc(func(*Exchange) error {
+			panic("boom")
+		}),
+	}
+	require.NoError(t, consumer.Start(context.Background()))
+	t.Cleanup(func() { _ = consumer.Stop() })
+
+	var resp *http.Response
+	require.Eventually(t, func() bool {
+		r, err := http.Get("http://" + addr + "/")
+		if err != nil {
+			return false
+		}
+		resp = r
+		return true
+	}, 2*time.Second, 20*time.Millisecond)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
 func TestHTTPProducer_UsesExchangeContext(t *testing.T) {

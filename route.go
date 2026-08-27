@@ -188,7 +188,7 @@ func (r *Route) SetTransacted(transacted bool) *Route {
 }
 
 // From sets the source endpoint of the route.
-// Errors are stored and surfaced at Start() time.
+// Errors are stored and surfaced at Build() / Start() time.
 func (r *Route) From(uri string) *Route {
 	// A Route built with NewRoute() has no CamelContext and cannot resolve an
 	// endpoint. Record the error instead of dereferencing a nil context:

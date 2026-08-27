@@ -314,6 +314,64 @@ func TestFileProducer_WritesWithCamelFileNameHeader(t *testing.T) {
 	}
 }
 
+func TestFileProducer_RejectsTraversingCamelFileName(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prod, err := ep.CreateProducer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := []string{
+		"../evil.txt",
+		filepath.Join("..", "evil.txt"),
+		filepath.Join(string(filepath.Separator), "etc", "passwd"),
+	}
+	for _, name := range names {
+		ex := gocamel.NewExchange(context.Background())
+		ex.GetIn().SetHeader(gocamel.CamelFileName, name)
+		ex.SetBody("nope")
+		if err := prod.Send(ex); err == nil {
+			t.Errorf("expected CamelFileName %q to be rejected", name)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "evil.txt")); err == nil {
+		t.Error("traversal write escaped the endpoint directory")
+	}
+}
+
+func TestFileProducer_AllowsNestedRelativeCamelFileName(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prod, err := ep.CreateProducer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.GetIn().SetHeader(gocamel.CamelFileName, filepath.Join("sub", "ok.txt"))
+	ex.SetBody("nested ok")
+	if err := prod.Send(ex); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "sub", "ok.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "nested ok" {
+		t.Errorf("got %q, want %q", got, "nested ok")
+	}
+}
+
 type testDoneSync struct {
 	done chan struct{}
 }

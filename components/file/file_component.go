@@ -114,12 +114,18 @@ func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 	info, statErr := os.Stat(targetPath)
 	if (statErr == nil && info.IsDir()) || (statErr != nil && strings.HasSuffix(targetPath, string(filepath.Separator))) {
 		if fileName, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
-			targetPath = filepath.Join(targetPath, fmt.Sprintf("%v", fileName))
+			name := fmt.Sprintf("%v", fileName)
+			if err := confinedFileName(name); err != nil {
+				return err
+			}
+			targetPath = filepath.Join(targetPath, name)
 		}
 	}
 
-	// Re-validate the target path before any filesystem access.
-	if err := gocamel.ValidatePath(targetPath); err != nil {
+	// Confine the write to the endpoint directory: ValidatePath alone accepts
+	// "/inbox/../../etc/passwd" (depth never drops below zero on an absolute
+	// path) and filepath.Join drops the base when CamelFileName is absolute.
+	if err := gocamel.ValidatePathInDir(targetPath, p.path); err != nil {
 		return err
 	}
 
@@ -149,7 +155,7 @@ func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 		flags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
 	}
 
-	// targetPath was validated above via ValidatePath. 0644 is the deliberate
+	// targetPath was confined above via ValidatePathInDir. 0644 is the deliberate
 	// default: produced files are meant to be read by other processes, and the
 	// effective mode still respects the process umask.
 	file, err := os.OpenFile(targetPath, flags, 0644) // #nosec G302,G304
@@ -523,4 +529,17 @@ func moveFilelocal(src, destDir string) {
 	if err := os.Rename(src, dest); err != nil {
 		gocamel.LogError("error moving file", "src", src, "dest", dest, "error", err)
 	}
+}
+
+// confinedFileName rejects a CamelFileName that would escape the endpoint
+// directory via filepath.Join: an empty name, an absolute path (Join discards
+// the base), or a Windows volume name.
+func confinedFileName(name string) error {
+	if name == "" {
+		return fmt.Errorf("CamelFileName cannot be empty")
+	}
+	if filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
+		return fmt.Errorf("CamelFileName must be a relative path: %s", name)
+	}
+	return nil
 }

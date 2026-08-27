@@ -103,6 +103,18 @@ func (d *LoopDefinition) SetHeader(key string, value interface{}) *LoopDefinitio
 	return d
 }
 
+// SimpleSetBody sets the body via a Simple expression and stays in the loop context.
+func (d *LoopDefinition) SimpleSetBody(expression string) *LoopDefinition {
+	d.RouteBuilder.SimpleSetBody(expression)
+	return d
+}
+
+// SimpleSetHeader sets a header via a Simple expression and stays in the loop context.
+func (d *LoopDefinition) SimpleSetHeader(headerName, expression string) *LoopDefinition {
+	d.RouteBuilder.SimpleSetHeader(headerName, expression)
+	return d
+}
+
 // SetHeaders sets multiple headers and stays in the loop context.
 func (d *LoopDefinition) SetHeaders(headers map[string]any) *LoopDefinition {
 	d.RouteBuilder.SetHeaders(headers)

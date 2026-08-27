@@ -33,7 +33,7 @@ go:
         # "./components/redis" -> "components-redis").
         profile_name=$(echo "$dir" | sed 's#^\./##; s#/#-#g')
         [ -z "$profile_name" ] || [ "$profile_name" = "." ] && profile_name="root"
-        (cd "$dir" && go build ./... && go vet ./... && go test -coverprofile="${covdir}/${profile_name}.out" ./...)
+        (cd "$dir" && go build ./... && go vet ./... && go test -race -coverprofile="${covdir}/${profile_name}.out" ./...)
       done
   artifacts:
     when: always
