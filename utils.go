@@ -92,8 +92,7 @@ func patternToRegex(pattern string) *regexp.Regexp {
 	// Escape special regex characters, then replace '*' with '.*'.
 	quoted := regexp.QuoteMeta(pattern)
 	regexStr := "^" + strings.ReplaceAll(quoted, "\\*", ".*") + "$"
-	re, _ := regexp.Compile(regexStr)
-	return re
+	return regexp.MustCompile(regexStr)
 }
 
 // defaultSensitiveURIKeys are query parameter names whose values are masked

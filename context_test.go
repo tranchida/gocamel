@@ -45,6 +45,18 @@ func TestDefaultRouteID(t *testing.T) {
 	}
 }
 
+func TestAddRoute_DuplicateIDWarnsButKeepsBoth(t *testing.T) {
+	ctx := NewCamelContext()
+	a := NewRoute()
+	a.ID = "dup"
+	b := NewRoute()
+	b.ID = "dup"
+	ctx.AddRoute(a)
+	ctx.AddRoute(b)
+	assert.Equal(t, 2, ctx.GetRouteCount())
+	assert.Equal(t, a, ctx.GetRoute("dup"))
+}
+
 func TestDefaultRouteIDConflict(t *testing.T) {
 	ctx := NewCamelContext()
 

@@ -114,13 +114,13 @@ func (r *ComponentRegistry) Clear() {
 func (r *ComponentRegistry) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
-		return nil, fmt.Errorf("invalid URI: %s", uri)
+		return nil, fmt.Errorf("invalid URI %s: %w", uri, err)
 	}
 
 	componentName := u.Scheme
 	component, err := r.GetComponent(componentName)
 	if err != nil {
-		return nil, fmt.Errorf("error retrieving component %s: %v", componentName, err)
+		return nil, fmt.Errorf("error retrieving component %s: %w", componentName, err)
 	}
 
 	return component.CreateEndpoint(uri)

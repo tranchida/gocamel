@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDirectComponent(t *testing.T) {
@@ -168,4 +169,26 @@ func TestDirectComponentMultipleRoutes(t *testing.T) {
 	assert.Equal(t, "Start Route1 Route2", exchange.GetOut().GetBody())
 
 	camelCtx.Stop()
+}
+
+func TestDirectProducer_RecoversProcessorPanic(t *testing.T) {
+	camelCtx := NewCamelContext()
+	camelCtx.AddComponent("direct", NewDirectComponent())
+
+	_, err := camelCtx.CreateRouteBuilder().
+		From("direct:panic").
+		ProcessFunc(func(*Exchange) error { panic("boom") }).
+		Build()
+	require.NoError(t, err)
+	require.NoError(t, camelCtx.Start())
+	t.Cleanup(func() { _ = camelCtx.Stop() })
+
+	ep, err := camelCtx.CreateEndpoint("direct:panic")
+	require.NoError(t, err)
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+
+	err = prod.Send(NewExchange(context.Background()))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrProcessorPanic)
 }

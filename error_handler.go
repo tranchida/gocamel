@@ -154,9 +154,7 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 		// base * multiplier^attempt when exponential backoff is enabled.
 		delay := dlc.redeliveryDelay
 		if dlc.useExponentialBackoff {
-			for i := 0; i < attempt; i++ {
-				delay = time.Duration(float64(delay) * dlc.backoffMultiplier)
-			}
+			delay = exponentialBackoffDelay(delay, dlc.backoffMultiplier, attempt)
 		}
 		if sleepErr := sleepWithContext(exchange, delay); sleepErr != nil {
 			// Context cancelled while waiting — abort redelivery, clean up state,
@@ -232,4 +230,23 @@ func (dlc *DeadLetterChannel) ResetRetryState(exchangeID string) {
 	dlc.mu.Lock()
 	delete(dlc.retryAttempts, exchangeID)
 	dlc.mu.Unlock()
+}
+
+// maxRedeliveryDelay caps exponential backoff so float64(duration)*multiplier
+// cannot overflow time.Duration into a negative sleep.
+const maxRedeliveryDelay = 24 * time.Hour
+
+func exponentialBackoffDelay(base time.Duration, multiplier float64, attempt int) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	delay := base
+	for i := 0; i < attempt; i++ {
+		next := float64(delay) * multiplier
+		if next <= 0 || next > float64(maxRedeliveryDelay) {
+			return maxRedeliveryDelay
+		}
+		delay = time.Duration(next)
+	}
+	return delay
 }

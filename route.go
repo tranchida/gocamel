@@ -385,7 +385,7 @@ func (r *Route) Start(ctx context.Context) error {
 
 	consumer, err := r.from.CreateConsumer(r)
 	if err != nil {
-		return fmt.Errorf("error creating consumer: %v", err)
+		return fmt.Errorf("error creating consumer: %w", err)
 	}
 	r.consumer = consumer
 	r.configureAggregatorTimeouts(ctx)
@@ -394,9 +394,9 @@ func (r *Route) Start(ctx context.Context) error {
 		r.stopAggregatorTimeouts()
 		r.consumer = nil
 		if stopErr := consumer.Stop(); stopErr != nil {
-			return fmt.Errorf("error starting consumer: %v; cleanup failed: %v", err, stopErr)
+			return fmt.Errorf("error starting consumer: %w; cleanup failed: %v", err, stopErr)
 		}
-		return fmt.Errorf("error starting consumer: %v", err)
+		return fmt.Errorf("error starting consumer: %w", err)
 	}
 
 	r.started = true

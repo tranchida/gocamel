@@ -16,7 +16,8 @@ import (
 const (
 	CamelTemplatePath     = "CamelTemplatePath"     // Template file path (override)
 	CamelTemplateEncoding = "CamelTemplateEncoding" // Template encoding (default: UTF-8)
-	CamelTemplatelocal    = "CamelTemplatelocal"    // Locale for the template
+	CamelTemplateLocale   = "CamelTemplateLocale"   // Locale for the template
+	CamelTemplatelocal    = "CamelTemplatelocal"    // Deprecated: typo alias of CamelTemplateLocale.
 )
 
 // TemplateData groups all data available within a template.
@@ -305,7 +306,7 @@ func prepareTemplateData(exchange *Exchange) *TemplateData {
 	data := &TemplateData{}
 
 	// Exchange information.
-	data.Exchange.ID = fmt.Sprintf("%p", exchange) // Unique ID based on memory address.
+	data.Exchange.ID = exchange.ID
 	data.Exchange.Created = exchange.Created
 	data.Exchange.Properties = exchange.Properties
 

@@ -124,3 +124,28 @@ func TestCircuitBreaker_HalfOpenFailure(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCircuitOpen)
 	assert.Equal(t, 2, mainCalled)
 }
+
+func TestCircuitBreaker_FallbackPanicRecovered(t *testing.T) {
+	cb := NewCircuitBreaker()
+	cb.SetFailureThreshold(1)
+	cb.SetProcessor(ProcessorFunc(func(*Exchange) error { return errors.New("fail") }))
+	cb.SetFallbackProcessor(ProcessorFunc(func(*Exchange) error { panic("fb") }))
+
+	err := cb.Process(NewExchange(context.Background()))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrProcessorPanic)
+}
+
+func TestCircuitBreaker_IdleFailuresDoNotOpen(t *testing.T) {
+	cb := NewCircuitBreaker()
+	cb.SetFailureThreshold(2)
+	cb.SetOpenTimeout(40 * time.Millisecond)
+	cb.SetProcessor(ProcessorFunc(func(*Exchange) error { return errors.New("x") }))
+
+	require.Error(t, cb.Process(NewExchange(context.Background())))
+	time.Sleep(60 * time.Millisecond)
+	require.Error(t, cb.Process(NewExchange(context.Background())))
+	// Count reset after idle gap, so the circuit is still closed.
+	require.Error(t, cb.Process(NewExchange(context.Background())))
+	assert.ErrorIs(t, cb.Process(NewExchange(context.Background())), ErrCircuitOpen)
+}

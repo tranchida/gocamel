@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -356,4 +357,9 @@ func TestDeadLetterChannel_MaxRedeliveriesZero(t *testing.T) {
 func TestNoErrorHandler_ImplementsInterface(t *testing.T) {
 	var handler ErrorHandler = &NoErrorHandler{}
 	assert.NotNil(t, handler)
+}
+
+func TestExponentialBackoffDelay_CapsOverflow(t *testing.T) {
+	d := exponentialBackoffDelay(time.Second, 10, 100)
+	assert.Equal(t, maxRedeliveryDelay, d)
 }

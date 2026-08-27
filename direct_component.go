@@ -107,7 +107,7 @@ func (p *DirectProducer) Send(exchange *Exchange) error {
 	if consumer == nil {
 		return fmt.Errorf("no consumers available on endpoint: %s", p.endpoint.uri)
 	}
-	return consumer.processor.Process(exchange)
+	return ProcessSafely(consumer.processor, exchange)
 }
 
 // DirectConsumer represents a direct consumer

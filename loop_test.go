@@ -188,3 +188,12 @@ func TestLoopProcessor_StopRouting(t *testing.T) {
 		t.Errorf("Expected loop to stop after 3 runs, ran %d times", counter)
 	}
 }
+
+func TestLoopProcessor_RejectsExcessiveIterations(t *testing.T) {
+	l := NewStaticLoopProcessor(10)
+	l.SetMaxIterations(3)
+	err := l.Process(NewExchange(context.Background()))
+	if err == nil {
+		t.Fatal("expected loop to reject a count above maxIterations")
+	}
+}

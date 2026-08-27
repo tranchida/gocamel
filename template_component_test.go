@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+func TestPrepareTemplateData_UsesExchangeID(t *testing.T) {
+	ex := NewExchange(context.Background())
+	data := prepareTemplateData(ex)
+	if data.Exchange.ID != ex.ID {
+		t.Fatalf("template exchange ID = %q, want %q", data.Exchange.ID, ex.ID)
+	}
+}
+
 func TestTemplateComponent_CreateEndpoint(t *testing.T) {
 	comp := NewTemplateComponent()
 

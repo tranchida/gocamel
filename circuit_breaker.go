@@ -29,7 +29,8 @@ type CircuitBreaker struct {
 	successCount      int
 	openTimeout       time.Duration
 	lastOpenTime      time.Time
-	halfOpenProbe     bool // true while a half-open trial request is in flight
+	lastFailureTime   time.Time // last failure while Closed; idle gaps reset the count
+	halfOpenProbe     bool      // true while a half-open trial request is in flight
 	mu                sync.RWMutex
 	processor         Processor
 	fallbackProcessor Processor
@@ -148,6 +149,13 @@ func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 }
 
 func (cb *CircuitBreaker) onFailure() {
+	now := time.Now()
+	// Idle reset: failures older than OpenTimeout do not count toward the
+	// threshold, so a burst of errors years ago cannot open the circuit today.
+	if cb.state == StateClosed && !cb.lastFailureTime.IsZero() && now.Sub(cb.lastFailureTime) > cb.openTimeout {
+		cb.failureCount = 0
+	}
+	cb.lastFailureTime = now
 	cb.failureCount++
 	if cb.state == StateClosed {
 		if cb.failureCount >= cb.failureThreshold {
@@ -187,7 +195,7 @@ func (cb *CircuitBreaker) closeCircuit() {
 func (cb *CircuitBreaker) doFallback(exchange *Exchange, err error, fb Processor) error {
 	if fb != nil {
 		exchange.SetProperty("CamelCircuitBreakerError", err)
-		return fb.Process(exchange)
+		return safeProcess(func() error { return fb.Process(exchange) })
 	}
 	return err
 }

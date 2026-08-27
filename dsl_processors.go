@@ -1,7 +1,5 @@
 package gocamel
 
-import "fmt"
-
 // This file centralises the small Processor factories used by every fluent
 // DSL builder (RouteBuilder, SplitDefinition, MulticastDefinition,
 // PipelineDefinition, ChoiceBuilder, OtherwiseBuilder, TryDefinition,
@@ -123,7 +121,7 @@ func removeHeadersProcessor(pattern string, excludePatterns []string) Processor 
 func logProcessor(message, routeID string) Processor {
 	return ProcessorFunc(func(exchange *Exchange) error {
 		LogInfo(message,
-			"exchange_id", fmt.Sprintf("%p", exchange),
+			"exchange_id", exchange.ID,
 			"route_id", routeID,
 		)
 		return nil

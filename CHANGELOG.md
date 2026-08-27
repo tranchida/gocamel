@@ -27,6 +27,15 @@ All notable changes to this project are documented in this file.
 - SEDA / chan `Stop` unblocks producers waiting on a full queue and drains
   leftover exchanges.
 - `Route.Validate()` aggregates errors with `errors.Join`.
+- Circuit breaker: idle failure window (OpenTimeout) resets the count;
+  fallback panics are recovered.
+- Resequencer buffer is bounded (default 10000); downstream drain uses
+  ProcessSafely.
+- Loop EIP rejects iteration counts above `MaxLoopIterations` (default 1e6).
+- Logger is swapped atomically; template/log/otel use `exchange.ID` instead
+  of the pointer address. `CamelTemplateLocale` added (typo alias kept).
+- Direct producer recovers panics. Duplicate route IDs are logged.
+- Dead-letter exponential backoff is capped at 24h. Error wrapping uses `%w`.
 
 ### Components
 

@@ -110,3 +110,24 @@ func TestResequencer_Timeout(t *testing.T) {
 
 	assert.Equal(t, []int64{1, 3}, received)
 }
+
+func TestResequencer_BufferCapacity(t *testing.T) {
+	r := NewResequencer(func(e *Exchange) (int64, error) {
+		v, _ := e.GetHeaderAsInt("seq")
+		return int64(v), nil
+	}, 1, time.Second)
+	r.SetCapacity(2)
+	r.SetProcessor(ProcessorFunc(func(*Exchange) error { return nil }))
+
+	send := func(seq int) error {
+		ex := NewExchange(context.Background())
+		ex.SetHeader("seq", seq)
+		return r.Process(ex)
+	}
+
+	require.ErrorIs(t, send(2), ErrStopRouting)
+	require.ErrorIs(t, send(3), ErrStopRouting)
+	err := send(4)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "buffer full")
+}

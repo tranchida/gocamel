@@ -3,7 +3,6 @@ package otel
 
 import (
 	"context"
-	"fmt"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -32,7 +31,7 @@ func Tracing() gocamel.RouteInterceptor {
 			ctx, span := tracer.Start(ctx, "route:"+route.ID,
 				trace.WithAttributes(
 					attribute.String("camel.route.id", route.ID),
-					attribute.String("camel.exchange.id", fmt.Sprintf("%p", exchange)),
+					attribute.String("camel.exchange.id", exchange.ID),
 				),
 			)
 			defer span.End()

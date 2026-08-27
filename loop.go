@@ -13,12 +13,25 @@ const (
 	CamelLoopComplete = "CamelLoopComplete"
 )
 
+// MaxLoopIterations caps a single Loop EIP evaluation. A LoopProcessor may
+// override it with SetMaxIterations; 0 on the processor means "use this
+// package default". Set the package value to 0 to disable the cap (not
+// recommended — a hostile Simple expression could then loop without bound).
+var MaxLoopIterations = 1_000_000
+
 // LoopProcessor implements the Loop EIP.
 // It executes a pipeline of processors repeatedly, either a fixed number of times
 // or a dynamic number determined per exchange.
 type LoopProcessor struct {
-	expression func(*Exchange) (int, error)
-	processors []Processor
+	expression    func(*Exchange) (int, error)
+	processors    []Processor
+	maxIterations int // 0 = use MaxLoopIterations
+}
+
+// SetMaxIterations overrides the package-level MaxLoopIterations for this loop.
+func (l *LoopProcessor) SetMaxIterations(n int) *LoopProcessor {
+	l.maxIterations = n
+	return l
 }
 
 // NewLoopProcessor creates a new LoopProcessor with a dynamic count function.
@@ -94,6 +107,14 @@ func (l *LoopProcessor) Process(exchange *Exchange) error {
 
 	if count <= 0 {
 		return nil
+	}
+
+	limit := l.maxIterations
+	if limit == 0 {
+		limit = MaxLoopIterations
+	}
+	if limit > 0 && count > limit {
+		return fmt.Errorf("loop: iteration count %d exceeds max %d", count, limit)
 	}
 
 	for i := 0; i < count; i++ {

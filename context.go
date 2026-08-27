@@ -61,6 +61,8 @@ func (c *CamelContext) AddRoute(route *Route) {
 				break
 			}
 		}
+	} else if c.usedRouteIDs[route.ID] {
+		LogWarn("duplicate route ID; GetRoute returns the first route with this ID", "id", route.ID)
 	}
 
 	c.usedRouteIDs[route.ID] = true

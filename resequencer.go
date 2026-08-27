@@ -10,10 +10,15 @@ import (
 
 // Resequencer implements the Resequencer EIP (Stream mode).
 // It reorders messages based on a sequence number or timestamp extracted via an expression.
+// DefaultResequencerCapacity is the default maximum number of out-of-order
+// exchanges retained by a Resequencer. SetCapacity(0) disables the bound.
+const DefaultResequencerCapacity = 10000
+
 type Resequencer struct {
 	expression func(*Exchange) (int64, error)
 	timeout    time.Duration
 	nextSeq    int64
+	capacity   int
 	buffer     []*resequencerEntry
 	mu         sync.Mutex
 	processor  Processor
@@ -32,8 +37,16 @@ func NewResequencer(expression func(*Exchange) (int64, error), nextSeq int64, ti
 		expression: expression,
 		nextSeq:    nextSeq,
 		timeout:    timeout,
+		capacity:   DefaultResequencerCapacity,
 		buffer:     make([]*resequencerEntry, 0),
 	}
+}
+
+// SetCapacity bounds how many out-of-order exchanges the resequencer retains.
+// 0 means unlimited (not recommended).
+func (r *Resequencer) SetCapacity(n int) *Resequencer {
+	r.capacity = n
+	return r
 }
 
 // SetProcessor sets the processor to be executed when a message is ready.
@@ -80,6 +93,10 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 		}
 	}
 
+	if r.capacity > 0 && len(r.buffer) >= r.capacity {
+		return fmt.Errorf("resequencer: buffer full (%d); dropping seq %d", r.capacity, seq)
+	}
+
 	entry := &resequencerEntry{
 		seq:      seq,
 		exchange: exchange.Copy(),
@@ -104,7 +121,10 @@ func (r *Resequencer) drain() error {
 		r.buffer = r.buffer[1:]
 		r.nextSeq++
 
-		if err := r.processor.Process(entry.exchange); err != nil {
+		if r.processor == nil {
+			continue
+		}
+		if err := safeProcess(func() error { return r.processor.Process(entry.exchange) }); err != nil {
 			return err
 		}
 	}
@@ -171,6 +191,12 @@ type ResequencerDefinition struct {
 // Timeout sets the timeout duration.
 func (d *ResequencerDefinition) Timeout(timeout time.Duration) *ResequencerDefinition {
 	d.resequencer.timeout = timeout
+	return d
+}
+
+// Capacity sets the maximum number of out-of-order exchanges retained.
+func (d *ResequencerDefinition) Capacity(n int) *ResequencerDefinition {
+	d.resequencer.SetCapacity(n)
 	return d
 }
 
