@@ -99,7 +99,9 @@ func (m *Message) GetHeaderAsBool(key string) (bool, bool) {
 }
 
 func (m *Message) GetHeaders() map[string]any {
-	return m.Headers
+	out := make(map[string]any, len(m.Headers))
+	maps.Copy(out, m.Headers)
+	return out
 }
 
 func (m *Message) SetHeaders(headers map[string]any) {

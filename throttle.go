@@ -8,11 +8,11 @@ import (
 
 // Throttler implements the Throttle EIP.
 // It limits the rate of exchange processing to at most MaxRequests per TimePeriod.
-// Exchanges that exceed the rate are delayed (not dropped) until the current window resets.
+// Exchanges that exceed the rate are delayed (not dropped).
 //
-// The implementation uses a fixed-window counter: the window resets every TimePeriod.
-// For smooth rate limiting across windows, use a smaller TimePeriod (e.g. 100ms with
-// MaxRequests=10 instead of 1000ms with MaxRequests=100).
+// The implementation is a token bucket of capacity MaxRequests that refills at
+// MaxRequests/TimePeriod. Unlike a fixed window, it does not allow a 2× burst
+// at a window boundary.
 //
 // Example DSL usage:
 //
@@ -26,9 +26,9 @@ type Throttler struct {
 	maxRequests int64
 	timePeriod  time.Duration
 
-	mu          sync.Mutex
-	count       int64
-	windowStart time.Time
+	mu     sync.Mutex
+	tokens float64
+	last   time.Time
 }
 
 // NewThrottler creates a Throttler that allows at most maxRequests per timePeriod.
@@ -36,12 +36,13 @@ func NewThrottler(maxRequests int64, timePeriod time.Duration) *Throttler {
 	return &Throttler{
 		maxRequests: maxRequests,
 		timePeriod:  timePeriod,
-		windowStart: time.Now(),
+		tokens:      float64(maxRequests),
+		last:        time.Now(),
 	}
 }
 
 // Process implements the Processor interface.
-// If the rate limit is reached, the call blocks until the current window expires.
+// If no token is available, the call blocks until one refills.
 func (t *Throttler) Process(exchange *Exchange) error {
 	if t.maxRequests <= 0 {
 		return fmt.Errorf("throttle: maxRequests must be greater than 0")
@@ -50,33 +51,35 @@ func (t *Throttler) Process(exchange *Exchange) error {
 		return fmt.Errorf("throttle: timePeriod must be greater than 0")
 	}
 
+	rate := float64(t.maxRequests) / t.timePeriod.Seconds()
+	capacity := float64(t.maxRequests)
+
 	for {
 		t.mu.Lock()
 		now := time.Now()
-
-		// Reset window if expired.
-		if now.Sub(t.windowStart) >= t.timePeriod {
-			t.windowStart = now
-			t.count = 0
+		elapsed := now.Sub(t.last).Seconds()
+		t.tokens += elapsed * rate
+		if t.tokens > capacity {
+			t.tokens = capacity
 		}
+		t.last = now
 
-		if t.count < t.maxRequests {
-			t.count++
+		if t.tokens >= 1 {
+			t.tokens--
 			t.mu.Unlock()
 			return nil
 		}
 
-		// Window is full — compute how long until it resets.
-		waitUntil := t.windowStart.Add(t.timePeriod)
+		need := 1 - t.tokens
+		wait := time.Duration(need / rate * float64(time.Second))
 		t.mu.Unlock()
 
-		sleepFor := time.Until(waitUntil)
-		if sleepFor > 0 {
-			if err := sleepWithContext(exchange, sleepFor); err != nil {
-				return fmt.Errorf("throttle: %w", err)
-			}
+		if wait < time.Millisecond {
+			wait = time.Millisecond
 		}
-		// Loop to recheck (another goroutine may have consumed the reset window).
+		if err := sleepWithContext(exchange, wait); err != nil {
+			return fmt.Errorf("throttle: %w", err)
+		}
 	}
 }
 

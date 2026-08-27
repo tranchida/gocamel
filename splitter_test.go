@@ -166,3 +166,36 @@ func TestSplit_SingleItem(t *testing.T) {
 
 	assert.Equal(t, []string{"single"}, processedItems)
 }
+
+func TestSplit_ParallelProcessing(t *testing.T) {
+	ctx := context.Background()
+	camel := NewCamelContext()
+
+	var mu sync.Mutex
+	var processed []string
+
+	builder := NewRouteBuilder(camel)
+	builder.From("direct:start").
+		Split(func(e *Exchange) (any, error) {
+			return []string{"a", "b", "c"}, nil
+		}).
+		ParallelProcessing(true).
+		ProcessFunc(func(e *Exchange) error {
+			body := e.GetIn().GetBody().(string)
+			mu.Lock()
+			processed = append(processed, body)
+			mu.Unlock()
+			return nil
+		}).
+		End()
+
+	route, err := builder.Build()
+	assert.NoError(t, err)
+
+	exchange := NewExchange(ctx)
+	assert.NoError(t, route.Process(exchange))
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.ElementsMatch(t, []string{"a", "b", "c"}, processed)
+}

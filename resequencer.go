@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -24,6 +25,7 @@ type Resequencer struct {
 	processor  Processor
 	timer      *time.Timer
 	timerGen   uint64 // incremented each time a new timer is created; guards against stale callbacks
+	delivering bool   // one goroutine at a time delivers, without holding mu
 }
 
 type resequencerEntry struct {
@@ -68,9 +70,10 @@ func (r *Resequencer) childProcessors() []Processor {
 // The incoming exchange is copied into the buffer and delivered downstream
 // (in order) via the internal pipeline; the ORIGINAL exchange never continues
 // past this processor, so Process returns ErrStopRouting for consumed
-// messages. Delivery happens under the internal mutex: ordering requires
-// serialized delivery, so downstream processors must not route back into the
-// same Resequencer (that would deadlock).
+// messages. Buffer mutations are serialized under mu; delivery runs without
+// that lock so a downstream processor that routes back into this Resequencer
+// can enqueue without deadlocking. A delivering flag ensures only one
+// goroutine emits at a time, preserving order.
 func (r *Resequencer) Process(exchange *Exchange) error {
 	seq, err := r.expression(exchange)
 	if err != nil {
@@ -78,57 +81,85 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if seq < r.nextSeq {
+		r.mu.Unlock()
 		LogWarn("resequencer: received outdated sequence number", "seq", seq, "expected", r.nextSeq)
 		return ErrStopRouting
 	}
 
-	// Check for duplicates
 	for _, e := range r.buffer {
 		if e.seq == seq {
+			r.mu.Unlock()
 			LogWarn("resequencer: duplicate sequence number received", "seq", seq)
 			return ErrStopRouting
 		}
 	}
 
 	if r.capacity > 0 && len(r.buffer) >= r.capacity {
+		r.mu.Unlock()
 		return fmt.Errorf("resequencer: buffer full (%d); dropping seq %d", r.capacity, seq)
 	}
 
-	entry := &resequencerEntry{
+	r.buffer = append(r.buffer, &resequencerEntry{
 		seq:      seq,
 		exchange: exchange.Copy(),
-	}
-
-	r.buffer = append(r.buffer, entry)
+	})
 	sort.Slice(r.buffer, func(i, j int) bool {
 		return r.buffer[i].seq < r.buffer[j].seq
 	})
 
-	err = r.drain()
-	r.updateTimer()
-	if err != nil {
-		return err
+	var ready []*resequencerEntry
+	if !r.delivering {
+		ready = r.takeReady()
+		r.delivering = len(ready) > 0
 	}
-	return ErrStopRouting
+	r.updateTimer()
+	r.mu.Unlock()
+
+	if len(ready) == 0 {
+		return ErrStopRouting
+	}
+	return r.deliver(ready)
 }
 
-func (r *Resequencer) drain() error {
+func (r *Resequencer) takeReady() []*resequencerEntry {
+	var ready []*resequencerEntry
 	for len(r.buffer) > 0 && r.buffer[0].seq == r.nextSeq {
-		entry := r.buffer[0]
+		ready = append(ready, r.buffer[0])
 		r.buffer = r.buffer[1:]
 		r.nextSeq++
-
-		if r.processor == nil {
-			continue
-		}
-		if err := safeProcess(func() error { return r.processor.Process(entry.exchange) }); err != nil {
-			return err
-		}
 	}
-	return nil
+	return ready
+}
+
+func (r *Resequencer) deliver(ready []*resequencerEntry) error {
+	var firstErr error
+	for {
+		for _, entry := range ready {
+			if r.processor == nil {
+				continue
+			}
+			if err := safeProcess(func() error { return r.processor.Process(entry.exchange) }); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		r.mu.Lock()
+		ready = r.takeReady()
+		if len(ready) == 0 {
+			r.delivering = false
+			r.updateTimer()
+			r.mu.Unlock()
+			break
+		}
+		r.mu.Unlock()
+	}
+	if firstErr != nil {
+		return firstErr
+	}
+	return ErrStopRouting
 }
 
 func (r *Resequencer) updateTimer() {
@@ -146,22 +177,32 @@ func (r *Resequencer) updateTimer() {
 
 func (r *Resequencer) onTimeout(gen uint64) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// A newer timer was created since this callback was scheduled; ignore.
 	if gen != r.timerGen {
+		r.mu.Unlock()
 		return
 	}
-
-	if len(r.buffer) > 0 && r.buffer[0].seq > r.nextSeq {
-		LogWarn("resequencer: timeout reached", "expected", r.nextSeq, "skipping to", r.buffer[0].seq)
-		r.nextSeq = r.buffer[0].seq
-		if err := r.drain(); err != nil {
-			// There is no caller to propagate to on the timeout path; surface
-			// the failure in the logs instead of dropping it silently.
-			LogError("resequencer: downstream processing failed during timeout drain", "error", err)
-		}
+	if len(r.buffer) == 0 || r.buffer[0].seq <= r.nextSeq {
+		r.mu.Unlock()
+		return
+	}
+	LogWarn("resequencer: timeout reached", "expected", r.nextSeq, "skipping to", r.buffer[0].seq)
+	r.nextSeq = r.buffer[0].seq
+	if r.delivering {
+		// The in-flight deliverer will pick the skipped group up on its next takeReady.
 		r.updateTimer()
+		r.mu.Unlock()
+		return
+	}
+	ready := r.takeReady()
+	r.delivering = len(ready) > 0
+	r.updateTimer()
+	r.mu.Unlock()
+
+	if len(ready) == 0 {
+		return
+	}
+	if err := r.deliver(ready); err != nil && !errors.Is(err, ErrStopRouting) {
+		LogError("resequencer: downstream processing failed during timeout drain", "error", err)
 	}
 }
 

@@ -43,6 +43,12 @@ func (d *SplitDefinition) AggregationStrategy(strategy AggregationStrategy) *Spl
 	return d
 }
 
+// ParallelProcessing processes split parts concurrently.
+func (d *SplitDefinition) ParallelProcessing(parallel bool) *SplitDefinition {
+	d.splitter.SetParallelProcessing(parallel)
+	return d
+}
+
 // Process adds a processor to the current container and stays in the split context.
 func (d *SplitDefinition) Process(processor Processor) *SplitDefinition {
 	d.RouteBuilder.Process(processor)

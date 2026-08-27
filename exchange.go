@@ -284,7 +284,9 @@ func (e *Exchange) HasProperty(key string) bool {
 }
 
 func (e *Exchange) GetProperties() map[string]any {
-	return e.Properties
+	out := make(map[string]any, len(e.Properties))
+	maps.Copy(out, e.Properties)
+	return out
 }
 
 func (e *Exchange) SetProperties(properties map[string]any) {

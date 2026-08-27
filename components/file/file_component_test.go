@@ -471,3 +471,38 @@ func TestFileConsumer_ReadLockMarkerFile(t *testing.T) {
 		t.Errorf("marker file was not deleted: %v", err)
 	}
 }
+
+func TestFileConsumer_IngestsExistingDirectoryFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "already.txt"), []byte("preexisting"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir + "?readLock=none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	received := make(chan []byte, 1)
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		body, _ := ex.GetBody().([]byte)
+		received <- body
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer consumer.Stop()
+
+	select {
+	case got := <-received:
+		if string(got) != "preexisting" {
+			t.Errorf("got %q, want preexisting", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for preexisting file")
+	}
+}

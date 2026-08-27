@@ -36,6 +36,11 @@ All notable changes to this project are documented in this file.
   of the pointer address. `CamelTemplateLocale` added (typo alias kept).
 - Direct producer recovers panics. Duplicate route IDs are logged.
 - Dead-letter exponential backoff is capped at 24h. Error wrapping uses `%w`.
+- `GetHeaders` / `GetProperties` return copies. `Route.SetID` updates `usedRouteIDs`.
+- Stdlib components (`direct`, `timer`, `http`, `seda`, …) are registered by default.
+- Split supports `ParallelProcessing`. Throttle is a token bucket.
+- Resequencer delivers without holding the buffer mutex (re-entrant enqueue).
+- File consumer scans existing files on start and watches `Write` as well as `Create`.
 
 ### Components
 

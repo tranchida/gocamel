@@ -45,6 +45,25 @@ func TestDefaultRouteID(t *testing.T) {
 	}
 }
 
+func TestStdlibComponentsAreRegisteredByDefault(t *testing.T) {
+	ctx := NewCamelContext()
+	_, err := ctx.CreateEndpoint("direct:auto")
+	require.NoError(t, err)
+	_, err = ctx.CreateEndpoint("timer:tick")
+	require.NoError(t, err)
+}
+
+func TestRouteSetID_ReleasesPreviousID(t *testing.T) {
+	ctx := NewCamelContext()
+	route := ctx.CreateRoute()
+	old := route.ID
+	require.NotEmpty(t, old)
+	route.SetID("renamed")
+	assert.False(t, ctx.usedRouteIDs[old])
+	assert.True(t, ctx.usedRouteIDs["renamed"])
+	assert.Equal(t, "renamed", route.ID)
+}
+
 func TestAddRoute_DuplicateIDWarnsButKeepsBoth(t *testing.T) {
 	ctx := NewCamelContext()
 	a := NewRoute()

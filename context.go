@@ -33,7 +33,26 @@ func NewCamelContext() *CamelContext {
 		registry: NewComponentRegistry(),
 	}
 	c.producerCache = NewProducerCache(c)
+	c.registerStdlibComponents()
 	return c
+}
+
+// registerStdlibComponents installs the zero-dependency components that live
+// in the core module so From("direct:…") / From("timer:…") work without an
+// explicit AddComponent. Callers can still AddComponent to replace a default.
+func (c *CamelContext) registerStdlibComponents() {
+	c.AddComponent("direct", NewDirectComponent())
+	c.AddComponent("seda", NewSedaComponent())
+	c.AddComponent("chan", NewChanComponent())
+	c.AddComponent("timer", NewTimerComponent())
+	httpComp := NewHTTPComponent()
+	c.AddComponent("http", httpComp)
+	c.AddComponent("https", httpComp)
+	c.AddComponent("exec", NewExecComponent())
+	c.AddComponent("template", NewTemplateComponent())
+	c.AddComponent("sql", NewSQLComponent())
+	c.AddComponent("sql-stored", NewSQLStoredComponent())
+	c.AddComponent("net", NewNetComponent())
 }
 
 // AddRoute adds a route to the context
@@ -67,6 +86,30 @@ func (c *CamelContext) AddRoute(route *Route) {
 
 	c.usedRouteIDs[route.ID] = true
 	c.routes = append(c.routes, route)
+}
+
+// reassignRouteID updates a route's ID and the usedRouteIDs set. Called from
+// Route.SetID so a later auto-generated ID can reuse the previous value.
+func (c *CamelContext) reassignRouteID(route *Route, newID string) {
+	c.routesLock.Lock()
+	defer c.routesLock.Unlock()
+	old := route.ID
+	if old == newID {
+		return
+	}
+	if c.usedRouteIDs == nil {
+		c.usedRouteIDs = make(map[string]bool)
+	}
+	if old != "" {
+		delete(c.usedRouteIDs, old)
+	}
+	if newID != "" && c.usedRouteIDs[newID] {
+		LogWarn("duplicate route ID; GetRoute returns the first route with this ID", "id", newID)
+	}
+	route.ID = newID
+	if newID != "" {
+		c.usedRouteIDs[newID] = true
+	}
 }
 
 // AddRoutes adds multiple routes to the context

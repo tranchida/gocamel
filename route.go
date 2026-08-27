@@ -528,6 +528,10 @@ func (r *Route) IsStarted() bool {
 }
 
 func (r *Route) SetID(id string) *Route {
+	if r.context != nil {
+		r.context.reassignRouteID(r, id)
+		return r
+	}
 	r.ID = id
 	return r
 }

@@ -177,6 +177,11 @@ func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 }
 
 // FileConsumer represents a File consumer
+type fileStamp struct {
+	size int64
+	mod  time.Time
+}
+
 type FileConsumer struct {
 	path      string
 	url       *url.URL
@@ -186,6 +191,7 @@ type FileConsumer struct {
 	wg        sync.WaitGroup
 	mu        sync.Mutex
 	ignored   map[string]struct{}
+	seen      map[string]fileStamp // last ingested size+mtime; skips Create+Write duplicates
 }
 
 func (c *FileConsumer) ignoreNext(path string) {
@@ -325,6 +331,19 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 		})
 	}
 
+	// Snapshot files already in the directory so a consumer started against a
+	// non-empty inbox does not wait for a later Create event.
+	filepath.Walk(c.path, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if !opts.Recursive && filepath.Dir(path) != c.path {
+			return nil
+		}
+		c.ingest(ctx, path, opts, false)
+		return nil
+	})
+
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -334,111 +353,10 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				if !ok {
 					return
 				}
-				if event.Op&fsnotify.Create != fsnotify.Create {
+				if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
 					continue
 				}
-				if c.checkAndClearIgnored(event.Name) {
-					continue
-				}
-				info, statErr := os.Stat(event.Name)
-				if statErr != nil {
-					continue
-				}
-				// New directory: add to watcher if recursive
-				if info.IsDir() {
-					if opts.Recursive {
-						watcher.Add(event.Name)
-					}
-					continue
-				}
-				filename := filepath.Base(event.Name)
-				if strings.HasSuffix(filename, ".camelLock") || strings.HasSuffix(filename, ".camelExclusiveReadLock") {
-					continue
-				}
-				if !gocamel.MatchFileName(filename, opts.Include, opts.Exclude) {
-					continue
-				}
-
-				var lockPath string
-				var markerPath string
-
-				switch opts.ReadLock {
-				case gocamel.ReadLockChanged:
-					statFn := func() (int64, time.Time, error) {
-						fi, err := os.Stat(event.Name)
-						if err != nil {
-							return 0, time.Time{}, err
-						}
-						return fi.Size(), fi.ModTime(), nil
-					}
-					if !gocamel.WaitForStable(ctx, statFn, opts.ReadLockTimeout, opts.ReadLockCheckInterval, opts.ReadLockMinAge, opts.ReadLockMinLength) {
-						gocamel.LogWarn("file did not stabilise before the read lock timeout; skipping",
-							"file", event.Name, "timeout", opts.ReadLockTimeout)
-						continue
-					}
-
-				case gocamel.ReadLockRename:
-					targetLockPath := event.Name + ".camelExclusiveReadLock"
-					if err := os.Rename(event.Name, targetLockPath); err != nil {
-						gocamel.LogWarn("could not acquire file rename read lock; skipping", "file", event.Name, "error", err)
-						continue
-					}
-					lockPath = targetLockPath
-
-				case gocamel.ReadLockMarkerFile:
-					targetMarkerPath := event.Name + ".camelLock"
-					if _, err := os.Stat(targetMarkerPath); err == nil {
-						continue
-					}
-					mf, err := os.OpenFile(targetMarkerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600) // #nosec G302,G304
-					if err != nil {
-						gocamel.LogWarn("could not create marker file for file read lock; skipping", "file", event.Name, "error", err)
-						continue
-					}
-					_ = mf.Close()
-					markerPath = targetMarkerPath
-				}
-
-				readPath := event.Name
-				if lockPath != "" {
-					readPath = lockPath
-				}
-
-				content, err := os.ReadFile(readPath) // #nosec G304
-				if err != nil {
-					gocamel.LogError("error reading file", "file", readPath, "error", err)
-					if markerPath != "" {
-						_ = os.Remove(markerPath)
-					}
-					if lockPath != "" {
-						_ = os.Rename(lockPath, event.Name)
-					}
-					continue
-				}
-
-				exchange := gocamel.NewExchange(ctx)
-				exchange.SetBody(content)
-				exchange.SetHeader(gocamel.CamelFileName, filename)
-				exchange.SetHeader(gocamel.CamelFilePath, event.Name)
-				exchange.SetHeader(gocamel.CamelFileLength, info.Size())
-				exchange.SetHeader(gocamel.CamelFileLastModified, info.ModTime())
-				// Compatibility alias
-				exchange.SetHeader("FileName", filename)
-				exchange.SetHeader("FilePath", event.Name)
-
-				exchange.AddSynchronization(&fileSynchronization{
-					consumer:   c,
-					path:       event.Name,
-					lockPath:   lockPath,
-					markerPath: markerPath,
-					noop:       opts.Noop,
-					delete:     opts.Delete,
-					move:       opts.Move,
-					moveFailed: opts.MoveFailed,
-				})
-
-				_ = gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
-
+				c.ingest(ctx, event.Name, opts, true)
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
@@ -451,6 +369,132 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.PollingOptions, waitForLock bool) {
+	if c.checkAndClearIgnored(path) {
+		return
+	}
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return
+	}
+	if info.IsDir() {
+		if opts.Recursive && c.watcher != nil {
+			_ = c.watcher.Add(path)
+		}
+		return
+	}
+	filename := filepath.Base(path)
+	if strings.HasSuffix(filename, ".camelLock") || strings.HasSuffix(filename, ".camelExclusiveReadLock") {
+		return
+	}
+	if !gocamel.MatchFileName(filename, opts.Include, opts.Exclude) {
+		return
+	}
+	if c.alreadySeen(path, info.Size(), info.ModTime()) {
+		return
+	}
+
+	var lockPath string
+	var markerPath string
+
+	switch opts.ReadLock {
+	case gocamel.ReadLockChanged:
+		if waitForLock {
+			statFn := func() (int64, time.Time, error) {
+				fi, err := os.Stat(path)
+				if err != nil {
+					return 0, time.Time{}, err
+				}
+				return fi.Size(), fi.ModTime(), nil
+			}
+			if !gocamel.WaitForStable(ctx, statFn, opts.ReadLockTimeout, opts.ReadLockCheckInterval, opts.ReadLockMinAge, opts.ReadLockMinLength) {
+				gocamel.LogWarn("file did not stabilise before the read lock timeout; skipping",
+					"file", path, "timeout", opts.ReadLockTimeout)
+				return
+			}
+		}
+	case gocamel.ReadLockRename:
+		targetLockPath := path + ".camelExclusiveReadLock"
+		if err := os.Rename(path, targetLockPath); err != nil {
+			gocamel.LogWarn("could not acquire file rename read lock; skipping", "file", path, "error", err)
+			return
+		}
+		lockPath = targetLockPath
+	case gocamel.ReadLockMarkerFile:
+		targetMarkerPath := path + ".camelLock"
+		if _, err := os.Stat(targetMarkerPath); err == nil {
+			return
+		}
+		mf, err := os.OpenFile(targetMarkerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600) // #nosec G302,G304
+		if err != nil {
+			gocamel.LogWarn("could not create marker file for file read lock; skipping", "file", path, "error", err)
+			return
+		}
+		_ = mf.Close()
+		markerPath = targetMarkerPath
+	}
+
+	readPath := path
+	if lockPath != "" {
+		readPath = lockPath
+	}
+
+	content, err := os.ReadFile(readPath) // #nosec G304
+	if err != nil {
+		gocamel.LogError("error reading file", "file", readPath, "error", err)
+		if markerPath != "" {
+			_ = os.Remove(markerPath)
+		}
+		if lockPath != "" {
+			_ = os.Rename(lockPath, path)
+		}
+		return
+	}
+
+	if restat, err := os.Stat(readPath); err == nil {
+		info = restat
+	}
+	c.remember(path, info.Size(), info.ModTime())
+
+	exchange := gocamel.NewExchange(ctx)
+	exchange.SetBody(content)
+	exchange.SetHeader(gocamel.CamelFileName, filename)
+	exchange.SetHeader(gocamel.CamelFilePath, path)
+	exchange.SetHeader(gocamel.CamelFileLength, info.Size())
+	exchange.SetHeader(gocamel.CamelFileLastModified, info.ModTime())
+	exchange.SetHeader("FileName", filename)
+	exchange.SetHeader("FilePath", path)
+
+	exchange.AddSynchronization(&fileSynchronization{
+		consumer:   c,
+		path:       path,
+		lockPath:   lockPath,
+		markerPath: markerPath,
+		noop:       opts.Noop,
+		delete:     opts.Delete,
+		move:       opts.Move,
+		moveFailed: opts.MoveFailed,
+	})
+
+	_ = gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
+}
+
+func (c *FileConsumer) alreadySeen(path string, size int64, mod time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st, ok := c.seen[path]
+	return ok && st.size == size && st.mod.Equal(mod)
+}
+
+func (c *FileConsumer) remember(path string, size int64, mod time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.seen == nil {
+		c.seen = make(map[string]fileStamp)
+	}
+	c.seen[path] = fileStamp{size: size, mod: mod}
 }
 
 // watchFile reads and processes a single file, then applies post-processing options.

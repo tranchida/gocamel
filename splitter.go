@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 )
 
 // Splitter is a Processor that implements the Split EIP.
@@ -12,6 +13,7 @@ type Splitter struct {
 	Expression          func(*Exchange) (any, error)
 	processors          []Processor
 	AggregationStrategy AggregationStrategy
+	ParallelProcessing  bool
 }
 
 // NewSplitter creates a new Splitter instance
@@ -36,6 +38,12 @@ func (s *Splitter) childProcessors() []Processor {
 // SetAggregationStrategy sets the aggregation strategy for collecting results
 func (s *Splitter) SetAggregationStrategy(strategy AggregationStrategy) *Splitter {
 	s.AggregationStrategy = strategy
+	return s
+}
+
+// SetParallelProcessing enables concurrent processing of split parts.
+func (s *Splitter) SetParallelProcessing(parallel bool) *Splitter {
+	s.ParallelProcessing = parallel
 	return s
 }
 
@@ -126,6 +134,10 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		return nil
 	}
 
+	if s.ParallelProcessing {
+		return s.processParallel(exchange, splitParts)
+	}
+
 	var aggregatedExchange *Exchange
 	for i := 0; i < length; i++ {
 		part := splitParts[i]
@@ -164,6 +176,52 @@ func (s *Splitter) processPart(exchange *Exchange) error {
 		if err := p.Process(exchange); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (s *Splitter) processParallel(exchange *Exchange, splitParts []any) error {
+	length := len(splitParts)
+	parts := make([]*Exchange, length)
+	for i, part := range splitParts {
+		partExchange := exchange.DeepCopy()
+		partExchange.In.SetBody(part)
+		partExchange.SetProperty(CamelSplitIndex, i)
+		partExchange.SetProperty(CamelSplitSize, length)
+		partExchange.SetProperty(CamelSplitComplete, i == length-1)
+		parts[i] = partExchange
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var aggregatedExchange *Exchange
+	var firstErr error
+
+	for i := range parts {
+		wg.Add(1)
+		go func(partExchange *Exchange) {
+			defer wg.Done()
+			err := safeProcess(func() error { return s.processPart(partExchange) })
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil && !errors.Is(err, ErrStopRouting) {
+				if firstErr == nil {
+					firstErr = err
+				}
+				return
+			}
+			if s.AggregationStrategy != nil {
+				aggregatedExchange = s.AggregationStrategy.Aggregate(aggregatedExchange, partExchange)
+			}
+		}(parts[i])
+	}
+	wg.Wait()
+
+	if firstErr != nil {
+		return fmt.Errorf("split parallel error: %w", firstErr)
+	}
+	if s.AggregationStrategy != nil && aggregatedExchange != nil {
+		publishAggregatedResult(exchange, aggregatedExchange)
 	}
 	return nil
 }

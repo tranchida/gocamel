@@ -137,6 +137,10 @@ func TestExchange_PropertyMethods(t *testing.T) {
 	if len(allProps) != 2 {
 		t.Errorf("Expected 2 properties, got %d", len(allProps))
 	}
+	allProps["injected"] = true
+	if exchange.HasProperty("injected") {
+		t.Error("GetProperties must return a copy")
+	}
 
 	// Test ClearProperties
 	exchange.ClearProperties()
