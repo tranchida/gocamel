@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -46,15 +47,12 @@ func (c *CamelContext) AddRoute(route *Route) {
 		}
 	}
 
+	if c.usedRouteIDs == nil {
+		c.usedRouteIDs = make(map[string]bool, len(c.routes)+1)
+	}
 	if route.ID == "" {
 		// Collision check against a set rather than a linear scan of every
 		// route per candidate: generating N ids was O(N^2).
-		if c.usedRouteIDs == nil {
-			c.usedRouteIDs = make(map[string]bool, len(c.routes))
-		}
-		for _, r := range c.routes {
-			c.usedRouteIDs[r.ID] = true
-		}
 		for {
 			c.routeCounter++
 			newID := fmt.Sprintf("route-%d", c.routeCounter)
@@ -65,9 +63,7 @@ func (c *CamelContext) AddRoute(route *Route) {
 		}
 	}
 
-	if c.usedRouteIDs != nil {
-		c.usedRouteIDs[route.ID] = true
-	}
+	c.usedRouteIDs[route.ID] = true
 	c.routes = append(c.routes, route)
 }
 
@@ -286,38 +282,65 @@ func (c *CamelContext) GetComponent(name string) (Component, error) {
 	return c.registry.GetComponent(name)
 }
 
-// RemoveRoute removes a route from the context
-func (c *CamelContext) RemoveRoute(route *Route) {
+// RemoveRoute stops the route if it is running, then drops it from the context.
+// The route ID is released so a later auto-generated ID can reuse it.
+func (c *CamelContext) RemoveRoute(route *Route) error {
+	if route == nil {
+		return nil
+	}
+	stopErr := route.Stop()
+
 	c.routesLock.Lock()
 	defer c.routesLock.Unlock()
+	c.detachRouteLocked(route)
+	return stopErr
+}
 
+// RemoveRouteByID stops and removes the route with the given ID.
+func (c *CamelContext) RemoveRouteByID(id string) error {
+	c.routesLock.Lock()
+	var route *Route
+	for _, r := range c.routes {
+		if r.ID == id {
+			route = r
+			break
+		}
+	}
+	c.routesLock.Unlock()
+	if route == nil {
+		return nil
+	}
+	return c.RemoveRoute(route)
+}
+
+// RemoveAllRoutes stops every route and clears the context's route list.
+func (c *CamelContext) RemoveAllRoutes() error {
+	c.routesLock.Lock()
+	routes := make([]*Route, len(c.routes))
+	copy(routes, c.routes)
+	c.routesLock.Unlock()
+
+	var errs []error
+	for _, route := range routes {
+		if err := c.RemoveRoute(route); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// detachRouteLocked removes route from the slice and frees its ID.
+// Caller must hold routesLock.
+func (c *CamelContext) detachRouteLocked(route *Route) {
 	for i, r := range c.routes {
 		if r == route {
 			c.routes = append(c.routes[:i], c.routes[i+1:]...)
 			break
 		}
 	}
-}
-
-// RemoveRouteByID removes a route by its ID
-func (c *CamelContext) RemoveRouteByID(id string) {
-	c.routesLock.Lock()
-	defer c.routesLock.Unlock()
-
-	for i, route := range c.routes {
-		if route.ID == id {
-			c.routes = append(c.routes[:i], c.routes[i+1:]...)
-			break
-		}
+	if c.usedRouteIDs != nil && route.ID != "" {
+		delete(c.usedRouteIDs, route.ID)
 	}
-}
-
-// RemoveAllRoutes removes all routes
-func (c *CamelContext) RemoveAllRoutes() {
-	c.routesLock.Lock()
-	defer c.routesLock.Unlock()
-
-	c.routes = make([]*Route, 0)
 }
 
 // GetRouteCount returns the number of routes

@@ -342,3 +342,33 @@ func TestExecComponent_Integration_Route(t *testing.T) {
 		t.Fatal("timeout: exec result was not received")
 	}
 }
+
+func TestValidateExecPath_AllowsDoubleDotInName(t *testing.T) {
+	assert.NoError(t, validateExecPath("foo..bar"))
+	assert.NoError(t, validateExecPath("report..v2"))
+}
+
+func TestValidateExecPath_RejectsTraversal(t *testing.T) {
+	assert.Error(t, validateExecPath("../bin/sh"))
+	assert.Error(t, validateExecPath("foo/../../bin/sh"))
+}
+
+func TestValidateExecWorkingDir_AllowsDoubleDotInName(t *testing.T) {
+	assert.NoError(t, validateExecWorkingDir("archive..old"))
+}
+
+func TestValidateExecWorkingDir_RejectsTraversal(t *testing.T) {
+	assert.Error(t, validateExecWorkingDir("../etc"))
+}
+
+func TestExecProducer_RejectsTraversingOutFile(t *testing.T) {
+	ep := &ExecEndpoint{
+		uri:        "exec:echo",
+		executable: "echo",
+		args:       []string{"ok"},
+		outFile:    "../etc/passwd",
+	}
+	err := (&ExecProducer{endpoint: ep}).Send(NewExchange(context.Background()))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outFile")
+}

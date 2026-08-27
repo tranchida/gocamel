@@ -78,6 +78,8 @@ type SedaEndpoint struct {
 	concurrentConsumers int
 	consumer            *SedaConsumer
 	mu                  sync.Mutex
+	stopCh              chan struct{} // closed when the consumer stops; nil until first Start
+	stopped             bool          // true after Stop until the next Start
 }
 
 // URI returns the endpoint URI.
@@ -135,16 +137,33 @@ func (p *SedaProducer) Send(exchange *Exchange) error {
 	// enqueue, which is the behaviour of an uncancellable context.
 	ctx := exchange.Context
 	if ctx == nil {
-		p.endpoint.queue <- queued
-		return nil
+		ctx = context.Background()
 	}
 
+	stopCh, err := p.endpoint.beginSend()
+	if err != nil {
+		return err
+	}
 	select {
 	case p.endpoint.queue <- queued:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-stopCh:
+		return fmt.Errorf("seda: consumer stopped: %s", p.endpoint.uri)
 	}
+}
+
+// beginSend returns the current stop channel, or an error if the consumer
+// has already stopped. stopCh may be nil when no consumer has started yet
+// (enqueue is still allowed; a nil channel never fires in select).
+func (e *SedaEndpoint) beginSend() (<-chan struct{}, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stopped {
+		return nil, fmt.Errorf("seda: consumer stopped: %s", e.uri)
+	}
+	return e.stopCh, nil
 }
 
 // SedaConsumer represents a SEDA consumer.
@@ -160,6 +179,11 @@ func (c *SedaConsumer) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
+	c.endpoint.mu.Lock()
+	c.endpoint.stopped = false
+	c.endpoint.stopCh = make(chan struct{})
+	c.endpoint.mu.Unlock()
+
 	for i := 0; i < c.endpoint.concurrentConsumers; i++ {
 		c.wg.Add(1)
 		go c.run(ctx)
@@ -168,18 +192,48 @@ func (c *SedaConsumer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops all SEDA consumer workers and waits for them to finish.
+// Stop stops all SEDA consumer workers, unblocks producers waiting on a full
+// queue, and discards leftover exchanges so they cannot leak after shutdown.
 func (c *SedaConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
 	c.wg.Wait()
+
 	c.endpoint.mu.Lock()
+	c.endpoint.stopped = true
+	if c.endpoint.stopCh != nil {
+		select {
+		case <-c.endpoint.stopCh:
+		default:
+			close(c.endpoint.stopCh)
+		}
+	}
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}
 	c.endpoint.mu.Unlock()
+
+	drainExchangeQueue(c.endpoint.queue, fmt.Errorf("seda: discarded because the consumer stopped"))
 	return nil
+}
+
+// drainExchangeQueue discards leftover exchanges after a consumer stops so they
+// cannot sit in the buffer forever. Synchronizations still fire (as a failure).
+func drainExchangeQueue(queue chan *Exchange, reason error) {
+	for {
+		select {
+		case ex, ok := <-queue:
+			if !ok {
+				return
+			}
+			if ex != nil {
+				_ = CompleteExchange(ex, reason)
+			}
+		default:
+			return
+		}
+	}
 }
 
 func (c *SedaConsumer) run(ctx context.Context) {

@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -211,4 +212,33 @@ func TestRoute_Validate_BadChoiceExpression(t *testing.T) {
 	err := r.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "choice when")
+}
+
+func TestRoute_Validate_JoinsErrors(t *testing.T) {
+	r := NewRoute()
+	r.err = fmt.Errorf("bad from")
+	err := r.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bad from")
+	assert.Contains(t, err.Error(), "no source endpoint")
+}
+
+func TestCamelContext_RemoveRouteStopsAndReleasesID(t *testing.T) {
+	ctx := NewCamelContext()
+	ctx.AddComponent("direct", NewDirectComponent())
+
+	route := ctx.CreateRoute().From("direct:remove-me")
+	route.SetID("custom-id")
+	require.NoError(t, ctx.Start())
+	require.True(t, route.IsStarted())
+
+	require.NoError(t, ctx.RemoveRoute(route))
+	assert.False(t, route.IsStarted())
+	assert.Nil(t, ctx.GetRoute("custom-id"))
+
+	// The released ID can be reused by a later auto-generated assignment
+	// only for empty IDs; an explicit SetID of the same value is still allowed.
+	next := ctx.CreateRoute()
+	assert.NotEqual(t, "custom-id", next.ID)
+	assert.False(t, ctx.usedRouteIDs["custom-id"])
 }

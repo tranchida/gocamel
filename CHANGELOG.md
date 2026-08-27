@@ -19,6 +19,14 @@ All notable changes to this project are documented in this file.
 - `TimerConsumer.Stop()` waits for the firing goroutine to exit.
 - `CamelContext.Start()` is rejected while a timed-out `GracefulStop` is still tearing down.
 - CI runs `go test -race` on every module.
+- `exec` / `template` path checks use component-walking traversal detection
+  (filenames like `report..v2` are accepted). Template header overrides are
+  confined to the endpoint directory. Exec `outFile` is validated before read.
+- `RemoveRoute` / `RemoveRouteByID` / `RemoveAllRoutes` stop the route and
+  release its ID. They now return `error`.
+- SEDA / chan `Stop` unblocks producers waiting on a full queue and drains
+  leftover exchanges.
+- `Route.Validate()` aggregates errors with `errors.Join`.
 
 ### Components
 

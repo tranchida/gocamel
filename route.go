@@ -122,6 +122,10 @@ func (r *Route) Intercept(interceptor RouteInterceptor) *Route {
 // first use and exposes Stop() for cleanup when the route stops. A failed
 // initialisation is NOT cached: the next exchange retries, so a transient
 // connection error does not poison the producer for the lifetime of the route.
+//
+// Creation is single-flighted per lazyProducer (the mutex) but Send runs
+// without the lock. The producer is route-scoped: Route.Stop() tears it down
+// so a later Start recreates it, unlike ToD which uses the context cache.
 type lazyProducer struct {
 	context *CamelContext
 	uri     string
@@ -134,34 +138,38 @@ func newLazyProducer(ctx *CamelContext, uri string) *lazyProducer {
 }
 
 func (lp *lazyProducer) Process(exchange *Exchange) error {
-	lp.mu.Lock()
-	prod := lp.p
-	if prod == nil {
-		endpoint, err := lp.context.CreateEndpoint(lp.uri)
-		if err != nil {
-			lp.mu.Unlock()
-			return err
-		}
-		p, err := endpoint.CreateProducer()
-		if err != nil {
-			lp.mu.Unlock()
-			return err
-		}
-		// Start with the CamelContext's lifecycle context, not the exchange's
-		// (which may be nil or a short-lived request context). The producer is
-		// a route-level resource stopped by Route.Stop, so it should observe the
-		// context shutdown like the producers in ProducerCache do.
-		if err := p.Start(lp.context.GetContext()); err != nil {
-			lp.mu.Unlock()
-			return err
-		}
-		lp.p = p
-		prod = p
+	prod, err := lp.producer()
+	if err != nil {
+		return err
 	}
-	lp.mu.Unlock()
-
 	exchange.PropagateOutToIn()
 	return prod.Send(exchange)
+}
+
+func (lp *lazyProducer) producer() (Producer, error) {
+	lp.mu.Lock()
+	defer lp.mu.Unlock()
+	if lp.p != nil {
+		return lp.p, nil
+	}
+
+	endpoint, err := lp.context.CreateEndpoint(lp.uri)
+	if err != nil {
+		return nil, err
+	}
+	p, err := endpoint.CreateProducer()
+	if err != nil {
+		return nil, err
+	}
+	// Start with the CamelContext's lifecycle context, not the exchange's
+	// (which may be nil or a short-lived request context). The producer is
+	// a route-level resource stopped by Route.Stop, so it should observe the
+	// context shutdown like the producers in ProducerCache do.
+	if err := p.Start(lp.context.GetContext()); err != nil {
+		return nil, err
+	}
+	lp.p = p
+	return p, nil
 }
 
 func (lp *lazyProducer) Stop() error {
@@ -335,15 +343,16 @@ func (r *Route) resetErrorHandlerState(exchange *Exchange) {
 //     interface (e.g. Choice when-clause expressions that fail to parse).
 //
 // Call Validate before Start in tests or CI to fail fast on broken routes.
-// Start does NOT call Validate automatically — that would change the timing
-// of existing error reporting and could turn previously latent issues into
-// startup failures.
+// All problems are returned via errors.Join. Start does NOT call Validate
+// automatically — that would change the timing of existing error reporting
+// and could turn previously latent issues into startup failures.
 func (r *Route) Validate() error {
+	var errs []error
 	if r.err != nil {
-		return r.err
+		errs = append(errs, r.err)
 	}
 	if r.from == nil {
-		return fmt.Errorf("no source endpoint defined")
+		errs = append(errs, fmt.Errorf("no source endpoint defined"))
 	}
 	for i, p := range r.processors {
 		v, ok := p.(Validator)
@@ -351,10 +360,10 @@ func (r *Route) Validate() error {
 			continue
 		}
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("processor[%d]: %w", i, err)
+			errs = append(errs, fmt.Errorf("processor[%d]: %w", i, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Start starts the route.

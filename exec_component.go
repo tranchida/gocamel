@@ -25,22 +25,41 @@ const (
 // ExecComponent represents the exec component
 type ExecComponent struct{}
 
-// validateExecPath validates that the executable path is safe
+// validateExecPath validates that the executable path is safe.
+// Traversal is detected by walking components (so "foo..bar" is accepted);
+// backslash is allowed because it is the path separator on Windows.
 func validateExecPath(executable string) error {
-	// Reject if contains path traversal
-	if strings.Contains(executable, "..") {
+	if executable == "" {
+		return fmt.Errorf("executable is empty")
+	}
+	if containsTraversal(executable) {
 		return fmt.Errorf("executable contains path traversal: %s", executable)
 	}
-	// Reject shell metacharacters
-	dangerousChars := []string{"|", "&", ";", "$", "`", "<", ">", "\\", "\n", "\r"}
-	for _, char := range dangerousChars {
+	if strings.ContainsRune(executable, 0) {
+		return fmt.Errorf("executable contains null byte")
+	}
+	// Reject shell metacharacters. Backslash is NOT in this list: execve
+	// does not invoke a shell, and '\' is the path separator on Windows.
+	for _, char := range []string{"|", "&", ";", "$", "`", "<", ">", "\n", "\r"} {
 		if strings.Contains(executable, char) {
 			return fmt.Errorf("executable contains dangerous character '%s': %s", char, executable)
 		}
 	}
-	// Reject if starts with dangerous character
 	if strings.HasPrefix(executable, "-") {
 		return fmt.Errorf("executable starts with dangerous character '-': %s", executable)
+	}
+	return nil
+}
+
+// validateExecWorkingDir validates a working directory. Unlike the previous
+// metacharacter denylist, backslash is accepted (Windows paths) and '..' is
+// only rejected when it actually escapes the base.
+func validateExecWorkingDir(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	if err := ValidatePath(dir); err != nil {
+		return fmt.Errorf("exec: working directory: %w", err)
 	}
 	return nil
 }
@@ -251,18 +270,8 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Security: validate working directory path
-	if workingDir != "" {
-		// Check for path traversal
-		if strings.Contains(workingDir, "..") {
-			return fmt.Errorf("exec: working directory contains path traversal: %s", workingDir)
-		}
-		// Check for shell metacharacters
-		for _, char := range []string{"|", "&", ";", "$", "`", "<", ">", "\\", "\n", "\r"} {
-			if strings.Contains(workingDir, char) {
-				return fmt.Errorf("exec: working directory contains dangerous character: %s", workingDir)
-			}
-		}
+	if err := validateExecWorkingDir(workingDir); err != nil {
+		return err
 	}
 
 	// Timeout resolution (header > URI, when allowHeaderOverride is set)
@@ -296,7 +305,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 	// The executable, args and working dir are resolved from the trusted
 	// endpoint URI config (header overrides only when allowHeaderOverride is
 	// set) and each is validated above — validateExecPath, validateExecArgs
-	// and the workingDir traversal/metacharacter checks (gosec G204).
+	// and validateExecWorkingDir (gosec G204).
 	cmd := exec.CommandContext(ctx, executable, args...) // #nosec G204
 
 	if workingDir != "" {
@@ -325,9 +334,14 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 	stdoutStr := stdoutBuf.String()
 	stderrStr := stderrBuf.String()
 
-	// If outFile is defined, read the results from this file
+	// If outFile is defined, read the results from this file.
+	// outFile is trusted URI configuration; ValidatePath still rejects
+	// traversal and null bytes before the read (gosec G304).
 	if p.endpoint.outFile != "" {
-		data, err := os.ReadFile(p.endpoint.outFile)
+		if err := ValidatePath(p.endpoint.outFile); err != nil {
+			return fmt.Errorf("exec: invalid outFile: %w", err)
+		}
+		data, err := os.ReadFile(p.endpoint.outFile) // #nosec G304
 		if err != nil {
 			return fmt.Errorf("error reading output file %s: %w", p.endpoint.outFile, err)
 		}

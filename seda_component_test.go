@@ -107,3 +107,24 @@ func TestSedaConsumer_StopReleasesEndpointRegistration(t *testing.T) {
 	_, err = endpoint.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
 	assert.NoError(t, err)
 }
+
+func TestSedaConsumer_StopUnblocksProducerAndDrains(t *testing.T) {
+	component := NewSedaComponent()
+	endpoint, err := component.CreateEndpoint("seda:block?size=1")
+	require.NoError(t, err)
+
+	prod, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	// Enqueue before any consumer starts (stopCh is nil, so Send is allowed).
+	require.NoError(t, prod.Send(NewExchange(context.Background())))
+
+	consumer, err := endpoint.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+	require.NoError(t, err)
+	require.NoError(t, consumer.Start(context.Background()))
+	require.NoError(t, consumer.Stop())
+
+	err = prod.Send(NewExchange(context.Background()))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stopped")
+}

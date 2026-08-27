@@ -328,6 +328,36 @@ func TestTemplateProducer_SendWithTemplateFromHeader(t *testing.T) {
 	}
 }
 
+func TestTemplateProducer_RejectsTraversingHeaderPath(t *testing.T) {
+	tempDir := t.TempDir()
+	outside := t.TempDir()
+	inside := filepath.Join(tempDir, "ok.tmpl")
+	escape := filepath.Join(outside, "secret.tmpl")
+	if err := os.WriteFile(inside, []byte("ok {{.Body}}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(escape, []byte("secret {{.Body}}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	comp := NewTemplateComponent()
+	ep, err := comp.CreateEndpoint("template:" + inside + "?allowTemplateFromHeader=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prod, err := ep.CreateProducer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ex := NewExchange(context.TODO())
+	ex.SetHeader(CamelTemplatePath, escape)
+	ex.SetBody("x")
+	if err := prod.Send(ex); err == nil {
+		t.Fatal("expected CamelTemplatePath outside the endpoint directory to be rejected")
+	}
+}
+
 func TestTemplateFuncs(t *testing.T) {
 	// Test utility functions
 	tests := []struct {

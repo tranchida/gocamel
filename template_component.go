@@ -186,18 +186,11 @@ func (p *TemplateProducer) Send(exchange *Exchange) error {
 	if p.endpoint.allowTemplateFromHeader {
 		if v, ok := exchange.GetHeader(CamelTemplatePath); ok && v != "" {
 			if s, isString := v.(string); isString && s != "" {
-				// Security: validate template path before using from header
-				if strings.Contains(s, "..") {
-					return fmt.Errorf("template: path contains traversal sequence: %s", s)
+				resolved, err := confineTemplatePath(s, p.endpoint.path)
+				if err != nil {
+					return err
 				}
-				if strings.Contains(s, "\x00") {
-					return fmt.Errorf("template: path contains null byte")
-				}
-				cleanPath := filepath.Clean(s)
-				if strings.Contains(cleanPath, "..") {
-					return fmt.Errorf("template: path contains traversal after cleaning: %s", s)
-				}
-				templatePath = cleanPath
+				templatePath = resolved
 			}
 		}
 	}
@@ -435,4 +428,26 @@ func templateFuncs() template.FuncMap {
 // toString converts any value to a string.
 func toString(v any) string {
 	return fmt.Sprintf("%v", v)
+}
+
+// confineTemplatePath resolves a CamelTemplatePath header against the
+// directory of the endpoint template. Absolute paths are accepted only when
+// they stay inside that directory (ValidatePathInDir), so the opt-in header
+// override cannot read arbitrary files.
+func confineTemplatePath(name, endpointPath string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("template: CamelTemplatePath cannot be empty")
+	}
+	baseDir := filepath.Dir(endpointPath)
+	if baseDir == "" {
+		baseDir = "."
+	}
+	target := name
+	if !filepath.IsAbs(name) {
+		target = filepath.Join(baseDir, name)
+	}
+	if err := ValidatePathInDir(target, baseDir); err != nil {
+		return "", fmt.Errorf("template: %w", err)
+	}
+	return target, nil
 }

@@ -78,6 +78,8 @@ type ChanEndpoint struct {
 	queue    chan *Exchange
 	consumer *ChanConsumer
 	mu       sync.Mutex
+	stopCh   chan struct{} // closed when the consumer stops; nil until first Start
+	stopped  bool          // true after Stop until the next Start
 }
 
 // URI returns the endpoint URI.
@@ -134,12 +136,27 @@ func (p *ChanProducer) Send(exchange *Exchange) error {
 	// — a data race. DeepCopy duplicates the common mutable container types.
 	copy := exchange.DeepCopy()
 
+	stopCh, err := p.endpoint.beginSend()
+	if err != nil {
+		return err
+	}
 	select {
 	case p.endpoint.queue <- copy:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-stopCh:
+		return fmt.Errorf("chan: consumer stopped: %s", p.endpoint.uri)
 	}
+}
+
+func (e *ChanEndpoint) beginSend() (<-chan struct{}, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stopped {
+		return nil, fmt.Errorf("chan: consumer stopped: %s", e.uri)
+	}
+	return e.stopCh, nil
 }
 
 // ChanConsumer reads exchanges from the channel and passes them to the route.
@@ -155,23 +172,40 @@ func (c *ChanConsumer) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
+	c.endpoint.mu.Lock()
+	c.endpoint.stopped = false
+	c.endpoint.stopCh = make(chan struct{})
+	c.endpoint.mu.Unlock()
+
 	c.wg.Add(1)
 	go c.run(ctx)
 
 	return nil
 }
 
-// Stop stops the consumer worker.
+// Stop stops the consumer worker, unblocks producers waiting on a full
+// queue, and discards leftover exchanges so they cannot leak after shutdown.
 func (c *ChanConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
 	c.wg.Wait()
+
 	c.endpoint.mu.Lock()
+	c.endpoint.stopped = true
+	if c.endpoint.stopCh != nil {
+		select {
+		case <-c.endpoint.stopCh:
+		default:
+			close(c.endpoint.stopCh)
+		}
+	}
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}
 	c.endpoint.mu.Unlock()
+
+	drainExchangeQueue(c.endpoint.queue, fmt.Errorf("chan: discarded because the consumer stopped"))
 	return nil
 }
 
