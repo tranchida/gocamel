@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // The Simple Language implementation is split across this package:
@@ -138,7 +139,40 @@ func ParseSimpleExpression(expression string) (Expression, error) {
 	return template, nil
 }
 
+// simpleTemplateCache caches parsed templates keyed by expression text.
+//
+// Expressions normally come from trusted route configuration (a small, fixed
+// set), but nothing stops an application from interpolating per-message text
+// through the Simple language. An unbounded sync.Map would then leak one entry
+// per distinct expression for the lifetime of the process. simpleCacheSize
+// bounds the cache; once the cap is reached, new expressions are parsed on
+// every call (the common trusted-config case keeps hitting the cache, since
+// its entries were inserted first).
 var simpleTemplateCache sync.Map
+
+// MaxSimpleTemplateCacheEntries caps how many parsed Simple templates are
+// memoised. 0 disables the cache entirely. Lower it for long-running processes
+// that feed unbounded dynamic expressions through the Simple language; raise
+// it for applications with a very large but static set of route expressions.
+var MaxSimpleTemplateCacheEntries = 10_000
+
+var simpleCacheSize atomic.Int64
+
+func cacheSimpleTemplate(expression string, template *SimpleTemplate) {
+	if MaxSimpleTemplateCacheEntries <= 0 {
+		return // cache disabled
+	}
+	if simpleCacheSize.Load() >= int64(MaxSimpleTemplateCacheEntries) {
+		// At capacity: parsing is cheap and idempotent, so simply skip the
+		// insert rather than implementing eviction over sync.Map. Trusted
+		// config (inserted first) stays cached; dynamic overflow pays a
+		// re-parse per call instead of growing without bound.
+		return
+	}
+	if _, loaded := simpleTemplateCache.LoadOrStore(expression, template); !loaded {
+		simpleCacheSize.Add(1)
+	}
+}
 
 // ParseSimpleTemplate parses a simple expression template.
 //
@@ -165,7 +199,7 @@ func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
 	if !placeholderRegex.MatchString(expression) {
 		template.isLiteral = true
 		template.parts = append(template.parts, templatePart{isVariable: false, content: expression})
-		simpleTemplateCache.Store(expression, template)
+		cacheSimpleTemplate(expression, template)
 		return template, nil
 	}
 
@@ -201,7 +235,7 @@ func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
 		})
 	}
 
-	simpleTemplateCache.Store(expression, template)
+	cacheSimpleTemplate(expression, template)
 	return template, nil
 }
 

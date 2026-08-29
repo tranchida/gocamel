@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,63 @@ func TestParseSimpleTemplate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSimpleTemplateCacheIsBounded verifies that the parse cache stops growing
+// once MaxSimpleTemplateCacheEntries is reached: parsing still succeeds for
+// uncached expressions, and the internal size counter stops at the cap.
+func TestSimpleTemplateCacheIsBounded(t *testing.T) {
+	// Restore the global cap and size after the test.
+	savedCap := MaxSimpleTemplateCacheEntries
+	t.Cleanup(func() {
+		MaxSimpleTemplateCacheEntries = savedCap
+		// The cache itself keeps the entries inserted below; that is fine —
+		// the counter, not the map contents, is what the cap guards.
+	})
+
+	// Note: the cache is shared with other tests in this package, so the
+	// baseline size is unknown. Use a cap relative to that baseline.
+	base := simpleCacheSize.Load()
+
+	smallCap := int(base + 5)
+	MaxSimpleTemplateCacheEntries = smallCap
+
+	// First 5 new expressions are cached.
+	for i := 0; i < 5; i++ {
+		expr := fmt.Sprintf("bounded-cache-test-%d: ${body}", i)
+		_, err := ParseSimpleTemplate(expr)
+		if err != nil {
+			t.Fatalf("ParseSimpleTemplate(%q) failed: %v", expr, err)
+		}
+	}
+	if got := simpleCacheSize.Load(); got != base+5 {
+		t.Fatalf("expected cache size %d after 5 inserts, got %d", base+5, got)
+	}
+
+	// Beyond the cap: parsing succeeds but the cache does not grow.
+	for i := 5; i < 25; i++ {
+		expr := fmt.Sprintf("bounded-cache-test-%d: ${body}", i)
+		tpl, err := ParseSimpleTemplate(expr)
+		if err != nil {
+			t.Fatalf("ParseSimpleTemplate(%q) failed: %v", expr, err)
+		}
+		if tpl == nil {
+			t.Fatal("expected a parsed template even when the cache is full")
+		}
+	}
+	if got := simpleCacheSize.Load(); got != base+5 {
+		t.Fatalf("cache must not grow past the cap: expected size %d, got %d", base+5, got)
+	}
+
+	// An expression already inserted is still served from the cache.
+	tpl, err := ParseSimpleTemplate("bounded-cache-test-0: ${body}")
+	if err != nil {
+		t.Fatalf("ParseSimpleTemplate failed: %v", err)
+	}
+	if _, ok := simpleTemplateCache.Load("bounded-cache-test-0: ${body}"); !ok {
+		t.Fatal("previously cached expression must remain in the cache")
+	}
+	_ = tpl
 }
 
 func TestSimpleTemplateEvaluate(t *testing.T) {
