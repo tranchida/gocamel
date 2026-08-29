@@ -2,7 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [v0.8.0] - 2026-08-29
+
+Code review hardening release: empty-filter MongoDB updates require opt-in,
+orphan cron jobs and shared-connection double closes are fixed, and the
+prometheus interceptor gained an injectable registry.
 
 ### Security
 
@@ -306,6 +310,7 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.8.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.8.0
 [v0.7.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.7.0
 [v0.6.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.6.0
 [v0.5.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.5.0
