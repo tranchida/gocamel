@@ -90,6 +90,7 @@ func (c *MongoDBComponent) lookup(name string) (*MongoDBConnection, bool) {
 //	operation           Default operation (find, findOne, insert, insertOne, save, update, remove, count)
 //	connectionRef       Name of a registered connection
 //	allowDeleteAll      Permit remove with an empty filter (default false)
+//	allowUpdateAll      Permit update with an empty filter (default false)
 //	allowHeaderOverride true to let the CamelMongoDbDatabase, CamelMongoDbCollection,
 //	                    CamelMongoDbOperation and CamelMongoDbCriteria headers replace
 //	                    the corresponding URI configuration (default false)
@@ -129,6 +130,13 @@ func (c *MongoDBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) 
 			return nil, fmt.Errorf("invalid allowDeleteAll value %q: %w", raw, err)
 		}
 	}
+	allowUpdateAll := false
+	if raw := gocamel.GetConfigValue(u, "allowUpdateAll"); raw != "" {
+		allowUpdateAll, err = strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowUpdateAll value %q: %w", raw, err)
+		}
+	}
 
 	allowHeaderOverride := false
 	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
@@ -144,6 +152,7 @@ func (c *MongoDBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) 
 		collConfig:          collConfig,
 		operation:           operation,
 		allowDeleteAll:      allowDeleteAll,
+		allowUpdateAll:      allowUpdateAll,
 		allowHeaderOverride: allowHeaderOverride,
 		connection:          conn,
 	}, nil
@@ -157,6 +166,7 @@ type MongoDBEndpoint struct {
 	collConfig          string
 	operation           string
 	allowDeleteAll      bool
+	allowUpdateAll      bool
 	allowHeaderOverride bool // opt-in: CamelMongoDb* headers may override URI settings
 	connection          *MongoDBConnection
 }
@@ -513,6 +523,12 @@ func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *gocamel.Exch
 
 	// Validation
 	if filter == nil {
+		// An empty filter updates EVERY document in the collection: require
+		// the same explicit opt-in as remove's allowDeleteAll so a body
+		// missing its "filter" key cannot mass-update by accident.
+		if !p.endpoint.allowUpdateAll {
+			return fmt.Errorf("update: empty filter rejected; set allowUpdateAll=true on the endpoint to update all documents")
+		}
 		filter = bson.M{}
 	}
 	if update == nil {

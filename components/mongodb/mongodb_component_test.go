@@ -175,3 +175,93 @@ func TestIsEmptyMongoFilter(t *testing.T) {
 		t.Fatal("non-empty filter must not be treated as empty")
 	}
 }
+
+func TestMongoDBProducer_UpdateRejectsEmptyFilterWithoutOptIn(t *testing.T) {
+	// A body without a "filter" key must not fall through to an empty
+	// filter that would mass-update the whole collection.
+	producer := &MongoDBProducer{endpoint: &MongoDBEndpoint{}}
+
+	exchange := gocamel.NewExchange(context.Background())
+	exchange.SetBody(bson.M{"$set": bson.M{"status": "archived"}})
+
+	err := producer.execUpdate(context.Background(), exchange, nil)
+	if err == nil || !strings.Contains(err.Error(), "empty filter rejected") {
+		t.Fatalf("expected empty-filter rejection, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "allowUpdateAll") {
+		t.Fatalf("expected the error to mention allowUpdateAll, got %v", err)
+	}
+}
+
+func TestMongoDBProducer_UpdateAllowsEmptyFilterWithOptIn(t *testing.T) {
+	// With the opt-in, an update-only body passes the empty-filter guard and
+	// reaches UpdateMany. The mongo driver panics on a nil collection (method
+	// on a nil *Collection), so the panic itself is the proof the guard was
+	// passed: the no-opt-in sibling test never gets this far.
+	producer := &MongoDBProducer{endpoint: &MongoDBEndpoint{allowUpdateAll: true}}
+
+	exchange := gocamel.NewExchange(context.Background())
+	exchange.SetBody(bson.M{"$set": bson.M{"status": "archived"}})
+
+	panicked := false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+			}
+		}()
+		_ = producer.execUpdate(context.Background(), exchange, nil)
+	}()
+	if !panicked {
+		t.Fatal("expected execUpdate to reach UpdateMany (nil-collection panic) with allowUpdateAll=true")
+	}
+}
+
+func TestMongoDBProducer_UpdateWithExplicitFilterNotRejected(t *testing.T) {
+	// Sanity check: a body carrying an explicit "filter" key never hits the
+	// guard, regardless of the opt-in flag. It reaches UpdateMany, which
+	// panics on the nil collection (see the opt-in test above for why the
+	// panic is the expected observable).
+	producer := &MongoDBProducer{endpoint: &MongoDBEndpoint{}}
+
+	exchange := gocamel.NewExchange(context.Background())
+	exchange.SetBody(bson.M{"filter": bson.M{"status": "active"}, "update": bson.M{"$set": bson.M{"seen": true}}})
+
+	panicked := false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+			}
+		}()
+		_ = producer.execUpdate(context.Background(), exchange, nil)
+	}()
+	if !panicked {
+		t.Fatal("expected execUpdate to reach UpdateMany with an explicit filter")
+	}
+}
+
+func TestMongoDBComponent_AllowUpdateAllRequiresExplicitOptIn(t *testing.T) {
+	component := NewMongoDBComponent()
+	component.RegisterConnection("test", CreateMongoDBConnection(nil, "mongodb://test", "db"))
+
+	endpoint, err := component.CreateEndpoint("mongodb://test?collection=items&operation=update&allowUpdateAll=true")
+	if err != nil {
+		t.Fatalf("CreateEndpoint failed: %v", err)
+	}
+	if !endpoint.(*MongoDBEndpoint).allowUpdateAll {
+		t.Fatal("expected allowUpdateAll to be enabled")
+	}
+
+	endpoint, err = component.CreateEndpoint("mongodb://test?collection=items&operation=update")
+	if err != nil {
+		t.Fatalf("CreateEndpoint failed: %v", err)
+	}
+	if endpoint.(*MongoDBEndpoint).allowUpdateAll {
+		t.Fatal("allowUpdateAll must default to false")
+	}
+
+	if _, err := component.CreateEndpoint("mongodb://test?collection=items&allowUpdateAll=maybe"); err == nil {
+		t.Fatal("expected invalid allowUpdateAll value to be rejected")
+	}
+}
