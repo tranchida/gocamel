@@ -86,7 +86,7 @@ func (e *SMBEndpoint) connect() (*smbConn, error) {
 
 	tcp, err := net.DialTimeout("tcp", host, e.connectTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("erreur de connexion TCP (SMB): %w", err)
+		return nil, fmt.Errorf("TCP connection error (SMB): %w", err)
 	}
 
 	d := &smb2.Dialer{
@@ -100,21 +100,21 @@ func (e *SMBEndpoint) connect() (*smbConn, error) {
 	session, err := d.Dial(tcp)
 	if err != nil {
 		tcp.Close()
-		return nil, fmt.Errorf("erreur de session SMB: %w", err)
+		return nil, fmt.Errorf("SMB session error: %w", err)
 	}
 
 	shareName, _ := e.shareName()
 	if shareName == "" {
 		session.Logoff()
 		tcp.Close()
-		return nil, fmt.Errorf("aucun nom de partage spécifié dans l'URI SMB")
+		return nil, fmt.Errorf("no share name specified in the SMB URI")
 	}
 
 	share, err := session.Mount(shareName)
 	if err != nil {
 		session.Logoff()
 		tcp.Close()
-		return nil, fmt.Errorf("erreur de montage du partage SMB %s: %w", shareName, err)
+		return nil, fmt.Errorf("error mounting SMB share %s: %w", shareName, err)
 	}
 
 	return &smbConn{tcp: tcp, session: session, share: share}, nil
@@ -161,7 +161,7 @@ type SMBProducer struct {
 	endpoint  *SMBEndpoint
 	fileExist gocamel.FileExistBehavior
 	mu        sync.Mutex
-	sc        *smbConn // connexion persistante (disconnect=false)
+	sc        *smbConn // persistent connection (disconnect=false)
 }
 
 func (p *SMBProducer) Start(ctx context.Context) error { return nil }
@@ -216,7 +216,7 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
 			path = filepath.Join(path, fmt.Sprintf("%v", name))
 		} else {
-			return fmt.Errorf("aucun nom de fichier (CamelFileName) spécifié pour SMB")
+			return fmt.Errorf("no file name (CamelFileName) specified for SMB")
 		}
 	}
 	path = strings.ReplaceAll(path, "/", "\\")
@@ -229,7 +229,7 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 	switch p.fileExist {
 	case gocamel.FileExistFail:
 		if _, err := sc.share.Stat(path); err == nil {
-			return fmt.Errorf("le fichier existe déjà sur SMB: %s", path)
+			return fmt.Errorf("file already exists on SMB: %s", path)
 		}
 	case gocamel.FileExistIgnore:
 		if _, err := sc.share.Stat(path); err == nil {
@@ -245,16 +245,23 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 		body = []byte(b)
 	case io.Reader:
 		if body, err = io.ReadAll(b); err != nil {
-			return fmt.Errorf("erreur lecture du corps: %w", err)
+			return fmt.Errorf("error reading body: %w", err)
 		}
 	default:
 		return fmt.Errorf("unsupported body type for SMB: %T", exchange.GetIn().GetBody())
 	}
 
 	if p.fileExist == gocamel.FileExistAppend {
+		// A failed open of a missing file is expected (create-if-absent
+		// semantics); a partial read, however, must abort the send:
+		// concatenating a truncated copy of the existing content would
+		// silently corrupt the stored file.
 		if f, err := sc.share.Open(path); err == nil {
-			existing, _ := io.ReadAll(f)
+			existing, readErr := io.ReadAll(f)
 			f.Close()
+			if readErr != nil {
+				return fmt.Errorf("smb: failed to read existing file %s for append: %w", path, readErr)
+			}
 			body = append(existing, body...)
 		}
 	}
@@ -264,12 +271,12 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 
 	file, err := sc.share.Create(path)
 	if err != nil {
-		return fmt.Errorf("erreur lors de la création du fichier SMB: %w", err)
+		return fmt.Errorf("error creating SMB file: %w", err)
 	}
 	defer file.Close()
 
 	if _, err = io.Copy(file, bytes.NewReader(body)); err != nil {
-		return fmt.Errorf("erreur lors de l'écriture SMB: %w", err)
+		return fmt.Errorf("error writing SMB file: %w", err)
 	}
 	return nil
 }
@@ -284,7 +291,7 @@ type SMBConsumer struct {
 	processor gocamel.Processor
 	opts      gocamel.PollingOptions
 	cancel    context.CancelFunc
-	sc        *smbConn // connexion persistante (disconnect=false)
+	sc        *smbConn // persistent connection (disconnect=false)
 	wg        sync.WaitGroup
 }
 
@@ -352,7 +359,7 @@ type smbFile struct {
 func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile {
 	entries, err := share.ReadDir(dirPath)
 	if err != nil {
-		gocamel.LogError("Erreur lors du listage SMB", "directory", dirPath, "error", err)
+		gocamel.LogError("SMB listing error", "directory", dirPath, "error", err)
 		return nil
 	}
 
@@ -411,7 +418,7 @@ func (s *smbSynchronization) OnComplete(exchange *gocamel.Exchange) {
 		moveSMBFile(s.share, effectivePath, s.move)
 	} else if s.delete {
 		if err := s.share.Remove(effectivePath); err != nil {
-			gocamel.LogError("Erreur lors de la suppression du fichier SMB", "file", effectivePath, "error", err)
+			gocamel.LogError("SMB file deletion error", "file", effectivePath, "error", err)
 		}
 	} else if s.lockPath != "" {
 		_ = s.share.Rename(s.lockPath, s.path)
@@ -440,7 +447,7 @@ func (s *smbSynchronization) OnFailure(exchange *gocamel.Exchange) {
 func (c *SMBConsumer) doPoll(ctx context.Context) {
 	sc, err := c.getConn()
 	if err != nil {
-		gocamel.LogError("Erreur de connexion SMB pendant le polling", "error", err)
+		gocamel.LogError("SMB polling connection error", "error", err)
 		return
 	}
 	defer c.releaseConn(sc)
@@ -506,7 +513,7 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 
 		file, err := sc.share.Open(readPath)
 		if err != nil {
-			gocamel.LogError("Erreur lors de l'ouverture du fichier SMB", "file", readPath, "error", err)
+			gocamel.LogError("SMB file open error", "file", readPath, "error", err)
 			if markerPath != "" {
 				_ = sc.share.Remove(markerPath)
 			}
@@ -518,7 +525,7 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 		content, err := gocamel.ReadLimited(file, c.endpoint.maxMessageSize)
 		file.Close()
 		if err != nil {
-			gocamel.LogError("Erreur lors de la lecture du fichier SMB", "file", readPath, "error", err)
+			gocamel.LogError("SMB file read error", "file", readPath, "error", err)
 			if markerPath != "" {
 				_ = sc.share.Remove(markerPath)
 			}
@@ -572,7 +579,7 @@ func moveSMBFile(share *smb2.Share, srcPath, destDir string) {
 	filename = strings.TrimSuffix(filename, ".camelExclusiveReadLock")
 	destPath := strings.ReplaceAll(filepath.Join(destDir, filename), "/", "\\")
 	if err := share.Rename(srcPath, destPath); err != nil {
-		gocamel.LogError("Erreur déplacement SMB", "src", srcPath, "dest", destPath, "error", err)
+		gocamel.LogError("SMB move error", "src", srcPath, "dest", destPath, "error", err)
 	}
 }
 

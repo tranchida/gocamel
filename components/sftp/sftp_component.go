@@ -95,7 +95,7 @@ func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 
 	hostKeyCallback, err := e.getHostKeyCallback(e.url)
 	if err != nil {
-		return nil, nil, fmt.Errorf("erreur de configuration de la validation de clé d'hôte: %w", err)
+		return nil, nil, fmt.Errorf("host key validation configuration error: %w", err)
 	}
 
 	config := &ssh.ClientConfig{
@@ -125,13 +125,13 @@ func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 
 	sshClient, err := ssh.Dial("tcp", host, config)
 	if err != nil {
-		return nil, nil, fmt.Errorf("erreur de connexion SSH: %w", err)
+		return nil, nil, fmt.Errorf("SSH connection error: %w", err)
 	}
 
 	sftpClient, err := sftp.NewClient(sshClient)
 	if err != nil {
 		sshClient.Close()
-		return nil, nil, fmt.Errorf("erreur de création du client SFTP: %w", err)
+		return nil, nil, fmt.Errorf("SFTP client creation error: %w", err)
 	}
 	return sshClient, sftpClient, nil
 }
@@ -223,13 +223,13 @@ func (p *SFTPProducer) Send(exchange *gocamel.Exchange) error {
 		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
 			path = fmt.Sprintf("/%v", name)
 		} else {
-			return fmt.Errorf("aucun chemin ou CamelFileName spécifié pour SFTP")
+			return fmt.Errorf("no path or CamelFileName specified for SFTP")
 		}
 	} else if strings.HasSuffix(path, "/") {
 		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
 			path = path + fmt.Sprintf("%v", name)
 		} else {
-			return fmt.Errorf("le chemin est un répertoire mais CamelFileName n'est pas spécifié")
+			return fmt.Errorf("path is a directory but CamelFileName is not specified")
 		}
 	}
 
@@ -241,7 +241,7 @@ func (p *SFTPProducer) Send(exchange *gocamel.Exchange) error {
 	switch p.fileExist {
 	case gocamel.FileExistFail:
 		if _, err := sftpClient.Stat(path); err == nil {
-			return fmt.Errorf("le fichier existe déjà sur SFTP: %s", path)
+			return fmt.Errorf("file already exists on SFTP: %s", path)
 		}
 	case gocamel.FileExistIgnore:
 		if _, err := sftpClient.Stat(path); err == nil {
@@ -257,16 +257,23 @@ func (p *SFTPProducer) Send(exchange *gocamel.Exchange) error {
 		body = []byte(b)
 	case io.Reader:
 		if body, err = io.ReadAll(b); err != nil {
-			return fmt.Errorf("erreur lecture du corps: %w", err)
+			return fmt.Errorf("error reading body: %w", err)
 		}
 	default:
 		return fmt.Errorf("unsupported body type for SFTP: %T", exchange.GetIn().GetBody())
 	}
 
 	if p.fileExist == gocamel.FileExistAppend {
+		// A failed open of a missing file is expected (create-if-absent
+		// semantics); a partial read, however, must abort the send:
+		// concatenating a truncated copy of the existing content would
+		// silently corrupt the stored file.
 		if f, err := sftpClient.Open(path); err == nil {
-			existing, _ := io.ReadAll(f)
+			existing, readErr := io.ReadAll(f)
 			f.Close()
+			if readErr != nil {
+				return fmt.Errorf("sftp: failed to read existing file %s for append: %w", path, readErr)
+			}
 			body = append(existing, body...)
 		}
 	}
@@ -277,12 +284,12 @@ func (p *SFTPProducer) Send(exchange *gocamel.Exchange) error {
 
 	file, err := sftpClient.Create(path)
 	if err != nil {
-		return fmt.Errorf("erreur lors de la création du fichier SFTP: %w", err)
+		return fmt.Errorf("error creating SFTP file: %w", err)
 	}
 	defer file.Close()
 
 	if _, err = io.Copy(file, bytes.NewReader(body)); err != nil {
-		return fmt.Errorf("erreur lors de l'écriture SFTP: %w", err)
+		return fmt.Errorf("error writing SFTP file: %w", err)
 	}
 	return nil
 }
@@ -424,7 +431,7 @@ func (s *sftpSynchronization) OnFailure(exchange *gocamel.Exchange) {
 func (c *SFTPConsumer) doPoll(ctx context.Context) {
 	sshClient, sftpClient, err := c.getClients()
 	if err != nil {
-		gocamel.LogError("Erreur de connexion SFTP pendant le polling", "error", err)
+		gocamel.LogError("SFTP polling connection error", "error", err)
 		return
 	}
 	defer c.releaseClients(sshClient, sftpClient)
@@ -538,7 +545,7 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 
 		file, err := sftpClient.Open(readPath)
 		if err != nil {
-			gocamel.LogError("Erreur lors de l'ouverture du fichier SFTP", "file", readPath, "error", err)
+			gocamel.LogError("SFTP file open error", "file", readPath, "error", err)
 			if markerPath != "" {
 				_ = sftpClient.Remove(markerPath)
 			}
@@ -550,7 +557,7 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 		content, err := gocamel.ReadLimited(file, c.endpoint.maxMessageSize)
 		file.Close()
 		if err != nil {
-			gocamel.LogError("Erreur lors de la lecture du fichier SFTP", "file", readPath, "error", err)
+			gocamel.LogError("SFTP file read error", "file", readPath, "error", err)
 			if markerPath != "" {
 				_ = sftpClient.Remove(markerPath)
 			}
@@ -610,6 +617,6 @@ func moveSFTPFile(client *sftp.Client, srcPath, destDir string) {
 			gocamel.LogError("Erreur déplacement SFTP", "src", srcPath, "dest", destPath, "error", err)
 		}
 	} else {
-		gocamel.LogError("Erreur création répertoire SFTP", "directory", destDir, "error", err)
+		gocamel.LogError("SFTP directory creation error", "directory", destDir, "error", err)
 	}
 }

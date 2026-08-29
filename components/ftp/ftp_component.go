@@ -213,18 +213,26 @@ func (p *FTPProducer) Send(exchange *gocamel.Exchange) error {
 			return nil
 		}
 	case gocamel.FileExistAppend:
-		// Download the existing file and concatenate
+		// Download the existing file and concatenate. A failed download of a
+		// missing file is expected (create-if-absent semantics); a partial
+		// read, however, must abort the send: concatenating a truncated copy
+		// of the existing content would silently corrupt the stored file.
 		if resp, err := conn.Retr(path); err == nil {
-			existing, _ := io.ReadAll(resp)
+			existing, readErr := io.ReadAll(resp)
 			resp.Close()
+			if readErr != nil {
+				return fmt.Errorf("ftp: failed to read existing file %s for append: %w", path, readErr)
+			}
 			body = append(existing, body...)
 		}
 	}
 
-	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		conn.ChangeDir(dir) // ignore the error if the directory already exists
-	}
-	if err := conn.Stor(filepath.Base(path), bytes.NewReader(body)); err != nil {
+	// STOR (like RETR and SIZE above) accepts a full pathname resolved from
+	// the login directory, so no ChangeDir is needed. Keeping the session in
+	// the login directory matters: with a persistent connection
+	// (disconnect=false), a ChangeDir would leak into the next Send and make
+	// a relative path resolve against the previous file's directory.
+	if err := conn.Stor(path, bytes.NewReader(body)); err != nil {
 		return fmt.Errorf("error sending FTP file: %w", err)
 	}
 	return nil
