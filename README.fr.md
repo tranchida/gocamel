@@ -261,10 +261,10 @@ dans sa réponse.
 
 ## 📚 Documentation
 
-- [**Site de Documentation en Ligne**](https://tranchida.gitlab.io/gocamel/fr/)
+- [**Site de Documentation en Ligne**](https://gocamel.tranchida.cloud/fr/)
 - [Exemples](examples/)
-- [Architecture](https://tranchida.gitlab.io/gocamel/fr/architecture/)
-- [Référence API](https://tranchida.gitlab.io/gocamel/fr/reference/)
+- [Architecture](https://gocamel.tranchida.cloud/fr/architecture/)
+- [Référence API](https://gocamel.tranchida.cloud/fr/reference/)
 
 ## 🤝 Contribution
 

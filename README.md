@@ -258,10 +258,10 @@ response.
 
 ## 📚 Documentation
 
-- [**Live Documentation Website**](https://tranchida.gitlab.io/gocamel/)
+- [**Live Documentation Website**](https://gocamel.tranchida.cloud/)
 - [Examples](examples/)
-- [Architecture](https://tranchida.gitlab.io/gocamel/en/architecture/)
-- [API Reference](https://tranchida.gitlab.io/gocamel/en/reference/)
+- [Architecture](https://gocamel.tranchida.cloud/en/architecture/)
+- [API Reference](https://gocamel.tranchida.cloud/en/reference/)
 
 ## 🤝 Contributing
 
