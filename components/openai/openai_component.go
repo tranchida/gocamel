@@ -69,7 +69,7 @@ func (p *OpenAIProducer) Start(ctx context.Context) error {
 	if token == "" {
 		token = gocamel.GetConfigValue(p.endpoint.url, "apiKey") // alias
 		if token == "" {
-			return fmt.Errorf("authorizationToken (ou apiKey) missing for OpenAI")
+			return fmt.Errorf("authorizationToken (or apiKey) missing for OpenAI")
 		}
 	}
 

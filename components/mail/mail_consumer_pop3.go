@@ -75,7 +75,13 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 		}
 		return
 	}
-	defer c.disconnect()
+	// Honor the documented disconnect option (like the IMAP consumer): with
+	// disconnect=false the connection is kept between polls; with disconnect
+	// =true (and on context end) it is torn down after each poll. Previously
+	// the unconditional defer made the keep-alive path dead code.
+	if ep.disconnect {
+		defer c.disconnect()
+	}
 
 	// List messages
 	count, size, err := c.client.Stat()

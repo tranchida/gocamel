@@ -437,9 +437,23 @@ func (c *KafkaConsumer) run(ctx context.Context) {
 					"exchange_id", exchange.ID,
 				)
 			} else {
-				// Commit message on successful processing if groupID is configured
+				// Commit message on successful processing if groupID is configured.
+				// A failed commit is logged, not swallowed silently: without the
+				// commit the message will be redelivered after a rebalance or a
+				// restart, and an operator seeing the log is the only signal of
+				// the duplicated processing to come. The error cannot be returned
+				// to the route (the exchange has already completed), so the loop
+				// continues either way.
 				if c.endpoint.groupID != "" {
-					_ = c.reader.CommitMessages(ctx, msg)
+					if err := c.reader.CommitMessages(ctx, msg); err != nil {
+						gocamel.LogError("kafka commit failed; message will be redelivered",
+							"uri", c.endpoint.uri,
+							"topic", msg.Topic,
+							"partition", msg.Partition,
+							"offset", msg.Offset,
+							"error", err,
+						)
+					}
 				}
 			}
 		}

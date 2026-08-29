@@ -170,7 +170,7 @@ func (c *MailComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 
 	portNum, err := strconv.Atoi(port)
 	if err != nil || portNum <= 0 || portNum > 65535 {
-		return nil, fmt.Errorf("port invalid in l'URI mail: %s", port)
+		return nil, fmt.Errorf("invalid port in mail URI: %s", port)
 	}
 
 	// Query parameters
