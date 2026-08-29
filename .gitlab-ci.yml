@@ -25,7 +25,7 @@ go:
       set -e
       mkdir -p .coverage
       covdir="$CI_PROJECT_DIR/.coverage"
-      for mod in $(find . -name go.mod -not -path '*/.*'); do
+      for mod in $(find . -name go.mod -not -path '*/.*' -not -path './hugo-site/*'); do
         dir=$(dirname "$mod")
         echo "== $dir =="
         # Build a path-safe profile name: drop leading "./", replace "/" with "-"
@@ -109,7 +109,7 @@ lint:
       if ! command -v gosec >/dev/null 2>&1; then
         go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
       fi
-      for mod in $(find . -name go.mod -not -path '*/.*'); do
+      for mod in $(find . -name go.mod -not -path '*/.*' -not -path './hugo-site/*'); do
         dir=$(dirname "$mod")
         echo "== staticcheck $dir =="
         (cd "$dir" && staticcheck ./...)
