@@ -69,11 +69,10 @@ func main() {
 	fmt.Println("=== GoCamel Processor Example (Apache Camel Style) ===")
 	fmt.Println()
 
-	// Create the Camel context
+	// Create the Camel context. NewCamelContext already registers the stdlib
+	// components (direct, seda, chan, timer, http, exec, template, sql, net),
+	// so no AddComponent call is needed here.
 	ctx := gocamel.NewCamelContext()
-
-	// Register components needed for the example
-	ctx.AddComponent("direct", gocamel.NewDirectComponent())
 
 	// --- 1. Registering processors in the Registry ---
 	// This allows using them by name via ProcessRef
@@ -105,11 +104,11 @@ func main() {
 	endBuilder.From("direct:end").
 		LogSimple("Final result received: ${body} (Type: ${header.OrderType})")
 
-	endBuilderroute, err := endBuilder.Build()
+	endRoute, err := endBuilder.Build()
 	if err != nil {
 		log.Fatal(err)
 	}
-	ctx.AddRoute(endBuilderroute)
+	ctx.AddRoute(endRoute)
 
 	// Start the context
 	if err := ctx.Start(); err != nil {

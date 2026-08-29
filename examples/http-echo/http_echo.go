@@ -11,7 +11,8 @@ func main() {
 
 	context := gocamel.NewCamelContext()
 
-	context.AddComponent("http", gocamel.NewHTTPComponent())
+	// The HTTP component is already registered by NewCamelContext
+	// ("http" and "https" schemes), so no AddComponent call is needed.
 
 	// Create a route that listens on port 8080 and echoes the received message.
 	route, err := context.CreateRouteBuilder().
@@ -28,7 +29,10 @@ func main() {
 	}
 
 	context.AddRoute(route)
-	context.Start()
+	if err := context.Start(); err != nil {
+		fmt.Printf("Error starting context: %v\n", err)
+		return
+	}
 
 	fmt.Println("Server started on http://localhost:8080/echo")
 	fmt.Println("Press Ctrl+C to stop")

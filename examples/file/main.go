@@ -45,7 +45,10 @@ func main() {
 
 	// Start the route.
 	context.AddRoute(route)
-	context.Start()
+	if err := context.Start(); err != nil {
+		fmt.Printf("Error starting context: %v\n", err)
+		return
+	}
 
 	fmt.Printf("Watching directory: %s\n", tempDir)
 

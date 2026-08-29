@@ -43,10 +43,10 @@ func main() {
 	}
 	defer func() { _ = tp.Shutdown(context.Background()) }()
 
-	// 2. Initialize the GoCamel context.
+	// 2. Initialize the GoCamel context. NewCamelContext already registers
+	// the stdlib components (direct, timer, http, ...), so no AddComponent
+	// call is needed here.
 	ctx := gocamel.NewCamelContext()
-	ctx.AddComponent("direct", gocamel.NewDirectComponent())
-	ctx.AddComponent("timer", gocamel.NewTimerComponent())
 
 	// 3. Define the route with monitoring.
 	_, err = ctx.CreateRouteBuilder().
