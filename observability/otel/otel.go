@@ -3,6 +3,7 @@ package otel
 
 import (
 	"context"
+	"errors"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -38,7 +39,10 @@ func Tracing() gocamel.RouteInterceptor {
 
 			exchange.Context = ctx
 			err := next(exchange)
-			if err != nil && err != gocamel.ErrStopRouting {
+			// ErrStopRouting is a control signal, not a failure — and it may
+			// be wrapped by the processor that returned it, so compare with
+			// errors.Is like the core does (route.processFrom), not by value.
+			if err != nil && !errors.Is(err, gocamel.ErrStopRouting) {
 				span.RecordError(err)
 			}
 			return err
