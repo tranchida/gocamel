@@ -15,7 +15,7 @@ stages:
 # profile is written under .coverage/ and aggregated by the coverage job.
 go:
   stage: test
-  image: golang:1.25
+  image: golang:1.26
   cache:
     key: go-mod
     paths:
@@ -49,7 +49,7 @@ go:
 # exposes the merged profile as an artifact.
 coverage:
   stage: test
-  image: golang:1.25
+  image: golang:1.26
   needs:
     - go
   script:
@@ -91,7 +91,7 @@ coverage:
 # log without gating merges; tighten it to blocking once the backlog is cleared.
 lint:
   stage: test
-  image: golang:1.25
+  image: golang:1.26
   allow_failure: true
   cache:
     key: lint-tools

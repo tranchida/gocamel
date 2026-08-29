@@ -1,6 +1,6 @@
 module gitlab.com/tranchida/gocamel/components/kafka
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/segmentio/kafka-go v0.4.47

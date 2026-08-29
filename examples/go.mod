@@ -1,6 +1,6 @@
 module gitlab.com/tranchida/gocamel/examples
 
-go 1.25.0
+go 1.26.0
 
 // Examples always build against the in-repo modules.
 require (

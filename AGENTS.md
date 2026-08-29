@@ -9,7 +9,7 @@ Guidance for AI coding agents and LLMs working in the **GoCamel** repository. As
 **GoCamel** is an enterprise integration framework for Go, inspired by [Apache Camel](https://camel.apache.org/). It provides a fluent DSL for building integration routes that connect heterogeneous systems, plus implementations of the classic Enterprise Integration Patterns (EIPs).
 
 - **Module path**: `gitlab.com/tranchida/gocamel`
-- **Language**: Go 1.25 (see `go.mod`, `go.work`)
+- **Language**: Go 1.26 (see `go.mod`, `go.work`)
 - **License**: Apache 2.0
 - **Language / Naming Policy**: All code, comments, docstrings, variable names, error messages, logs, and commit messages **MUST be written in English**. (User-facing docs are bilingual EN/FR).
 
