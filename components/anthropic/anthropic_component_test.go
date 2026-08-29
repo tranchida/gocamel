@@ -205,7 +205,7 @@ func TestAnthropicProducer_Send_UsesExchangeContext(t *testing.T) {
 	ex.SetBody("hi")
 	err := p.Send(ex)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Anthropic request error")
+	assert.Contains(t, err.Error(), "request error from Anthropic")
 }
 
 func TestAnthropicProducer_Send_ErrorWrapped(t *testing.T) {
@@ -217,7 +217,7 @@ func TestAnthropicProducer_Send_ErrorWrapped(t *testing.T) {
 	ex.SetBody("hi")
 	err := p.Send(ex)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Anthropic request error")
+	assert.Contains(t, err.Error(), "request error from Anthropic")
 	// Out body must remain unchanged on error.
 	assert.Nil(t, ex.GetOut().GetBody())
 }

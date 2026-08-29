@@ -177,7 +177,7 @@ func (p *AnthropicProducer) Send(exchange *gocamel.Exchange) error {
 	}
 	resp, err := p.client.Messages.New(reqCtx, params)
 	if err != nil {
-		return fmt.Errorf("Anthropic request error: %w", err)
+		return fmt.Errorf("request error from Anthropic: %w", err)
 	}
 
 	out := exchange.GetOut()
@@ -191,7 +191,7 @@ func (p *AnthropicProducer) Send(exchange *gocamel.Exchange) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("Anthropic returned no text content")
+	return fmt.Errorf("no text content returned by Anthropic")
 }
 
 // getStringHeader returns a string-typed exchange In header, treating
