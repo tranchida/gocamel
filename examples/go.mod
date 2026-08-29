@@ -4,7 +4,7 @@ go 1.26.0
 
 // Examples always build against the in-repo modules.
 require (
-	gitlab.com/tranchida/gocamel v0.8.0
+	gitlab.com/tranchida/gocamel v0.9.0
 	gitlab.com/tranchida/gocamel/components/file v0.0.0
 	gitlab.com/tranchida/gocamel/components/mail v0.0.0
 	gitlab.com/tranchida/gocamel/observability/otel v0.0.0

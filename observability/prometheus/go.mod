@@ -19,7 +19,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
-	gitlab.com/tranchida/gocamel v0.8.0
+	gitlab.com/tranchida/gocamel v0.9.0
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect

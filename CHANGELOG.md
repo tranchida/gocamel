@@ -2,6 +2,51 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.9.0] - 2026-08-29
+
+Follow-up hardening after v0.8.0: context restart, nested DSL errors, HTTP
+consumer headers, and remaining path/filter holes.
+
+### Security
+
+- **mongodb** — `update` now rejects empty filters as documents too (`{}`,
+  empty `bson.M` / `bson.D`), not only a missing `"filter"` key.
+  `allowUpdateAll=true` remains the opt-in for a mass update.
+- **ftp / sftp / smb** — `CamelFileName` is joined with `JoinRemotePath`:
+  absolute names and `..` traversal are rejected (SMB no longer uses
+  `filepath.Join`, which discarded the share path for an absolute header).
+- **file** — the consumer skips symbolic links and refuses files larger than
+  32 MiB (`DefaultMaxBodySize`). Producer opens use `O_NOFOLLOW` on Unix.
+
+### Fixed
+
+- **CamelContext** — `Stop` / `GracefulStop` install a fresh root context, so
+  `Start()` after `Stop()` works. `ProducerCache` refuses `Get` while stopping.
+  `RemoveRoute` takes `startLock` so it cannot race `Start`.
+- **HTTP consumer** — sets `CamelHttpMethod`, `CamelHttpPath`, `CamelHttpQuery`
+  and `CamelHttpUrl`. A `From(http).To(http)` proxy forwards the inbound method
+  instead of always POSTing. `https://` consumers are rejected (plaintext
+  listen only; terminate TLS in front). In-flight handlers are joined on Stop.
+- **DSL** — nested `Split` / `Loop` / `Multicast` / `Pipeline` / `DoTry`
+  construction errors are copied to the parent at `End()`. `Choice.EndChoice()`
+  attaches to the current container so Choice inside Split runs per part.
+  Nested `RecipientList` with an unsupported expression type fails at `Build`.
+- **Circuit breaker** — `ErrStopRouting` is not counted as a failure.
+- **Saga** — actions run through `ProcessSafely`; `ErrStopRouting` does not
+  trigger compensation.
+- **Aggregator** — at least one completion condition (size, timeout, or
+  predicate) is required.
+- **PollEnrich** — Simple URI parse/eval errors are returned instead of
+  falling through with the unresolved template.
+- **net** — `wg.Add` for accepted connections happens under the mutex.
+- **cron** — the simple-trigger goroutine is joined on `Stop`.
+- **openai / anthropic** — HTTP client timeout is 60 seconds.
+
+### Notes
+
+- `Start()` after `Stop()` is supported. `https` remains producer-only for
+  the HTTP component.
+
 ## [v0.8.0] - 2026-08-29
 
 Code review hardening release: empty-filter MongoDB updates require opt-in,
@@ -310,6 +355,7 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.9.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.9.0
 [v0.8.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.8.0
 [v0.7.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.7.0
 [v0.6.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.6.0

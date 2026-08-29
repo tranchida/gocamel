@@ -4,28 +4,28 @@ weight = 20
 +++
 ## Requirements
 
-- Go 1.25 or later
+- Go 1.26 or later
 - Module-aware Go project (go.mod)
 
 ## Install
 
 ```bash
-go get gitlab.com/tranchida/gocamel@v0.7.0
+go get gitlab.com/tranchida/gocamel@v0.9.0
 ```
 
 Or add to `go.mod`:
 
 ```go
-require gitlab.com/tranchida/gocamel v0.7.0
+require gitlab.com/tranchida/gocamel v0.9.0
 ```
 
 To use optional components, install the individual modules:
 
 ```bash
-go get gitlab.com/tranchida/gocamel/components/kafka@v0.7.0
-go get gitlab.com/tranchida/gocamel/components/grpc@v0.7.0
-go get gitlab.com/tranchida/gocamel/components/redis@v0.7.0
-go get gitlab.com/tranchida/gocamel/components/nats@v0.7.0
+go get gitlab.com/tranchida/gocamel/components/kafka@v0.9.0
+go get gitlab.com/tranchida/gocamel/components/grpc@v0.9.0
+go get gitlab.com/tranchida/gocamel/components/redis@v0.9.0
+go get gitlab.com/tranchida/gocamel/components/nats@v0.9.0
 ```
 
 Then:
