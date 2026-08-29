@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -55,16 +56,17 @@ func (s *SagaProcessor) Process(exchange *Exchange) error {
 	var completedCompensations []Processor
 
 	for _, step := range s.steps {
-		// Run the action
-		err := step.Action.Process(exchange)
+		if step.Action == nil {
+			continue
+		}
+		err := safeProcess(func() error { return step.Action.Process(exchange) })
 		if err != nil {
-			// An action failed! Execute compensations in LIFO order
+			if errors.Is(err, ErrStopRouting) {
+				return err
+			}
 			for i := len(completedCompensations) - 1; i >= 0; i-- {
 				comp := completedCompensations[i]
-				// We run compensation on a copy of the exchange to avoid contaminating the failure state
 				compExchange := exchange.Copy()
-				// A failing or panicking compensation must not prevent the remaining ones from
-				// running, but it MUST be visible to operators.
 				if compErr := safeProcess(func() error { return comp.Process(compExchange) }); compErr != nil {
 					LogError("saga: compensation failed",
 						"compensation_index", i,
@@ -76,7 +78,6 @@ func (s *SagaProcessor) Process(exchange *Exchange) error {
 			return fmt.Errorf("saga action failed: %w", err)
 		}
 
-		// Success! Save the compensation for rollback if a future step fails
 		if step.Compensation != nil {
 			completedCompensations = append(completedCompensations, step.Compensation)
 		}

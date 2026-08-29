@@ -144,3 +144,14 @@ func TestAggregator_CompletionSize(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Nil(t, savedEx, "Repository should be cleared after completion")
 }
+
+func TestAggregator_RequiresCompletionCondition(t *testing.T) {
+	agg := NewAggregator(
+		func(*Exchange) string { return "k" },
+		&StringConcatStrategy{},
+		NewMemoryAggregationRepository(),
+	)
+	err := agg.Process(NewExchange(context.Background()))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "completion condition")
+}

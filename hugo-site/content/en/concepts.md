@@ -141,17 +141,20 @@ context := gocamel.NewCamelContext()
 context.AddRoute(route)
 context.Start()
 context.Stop()
+// Start after Stop is supported: Stop installs a fresh root context.
 ```
 
 ### Graceful Shutdown
 
 `Stop()` has no deadline: if a consumer's `Stop()` blocks (for example an HTTP
-shutdown waiting on an idle keep-alive), `context.Stop()` blocks with it. For
-production use prefer `GracefulStop(timeout)`, which cancels the parent
+shutdown waiting on an idle keep-alive), `context.Stop()` blocks with it. After
+teardown it replaces the cancelled root context so a later `Start()` can run.
+For production use prefer `GracefulStop(timeout)`, which cancels the parent
 context first (so consumers observing `ctx.Done()` unwind their work loops
 immediately) and then waits up to `timeout` for every route to finish
 stopping. Routes still running after the deadline are abandoned and the call
-returns an error describing the situation.
+returns an error describing the situation; the root context is recreated when
+background teardown completes.
 
 ```go
 // Bound shutdown to 30 seconds.
@@ -167,10 +170,13 @@ that would otherwise surface only on the first matching message:
 
 - the accumulated construction error from `From()` (e.g. an unknown component
   scheme),
+- construction errors recorded on nested `Split` / `Loop` / `Multicast` /
+  `Pipeline` / `DoTry` builders (copied to the parent at `End()`),
 - the absence of a source endpoint,
 - validation errors from any processor implementing the `Validator` interface
   (notably `ChoiceProcessor`, whose When-clause Simple expressions are
-  re-parsed to surface syntax errors).
+  re-parsed to surface syntax errors, and `Aggregator`, which requires at
+  least one completion condition).
 
 `Start()` does **not** call `Validate()` automatically — opt in from tests or
 CI to fail fast on broken routes:

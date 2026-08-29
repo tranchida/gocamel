@@ -33,7 +33,8 @@ builder.From("direct:start").
 
 - `When(expression)` - Adds a conditional branch
 - `Otherwise()` - Adds a default branch
-- `EndChoice()` - Ends the Choice block
+- `EndChoice()` - Ends the Choice block and adds it to the **current** container
+  (the route, or a surrounding `Split` / `Loop` / `Multicast` so each part is evaluated)
 - `End()` - Alternative method
 
 **Expression Operators:**
@@ -275,6 +276,9 @@ builder.From("direct:start").
   Once `SuccessThreshold` successful probes complete, the circuit closes. If a probe fails, it
   opens again.
 
+`ErrStopRouting` (Filter, incomplete aggregation, Stop EIP) is **not** a failure:
+it does not increment the failure count and does not open the circuit.
+
 ---
 
 ### Load Balancer
@@ -502,6 +506,10 @@ builder.From("direct:start").
 ### Aggregator
 
 Combine multiple messages into one.
+
+At least one completion condition is required: `SetCompletionSize`,
+`SetCompletionTimeout`, or `SetCompletionPredicate`. Without one, `Process`
+returns an error instead of buffering forever.
 
 ```go
 // Define correlation expression and completion condition
@@ -890,7 +898,7 @@ builder.From("direct:start").
 
 The Saga EIP provides a mechanism to coordinate a series of local transactions across distributed services without locking databases. It defines a set of actions and their corresponding compensating actions (rollbacks).
 
-If any action in the Saga block fails or returns an error, the Saga orchestrator automatically triggers the compensating steps for all completed actions in reverse order (LIFO - Last In, First Out).
+If any action in the Saga block fails or returns an error, the Saga orchestrator automatically triggers the compensating steps for all completed actions in reverse order (LIFO - Last In, First Out). Action panics are recovered and treated as failures (compensations still run). `ErrStopRouting` from an action stops the saga **without** compensation — it is a control signal, not a failure.
 
 ```go
 builder.From("direct:saga-route").

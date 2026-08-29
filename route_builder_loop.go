@@ -183,5 +183,6 @@ func (d *LoopDefinition) WireTap(uri string) *LoopDefinition {
 
 // End terminates the Loop block and returns to the parent builder.
 func (d *LoopDefinition) End() *RouteBuilder {
+	d.parent.adoptErr(d.RouteBuilder)
 	return d.parent
 }

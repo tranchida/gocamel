@@ -241,8 +241,8 @@ func (d *ResequencerDefinition) Capacity(n int) *ResequencerDefinition {
 	return d
 }
 
-// End terminates the Resequencer block and returns to the parent builder.
 func (d *ResequencerDefinition) End() *RouteBuilder {
+	d.parent.adoptErr(d.mainBuilder)
 	return d.parent
 }
 

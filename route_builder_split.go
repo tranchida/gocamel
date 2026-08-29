@@ -1,6 +1,9 @@
 package gocamel
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // This file implements the Split EIP sub-DSL.
 //
@@ -85,6 +88,9 @@ func (d *SplitDefinition) RecipientList(expression any) *SplitDefinition {
 		}
 	case func(*Exchange) ([]string, error):
 		rl.SetURIFunc(expr)
+	default:
+		d.err = fmt.Errorf("unsupported RecipientList expression type: %T", expression)
+		return d
 	}
 	d.container.AddProcessor(rl)
 	return d
@@ -218,5 +224,6 @@ func (d *SplitDefinition) WireTap(uri string) *SplitDefinition {
 
 // End terminates the Split block and returns to the parent builder.
 func (d *SplitDefinition) End() *RouteBuilder {
+	d.parent.adoptErr(d.RouteBuilder)
 	return d.parent
 }

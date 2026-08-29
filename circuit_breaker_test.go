@@ -149,3 +149,15 @@ func TestCircuitBreaker_IdleFailuresDoNotOpen(t *testing.T) {
 	require.Error(t, cb.Process(NewExchange(context.Background())))
 	assert.ErrorIs(t, cb.Process(NewExchange(context.Background())), ErrCircuitOpen)
 }
+
+func TestCircuitBreaker_ErrStopRoutingIsNotFailure(t *testing.T) {
+	cb := NewCircuitBreaker()
+	cb.SetFailureThreshold(1)
+	cb.SetProcessor(ProcessorFunc(func(*Exchange) error { return ErrStopRouting }))
+
+	err := cb.Process(NewExchange(context.Background()))
+	require.ErrorIs(t, err, ErrStopRouting)
+	err = cb.Process(NewExchange(context.Background()))
+	require.ErrorIs(t, err, ErrStopRouting)
+	assert.NotErrorIs(t, err, ErrCircuitOpen)
+}

@@ -193,6 +193,19 @@ func TestMongoDBProducer_UpdateRejectsEmptyFilterWithoutOptIn(t *testing.T) {
 	}
 }
 
+func TestMongoDBProducer_UpdateRejectsEmptyMapFilterWithoutOptIn(t *testing.T) {
+	producer := &MongoDBProducer{endpoint: &MongoDBEndpoint{}}
+	exchange := gocamel.NewExchange(context.Background())
+	exchange.SetBody(map[string]interface{}{
+		"filter": map[string]interface{}{},
+		"update": bson.M{"$set": bson.M{"status": "archived"}},
+	})
+	err := producer.execUpdate(context.Background(), exchange, nil)
+	if err == nil || !strings.Contains(err.Error(), "empty filter rejected") {
+		t.Fatalf("expected empty-filter rejection, got %v", err)
+	}
+}
+
 func TestMongoDBProducer_UpdateAllowsEmptyFilterWithOptIn(t *testing.T) {
 	// With the opt-in, an update-only body passes the empty-filter guard and
 	// reaches UpdateMany. The mongo driver panics on a nil collection (method

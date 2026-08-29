@@ -214,14 +214,17 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 	path := p.endpoint.getFilePath()
 	if path == "" || strings.HasSuffix(path, "\\") {
 		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
-			path = filepath.Join(path, fmt.Sprintf("%v", name))
+			joined, err := gocamel.JoinRemotePath(strings.ReplaceAll(path, "\\", "/"), fmt.Sprintf("%v", name))
+			if err != nil {
+				return fmt.Errorf("smb: invalid path: %w", err)
+			}
+			path = joined
 		} else {
 			return fmt.Errorf("no file name (CamelFileName) specified for SMB")
 		}
 	}
 	path = strings.ReplaceAll(path, "/", "\\")
 
-	// Security: validate path for directory traversal
 	if err := gocamel.ValidateRemotePath(path); err != nil {
 		return fmt.Errorf("smb: invalid path: %w", err)
 	}

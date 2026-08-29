@@ -158,7 +158,7 @@ func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 	// targetPath was confined above via ValidatePathInDir. 0644 is the deliberate
 	// default: produced files are meant to be read by other processes, and the
 	// effective mode still respects the process umask.
-	file, err := os.OpenFile(targetPath, flags, 0644) // #nosec G302,G304
+	file, err := confinedOpen(targetPath, flags, 0644) // #nosec G302,G304
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			if p.fileExist == gocamel.FileExistIgnore {
@@ -375,14 +375,22 @@ func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.Pol
 	if c.checkAndClearIgnored(path) {
 		return
 	}
-	info, statErr := os.Stat(path)
+	info, statErr := os.Lstat(path)
 	if statErr != nil {
+		return
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		gocamel.LogWarn("file consumer: skipping symlink", "file", path)
 		return
 	}
 	if info.IsDir() {
 		if opts.Recursive && c.watcher != nil {
 			_ = c.watcher.Add(path)
 		}
+		return
+	}
+	if info.Size() > gocamel.DefaultMaxBodySize {
+		gocamel.LogWarn("file consumer: skipping oversized file", "file", path, "size", info.Size(), "limit", gocamel.DefaultMaxBodySize)
 		return
 	}
 	filename := filepath.Base(path)
@@ -505,7 +513,13 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 		return nil
 	}
 
-	info, statErr := os.Stat(c.path)
+	info, statErr := os.Lstat(c.path)
+	if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("file consumer: refusing to read symlink %s", c.path)
+	}
+	if statErr == nil && info.Size() > gocamel.DefaultMaxBodySize {
+		return fmt.Errorf("file consumer: file %s exceeds %d bytes", c.path, gocamel.DefaultMaxBodySize)
+	}
 	content, err := os.ReadFile(c.path)
 	if err != nil {
 		return fmt.Errorf("error reading file: %v", err)
@@ -579,11 +593,8 @@ func moveFilelocal(src, destDir string) {
 // directory via filepath.Join: an empty name, an absolute path (Join discards
 // the base), or a Windows volume name.
 func confinedFileName(name string) error {
-	if name == "" {
-		return fmt.Errorf("CamelFileName cannot be empty")
-	}
-	if filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
-		return fmt.Errorf("CamelFileName must be a relative path: %s", name)
+	if err := gocamel.ConfineFileName(name); err != nil {
+		return fmt.Errorf("CamelFileName: %w", err)
 	}
 	return nil
 }

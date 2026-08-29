@@ -242,9 +242,10 @@ http := gocamel.NewHTTPComponent()
 http.SetThrowExceptionOnFailure(false)
 ```
 
-**MongoDB `update` rejects an empty filter.** Like `remove` before it, an
-`update` whose body carries no `"filter"` key would mass-update every document
-in the collection. It is now rejected unless the endpoint opts in:
+**MongoDB `update` rejects an empty filter**, including a missing `"filter"`
+key and an empty document (`{}` / `bson.M{}`). Like `remove`, that would
+mass-update every document in the collection. It is rejected unless the
+endpoint opts in:
 
 ```go
 // Opt in explicitly to allow updating the whole collection

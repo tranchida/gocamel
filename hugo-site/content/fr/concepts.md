@@ -146,18 +146,22 @@ context := gocamel.NewCamelContext()
 context.AddRoute(route)
 context.Start()
 context.Stop()
+// Start après Stop est supporté : Stop installe un nouveau contexte racine.
 ```
 
 ### Arrêt propre (Graceful Shutdown)
 
 `Stop()` n'a pas de délai limite : si le `Stop()` d'un consumer bloque (par
 exemple un shutdown HTTP qui attend une connexion keep-alive inactive),
-`context.Stop()` bloque avec lui. En production, préférez
+`context.Stop()` bloque avec lui. Après le teardown, il remplace le contexte
+racine annulé pour qu'un `Start()` ultérieur puisse s'exécuter.
+En production, préférez
 `GracefulStop(timeout)` qui annule d'abord le contexte parent (pour que les
 consumers qui observent `ctx.Done()` sortent immédiatement de leur boucle de
 travail), puis attend jusqu'à `timeout` que toutes les routes terminent leur
 arrêt. Les routes encore actives à l'échéance sont abandonnées et l'appel
-retourne une erreur décrivant la situation.
+retourne une erreur décrivant la situation ; le contexte racine est recréé
+lorsque le teardown en arrière-plan se termine.
 
 ```go
 // Borne l'arrêt à 30 secondes.
@@ -173,10 +177,13 @@ les problèmes qui n'apparaîtraient sinon qu'au premier message correspondant :
 
 - l'erreur de construction accumulée par `From()` (ex. un scheme de composant
   inconnu),
+- les erreurs de construction enregistrées sur les builders imbriqués `Split` /
+  `Loop` / `Multicast` / `Pipeline` / `DoTry` (recopiées sur le parent à `End()`),
 - l'absence d'endpoint source,
 - les erreurs de validation des processors implémentant l'interface
   `Validator` (notamment `ChoiceProcessor`, dont les expressions Simple des
-  clauses `When` sont re-parsées pour faire remonter les erreurs de syntaxe).
+  clauses `When` sont re-parsées pour faire remonter les erreurs de syntaxe,
+  et `Aggregator`, qui exige au moins une condition de complétion).
 
 `Start()` **n'appelle pas** `Validate()` automatiquement — c'est un opt-in
 destiné aux tests et à la CI pour échouer tôt sur des routes mal formées :

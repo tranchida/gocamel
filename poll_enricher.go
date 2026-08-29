@@ -51,15 +51,17 @@ func (p *PollEnricher) Process(exchange *Exchange) error {
 		ctx = context.Background()
 	}
 
-	// Resolve dynamic URI if it contains simple expressions (${...})
 	targetURI := p.uri
 	if stringsContainsPlaceholder(targetURI) {
 		template, err := ParseSimpleTemplate(targetURI)
-		if err == nil {
-			if resolved, err := template.EvaluateAsString(exchange); err == nil {
-				targetURI = resolved
-			}
+		if err != nil {
+			return fmt.Errorf("pollEnrich: failed to parse URI expression: %w", err)
 		}
+		resolved, err := template.EvaluateAsString(exchange)
+		if err != nil {
+			return fmt.Errorf("pollEnrich: failed to evaluate URI expression: %w", err)
+		}
+		targetURI = resolved
 	}
 
 	endpoint, err := p.context.CreateEndpoint(targetURI)

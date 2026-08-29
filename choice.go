@@ -28,18 +28,17 @@ func NewChoiceProcessor() *ChoiceProcessor {
 func (cp *ChoiceProcessor) When(expression string, processor Processor) *ChoiceProcessor {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		// Store the expression; we'll parse it during Process
 		cp.whens = append(cp.whens, &WhenClause{
 			Expression: expression,
 			processor:  processor,
 		})
-	} else {
-		cp.whens = append(cp.whens, &WhenClause{
-			Expression: expression,
-			template:   template,
-			processor:  processor,
-		})
+		return cp
 	}
+	cp.whens = append(cp.whens, &WhenClause{
+		Expression: expression,
+		template:   template,
+		processor:  processor,
+	})
 	return cp
 }
 
@@ -180,10 +179,11 @@ func (cb *ChoiceBuilder) finalizeActiveWhen() {
 
 // When adds a When condition to the Choice
 func (cb *ChoiceBuilder) When(expression string) *ChoiceBuilder {
-	// Finalize any previous when clause first
 	cb.finalizeActiveWhen()
-
-	// Start a new when clause
+	if _, err := ParseSimpleTemplate(expression); err != nil {
+		cb.err = fmt.Errorf("choice When: failed to parse %q: %w", expression, err)
+		return cb
+	}
 	cb.activeExpression = expression
 	cb.activeProcessors = make([]Processor, 0)
 	return cb
@@ -271,24 +271,19 @@ func (cb *ChoiceBuilder) Otherwise() *OtherwiseBuilder {
 	}
 }
 
-// EndChoice completes the Choice pattern and adds it to the route
 func (cb *ChoiceBuilder) EndChoice() *RouteBuilder {
-	// If we have an accumulated error, propagate it to the RouteBuilder
 	if cb.err != nil {
 		cb.routeBuilder.err = cb.err
 		return cb.routeBuilder
 	}
 
-	// Finalize any active when clause
 	cb.finalizeActiveWhen()
 
-	// Add Otherwise if any processors were collected
 	if len(cb.otherwiseProcessors) > 0 {
 		cb.choice.Otherwise(&compositeProcessor{processors: cb.otherwiseProcessors})
 	}
 
-	// Add the choice processor to the route
-	cb.routeBuilder.route.AddProcessor(cb.choice)
+	cb.routeBuilder.container.AddProcessor(cb.choice)
 	return cb.routeBuilder
 }
 

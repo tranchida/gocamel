@@ -245,9 +245,10 @@ http := gocamel.NewHTTPComponent()
 http.SetThrowExceptionOnFailure(false)
 ```
 
-**MongoDB `update` refuse un filtre vide.** Comme `remove` avant lui, un
-`update` dont le corps ne contient pas de clé `"filter"` mettait à jour tous
-les documents de la collection. Il est désormais rejeté sauf opt-in explicite :
+**MongoDB `update` refuse un filtre vide**, y compris une clé `"filter"`
+absente et un document vide (`{}` / `bson.M{}`). Comme `remove`, cela
+mettrait à jour tous les documents de la collection. L'opération est rejetée
+sauf opt-in explicite :
 
 ```go
 // Opt-in explicite pour autoriser la mise à jour de toute la collection

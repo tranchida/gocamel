@@ -77,6 +77,10 @@ builder.From("direct:start").
 
 Combine plusieurs messages en un seul.
 
+Au moins une condition de complétion est obligatoire : `SetCompletionSize`,
+`SetCompletionTimeout` ou `SetCompletionPredicate`. Sans cela, `Process`
+retourne une erreur au lieu de bufferiser indéfiniment.
+
 ```go
 strategy := &MyAggregationStrategy{}
 repo := gocamel.NewMemoryAggregationRepository()
@@ -213,6 +217,9 @@ builder.From("direct:start").
             To("direct:default").
     EndChoice()
 ```
+
+`EndChoice()` accroche le Choice au **container courant** (la route, ou un
+`Split` / `Loop` / `Multicast` englobant, pour que chaque partie soit évaluée).
 
 **Expressions supportées :**
 
@@ -486,6 +493,9 @@ builder.From("direct:start").
 - **Half-Open (Semi-ouvert)** : Après le `OpenTimeout`, **une seule requête d'essai à la fois** sonde le service
   aval ; les requêtes concurrentes sont redirigées vers le fallback comme si le circuit était encore ouvert.
   Quand `SuccessThreshold` sondes réussissent, le circuit se referme. Si une sonde échoue, il s'ouvre à nouveau.
+
+`ErrStopRouting` (Filter, agrégation incomplète, Stop EIP) n'est **pas** un
+échec : il n'incrémente pas le compteur et n'ouvre pas le circuit.
 
 ---
 
@@ -843,7 +853,7 @@ builder.From("direct:start").
 
 Le pattern Saga fournit un mécanisme pour coordonner une série de transactions locales à travers des services distribués sans verrouiller les bases de données. Il définit un ensemble d'actions et leurs actions de compensation correspondantes (annulations).
 
-Si une action dans le bloc Saga échoue ou retourne une erreur, l'orchestrateur de la Saga déclenche automatiquement les étapes de compensation pour toutes les actions terminées, dans l'ordre inverse (LIFO - Last In, First Out).
+Si une action dans le bloc Saga échoue ou retourne une erreur, l'orchestrateur de la Saga déclenche automatiquement les étapes de compensation pour toutes les actions terminées, dans l'ordre inverse (LIFO - Last In, First Out). Les panics d'action sont récupérés et traités comme des échecs (les compensations s'exécutent quand même). Un `ErrStopRouting` provenant d'une action arrête la saga **sans** compensation — c'est un signal de contrôle, pas un échec.
 
 ```go
 builder.From("direct:saga-route").

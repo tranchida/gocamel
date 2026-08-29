@@ -26,6 +26,17 @@ func NewRouteBuilder(context *CamelContext) *RouteBuilder {
 	}
 }
 
+// adoptErr copies a nested builder's construction error onto b so End() cannot
+// drop Filter/Simple parse failures that were recorded on the child.
+func (b *RouteBuilder) adoptErr(child *RouteBuilder) {
+	if b == nil || child == nil || child == b {
+		return
+	}
+	if child.err != nil && b.err == nil {
+		b.err = child.err
+	}
+}
+
 // From sets the source endpoint of the route.
 // Endpoint resolution errors are recorded and surfaced by Build().
 func (b *RouteBuilder) From(uri string) *RouteBuilder {

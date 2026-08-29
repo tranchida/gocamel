@@ -3,8 +3,10 @@ package anthropic
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -73,9 +75,9 @@ func (e *AnthropicEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel
 
 // AnthropicProducer represents an Anthropic producer.
 type AnthropicProducer struct {
-	endpoint *AnthropicEndpoint
-	client   anthropic.Client
-	model    anthropic.Model
+	endpoint  *AnthropicEndpoint
+	client    anthropic.Client
+	model     anthropic.Model
 	maxTokens int64
 	system    string
 	started   bool
@@ -110,7 +112,10 @@ func (p *AnthropicProducer) Start(ctx context.Context) error {
 
 	p.system = gocamel.GetConfigValue(u, "system")
 
-	opts := []option.RequestOption{option.WithAPIKey(token)}
+	opts := []option.RequestOption{
+		option.WithAPIKey(token),
+		option.WithHTTPClient(&http.Client{Timeout: 60 * time.Second}),
+	}
 	if baseURL := gocamel.GetConfigValue(u, "baseURL"); baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}

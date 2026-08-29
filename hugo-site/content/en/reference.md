@@ -15,8 +15,8 @@ func NewCamelContext() *CamelContext
 | `AddRoute(route *Route)`                         | Register a route     |
 | `AddComponent(name string, component Component)` | Register a component |
 | `CreateEndpoint(uri string) (Endpoint, error)`   | Create endpoint      |
-| `Start()`                                        | Start all routes     |
-| `Stop()`                                         | Stop all routes      |
+| `Start()`                                        | Start all routes (safe after `Stop()`) |
+| `Stop()`                                         | Stop all routes; installs a fresh root context |
 | `CreateRouteBuilder() *RouteBuilder`             | Create route builder |
 
 ## RouteBuilder

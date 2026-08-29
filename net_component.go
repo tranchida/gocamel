@@ -374,16 +374,14 @@ func (c *NetConsumer) acceptLoop(ctx context.Context, ln net.Listener, stop <-ch
 
 		c.mu.Lock()
 		if !c.started {
-			// Stop() already ran its teardown; this connection was accepted
-			// concurrently and will not be closed by it.
 			c.mu.Unlock()
 			_ = conn.Close()
 			return
 		}
 		c.conns[conn] = struct{}{}
+		c.wg.Add(1)
 		c.mu.Unlock()
 
-		c.wg.Add(1)
 		go c.handleConn(ctx, conn)
 	}
 }

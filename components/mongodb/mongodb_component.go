@@ -522,14 +522,13 @@ func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *gocamel.Exch
 	}
 
 	// Validation
-	if filter == nil {
-		// An empty filter updates EVERY document in the collection: require
-		// the same explicit opt-in as remove's allowDeleteAll so a body
-		// missing its "filter" key cannot mass-update by accident.
+	if isEmptyMongoFilter(filter) {
 		if !p.endpoint.allowUpdateAll {
 			return fmt.Errorf("update: empty filter rejected; set allowUpdateAll=true on the endpoint to update all documents")
 		}
-		filter = bson.M{}
+		if filter == nil {
+			filter = bson.M{}
+		}
 	}
 	if update == nil {
 		return fmt.Errorf("update: no update document found (use the body or CamelMongoDbCriteria for the filter)")

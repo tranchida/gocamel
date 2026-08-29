@@ -157,8 +157,8 @@ func (d *TryDefinition) DoFinally() *FinallyDefinition {
 	}
 }
 
-// End terminates the Try block and returns to the parent builder.
 func (d *TryDefinition) End() *RouteBuilder {
+	d.parent.adoptErr(d.routeBuilder)
 	return d.parent
 }
 
@@ -195,6 +195,7 @@ func (d *CatchDefinition) DoFinally() *FinallyDefinition {
 
 // End terminates the Catch block and returns to the parent builder.
 func (d *CatchDefinition) End() *RouteBuilder {
+	d.parent.parent.adoptErr(d.routeBuilder)
 	return d.parent.End()
 }
 
@@ -221,6 +222,7 @@ func (d *FinallyDefinition) To(uris ...string) *FinallyDefinition {
 
 // End terminates the Finally block and returns to the parent builder.
 func (d *FinallyDefinition) End() *RouteBuilder {
+	d.parent.parent.adoptErr(d.routeBuilder)
 	return d.parent.End()
 }
 

@@ -45,6 +45,48 @@ func ValidateRemotePath(path string) error {
 	return nil
 }
 
+// ConfineFileName rejects a payload file name that would escape a directory
+// when concatenated or filepath.Joined: empty names, null bytes, absolute
+// paths, Windows volume names, and '..' components that walk above the name's
+// own root.
+func ConfineFileName(name string) error {
+	if name == "" {
+		return fmt.Errorf("file name cannot be empty")
+	}
+	if strings.Contains(name, "\x00") {
+		return fmt.Errorf("file name contains null byte")
+	}
+	if filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
+		return fmt.Errorf("file name must be a relative path: %s", name)
+	}
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	if strings.HasPrefix(normalized, "/") {
+		return fmt.Errorf("file name must be a relative path: %s", name)
+	}
+	if containsTraversal(name) {
+		return fmt.Errorf("file name contains traversal: %s", name)
+	}
+	return nil
+}
+
+// JoinRemotePath concatenates a remote directory URI path with a payload file
+// name after ConfineFileName. dir should be the endpoint path (possibly with a
+// trailing slash). The result uses forward slashes.
+func JoinRemotePath(dir, name string) (string, error) {
+	if err := ConfineFileName(name); err != nil {
+		return "", err
+	}
+	dir = strings.ReplaceAll(dir, "\\", "/")
+	name = strings.ReplaceAll(name, "\\", "/")
+	if dir == "" || dir == "/" {
+		return name, nil
+	}
+	if !strings.HasSuffix(dir, "/") {
+		dir += "/"
+	}
+	return dir + name, nil
+}
+
 // validateSQLQuery performs a lightweight sanity check on a SQL query string.
 //
 // The query is treated as TRUSTED configuration (it is never interpolated with

@@ -1,6 +1,9 @@
 package gocamel
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // This file implements the Multicast EIP sub-DSL and the nested Pipeline DSL
 // used for grouping processors inside a multicast branch.
@@ -100,6 +103,9 @@ func (d *MulticastDefinition) RecipientList(expression any) *MulticastDefinition
 		}
 	case func(*Exchange) ([]string, error):
 		rl.SetURIFunc(expr)
+	default:
+		d.err = fmt.Errorf("unsupported RecipientList expression type: %T", expression)
+		return d
 	}
 	d.container.AddProcessor(rl)
 	return d
@@ -143,6 +149,7 @@ func (d *MulticastDefinition) WireTap(uri string) *MulticastDefinition {
 
 // End terminates the Multicast block and returns to the parent builder.
 func (d *MulticastDefinition) End() *RouteBuilder {
+	d.parent.adoptErr(d.RouteBuilder)
 	return d.parent
 }
 
@@ -189,6 +196,9 @@ func (d *PipelineDefinition) RecipientList(expression any) *PipelineDefinition {
 		}
 	case func(*Exchange) ([]string, error):
 		rl.SetURIFunc(expr)
+	default:
+		d.err = fmt.Errorf("unsupported RecipientList expression type: %T", expression)
+		return d
 	}
 	d.container.AddProcessor(rl)
 	return d
@@ -226,5 +236,6 @@ func (d *PipelineDefinition) WireTap(uri string) *PipelineDefinition {
 
 // End terminates the Pipeline block and returns to the multicast builder.
 func (d *PipelineDefinition) End() *MulticastDefinition {
+	d.parent.adoptErr(d.RouteBuilder)
 	return d.parent
 }

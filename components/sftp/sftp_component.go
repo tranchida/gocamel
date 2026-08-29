@@ -221,19 +221,26 @@ func (p *SFTPProducer) Send(exchange *gocamel.Exchange) error {
 	path := p.endpoint.url.Path
 	if path == "" || path == "/" {
 		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
-			path = fmt.Sprintf("/%v", name)
+			joined, err := gocamel.JoinRemotePath("", fmt.Sprintf("%v", name))
+			if err != nil {
+				return fmt.Errorf("sftp: invalid path: %w", err)
+			}
+			path = "/" + joined
 		} else {
 			return fmt.Errorf("no path or CamelFileName specified for SFTP")
 		}
 	} else if strings.HasSuffix(path, "/") {
 		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
-			path = path + fmt.Sprintf("%v", name)
+			joined, err := gocamel.JoinRemotePath(path, fmt.Sprintf("%v", name))
+			if err != nil {
+				return fmt.Errorf("sftp: invalid path: %w", err)
+			}
+			path = joined
 		} else {
 			return fmt.Errorf("path is a directory but CamelFileName is not specified")
 		}
 	}
 
-	// Security: validate path for directory traversal
 	if err := gocamel.ValidateRemotePath(path); err != nil {
 		return fmt.Errorf("sftp: invalid path: %w", err)
 	}

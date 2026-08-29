@@ -154,6 +154,7 @@ func (c *CamelContext) Start() error {
 	if c.started {
 		return fmt.Errorf("context is already started")
 	}
+	c.producerCache.Resume()
 
 	c.routesLock.RLock()
 	routes := make([]*Route, len(c.routes))
@@ -215,6 +216,7 @@ func (c *CamelContext) Stop() error {
 		errs = append(errs, err)
 	}
 
+	c.resetContext()
 	c.stopping = false
 
 	if len(errs) > 0 {
@@ -270,16 +272,16 @@ func (c *CamelContext) GracefulStop(timeout time.Duration) error {
 	select {
 	case err := <-done:
 		c.started = false
+		c.resetContext()
 		c.stopping = false
 		return err
 	case <-time.After(timeout):
-		// Mark stopped so IsStarted is false, but keep stopping=true until
-		// the background teardown finishes so Start() cannot race with it.
 		c.started = false
 		c.stopping = true
 		go func() {
 			<-done
 			c.startLock.Lock()
+			c.resetContext()
 			c.stopping = false
 			c.startLock.Unlock()
 		}()
@@ -292,6 +294,17 @@ func (c *CamelContext) IsStarted() bool {
 	c.startLock.RLock()
 	defer c.startLock.RUnlock()
 	return c.started
+}
+
+// resetContext replaces the cancelled root context so a later Start() observes
+// a live ctx. Caller must hold startLock.
+func (c *CamelContext) resetContext() {
+	ctx, cancel := context.WithCancel(context.Background())
+	c.ctx = ctx
+	c.cancel = cancel
+	if c.producerCache != nil {
+		c.producerCache.Resume()
+	}
 }
 
 // GetContext retrieves the underlying Go context
@@ -333,11 +346,13 @@ func (c *CamelContext) RemoveRoute(route *Route) error {
 	if route == nil {
 		return nil
 	}
+	c.startLock.Lock()
+	defer c.startLock.Unlock()
 	stopErr := route.Stop()
 
 	c.routesLock.Lock()
-	defer c.routesLock.Unlock()
 	c.detachRouteLocked(route)
+	c.routesLock.Unlock()
 	return stopErr
 }
 
@@ -428,6 +443,7 @@ type ProducerCache struct {
 	cache   map[string]Producer
 	mu      sync.RWMutex
 	entries sync.Map // map[string]*producerEntry — per-URI creation locks
+	stopped bool
 }
 
 // producerEntry single-flights the creation of one URI's producer.
@@ -452,6 +468,10 @@ func NewProducerCache(context *CamelContext) *ProducerCache {
 // producer is still built only once.
 func (pc *ProducerCache) Get(uri string) (Producer, error) {
 	pc.mu.RLock()
+	if pc.stopped {
+		pc.mu.RUnlock()
+		return nil, fmt.Errorf("producer cache: context is stopping")
+	}
 	prod, exists := pc.cache[uri]
 	pc.mu.RUnlock()
 	if exists {
@@ -462,8 +482,11 @@ func (pc *ProducerCache) Get(uri string) (Producer, error) {
 	entry.once.Lock()
 	defer entry.once.Unlock()
 
-	// Another goroutine may have populated the cache while we waited.
 	pc.mu.RLock()
+	if pc.stopped {
+		pc.mu.RUnlock()
+		return nil, fmt.Errorf("producer cache: context is stopping")
+	}
 	prod, exists = pc.cache[uri]
 	pc.mu.RUnlock()
 	if exists {
@@ -480,14 +503,16 @@ func (pc *ProducerCache) Get(uri string) (Producer, error) {
 		return nil, fmt.Errorf("producer cache: producer creation failed for %s: %w", uri, err)
 	}
 
-	// Start with the CamelContext's context, not context.Background(): a
-	// producer started with a detached context never observes shutdown and
-	// keeps its connections alive past CamelContext.Stop().
 	if err := p.Start(pc.context.GetContext()); err != nil {
 		return nil, fmt.Errorf("producer cache: producer start failed for %s: %w", uri, err)
 	}
 
 	pc.mu.Lock()
+	if pc.stopped {
+		pc.mu.Unlock()
+		_ = p.Stop()
+		return nil, fmt.Errorf("producer cache: context is stopping")
+	}
 	pc.cache[uri] = p
 	pc.mu.Unlock()
 	return p, nil
@@ -499,22 +524,30 @@ func (pc *ProducerCache) entryFor(uri string) *producerEntry {
 	return actual.(*producerEntry)
 }
 
-// Stop stops all cached producers.
 func (pc *ProducerCache) Stop() error {
 	pc.mu.Lock()
-	defer pc.mu.Unlock()
+	pc.stopped = true
+	cache := pc.cache
+	pc.cache = make(map[string]Producer)
+	pc.entries.Clear()
+	pc.mu.Unlock()
 
 	var errs []error
-	for uri, prod := range pc.cache {
+	for uri, prod := range cache {
 		if err := prod.Stop(); err != nil {
 			errs = append(errs, fmt.Errorf("producer cache: error stopping producer for %s: %w", uri, err))
 		}
 	}
-	pc.cache = make(map[string]Producer) // clear
-	pc.entries.Clear()
 
 	if len(errs) > 0 {
 		return fmt.Errorf("producer cache: errors stopping producers: %v", errs)
 	}
 	return nil
+}
+
+// Resume allows Get after CamelContext.Stop so a subsequent Start can create producers.
+func (pc *ProducerCache) Resume() {
+	pc.mu.Lock()
+	pc.stopped = false
+	pc.mu.Unlock()
 }

@@ -135,6 +135,10 @@ func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 	}
 	var fb Processor
 	if err != nil {
+		if errors.Is(err, ErrStopRouting) {
+			cb.mu.Unlock()
+			return err
+		}
 		cb.onFailure()
 		fb = cb.fallbackProcessor
 	} else {
@@ -242,6 +246,7 @@ func (d *CircuitBreakerDefinition) OnFallback() *FallbackDefinition {
 
 // End terminates the CircuitBreaker block and returns to the parent builder.
 func (d *CircuitBreakerDefinition) End() *RouteBuilder {
+	d.parent.adoptErr(d.mainBuilder)
 	return d.parent
 }
 
@@ -271,6 +276,7 @@ func (d *FallbackDefinition) To(uris ...string) *FallbackDefinition {
 
 // End terminates the Fallback block and returns to the CircuitBreakerDefinition.
 func (d *FallbackDefinition) End() *CircuitBreakerDefinition {
+	d.parent.parent.adoptErr(d.routeBuilder)
 	return d.parent
 }
 

@@ -79,7 +79,10 @@ builder.To("file://output")
 - `CamelFileLastModified` : Date et heure de dernière modification (`time.Time`)
 
 ##### Consommés par le Producer
-- `CamelFileName` : Surcharge le nom du fichier lorsque l'URI cible pointe vers un répertoire
+- `CamelFileName` : Surcharge le nom du fichier lorsque l'URI cible pointe vers un répertoire. Doit être un chemin **relatif** : nom vide, chemin absolu, volume Windows et composants `..` qui sortent du répertoire de l'endpoint sont rejetés.
+
+Le consumer ignore les liens symboliques et refuse les fichiers de plus de 32 Mio
+(`DefaultMaxBodySize`).
 
 #### Verrou de lecture (Read Lock)
 
@@ -134,6 +137,9 @@ Avec `fileExist=Append`, le producer télécharge le fichier distant existant
 puis renvoie l'envoi de la concaténation. Un téléchargement partiel fait
 échouer l'envoi plutôt que de renvoyer silencieusement un contenu tronqué.
 
+Lorsque le chemin de l'URI est un répertoire, `CamelFileName` est joint avec
+`JoinRemotePath` : noms absolus et traversée de répertoires sont rejetés.
+
 ---
 
 ### SFTP
@@ -163,7 +169,8 @@ builder.From("sftp://host:22/data?username=scott&readLock=changed&readLockTimeou
 | `readLockMinAge`        | Duration | `0`    | Âge minimal du fichier                                             |
 
 Comme pour FTP, `fileExist=Append` concatène au fichier distant existant et
-fait échouer l'envoi si sa lecture échoue en cours de route.
+fait échouer l'envoi si sa lecture échoue en cours de route. `CamelFileName`
+est confiné comme pour FTP (`JoinRemotePath`).
 
 ---
 
@@ -188,6 +195,9 @@ builder.From("smb://server/share/folder?username=user&readLock=changed")
 | `readLockMinAge`        | Duration | `0`       | Âge minimal du fichier                                             |
 
 La sémantique de `fileExist=Append` est identique à celle de FTP/SFTP.
+`CamelFileName` est confiné avec `JoinRemotePath` (noms absolus et `..`
+rejetés ; le producer n'utilise pas `filepath.Join`, qui jetterait le chemin
+du partage si le header était absolu).
 
 ---
 
@@ -198,20 +208,31 @@ La sémantique de `fileExist=Append` est identique à celle de FTP/SFTP.
 Support serveur et client HTTP.
 
 ```go
-// Consumer (serveur HTTP)
+// Consumer (serveur HTTP) — écoute en clair uniquement
 builder.From("http://localhost:8080/api")
 
 // Producer (client HTTP)
 builder.To("http://example.com/webhook")
-
-// Avec options
-builder.To("http://api.example.com/data?httpMethod=POST")
 ```
 
-| Option           | Type   | Défaut  | Description                    |
-|------------------|--------|---------|--------------------------------|
-| `httpMethod`     | string | `GET`   | Méthode HTTP pour le producer  |
-| `bridgeEndpoint` | bool   | `false` | Bridge l'endpoint consumer     |
+Le scheme `https` est **producer uniquement**. `From("https://...")` échoue à
+la création du consumer : le listener est du HTTP en clair. Terminez le TLS
+devant un consumer `http://` (reverse proxy, `HTTPComponent.SetMiddleware`, etc.).
+
+#### Headers posés par le consumer
+
+| Header            | Source                              |
+|-------------------|-------------------------------------|
+| `CamelHttpMethod` | Méthode de la requête (`GET`, `POST`, …) |
+| `CamelHttpPath`   | Chemin de l'URL                     |
+| `CamelHttpQuery`  | Query string brute                  |
+| `CamelHttpUrl`    | `url.URL.String()` de la requête    |
+
+Le producer envoie en **POST** sauf si `CamelHttpMethod` est posé sur
+l'exchange (un pont `From(http).To(http)` transmet donc la méthode entrante).
+
+Les headers de la requête entrante sont aussi copiés sur l'exchange (voir
+headers de réponse ci-dessous).
 
 #### Authentification, TLS, limitation de débit (middleware consumer)
 
@@ -706,6 +727,9 @@ endpoint, _ := ctx.CreateEndpoint(
 | `authorizationToken` | string | variable d'env       | Clé API (alias : `apiKey`)                                      |
 | `baseURL`            | string | `https://api.openai.com/v1` | URL de base compatible OpenAI personnalisée (OpenRouter, Groq, ...) |
 
+Le timeout HTTP du SDK est de **60 secondes**. Bornez davantage les appels
+longs avec `exchange.Context`.
+
 ### Anthropic
 
 Intégration native de l'API Messages d'Anthropic (Claude). Contrairement au
@@ -743,6 +767,8 @@ fmt.Println(exchange.GetOut().GetBody()) // Réponse de Claude
 | `system`             | string | `""`        | Prompt système                                                |
 | `temperature`         | float  | non défini  | Température d'échantillonnage (0.0-1.0)                       |
 | `baseURL`            | string | API Anthropic | URL de base personnalisée (proxies, passerelles). Doit être `http(s)`. |
+
+Le timeout HTTP du SDK est de **60 secondes**.
 
 **En-têtes de surcharge par message** (message In) :
 
@@ -1138,10 +1164,10 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 
 Par sécurité, `remove` refuse les filtres nuls ou vides. Définissez
 `allowDeleteAll=true` explicitement uniquement si la suppression de toute la
-collection est intentionnelle. De même, `update` refuse un filtre vide ou
-absent : un corps sans clé `"filter"` mettrait sinon à jour tous les documents
-de la collection. Définissez `allowUpdateAll=true` explicitement uniquement si
-c'est intentionnel.
+collection est intentionnelle. De même, `update` refuse un filtre absent ou
+vide (`nil`, `{}`, `bson.M` / `bson.D` vides, chaîne vide) : chacun
+mettrait à jour tous les documents. Définissez `allowUpdateAll=true`
+explicitement uniquement si c'est intentionnel.
 
 > ⚠️ Sécurité : la base, la collection et l'opération configurées dans l'URI
 > constituent une configuration de confiance. Les headers

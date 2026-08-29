@@ -105,8 +105,17 @@ func (a *Aggregator) lockForKey(key string) *keyState {
 	}
 }
 
-// Process handles the arrival of a new exchange.
+func (a *Aggregator) Validate() error {
+	if a.CompletionSize <= 0 && a.CompletionTimeout <= 0 && a.CompletionPredicate == nil {
+		return fmt.Errorf("aggregator: at least one completion condition is required (size, timeout, or predicate)")
+	}
+	return nil
+}
+
 func (a *Aggregator) Process(exchange *Exchange) error {
+	if err := a.Validate(); err != nil {
+		return err
+	}
 	ctx := exchange.Context
 	if ctx == nil {
 		ctx = context.Background()

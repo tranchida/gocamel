@@ -160,8 +160,14 @@ func (e *HTTPEndpoint) CreateProducer() (Producer, error) {
 	}, nil
 }
 
-// CreateConsumer creates an HTTP consumer
 func (e *HTTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
+	parsed, err := url.Parse(e.uri)
+	if err != nil {
+		return nil, fmt.Errorf("invalid HTTP URI: %v", err)
+	}
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return nil, fmt.Errorf("http consumer does not terminate TLS; use an http:// URI and terminate TLS in front of the listener")
+	}
 	return &HTTPConsumer{
 		uri:         e.uri,
 		processor:   processor,
@@ -300,6 +306,8 @@ type HTTPConsumer struct {
 	maxBodySize int64
 	server      *http.Server
 	wg          sync.WaitGroup
+	handlerWG   sync.WaitGroup
+	cancel      context.CancelFunc
 	stopOnce    sync.Once
 }
 
@@ -323,7 +331,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
+	ctx, c.cancel = context.WithCancel(ctx)
 	// http.ServeMux panics on an empty pattern, so a URI without a path
 	// ("http://host:8080") must still register a valid route.
 	pattern := parsedURL.Path
@@ -333,10 +341,11 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		c.handlerWG.Add(1)
+		defer c.handlerWG.Done()
+
 		exchange := NewExchange(r.Context())
 
-		// Reading the request body, bounded so an oversized upload cannot
-		// exhaust process memory (CWE-400).
 		reqBody := r.Body
 		if c.maxBodySize > 0 {
 			reqBody = http.MaxBytesReader(w, r.Body, c.maxBodySize)
@@ -349,15 +358,18 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 				return
 			}
-			// Internal detail goes to the log, not to the client.
 			LogError("HTTP consumer: error reading request body", "uri", c.uri, "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		// Configuring the exchange. requestHeaders records what arrived so
-		// that unmodified inbound headers are not echoed back in the response.
 		exchange.SetBody(body)
+		exchange.SetHeader(CamelHttpMethod, r.Method)
+		exchange.SetHeader(CamelHttpPath, r.URL.Path)
+		exchange.SetHeader(CamelHttpQuery, r.URL.RawQuery)
+		if r.URL.String() != "" {
+			exchange.SetHeader(CamelHttpUrl, r.URL.String())
+		}
 		requestHeaders := make(map[string]string, len(r.Header))
 		for key, values := range r.Header {
 			if len(values) > 0 {
@@ -366,9 +378,6 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			}
 		}
 
-		// Processing the message. ProcessSafely turns a panicking route into an
-		// ordinary error so the ErrorHandler / DLC can act on it (net/http would
-		// recover the panic, but then CompleteExchange never fires).
 		if err := CompleteExchange(exchange, ProcessSafely(c.processor, exchange)); err != nil {
 			// The error may carry internal detail (SQL text, file paths,
 			// driver errors); log it and return a generic message.
@@ -476,13 +485,14 @@ func (c *HTTPConsumer) Stop() error {
 	}
 	var err error
 	c.stopOnce.Do(func() {
-		// Shutdown blocks until idle connections close; bounded by a 30s
-		// deadline to prevent a stalled client from hanging the whole
-		// CamelContext shutdown.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		err = c.server.Shutdown(shutdownCtx)
+		if c.cancel != nil {
+			c.cancel()
+		}
 	})
+	c.handlerWG.Wait()
 	c.wg.Wait()
 	return err
 }

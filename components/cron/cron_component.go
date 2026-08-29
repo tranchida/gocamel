@@ -387,7 +387,9 @@ func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 	gCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
+	c.startWG.Add(1)
 	go func() {
+		defer c.startWG.Done()
 		defer cancel()
 
 		select {

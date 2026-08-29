@@ -93,7 +93,12 @@ func (vp *ValidateProcessor) Process(exchange *Exchange) error {
 // Validate adds a message validation step to the route.
 // If the predicate evaluates to false, an error wrapping ErrValidationFailed is returned.
 func (b *RouteBuilder) Validate(predicate any) *RouteBuilder {
-	b.container.AddProcessor(NewValidateProcessor(predicate))
+	vp := NewValidateProcessor(predicate)
+	if err := vp.Validate(); err != nil {
+		b.err = err
+		return b
+	}
+	b.container.AddProcessor(vp)
 	return b
 }
 

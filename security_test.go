@@ -273,3 +273,24 @@ func TestValidatePath_ErrorContainsPathNotExtra(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), ".."))
 }
+
+func TestConfineFileName(t *testing.T) {
+	assert.NoError(t, ConfineFileName("report.csv"))
+	assert.NoError(t, ConfineFileName("inbox/report.csv"))
+	assert.Error(t, ConfineFileName(""))
+	assert.Error(t, ConfineFileName("../etc/passwd"))
+	assert.Error(t, ConfineFileName("/etc/passwd"))
+	assert.Error(t, ConfineFileName("foo\x00bar"))
+}
+
+func TestJoinRemotePath(t *testing.T) {
+	joined, err := JoinRemotePath("/data/uploads/", "report.csv")
+	require.NoError(t, err)
+	assert.Equal(t, "/data/uploads/report.csv", joined)
+
+	_, err = JoinRemotePath("/data/uploads/", "../../outside.txt")
+	require.Error(t, err)
+
+	_, err = JoinRemotePath("/data/uploads/", "/etc/passwd")
+	require.Error(t, err)
+}

@@ -366,3 +366,96 @@ func waitForHTTP(t *testing.T, url string) {
 	}
 	t.Fatalf("server at %s never became ready", url)
 }
+
+func TestCamelContext_StartAfterStop(t *testing.T) {
+	c := NewCamelContext()
+	got := make(chan string, 1)
+	_, err := c.CreateRouteBuilder().
+		From("direct:restart").
+		ProcessFunc(func(e *Exchange) error {
+			got <- e.GetBody().(string)
+			return nil
+		}).
+		Build()
+	require.NoError(t, err)
+	require.NoError(t, c.Start())
+	require.NoError(t, c.Stop())
+	require.NoError(t, c.Start())
+	t.Cleanup(func() { _ = c.Stop() })
+
+	ep, err := c.CreateEndpoint("direct:restart")
+	require.NoError(t, err)
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, prod.Start(c.GetContext()))
+	ex := NewExchange(c.GetContext())
+	ex.SetBody("after-restart")
+	require.NoError(t, prod.Send(ex))
+	select {
+	case body := <-got:
+		assert.Equal(t, "after-restart", body)
+	case <-time.After(2 * time.Second):
+		t.Fatal("route did not process after Start following Stop")
+	}
+}
+
+func TestNestedSplitFilterErrorSurfacesAtBuild(t *testing.T) {
+	c := NewCamelContext()
+	split := c.CreateRouteBuilder().
+		From("direct:split-err").
+		Split(func(e *Exchange) (any, error) { return []string{"a"}, nil })
+	split.DelayFunc(nil)
+	_, err := split.End().Build()
+	require.Error(t, err)
+}
+
+func TestChoiceAttachesToSplitContainer(t *testing.T) {
+	c := NewCamelContext()
+	split := c.CreateRouteBuilder().
+		From("direct:split-choice").
+		Split(func(e *Exchange) (any, error) {
+			return []string{"keep", "drop"}, nil
+		})
+	split.Choice().
+		When("${body}").
+		SetBody("matched").
+		EndChoice()
+	route, err := split.End().Build()
+	require.NoError(t, err)
+	require.Len(t, route.processors, 1)
+	kids := route.processors[0].(childProcessorContainer).childProcessors()
+	require.Len(t, kids, 1)
+	_, ok := kids[0].(*ChoiceProcessor)
+	assert.True(t, ok, "Choice must be nested inside the Splitter, not the route")
+}
+
+func TestHTTPConsumer_SetsMethodHeaders(t *testing.T) {
+	c := NewCamelContext()
+	c.AddComponent("http", NewHTTPComponent())
+	var method, path string
+	c.CreateRouteBuilder().
+		From("http://127.0.0.1:18201/hdr").
+		ProcessFunc(func(e *Exchange) error {
+			method, _ = e.GetHeaderAsString(CamelHttpMethod)
+			path, _ = e.GetHeaderAsString(CamelHttpPath)
+			e.GetOut().SetBody("ok")
+			return nil
+		})
+	require.NoError(t, c.Start())
+	t.Cleanup(func() { _ = c.Stop() })
+	waitForHTTP(t, "http://127.0.0.1:18201/hdr")
+
+	resp, err := http.Get("http://127.0.0.1:18201/hdr")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.MethodGet, method)
+	assert.Equal(t, "/hdr", path)
+}
+
+func TestHTTPEndpoint_RejectsHTTPSConsumer(t *testing.T) {
+	ep, err := NewHTTPComponent().CreateEndpoint("https://127.0.0.1:8443/x")
+	require.NoError(t, err)
+	_, err = ep.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TLS")
+}
