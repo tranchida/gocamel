@@ -245,6 +245,15 @@ http := gocamel.NewHTTPComponent()
 http.SetThrowExceptionOnFailure(false)
 ```
 
+**MongoDB `update` refuse un filtre vide.** Comme `remove` avant lui, un
+`update` dont le corps ne contient pas de clé `"filter"` mettait à jour tous
+les documents de la collection. Il est désormais rejeté sauf opt-in explicite :
+
+```go
+// Opt-in explicite pour autoriser la mise à jour de toute la collection
+builder.To("mongodb://myconn?collection=items&operation=update&allowUpdateAll=true")
+```
+
 Deux autres changements ne nécessitent probablement aucune action : découper un
 corps `[]byte` produit désormais une seule part au lieu d'un exchange par
 octet, et le consommateur HTTP ne renvoie plus les en-têtes entrants inchangés

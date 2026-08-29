@@ -129,6 +129,10 @@ builder.To("ftp://host:21/outgoing?binary=true")
 | `readLockMinLength`     | int64    | `0`     | Minimum file size in bytes                                         |
 | `readLockMinAge`        | Duration | `0`     | Minimum file age                                                   |
 
+With `fileExist=Append`, the producer downloads the existing remote file and
+uploads the concatenation. A partial download fails the send instead of
+silently re-uploading truncated content.
+
 ---
 
 ### SFTP
@@ -157,6 +161,9 @@ builder.From("sftp://host:22/data?username=scott&readLock=changed&readLockTimeou
 | `readLockMinLength`     | int64    | `0`     | Minimum file size in bytes                                         |
 | `readLockMinAge`        | Duration | `0`     | Minimum file age                                                   |
 
+As with FTP, `fileExist=Append` concatenates onto the existing remote file and
+aborts the send if reading it fails partway.
+
 ---
 
 ### SMB
@@ -178,6 +185,8 @@ builder.From("smb://server/share/folder?username=user&readLock=changed")
 | `readLockCheckInterval` | Duration | `1s`     | Interval between read lock checks                                  |
 | `readLockMinLength`     | int64    | `0`      | Minimum file size in bytes                                         |
 | `readLockMinAge`        | Duration | `0`      | Minimum file age                                                   |
+
+The same `fileExist=Append` semantics as FTP/SFTP apply.
 
 ---
 
@@ -511,6 +520,12 @@ builder.From("direct:publish").
 > sitting downstream of the HTTP consumer does not leak client credentials.
 > Set `forwardHeaders` for an explicit allowlist when you want stricter
 > control.
+
+When a `groupId` is configured, each successfully processed message is
+committed to the consumer group. A failed commit is logged (with
+topic/partition/offset) rather than silently swallowed: the message will be
+redelivered after a rebalance or restart, and the log line is the only signal
+of that duplicated processing.
 
 ---
 
@@ -847,6 +862,10 @@ cron=0 0 12 * * *  # Every day at noon
 - `nextFireTime` - Next scheduled time
 - `triggerName` - Trigger identifier
 
+On `Stop()`, a job whose `triggerStartDelay` has not elapsed yet is never
+registered on the shared scheduler: the stop request wins the race with the
+delayed registration, so no orphan job is left firing forever.
+
 ---
 
 ## Mail Components
@@ -901,6 +920,10 @@ builder.From("pop3s://pop.gmail.com:995?username=user&password=pass")
 
 The POP3 consumer honours the same `maxMessageSize` option as IMAP (default
 `0` = unlimited) to bound the size of a downloaded message.
+
+With `disconnect=false` (default), the POP3 connection is kept between polls,
+like the IMAP consumer. Set `disconnect=true` to re-authenticate for each poll
+(useful with servers that drop idle connections).
 
 ---
 
@@ -1096,10 +1119,14 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 | `operation`     | string | Yes      | Operation: find, findOne, insert, insertOne, save, update, remove, count |
 | `connectionRef` | string | No       | Registered connection reference                                          |
 | `allowDeleteAll` | bool   | No       | Allow `remove` with an empty filter (default: `false`)                    |
+| `allowUpdateAll` | bool   | No       | Allow `update` with an empty filter, i.e. mass-update the whole collection (default: `false`) |
 | `allowHeaderOverride` | bool | No    | Allow `CamelMongoDbDatabase`, `CamelMongoDbCollection`, `CamelMongoDbOperation` and `CamelMongoDbCriteria` to override the URI configuration (default: `false`) |
 
 For safety, `remove` rejects nil and empty filters. Set `allowDeleteAll=true`
 explicitly only when deleting the entire collection is intentional.
+Likewise, `update` rejects an empty (missing) filter: a body without a
+`"filter"` key would otherwise mass-update every document in the collection.
+Set `allowUpdateAll=true` explicitly only when that is intentional.
 
 > ⚠️ Security: the database, collection and operation configured in the URI
 > are trusted configuration. The `CamelMongoDbDatabase`,

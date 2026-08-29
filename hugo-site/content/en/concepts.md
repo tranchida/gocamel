@@ -216,6 +216,15 @@ automatically:
 - `gocamel_exchange_duration_seconds`: Processing time distribution.
 - `gocamel_exchanges_inflight`: Number of exchanges currently in flight.
 
+`Metrics()` registers the metric families on the default Prometheus registry.
+Applications that own their registry (custom collectors, push gateway setups)
+or want isolated test registrations can use
+`.Intercept(gocamelprom.MetricsWith(reg))` with any `prometheus.Registerer`.
+
+A wrapped `ErrStopRouting` returned by the route is a control signal, not a
+failure: it is counted as `status="success"`, consistent with the core routing
+semantics.
+
 ### OpenTelemetry (Tracing)
 
 Enable distributed tracing with the interceptor from the

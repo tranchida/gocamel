@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file.
 
 ### Security
 
+- **mongodb** — `update` with an empty (missing) filter is now rejected by
+  default, matching the existing `remove` behaviour. A mass `UpdateMany` over
+  the whole collection requires the new `allowUpdateAll=true` endpoint option.
 - **file producer** — writes using `CamelFileName` are confined to the endpoint
   directory (`ValidatePathInDir`). Absolute names and `../` traversal are rejected.
 - **timer / HTTP consumers** — route panics are recovered via `ProcessSafely` so
@@ -13,6 +16,31 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **cron** — `Stop()` racing the delayed job registration could leave a job
+  registered on the shared component scheduler that fires forever with no
+  owner left to remove it. `Stop()` now joins the registration goroutine and
+  a `stopped` flag (decided under the same mutex) wins the race.
+- **nats** — the producer and consumer of one endpoint share the connection;
+  each `Stop()` closed it under the other's feet (use-after-close). The close
+  is now centralised in `closeConn()`.
+- **ftp** — the producer no longer `ChangeDir`s before `Stor`. With a
+  persistent connection (`disconnect=false`), the stateful `ChangeDir` made a
+  relative path resolve against the *previous* file's directory, silently
+  writing to the wrong remote directory. `Stor` now receives the full path.
+- **ftp / sftp / smb** — in `fileExist=Append` mode, a partial read of the
+  existing remote file aborted silently and the truncated content was
+  re-uploaded (data corruption). A read error now fails the send.
+- **mail (POP3)** — the `disconnect=false` option was dead code: the consumer
+  disconnected after each poll unconditionally. It now keeps the connection
+  between polls like the IMAP consumer, unless `disconnect=true`.
+- **kafka** — consumer group commit errors were swallowed silently; a failed
+  commit is now logged with topic/partition/offset so the coming redelivery is
+  diagnosable.
+- **observability** — the Prometheus and OpenTelemetry interceptors classified
+  a *wrapped* `ErrStopRouting` as a failure (counter inflation, spurious span
+  error events). Both now use `errors.Is`, matching the core.
+- All error messages and logs in `sftp`, `smb`, `openai` and `mail` are now in
+  English, per the repository language policy.
 - `SimpleSetBody` / `SimpleSetHeader` now attach to the current EIP container
   (Split, Loop, …) instead of always the top-level route.
 - `RouteBuilder.Build()` surfaces `From()` endpoint resolution errors.
@@ -67,6 +95,18 @@ All notable changes to this project are documented in this file.
   OpenAI-compatible endpoint (OpenRouter, Groq, Together, Mistral, vLLM, LM
   Studio, Ollama's OpenAI compatibility layer, ...). When unset, the SDK
   defaults to `https://api.openai.com/v1`.
+
+### Observability
+
+- **prometheus** — new `MetricsWith(reg prometheus.Registerer)` variant
+  registers the metric families on a caller-supplied registry instead of the
+  process-wide default, for embedders that own their registry and for test
+  isolation. `Metrics()` keeps using the default registry.
+- **Simple language** — the parse cache is bounded by the new
+  `MaxSimpleTemplateCacheEntries` (default 10000). Applications feeding
+  unbounded dynamic expressions through the Simple language no longer leak one
+  cache entry per distinct expression; trusted route configuration (inserted
+  first) keeps hitting the cache.
 
 ## [v0.7.0] - 2026-08-16
 

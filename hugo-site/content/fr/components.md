@@ -130,6 +130,10 @@ builder.To("ftp://host:21/outgoing?binary=true")
 | `readLockMinLength`     | int64    | `0`    | Taille minimale du fichier en octets                               |
 | `readLockMinAge`        | Duration | `0`    | Âge minimal du fichier                                             |
 
+Avec `fileExist=Append`, le producer télécharge le fichier distant existant
+puis renvoie l'envoi de la concaténation. Un téléchargement partiel fait
+échouer l'envoi plutôt que de renvoyer silencieusement un contenu tronqué.
+
 ---
 
 ### SFTP
@@ -158,6 +162,9 @@ builder.From("sftp://host:22/data?username=scott&readLock=changed&readLockTimeou
 | `readLockMinLength`     | int64    | `0`    | Taille minimale du fichier en octets                               |
 | `readLockMinAge`        | Duration | `0`    | Âge minimal du fichier                                             |
 
+Comme pour FTP, `fileExist=Append` concatène au fichier distant existant et
+fait échouer l'envoi si sa lecture échoue en cours de route.
+
 ---
 
 ### SMB
@@ -179,6 +186,8 @@ builder.From("smb://server/share/folder?username=user&readLock=changed")
 | `readLockCheckInterval` | Duration | `1s`      | Intervalle entre les vérifications du verrou                       |
 | `readLockMinLength`     | int64    | `0`       | Taille minimale du fichier en octets                               |
 | `readLockMinAge`        | Duration | `0`       | Âge minimal du fichier                                             |
+
+La sémantique de `fileExist=Append` est identique à celle de FTP/SFTP.
 
 ---
 
@@ -518,6 +527,12 @@ builder.From("direct:publish").
 > du client. Définissez `forwardHeaders` pour une liste explicite si vous
 > souhaitez un contrôle plus strict.
 
+Quand un `groupId` est configuré, chaque message traité avec succès est
+committé auprès du groupe de consommateurs. Un échec de commit est journalisé
+(avec topic/partition/offset) plutôt qu'ignoré silencieusement : le message
+sera redélivré après un rééquilibrage ou un redémarrage, et la ligne de journal
+est le seul signal de ce traitement dupliqué.
+
 ---
 
 ### gRPC
@@ -856,6 +871,11 @@ cron=0 0 12 * * *  # Chaque jour à midi
 - `nextFireTime` - Prochaine heure planifiée
 - `triggerName` - Identifiant du déclencheur
 
+À l'appel de `Stop()`, un job dont le `triggerStartDelay` n'est pas encore
+écoulé n'est jamais enregistré sur le scheduler partagé : la demande d'arrêt
+gagne la course avec l'enregistrement différé, aucun job orphelin ne peut donc
+rester à se déclencher indéfiniment.
+
 ---
 
 ## Composants de Messagerie Électronique
@@ -910,6 +930,11 @@ builder.From("pop3s://pop.gmail.com:995?username=user&password=pass")
 
 Le consumer POP3 accepte la même option `maxMessageSize` qu'IMAP (défaut `0` =
 illimité) pour borner la taille d'un message téléchargé.
+
+Avec `disconnect=false` (défaut), la connexion POP3 est conservée entre les
+polls, comme pour le consumer IMAP. Définissez `disconnect=true` pour vous
+ré-authentifier à chaque poll (utile avec les serveurs qui coupent les
+connexions inactives).
 
 ---
 
@@ -1108,11 +1133,15 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 | `operation`     | string | Oui    | Opération : find, findOne, insert, insertOne, save, update, remove, count |
 | `connectionRef` | string | Non    | Référence de connexion enregistrée                                      |
 | `allowDeleteAll` | bool   | Non    | Autorise `remove` avec un filtre vide (défaut : `false`)                 |
+| `allowUpdateAll` | bool   | Non    | Autorise `update` avec un filtre vide, c'est-à-dire une mise à jour massive de toute la collection (défaut : `false`) |
 | `allowHeaderOverride` | bool | Non | Autorise `CamelMongoDbDatabase`, `CamelMongoDbCollection`, `CamelMongoDbOperation` et `CamelMongoDbCriteria` à remplacer la configuration de l'URI (défaut : `false`) |
 
 Par sécurité, `remove` refuse les filtres nuls ou vides. Définissez
 `allowDeleteAll=true` explicitement uniquement si la suppression de toute la
-collection est intentionnelle.
+collection est intentionnelle. De même, `update` refuse un filtre vide ou
+absent : un corps sans clé `"filter"` mettrait sinon à jour tous les documents
+de la collection. Définissez `allowUpdateAll=true` explicitement uniquement si
+c'est intentionnel.
 
 > ⚠️ Sécurité : la base, la collection et l'opération configurées dans l'URI
 > constituent une configuration de confiance. Les headers

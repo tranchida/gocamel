@@ -242,6 +242,15 @@ http := gocamel.NewHTTPComponent()
 http.SetThrowExceptionOnFailure(false)
 ```
 
+**MongoDB `update` rejects an empty filter.** Like `remove` before it, an
+`update` whose body carries no `"filter"` key would mass-update every document
+in the collection. It is now rejected unless the endpoint opts in:
+
+```go
+// Opt in explicitly to allow updating the whole collection
+builder.To("mongodb://myconn?collection=items&operation=update&allowUpdateAll=true")
+```
+
 Two further behaviour changes are unlikely to need action: splitting a
 `[]byte` body now yields a single part instead of one exchange per byte, and
 the HTTP consumer no longer echoes unchanged inbound request headers in its

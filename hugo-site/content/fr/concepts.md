@@ -222,6 +222,16 @@ sont collectées automatiquement :
 - `gocamel_exchange_duration_seconds` : Temps de traitement des messages.
 - `gocamel_exchanges_inflight` : Nombre de messages en cours de traitement.
 
+`Metrics()` enregistre les familles de métriques sur le registre Prometheus par
+défaut. Les applications qui possèdent leur propre registre (collecteurs
+personnalisés, push gateway) ou qui souhaitent des enregistrements isolés dans
+les tests peuvent utiliser `.Intercept(gocamelprom.MetricsWith(reg))` avec
+n'importe quel `prometheus.Registerer`.
+
+Un `ErrStopRouting` enveloppé (wrapped) renvoyé par la route est un signal de
+contrôle, pas un échec : il est compté comme `status="success"`, en cohérence
+avec la sémantique du routeur principal.
+
 ### OpenTelemetry (Tracing)
 
 Activez le traçage distribué avec l'intercepteur du module
