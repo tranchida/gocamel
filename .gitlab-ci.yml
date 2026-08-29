@@ -17,7 +17,7 @@ go:
   stage: test
   image: golang:1.26
   cache:
-    key: go-mod
+    key: go-mod-go1.26
     paths:
       - .cache/go/pkg/mod
   script:
@@ -94,7 +94,10 @@ lint:
   image: golang:1.26
   allow_failure: true
   cache:
-    key: lint-tools
+    key:
+      files:
+        - .gitlab-ci.yml
+      prefix: "lint-tools-${STATICCHECK_VERSION}-${GOSEC_VERSION}-go1.26"
     paths:
       - .cache/go/bin
       - .cache/go/pkg/mod
