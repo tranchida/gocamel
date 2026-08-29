@@ -83,6 +83,25 @@ type NATSEndpoint struct {
 	mu                  sync.Mutex
 }
 
+// closeConn closes the endpoint's shared NATS connection exactly once.
+//
+// The producer and the consumer created from the same endpoint share one
+// connection, and both call Stop() on it (via Route.Stop and
+// CamelContext.Stop). Closing twice — or racing a Close against a Send that
+// already grabbed the conn reference — is a use-after-close. sync.Once makes
+// the shutdown idempotent; the mutex serialises the close against connection
+// establishment and Send's conn snapshot.
+func (e *NATSEndpoint) closeConn() {
+	e.mu.Lock()
+	conn := e.conn
+	e.conn = nil
+	e.mu.Unlock()
+
+	if conn != nil {
+		conn.Close()
+	}
+}
+
 // URI returns the endpoint URI.
 func (e *NATSEndpoint) URI() string {
 	return e.uri
@@ -132,15 +151,9 @@ func (p *NATSProducer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops the producer and closes the NATS connection.
+// Stop stops the producer by closing the shared NATS connection.
 func (p *NATSProducer) Stop() error {
-	p.endpoint.mu.Lock()
-	defer p.endpoint.mu.Unlock()
-
-	if p.endpoint.conn != nil {
-		p.endpoint.conn.Close()
-		p.endpoint.conn = nil
-	}
+	p.endpoint.closeConn()
 	return nil
 }
 
@@ -240,7 +253,10 @@ func (c *NATSConsumer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop unsubscribes, closes subscription and NATS connection.
+// Stop unsubscribes and releases the endpoint's shared NATS connection. The
+// connection is closed via closeConn, which is safe when the producer is
+// still active on the same endpoint: nats.Conn is safe for concurrent use,
+// and the mutex prevents a Close from racing a subsequent Send's snapshot.
 func (c *NATSConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
@@ -250,15 +266,13 @@ func (c *NATSConsumer) Stop() error {
 	}
 	c.wg.Wait()
 
+	c.endpoint.closeConn()
+
 	c.endpoint.mu.Lock()
-	defer c.endpoint.mu.Unlock()
-	if c.endpoint.conn != nil {
-		c.endpoint.conn.Close()
-		c.endpoint.conn = nil
-	}
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}
+	c.endpoint.mu.Unlock()
 	return nil
 }
 

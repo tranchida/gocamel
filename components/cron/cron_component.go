@@ -243,6 +243,20 @@ type CronConsumer struct {
 	prevFireTime atomic.Pointer[time.Time] // actual time of last trigger
 
 	cancel context.CancelFunc // cancels the startup goroutine or SimpleTrigger ticker
+
+	// startWG tracks the delayed-registration goroutine started by
+	// startCronTrigger. Stop() must wait for it to unwind before inspecting
+	// c.added: without the join, a Stop() racing the goroutine's own
+	// c.mu.Lock() would observe added == false, remove nothing, and let the
+	// goroutine register the job on the SHARED component scheduler a moment
+	// later — where it would fire forever with no owner left to remove it.
+	startWG sync.WaitGroup
+
+	// stopped is set (under mu) by the first Stop() once deleteJob semantics
+	// apply. The registration goroutine re-checks it under the same mutex
+	// before calling AddJob, so a Stop() that lands inside the start-delay
+	// window reliably wins the race.
+	stopped bool
 }
 
 // buildSpec builds the cron expression for robfig/cron (CronTrigger only).
@@ -330,14 +344,24 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 	gCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
+	c.startWG.Add(1)
 	go func() {
+		defer c.startWG.Done()
+
 		select {
 		case <-time.After(ep.triggerStartDelay):
 		case <-gCtx.Done():
 			return
 		}
 
+		// The add and the stopped flag are decided under the same mutex Stop()
+		// holds, so a Stop() that raced this goroutine either removed a job
+		// that was never added (impossible) or is honoured here.
 		c.mu.Lock()
+		if c.stopped {
+			c.mu.Unlock()
+			return
+		}
 		entryID, err := sched.AddJob(spec, job)
 		if err != nil {
 			gocamel.LogError("Cron job add error", "group", ep.group, "name", ep.name, "error", err)
@@ -451,9 +475,17 @@ func (c *CronConsumer) Stop() error {
 		c.cancel()
 	}
 
-	// For CronTrigger, remove the entry from the scheduler
+	// Join the delayed-registration goroutine so that a Stop() racing it
+	// cannot observe added == false and leave a permanently-firing job on the
+	// shared scheduler.
+	c.startWG.Wait()
+
+	// For CronTrigger, remove the entry from the scheduler. The stopped flag
+	// (checked by the registration goroutine under the same mutex) makes this
+	// a single producer/consumer handoff on c.added/c.entryID.
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.stopped = true
 	if c.added {
 		ep.component.scheduler.Remove(c.entryID)
 		c.added = false
