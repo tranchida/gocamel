@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.10.0] - 2026-08-31
+
+Metadata and packaging release: per-module license files for pkg.go.dev
+license detection, and a refreshed workspace checksum file.
+
+### Fixed
+
+- **packaging** — a copy of the Apache-2.0 `LICENSE` now ships inside every
+  published module (`components/*`, `observability/*`). Each nested module is
+  distributed as its own module zip, so the root LICENSE was never included
+  and pkg.go.dev showed the submodules without a detected license.
+- `go.work.sum` refreshed (`go work sync` leftover from the v0.8.0 module
+  additions).
+
+### Notes
+
+- No API or behavioural changes; safe upgrade from v0.9.0.
+
 ## [v0.9.0] - 2026-08-29
 
 Follow-up hardening after v0.8.0: context restart, nested DSL errors, HTTP
@@ -355,6 +373,7 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.10.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.10.0
 [v0.9.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.9.0
 [v0.8.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.8.0
 [v0.7.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.7.0
