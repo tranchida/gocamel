@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.11.0] - 2026-09-03
+
+Hardening, robustness, and performance improvements across core EIPs and components following an in-depth code audit.
+
+### Fixed
+
+- **core (`ContentEnricher`)** — reuse started producers via `CamelContext.GetProducer(uri)` from the shared producer cache instead of creating, starting, and tearing down an endpoint and producer on every single exchange.
+- **core (`TryProcessor`)** — exclude `ErrStopRouting` from catch clause pattern matching so that routing control signals (filters, stops) are not misclassified as caught exceptions; wrap try and catch execution in `safeProcess` to catch panics gracefully and ensure `DoFinally` always runs via deferred cleanup.
+- **core (`DynamicRouter`, `RoutingSlip`, `RecipientList`)** — route debug logs through `LogDebug` instead of direct `slog.Debug` calls to honor custom loggers configured via `SetLogger`.
+- **core (`RoundRobinStrategy`)** — change counter to `uint64` with `atomic.AddUint64` to prevent integer overflow and eliminate gosec G115 security warning.
+- **components/openai** — enforce strict validation for `baseURL` requiring an absolute HTTP/HTTPS URL to align with Anthropic and Ollama component security standards.
+- **components/sftp** — translate all remaining French error and log messages to English per project naming standards.
+
+### Notes
+
+- Fully backward-compatible; recommended upgrade for all users.
+
 ## [v0.10.1] - 2026-09-02
 
 Packaging fix: the LICENSE files shipped in v0.10.0 were four words away from
@@ -392,6 +409,8 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.11.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.11.0
+[v0.10.1]: https://gitlab.com/tranchida/gocamel/-/tags/v0.10.1
 [v0.10.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.10.0
 [v0.9.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.9.0
 [v0.8.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.8.0
