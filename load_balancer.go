@@ -15,14 +15,14 @@ type LoadBalancerStrategy interface {
 
 // RoundRobinStrategy selects processors in a circular order.
 type RoundRobinStrategy struct {
-	counter int64
+	counter uint64
 }
 
 func (s *RoundRobinStrategy) Select(processors []Processor) Processor {
 	if len(processors) == 0 {
 		return nil
 	}
-	idx := uint64(atomic.AddInt64(&s.counter, 1) - 1)
+	idx := atomic.AddUint64(&s.counter, 1) - 1
 	return processors[idx%uint64(len(processors))]
 }
 
