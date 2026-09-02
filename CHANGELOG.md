@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.10.1] - 2026-09-02
+
+Packaging fix: the LICENSE files shipped in v0.10.0 were four words away from
+the canonical Apache-2.0 text, so pkg.go.dev's license scanner
+(`google/licensecheck`) matched only 6.4% of the file, classified every module
+as `License: UNKNOWN` and hid the documentation behind license restrictions.
+
+### Fixed
+
+- **packaging** — every `LICENSE` (root and all nested modules) now contains
+  the canonical Apache-2.0 text verbatim; the appendix keeps the copyright
+  attribution. All files verify at 100% coverage with `google/licensecheck`.
+- pkg.go.dev displays the Apache-2.0 badge and renders the package
+  documentation again.
+
+### Notes
+
+- No API or behavioural changes; safe upgrade from v0.10.0.
+
 ## [v0.10.0] - 2026-08-31
 
 Metadata and packaging release: per-module license files for pkg.go.dev
