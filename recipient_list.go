@@ -3,7 +3,6 @@ package gocamel
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 )
@@ -74,7 +73,7 @@ func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("recipient list URI function error: %w", err)
 		}
-		slog.Debug("recipient list resolved URIs via function",
+		LogDebug("recipient list resolved URIs via function",
 			"count", len(uris),
 			"uris", uris,
 		)
@@ -90,7 +89,7 @@ func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 		// Also interpolate ${header.x} / ${property.x} style placeholders
 		resolved = Interpolate(resolved, exchange)
 		uris := splitAndTrim(resolved)
-		slog.Debug("recipient list resolved URIs via simple expression",
+		LogDebug("recipient list resolved URIs via simple expression",
 			"expression", r.SimpleExpression,
 			"count", len(uris),
 			"uris", uris,
@@ -102,7 +101,7 @@ func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 		// Interpolate any ${...} placeholders in the static string
 		resolved := Interpolate(r.StaticURIs, exchange)
 		uris := splitAndTrim(resolved)
-		slog.Debug("recipient list resolved URIs via static string",
+		LogDebug("recipient list resolved URIs via static string",
 			"count", len(uris),
 			"uris", uris,
 		)
@@ -142,7 +141,7 @@ func (r *RecipientList) Process(exchange *Exchange) error {
 	}
 
 	if len(uris) == 0 {
-		slog.Debug("recipient list resolved to empty list, skipping")
+		LogDebug("recipient list resolved to empty list, skipping")
 		return nil
 	}
 

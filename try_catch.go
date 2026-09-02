@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"errors"
 	"strings"
 )
 
@@ -61,13 +62,26 @@ func (p *TryProcessor) childProcessors() []Processor {
 }
 
 // Process implements the Processor interface.
-func (p *TryProcessor) Process(exchange *Exchange) error {
-	var tryErr error
-	if p.tryBlock != nil {
-		tryErr = p.tryBlock.Process(exchange)
+func (p *TryProcessor) Process(exchange *Exchange) (finalErr error) {
+	if p.finallyBlock != nil {
+		defer func() {
+			if finErr := safeProcess(func() error { return p.finallyBlock.Process(exchange) }); finErr != nil {
+				finalErr = finErr
+			}
+		}()
 	}
 
-	finalErr := tryErr
+	var tryErr error
+	if p.tryBlock != nil {
+		tryErr = safeProcess(func() error { return p.tryBlock.Process(exchange) })
+	}
+
+	finalErr = tryErr
+
+	// ErrStopRouting is a routing control signal (Filter, Stop EIP), not a catchable exception.
+	if errors.Is(tryErr, ErrStopRouting) {
+		return tryErr
+	}
 
 	// Handle catch if there was an error
 	if tryErr != nil {
@@ -75,7 +89,7 @@ func (p *TryProcessor) Process(exchange *Exchange) error {
 		for _, clause := range p.catchClauses {
 			if clause.ErrorPattern == "" || strings.Contains(tryErr.Error(), clause.ErrorPattern) {
 				exchange.SetProperty(CamelExceptionCaught, tryErr)
-				if err := clause.Processor.Process(exchange); err != nil {
+				if err := safeProcess(func() error { return clause.Processor.Process(exchange) }); err != nil {
 					finalErr = err
 				} else {
 					finalErr = nil // Error was caught and handled
@@ -87,13 +101,6 @@ func (p *TryProcessor) Process(exchange *Exchange) error {
 
 		if !caught {
 			finalErr = tryErr
-		}
-	}
-
-	// Always execute finally block
-	if p.finallyBlock != nil {
-		if err := p.finallyBlock.Process(exchange); err != nil {
-			finalErr = err
 		}
 	}
 

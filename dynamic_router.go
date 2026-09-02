@@ -2,7 +2,6 @@ package gocamel
 
 import (
 	"fmt"
-	"log/slog"
 )
 
 const dynamicRouterMaxIterations = 1000
@@ -47,11 +46,11 @@ func (p *DynamicRouter) Process(exchange *Exchange) error {
 		}
 
 		if uri == "" {
-			slog.Debug("dynamic router: no more endpoints, routing ends")
+			LogDebug("dynamic router: no more endpoints, routing ends")
 			return nil
 		}
 
-		slog.Debug("dynamic router: sending to next endpoint", "uri", uri)
+		LogDebug("dynamic router: sending to next endpoint", "uri", uri)
 		// Reuse the started producer from the CamelContext cache (created once
 		// per URI, stopped with the context) instead of creating and tearing
 		// down a producer — and potentially a connection — on every step of

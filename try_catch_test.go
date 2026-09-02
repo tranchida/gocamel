@@ -149,3 +149,79 @@ func TestTryCatchFinally_Nested(t *testing.T) {
 	assert.True(t, finally1)
 	assert.True(t, finally2)
 }
+
+func TestTryCatch_IgnoresStopRouting(t *testing.T) {
+	ctx := NewCamelContext()
+	caught := false
+	finallyExecuted := false
+
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:stop-test").
+		DoTry().
+		ProcessFunc(func(e *Exchange) error {
+			return ErrStopRouting
+		}).
+		DoCatch("").
+		ProcessFunc(func(e *Exchange) error {
+			caught = true
+			return nil
+		}).
+		DoFinally().
+		ProcessFunc(func(e *Exchange) error {
+			finallyExecuted = true
+			return nil
+		}).
+		End().
+		Build()
+	require.NoError(t, err)
+	require.NoError(t, ctx.Start())
+	defer ctx.Stop()
+
+	prod, err := ctx.GetProducer("direct:stop-test")
+	require.NoError(t, err)
+
+	ex := NewExchange(context.Background())
+	err = prod.Send(ex)
+
+	assert.ErrorIs(t, err, ErrStopRouting)
+	assert.False(t, caught, "ErrStopRouting should not be intercepted by catch")
+	assert.True(t, finallyExecuted, "finally block should execute on ErrStopRouting")
+}
+
+func TestTryCatch_PanicHandled(t *testing.T) {
+	ctx := NewCamelContext()
+	caught := false
+	finallyExecuted := false
+
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:panic-test").
+		DoTry().
+		ProcessFunc(func(e *Exchange) error {
+			panic("something went terribly wrong")
+		}).
+		DoCatch("").
+		ProcessFunc(func(e *Exchange) error {
+			caught = true
+			return nil
+		}).
+		DoFinally().
+		ProcessFunc(func(e *Exchange) error {
+			finallyExecuted = true
+			return nil
+		}).
+		End().
+		Build()
+	require.NoError(t, err)
+	require.NoError(t, ctx.Start())
+	defer ctx.Stop()
+
+	prod, err := ctx.GetProducer("direct:panic-test")
+	require.NoError(t, err)
+
+	ex := NewExchange(context.Background())
+	err = prod.Send(ex)
+
+	assert.NoError(t, err)
+	assert.True(t, caught, "panic in try block should be caught by catch clause")
+	assert.True(t, finallyExecuted, "finally block should execute after caught panic")
+}

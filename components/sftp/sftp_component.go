@@ -118,7 +118,7 @@ func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 		}
 		signer, err := ssh.ParsePrivateKey(key)
 		if err != nil {
-			return nil, nil, fmt.Errorf("impossible de parser la clé privée: %w", err)
+			return nil, nil, fmt.Errorf("failed to parse private key: %w", err)
 		}
 		config.Auth = append([]ssh.AuthMethod{ssh.PublicKeys(signer)}, config.Auth...)
 	}
@@ -474,7 +474,7 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 	} else {
 		entries, err := sftpClient.ReadDir(rootPath)
 		if err != nil {
-			gocamel.LogError("Erreur lors du listage SFTP", "error", err)
+			gocamel.LogError("SFTP directory listing error", "error", err)
 			return
 		}
 		for _, entry := range entries {
@@ -621,7 +621,7 @@ func moveSFTPFile(client *sftp.Client, srcPath, destDir string) {
 	destPath := destDir + "/" + filename
 	if err := client.MkdirAll(destDir); err == nil || strings.Contains(err.Error(), "exist") {
 		if err := client.PosixRename(srcPath, destPath); err != nil {
-			gocamel.LogError("Erreur déplacement SFTP", "src", srcPath, "dest", destPath, "error", err)
+			gocamel.LogError("SFTP move error", "src", srcPath, "dest", destPath, "error", err)
 		}
 	} else {
 		gocamel.LogError("SFTP directory creation error", "directory", destDir, "error", err)

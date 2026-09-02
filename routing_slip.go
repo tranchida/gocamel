@@ -3,7 +3,6 @@ package gocamel
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 )
 
 // RoutingSlip implements the Routing Slip EIP.
@@ -49,7 +48,7 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("routing slip URI function error: %w", err)
 		}
-		slog.Debug("routing slip resolved URIs via function", "count", len(uris), "uris", uris)
+		LogDebug("routing slip resolved URIs via function", "count", len(uris), "uris", uris)
 		return uris, nil
 	}
 
@@ -60,7 +59,7 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 		}
 		resolved = Interpolate(resolved, exchange)
 		uris := splitAndTrim(resolved)
-		slog.Debug("routing slip resolved URIs via simple expression",
+		LogDebug("routing slip resolved URIs via simple expression",
 			"expression", r.SimpleExpression,
 			"count", len(uris),
 			"uris", uris,
@@ -71,7 +70,7 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 	if r.StaticURIs != "" {
 		resolved := Interpolate(r.StaticURIs, exchange)
 		uris := splitAndTrim(resolved)
-		slog.Debug("routing slip resolved URIs via static string", "count", len(uris), "uris", uris)
+		LogDebug("routing slip resolved URIs via static string", "count", len(uris), "uris", uris)
 		return uris, nil
 	}
 
@@ -85,7 +84,7 @@ func (r *RoutingSlip) Process(exchange *Exchange) error {
 		return err
 	}
 	if len(uris) == 0 {
-		slog.Debug("routing slip resolved to empty list, skipping")
+		LogDebug("routing slip resolved to empty list, skipping")
 		return nil
 	}
 

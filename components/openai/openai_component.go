@@ -26,6 +26,11 @@ func (c *OpenAIComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	if err != nil {
 		return nil, err
 	}
+	if baseURL := gocamel.GetConfigValue(u, "baseURL"); baseURL != "" {
+		if err := validateBaseURL(baseURL); err != nil {
+			return nil, fmt.Errorf("invalid openai baseURL: %w", err)
+		}
+	}
 
 	return &OpenAIEndpoint{
 		uri:  uri,
@@ -139,5 +144,22 @@ func (p *OpenAIProducer) Send(exchange *gocamel.Exchange) error {
 		return fmt.Errorf("OpenAI returned no response")
 	}
 
+	return nil
+}
+
+// validateBaseURL rejects non-absolute URLs and non-http(s) schemes to
+// prevent SSRF-style misconfiguration via attacker-controlled input.
+func validateBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("parse: %w", err)
+	}
+	if !u.IsAbs() {
+		return fmt.Errorf("baseURL must be absolute: %s", raw)
+	}
+	scheme := u.Scheme
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("baseURL scheme must be http or https, got %q", scheme)
+	}
 	return nil
 }

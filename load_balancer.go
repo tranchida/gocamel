@@ -22,8 +22,8 @@ func (s *RoundRobinStrategy) Select(processors []Processor) Processor {
 	if len(processors) == 0 {
 		return nil
 	}
-	idx := atomic.AddInt64(&s.counter, 1) - 1
-	return processors[idx%int64(len(processors))]
+	idx := uint64(atomic.AddInt64(&s.counter, 1) - 1)
+	return processors[idx%uint64(len(processors))]
 }
 
 // RandomStrategy selects a processor randomly.

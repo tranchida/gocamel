@@ -205,3 +205,30 @@ func TestOpenAIProducer_Start_CustomBaseURL(t *testing.T) {
 		t.Errorf("custom baseURL: got %q, want https://openrouter.ai/api/v1/chat/completions", recorder.gotURL.String())
 	}
 }
+
+func TestOpenAICreateEndpoint_BaseURLValidation(t *testing.T) {
+	comp := NewOpenAIComponent()
+
+	// Valid URLs
+	for _, valid := range []string{
+		"openai:chat?model=gpt-4&baseURL=https://api.openai.com/v1",
+		"openai:chat?model=gpt-4&baseURL=http://localhost:8080/v1",
+	} {
+		_, err := comp.CreateEndpoint(valid)
+		if err != nil {
+			t.Errorf("expected valid baseURL for %q, got error: %v", valid, err)
+		}
+	}
+
+	// Invalid URLs
+	for _, invalid := range []string{
+		"openai:chat?model=gpt-4&baseURL=ftp://example.com",
+		"openai:chat?model=gpt-4&baseURL=relative/path",
+		"openai:chat?model=gpt-4&baseURL=javascript:alert(1)",
+	} {
+		_, err := comp.CreateEndpoint(invalid)
+		if err == nil {
+			t.Errorf("expected error for invalid baseURL %q, got nil", invalid)
+		}
+	}
+}

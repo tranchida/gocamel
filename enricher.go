@@ -56,20 +56,10 @@ func (e *ContentEnricher) Process(exchange *Exchange) error {
 	// Send a copy so the enrichment endpoint cannot corrupt the original.
 	enrichExchange := exchange.Copy()
 
-	endpoint, err := e.context.CreateEndpoint(e.uri)
+	producer, err := e.context.GetProducer(e.uri)
 	if err != nil {
-		return fmt.Errorf("enrich: failed to create endpoint %q: %w", e.uri, err)
+		return fmt.Errorf("enrich: failed to get producer for %q: %w", e.uri, err)
 	}
-
-	producer, err := endpoint.CreateProducer()
-	if err != nil {
-		return fmt.Errorf("enrich: failed to create producer for %q: %w", e.uri, err)
-	}
-
-	if err := producer.Start(ctx); err != nil {
-		return fmt.Errorf("enrich: failed to start producer: %w", err)
-	}
-	defer producer.Stop()
 
 	if err := producer.Send(enrichExchange); err != nil {
 		return fmt.Errorf("enrich: failed to send to %q: %w", e.uri, err)
