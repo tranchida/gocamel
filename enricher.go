@@ -1,7 +1,6 @@
 package gocamel
 
 import (
-	"context"
 	"fmt"
 )
 
@@ -48,11 +47,6 @@ func NewContentEnricher(camelContext *CamelContext, uri string, strategy Aggrega
 
 // Process implements the Processor interface.
 func (e *ContentEnricher) Process(exchange *Exchange) error {
-	ctx := exchange.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	// Send a copy so the enrichment endpoint cannot corrupt the original.
 	enrichExchange := exchange.Copy()
 
