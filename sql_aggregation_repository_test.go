@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"github.com/stretchr/testify/assert"
+	_ "modernc.org/sqlite"
 )
 
 func TestSQLAggregationRepository_AddGetRemove(t *testing.T) {

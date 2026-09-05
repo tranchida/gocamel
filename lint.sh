@@ -5,8 +5,8 @@ set -e
 export GOPATH="$(pwd)/.cache/go"
 export PATH="$GOPATH/bin:$PATH"
 
-STATICCHECK_VERSION="2025.1.1"
-GOSEC_VERSION="v2.22.4"
+STATICCHECK_VERSION="2026.2.1"
+GOSEC_VERSION="v2.29.0"
 
 if ! command -v staticcheck >/dev/null 2>&1; then
   echo "Installing staticcheck ${STATICCHECK_VERSION}..."

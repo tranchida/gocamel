@@ -20,7 +20,7 @@ import (
 // Messages response, recording the last request it received.
 type stubServer struct {
 	*httptest.Server
-	lastReq *http.Request
+	lastReq  *http.Request
 	lastBody []byte
 }
 

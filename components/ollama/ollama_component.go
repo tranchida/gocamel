@@ -36,7 +36,7 @@ func NewOllamaComponent() *OllamaComponent {
 //   - model      (required in chat/generate, optional in embed) Model name.
 //   - system     (optional, generate) System prompt.
 //   - stream     (default false) Streaming responses. Disabled for pipeline
-//                determinism in v1.
+//     determinism in v1.
 //   - keepAlive  (optional duration, e.g. "5m") Model retention in memory.
 //   - think      (optional bool / "low"|"medium"|"high"|"max") Reasoning effort.
 //   - format     (optional, e.g. "json") Structured output format.

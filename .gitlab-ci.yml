@@ -2,8 +2,8 @@
 variables:
   GOPATH: "$CI_PROJECT_DIR/.cache/go"
   # Pinned linter versions (kept in lockstep across modules).
-  STATICCHECK_VERSION: "2025.1.1"
-  GOSEC_VERSION: "v2.22.4"
+  STATICCHECK_VERSION: "2026.2.1"
+  GOSEC_VERSION: "v2.29.0"
 
 stages:
   - test
@@ -134,4 +134,3 @@ lint:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
-

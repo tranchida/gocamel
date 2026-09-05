@@ -100,7 +100,6 @@ type contextRecordingDoer struct {
 	ctx context.Context
 }
 
-
 func (d *contextRecordingDoer) Do(req *http.Request) (*http.Response, error) {
 	d.ctx = req.Context()
 	return nil, req.Context().Err()

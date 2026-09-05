@@ -11,6 +11,9 @@ import (
 )
 
 func TestReviewSavePreservesIDOnFailure(t *testing.T) {
+	// NewClient intentionally avoids starting monitor goroutines: this test
+	// exercises the failed-operation path without a MongoDB deployment.
+	//lint:ignore SA1019 NewClient is required for this no-I/O regression test.
 	client, err := mongo.NewClient()
 	require.NoError(t, err)
 	coll := client.Database("test").Collection("items")
