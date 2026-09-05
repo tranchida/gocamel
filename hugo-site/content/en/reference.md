@@ -100,11 +100,18 @@ Accessible via `ctx.GetComponentRegistry()`:
 | `UnmarshalXml(opts...) *RouteBuilder` | Unmarshal XML body into typed struct or generic XML document                     |
 | `MarshalCSV(opts...) *RouteBuilder`   | Write a structured body as a CSV string                                          |
 | `UnmarshalCSV(opts...) *RouteBuilder` | Read a CSV body as `[][]string` or `[]map[string]string` with `CSVUseMaps(true)` |
+| `MarshalZip(opts...) *RouteBuilder`   | Build a ZIP archive from the body (single entry or `map[string][]byte`/`ZipFiles`) |
+| `UnmarshalZip(opts...) *RouteBuilder` | Extract a ZIP archive (single entry yields `[]byte`, multi-entry yields `map[string][]byte`) |
+| `MarshalTarGz(opts...) *RouteBuilder` | Build a gzipped tar archive from the body                                         |
+| `UnmarshalTarGz(opts...) *RouteBuilder`| Extract a gzipped tar archive                                                     |
 
 Main CSV options: `CSVDelimiter`, `CSVHeader`, `CSVSkipHeaderRecord`, `CSVCaptureHeaderRecord`, `CSVUseMaps`, `CSVTrim`,
 `CSVIgnoreEmptyLines`.
 Main JSON options: `JSONPrettyPrint`, `JSONIndent`, `JSONUnmarshalType`, `JSONUseNumber`.
 Main XML options: `XMLPrettyPrint`, `XMLIndent`, `XMLUnmarshalType`, `XMLHeader`.
+Main ZIP options: `ZipPassword` (WinZip AES-256 on write; WinZip AES and legacy ZipCrypto on read),
+`ZipEntryName`, `ZipFlat`, `ZipComment`, `ZipModTime`, `ZipMaxEntrySize` (zip-bomb guard, default 512 MiB per entry).
+Main tar.gz options: `TarGzEntryName`, `TarGzFlat`, `TarGzCompressionLevel`, `TarGzMaxEntrySize`.
 
 ### Builder
 

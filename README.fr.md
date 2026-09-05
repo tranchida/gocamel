@@ -179,6 +179,16 @@ builder.From("direct:start").
 | **XML**     | Marshal/unmarshal XML avec `MarshalXml()` / `UnmarshalXml()` ou `Marshal(NewXMLDataFormat(...))` |
 | **CSV**     | Marshal/unmarshal CSV avec `MarshalCSV()` / `UnmarshalCSV()` ou `Marshal(NewCSVDataFormat(...))` |
 | **RSS**     | Marshal/unmarshal XML RSS avec `Marshal(NewRSSDataFormat())` et `Unmarshal(NewRSSDataFormat())` |
+| **ZIP**     | Marshal/unmarshal d'archives ZIP avec `MarshalZip()` / `UnmarshalZip()` — prend en charge les archives protégées par mot de passe (WinZip AES-256 en lecture/écriture, ZipCrypto legacy en lecture) |
+| **Tar.gz**  | Marshal/unmarshal d'archives tar.gz avec `MarshalTarGz()` / `UnmarshalTarGz()` |
+
+Le unmarshal ZIP et tar.gz est durci contre les zip bombs (limite de taille
+par entrée, `ZipMaxEntrySize` / `TarGzMaxEntrySize`) et contre les chemins
+traversants (zip-slip/tar-slip). Une archive à entrée unique produit le contenu
+brut du fichier ; une archive multi-entrées produit une `map[string][]byte`.
+Au marshal, un body `[]byte`/`string` devient une entrée unique (nommée d'après
+le header `CamelFileName` le cas échéant), et une `map[string][]byte` ou des
+`ZipFiles` / `TarGzFiles` deviennent plusieurs entrées.
 
 ## 🔒 Sécurité
 

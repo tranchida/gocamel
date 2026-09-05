@@ -177,6 +177,16 @@ EndChoice()
 | **XML**     | Marshal/unmarshal XML with `MarshalXml()` / `UnmarshalXml()` or `Marshal(NewXMLDataFormat(...))` |
 | **CSV**     | Marshal/unmarshal CSV with `MarshalCSV()` / `UnmarshalCSV()` or `Marshal(NewCSVDataFormat(...))` |
 | **RSS**     | Marshal/unmarshal RSS XML with `Marshal(NewRSSDataFormat())` and `Unmarshal(NewRSSDataFormat())` |
+| **ZIP**     | Marshal/unmarshal ZIP archives with `MarshalZip()` / `UnmarshalZip()` — supports password-protected archives (WinZip AES-256 read/write, legacy ZipCrypto read) |
+| **Tar.gz**  | Marshal/unmarshal gzipped tar archives with `MarshalTarGz()` / `UnmarshalTarGz()` |
+
+ZIP and tar.gz unmarshalling is hardened against zip bombs (per-entry size
+limit, `ZipMaxEntrySize` / `TarGzMaxEntrySize`) and zip-slip/tar-slip path
+traversal. A single-entry archive unmarshals to the raw file content; a
+multi-entry archive unmarshals to `map[string][]byte`. While marshalling, a
+single `[]byte`/`string` body becomes one entry (named after the
+`CamelFileName` header when present), and `map[string][]byte` or `ZipFiles` /
+`TarGzFiles` become multiple entries.
 
 ## 🔒 Security
 

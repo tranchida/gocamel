@@ -100,11 +100,18 @@ Accessible via `ctx.GetComponentRegistry()` :
 | `UnmarshalXml(opts...)` | Désérialiser un corps XML vers une structure typée ou un document XML générique    |
 | `MarshalCSV(opts...)`   | Écrire un corps structuré en chaîne CSV                                            |
 | `UnmarshalCSV(opts...)` | Lire un corps CSV en `[][]string` ou `[]map[string]string` avec `CSVUseMaps(true)` |
+| `MarshalZip(opts...)`   | Créer une archive ZIP à partir du corps (entrée unique ou `map[string][]byte`/`ZipFiles`) |
+| `UnmarshalZip(opts...)` | Extraire une archive ZIP (une entrée produit `[]byte`, plusieurs produisent `map[string][]byte`) |
+| `MarshalTarGz(opts...)` | Créer une archive tar.gz à partir du corps                                        |
+| `UnmarshalTarGz(opts...)`| Extraire une archive tar.gz                                                       |
 
 Options CSV principales : `CSVDelimiter`, `CSVHeader`, `CSVSkipHeaderRecord`, `CSVCaptureHeaderRecord`, `CSVUseMaps`,
 `CSVTrim`, `CSVIgnoreEmptyLines`.
 Options JSON principales : `JSONPrettyPrint`, `JSONIndent`, `JSONUnmarshalType`, `JSONUseNumber`.
 Options XML principales : `XMLPrettyPrint`, `XMLIndent`, `XMLUnmarshalType`, `XMLHeader`.
+Options ZIP principales : `ZipPassword` (WinZip AES-256 en écriture ; WinZip AES et ZipCrypto legacy en lecture),
+`ZipEntryName`, `ZipFlat`, `ZipComment`, `ZipModTime`, `ZipMaxEntrySize` (garde anti zip-bomb, 512 Mio par entrée par défaut).
+Options tar.gz principales : `TarGzEntryName`, `TarGzFlat`, `TarGzCompressionLevel`, `TarGzMaxEntrySize`.
 
 ### Builder
 
