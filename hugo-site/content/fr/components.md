@@ -556,6 +556,92 @@ est le seul signal de ce traitement dupliqué.
 
 ---
 
+### STOMP
+
+Production et consommation de messages avec tout broker compatible STOMP 1.0/1.1/1.2 — ActiveMQ, ActiveMQ Artemis, RabbitMQ, Apollo — via le client `go-stomp`. Idéal pour les destinations JMS de type file (`/queue/...`) et topic (`/topic/...`).
+
+```go
+import "gitlab.com/tranchida/gocamel/components/stomp"
+
+ctx.AddComponent("stomp", stomp.NewStompComponent())
+
+// Consommateur : souscription à une file ActiveMQ
+builder.From("stomp://queue/orders?host=localhost:61613&ack=client-individual").
+    Log("Message reçu : ${body}")
+
+// Consommateur sur un topic
+builder.From("stomp://topic/prices?host=localhost:61613")
+
+// Producteur
+builder.From("direct:publish").
+    To("stomp://queue/orders?host=localhost:61613")
+
+// Destination dynamique (nécessite allowHeaderOverride=true)
+exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
+```
+
+| Option | Type | Défaut | Description |
+|---|---|---|---|
+| `host` | string | `localhost:61613` | Adresse du broker `host:port` (connecteur STOMP ActiveMQ) |
+| `destination` | string | analysée depuis le chemin | Destination STOMP (`/queue/...`, `/topic/...`) |
+| `login` | string | `""` | Identifiant envoyé dans la trame CONNECT STOMP |
+| `passcode` | string | `""` | Mot de passe envoyé dans la trame CONNECT STOMP (préférez la variable d'environnement `STOMP_PASSCODE`) |
+| `ack` | string | `auto` | Mode d'accusé de réception : `auto`, `client`, `client-individual` (consommateur uniquement) |
+| `allowHeaderOverride` | bool | `false` | Autorise `CamelStompDestination` à remplacer l'URI en production |
+| `forwardHeaders` | string | `""` | Liste de noms de headers (séparés par des virgules) propagés comme headers de trame STOMP ; si définie, SEULS ces headers sont propagés |
+| `ssl` | bool | `false` | Connexion au broker via TLS |
+| `sslCAFile` | string | racines système | Fichier PEM de l'autorité de certification vérifiant le certificat du broker |
+| `sslCertFile` | string | `""` | Fichier PEM du certificat client pour le TLS mutuel (nécessite `sslKeyFile`) |
+| `sslKeyFile` | string | `""` | Fichier PEM de la clé privée client pour le TLS mutuel (nécessite `sslCertFile`) |
+| `sslServerName` | string | hôte du broker | Nom du serveur utilisé pour le SNI et la vérification du certificat |
+| `sslInsecureSkipVerify` | bool | `false` | Désactive la vérification du certificat du broker (environnements contrôlés uniquement) |
+
+**Headers d'Exchange :**
+- `CamelStompDestination` - Destination d'origine du message reçu, ou destination cible en production (honorée avec `allowHeaderOverride=true`).
+- `CamelStompContentType` - Type MIME envoyé avec le message ou reçu du broker.
+
+> ⚠️ Sécurité : la destination configurée dans l'URI constitue une
+> configuration de confiance. Les surcharges par headers sont ignorées sauf si
+> l'endpoint active explicitement `allowHeaderOverride=true`. Ne l'activez que
+> si les headers ne peuvent pas être influencés par une entrée non fiable.
+>
+> Les headers sortants de l'exchange sont filtrés avant d'atteindre le broker :
+> `Authorization`, `Cookie`, `Proxy-Authorization`, `Set-Cookie` et
+> `WWW-Authenticate` (insensible à la casse) ne sont jamais propagés, afin
+> qu'un producteur en aval du consommateur HTTP ne fuite pas les identifiants
+> du client. Définissez `forwardHeaders` pour une liste explicite si vous
+> souhaitez un contrôle plus strict.
+
+Avec `ack=client` ou `ack=client-individual`, un message n'est accusé reçu
+qu'après que la route l'ait traité avec succès ; un échec de traitement est
+retenté avant tout accusé de réception, le broker redélivre donc le message si
+la connexion tombe entre-temps. Avec `ack=auto` (défaut), le broker considère
+le message comme délivré dès son envoi.
+
+**SSL/TLS :** activez `ssl=true` pour vous connecter au broker via TLS (par
+exemple le connecteur STOMP+SSL d'ActiveMQ sur le port 61614). Le certificat
+du serveur est vérifié contre les racines système par défaut, ou contre le
+fichier CA fourni via `sslCAFile`. Le TLS mutuel utilise
+`sslCertFile`/`sslKeyFile`. La configuration TLS est validée à la création de
+l'endpoint : un fichier CA manquant ou une paire de clés invalide échoue
+immédiatement.
+
+```go
+// TLS avec une CA privée
+builder.From("stomp://queue/orders?host=activemq:61614&ssl=true&sslCAFile=/etc/gocamel/ca.pem")
+
+// TLS mutuel
+builder.To("stomp://queue/orders?host=activemq:61614&ssl=true&sslCAFile=/etc/gocamel/ca.pem&sslCertFile=/etc/gocamel/client.pem&sslKeyFile=/etc/gocamel/client.key")
+```
+
+> [!WARNING]
+> `sslInsecureSkipVerify=true` désactive la vérification du certificat du
+> serveur et expose la connexion à des attaques de l'homme du milieu. Ne
+> l'utilisez que dans des environnements contrôlés (développement local,
+> bancs de test).
+
+---
+
 ### gRPC
 
 Intégration client et serveur RPC haute performance via `google.golang.org/grpc`.

@@ -106,6 +106,7 @@ When("${date:now:yyyy-MM-dd}")
 
 - **Kafka** — Apache Kafka distributed event streaming
 - **NATS** — High-performance event messaging
+- **STOMP** — ActiveMQ/JMS messaging over STOMP
 - **Redis** — Commands and Pub/Sub
 - **Telegram** — Bot API
 - **Mail** — SMTP/IMAP/POP3

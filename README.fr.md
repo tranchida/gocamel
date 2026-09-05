@@ -68,6 +68,7 @@ go get gitlab.com/tranchida/gocamel/components/anthropic@v0.12.2
 go get gitlab.com/tranchida/gocamel/components/ollama@v0.12.2
 go get gitlab.com/tranchida/gocamel/components/cron@v0.12.2     # robfig/cron
 go get gitlab.com/tranchida/gocamel/components/file@v0.12.2     # watcher fsnotify
+go get gitlab.com/tranchida/gocamel/components/stomp@v0.12.2    # go-stomp (ActiveMQ/JMS)
 go get gitlab.com/tranchida/gocamel/observability/prometheus@v0.12.2
 go get gitlab.com/tranchida/gocamel/observability/otel@v0.12.2
 ```
@@ -151,6 +152,7 @@ builder.From("direct:start").
 | **HTTP**       | Serveur et client HTTP         |
 | **Net**        | Sockets TCP/UDP bruts          |
 | **Kafka**      | Messagerie Apache Kafka        |
+| **STOMP**      | Messagerie ActiveMQ/JMS via STOMP |
 | **gRPC**       | Client et serveur gRPC         |
 | **File**       | Opérations système de fichiers |
 | **FTP/SFTP**   | Transfert via FTP/SSH          |

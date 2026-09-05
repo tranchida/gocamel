@@ -16,6 +16,7 @@ use (
 	./components/redis
 	./components/sftp
 	./components/smb
+	./components/stomp
 	./components/telegram
 	./examples
 	./observability/otel
