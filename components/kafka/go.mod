@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/segmentio/kafka-go v0.4.47
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.12.0
+	gitlab.com/tranchida/gocamel v0.12.2
 )
 
 require (

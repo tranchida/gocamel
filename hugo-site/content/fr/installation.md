@@ -10,22 +10,22 @@ weight = 20
 ## Installation
 
 ```bash
-go get gitlab.com/tranchida/gocamel@v0.12.0
+go get gitlab.com/tranchida/gocamel@v0.12.2
 ```
 
 Ou ajoutez à `go.mod`:
 
 ```go
-require gitlab.com/tranchida/gocamel v0.12.0
+require gitlab.com/tranchida/gocamel v0.12.2
 ```
 
 Pour utiliser des composants optionnels, installez les modules individuels :
 
 ```bash
-go get gitlab.com/tranchida/gocamel/components/kafka@v0.12.0
-go get gitlab.com/tranchida/gocamel/components/grpc@v0.12.0
-go get gitlab.com/tranchida/gocamel/components/redis@v0.12.0
-go get gitlab.com/tranchida/gocamel/components/nats@v0.12.0
+go get gitlab.com/tranchida/gocamel/components/kafka@v0.12.2
+go get gitlab.com/tranchida/gocamel/components/grpc@v0.12.2
+go get gitlab.com/tranchida/gocamel/components/redis@v0.12.2
+go get gitlab.com/tranchida/gocamel/components/nats@v0.12.2
 ```
 
 Puis:

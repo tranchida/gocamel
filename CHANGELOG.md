@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.12.2] - 2026-09-05
+
+Patch release for the Go 1.27 toolchain and lint configuration.
+
+### Fixed
+
+- Updated Staticcheck to 2026.2.1 and gosec to v2.29.0, both compatible with Go 1.27.
+- Removed the MongoDB test's deprecation diagnostic while preserving its no-I/O regression scenario.
+- Applied gofmt to all previously unformatted Go files.
+
+### Notes
+
+- This release contains no new runtime API or behavior changes compared with v0.12.1.
+
 ## [v0.12.0] - 2026-09-05
 
 Reliability release addressing 18 code-review findings across routing, message delivery, concurrency and component lifecycle.
@@ -443,6 +457,7 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.12.2]: https://gitlab.com/tranchida/gocamel/-/tags/v0.12.2
 [v0.12.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.12.0
 [v0.11.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.11.0
 [v0.10.1]: https://gitlab.com/tranchida/gocamel/-/tags/v0.10.1
