@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.13.0] - 2026-09-05
+
+Feature release adding archive data formats and the STOMP/ActiveMQ component.
+
+### Added
+
+- **STOMP component** (`components/stomp`, new module): produce and consume messages with any STOMP 1.0/1.1/1.2 compliant broker (ActiveMQ, ActiveMQ Artemis, RabbitMQ, Apollo) via the `go-stomp` client.
+  - URI-based destinations (`stomp://queue/orders?host=localhost:61613`), consumer ack modes `auto`/`client`/`client-individual` with retry-before-ack semantics, `forwardHeaders` allowlist and `allowHeaderOverride` opt-in for dynamic destinations.
+  - SSL/TLS support: `ssl=true` with `sslCAFile`, `sslCertFile`/`sslKeyFile` (mutual TLS), `sslServerName` and a warned `sslInsecureSkipVerify` opt-in; TLS options validated at endpoint creation with traversal-safe paths.
+  - Sensitive credential headers (`Authorization`, `Cookie`, ...) are never forwarded to the broker.
+  - Tests run in-process against the embedded go-stomp server over plain TCP, TLS and mutual TLS, all passing with `-race`.
+- **ZIP data format** (stdlib only): `MarshalZip`/`UnmarshalZip` DSL methods. Marshal writes standard deflate archives or WinZip AE-2 AES-256 encrypted entries (`ZipPassword`); Unmarshal reads plain, ZipCrypto (legacy `zip -P`) and WinZip AES archives. Single-entry archives unmarshal to raw content, multi-entry to `map[string][]byte`.
+- **tar.gz data format** (stdlib only): `MarshalTarGz`/`UnmarshalTarGz` DSL methods with configurable gzip level and the same body conventions as ZIP.
+- Security for both data formats: zip-slip/tar-slip entry names rejected on marshal and unmarshal, per-entry decompression size limits (512 MiB default) against zip bombs, constant-time password checks.
+
+### Notes
+
+- Published components and observability modules now require core **v0.13.0**.
+
 ## [v0.12.2] - 2026-09-05
 
 Patch release for the Go 1.27 toolchain and lint configuration.
