@@ -36,7 +36,7 @@ body, _ := exchange.GetBodyAsString()
 > `In`/`Out` et la map `Properties` n'ont aucun verrouillage interne. Les
 > EIPs qui font du fan-out vers plusieurs goroutines (`Multicast`,
 > `Splitter`, `RecipientList` en mode parallèle) appellent
-> `exchange.Copy()` une fois par branche **dans la goroutine appelante**
+> `exchange.DeepCopy()` une fois par branche **dans la goroutine appelante**
 > avant de lancer les workers — l'exchange parent est alors read-only le
 > temps du fan-out et redevient mutable une fois `wg.Wait()` retourné. Si
 > vous écrivez un EIP personnalisé qui fan-out, suivez le même schéma.
@@ -290,3 +290,9 @@ context.CreateRouteBuilder().
     To("http://api.service.com").
     Build()
 ```
+
+## Propagation des messages et cycle de vie
+
+Avant chaque étape du pipeline, le corps et les en-têtes présents dans `Out` sont fusionnés dans `In`, puis `Out` est réinitialisé. Cela vaut aussi dans Choice, Loop et Split. Après `SetBody("new").ProcessFunc(...)`, `GetBody()` expose donc `"new"` ; un ancien `Out` ne peut plus réintroduire un en-tête supprimé. `GetResponse()` combine les en-têtes finaux de `In` avec les éventuels en-têtes et corps de `Out` ; utilisez-le pour lire la réponse terminée.
+
+Les processeurs appelés au démarrage ou à l’arrêt peuvent consulter `CamelContext.IsStarted` et `Route.IsStarted`. Les appels aux consommateurs s’effectuent hors des verrous de cycle de vie. Des transitions concurrentes renvoient une erreur ; après expiration du délai de `GracefulStop`, le redémarrage reste refusé jusqu’à la fin de la libération des ressources.

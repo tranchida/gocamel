@@ -251,6 +251,7 @@ type CronConsumer struct {
 	// goroutine register the job on the SHARED component scheduler a moment
 	// later — where it would fire forever with no owner left to remove it.
 	startWG sync.WaitGroup
+	jobsWG  sync.WaitGroup // Add is guarded by mu and stopped/paused
 
 	// stopped is set (under mu) by the first Stop() once deleteJob semantics
 	// apply. The registration goroutine re-checks it under the same mutex
@@ -293,8 +294,11 @@ func (c *CronConsumer) Start(ctx context.Context) error {
 
 // startCronTrigger registers a job in the shared robfig/cron scheduler.
 func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = cancel
 	spec, err := c.buildSpec()
 	if err != nil {
+		cancel()
 		return err
 	}
 
@@ -302,9 +306,14 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 	sched := ep.component.scheduler
 
 	jobFn := func() {
-		if c.paused.Load() {
+		c.mu.Lock()
+		if c.stopped || c.paused.Load() {
+			c.mu.Unlock()
 			return
 		}
+		c.jobsWG.Add(1)
+		c.mu.Unlock()
+		defer c.jobsWG.Done()
 
 		now := time.Now()
 
@@ -341,8 +350,7 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 		job = cron.NewChain(cron.SkipIfStillRunning(cron.DefaultLogger)).Then(job)
 	}
 
-	gCtx, cancel := context.WithCancel(ctx)
-	c.cancel = cancel
+	gCtx := ctx
 
 	c.startWG.Add(1)
 	go func() {
@@ -416,9 +424,14 @@ func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 
 // fireSimpleJob executes the processor for a SimpleTrigger fire.
 func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
-	if c.paused.Load() {
+	c.mu.Lock()
+	if c.stopped || c.paused.Load() {
+		c.mu.Unlock()
 		return
 	}
+	c.jobsWG.Add(1)
+	c.mu.Unlock()
+	defer c.jobsWG.Done()
 
 	ep := c.endpoint
 
@@ -464,34 +477,27 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 
 // Stop stops the consumer according to the deleteJob / pauseJob options.
 func (c *CronConsumer) Stop() error {
-	ep := c.endpoint
-
-	if ep.pauseJob {
-		// Pause: the scheduler continues but jobs become no-ops
-		c.paused.Store(true)
-		return nil
-	}
-
-	// Full stop: cancel the startup goroutine or the ticker
-	if c.cancel != nil {
-		c.cancel()
-	}
-
-	// Join the delayed-registration goroutine so that a Stop() racing it
-	// cannot observe added == false and leave a permanently-firing job on the
-	// shared scheduler.
-	c.startWG.Wait()
-
-	// For CronTrigger, remove the entry from the scheduler. The stopped flag
-	// (checked by the registration goroutine under the same mutex) makes this
-	// a single producer/consumer handoff on c.added/c.entryID.
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.stopped = true
-	if c.added {
-		ep.component.scheduler.Remove(c.entryID)
-		c.added = false
+	pause := c.endpoint.pauseJob
+	if pause {
+		c.paused.Store(true)
+	} else {
+		c.stopped = true
 	}
-
+	c.mu.Unlock()
+	if !pause {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		c.startWG.Wait()
+		c.mu.Lock()
+		added, entryID := c.added, c.entryID
+		c.added = false
+		c.mu.Unlock()
+		if added {
+			c.endpoint.component.scheduler.Remove(entryID)
+		}
+	}
+	c.jobsWG.Wait()
 	return nil
 }

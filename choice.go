@@ -131,6 +131,7 @@ type compositeProcessor struct {
 
 func (cp *compositeProcessor) Process(exchange *Exchange) error {
 	for _, p := range cp.processors {
+		propagateOutToInAndReset(exchange)
 		if err := p.Process(exchange); err != nil {
 			return err
 		}

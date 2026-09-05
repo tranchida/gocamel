@@ -500,7 +500,7 @@ func TestSimpleSetHeaderProcessor(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	got, exists := ex.GetOut().GetHeader("X-Processed")
+	got, exists := ex.GetResponse().GetHeader("X-Processed")
 	if !exists {
 		t.Fatal("X-Processed header not found")
 	}
@@ -1312,7 +1312,7 @@ func TestChoiceProcessorWithSimpleExpressions(t *testing.T) {
 
 			// Reset output
 			ex.GetOut().SetBody(nil)
-			ex.GetOut().SetHeaders(nil)
+			ex.GetOut().ClearHeaders()
 
 			err = route.Process(ex)
 			if err != nil {
@@ -1395,7 +1395,7 @@ func TestChoiceWithSetHeader(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	header, _ := ex.GetOut().GetHeader("X-Processed")
+	header, _ := ex.GetResponse().GetHeader("X-Processed")
 	if header != "yes" {
 		t.Errorf("Expected X-Processed header = 'yes', got %v", header)
 	}
@@ -1442,8 +1442,8 @@ func TestChoiceProcessorWithMultipleProcessors(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	step1, exists1 := ex.GetOut().GetHeader("Step1")
-	step2, exists2 := ex.GetOut().GetHeader("Step2")
+	step1, exists1 := ex.GetResponse().GetHeader("Step1")
+	step2, exists2 := ex.GetResponse().GetHeader("Step2")
 
 	if !exists1 || step1 != "done" {
 		t.Errorf("Expected Step1 header = 'done', got %v (exists=%v)", step1, exists1)

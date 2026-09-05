@@ -35,7 +35,7 @@ body, _ := exchange.GetBodyAsString()
 > `Exchange` is **not** safe for concurrent use. The `In`/`Out` messages and
 > the `Properties` map have no internal locking. EIPs that fan out to
 > multiple goroutines (`Multicast`, `Splitter`, `RecipientList` in parallel
-> mode) call `exchange.Copy()` once per branch in the caller goroutine
+> mode) call `exchange.DeepCopy()` once per branch in the caller goroutine
 > before launching workers — the parent exchange is then read-only for the
 > duration of the fan-out and becomes writable again after `wg.Wait()`
 > returns. If you write a custom EIP that fans out, follow the same pattern.
@@ -282,3 +282,9 @@ context.CreateRouteBuilder().
     To("http://api.service.com").
     Build()
 ```
+
+## Message propagation and lifecycle
+
+Before each pipeline step, a pending `Out` body and headers are merged into `In`, then `Out` is reset. This also applies inside Choice, Loop and Split. `SetBody("new").ProcessFunc(...)` therefore exposes `"new"` through `GetBody()`, and `RemoveHeader` cannot be undone by a stale output. `GetResponse()` combines the final input headers with any pending output headers/body; use it when reading a completed response.
+
+Lifecycle status queries (`CamelContext.IsStarted`, `Route.IsStarted`) are safe from processors invoked during startup or shutdown. External consumer calls run outside lifecycle locks. Concurrent lifecycle transitions return an error; after a `GracefulStop` timeout, restart remains blocked until resource teardown finishes.

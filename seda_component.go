@@ -73,6 +73,7 @@ func (c *SedaComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 // SedaEndpoint represents a SEDA endpoint.
 type SedaEndpoint struct {
+	polling             bool // guarded by mu; mutually exclusive with a continuous consumer
 	uri                 string
 	queue               chan *Exchange
 	concurrentConsumers int
@@ -97,7 +98,7 @@ func (e *SedaEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.consumer != nil {
+	if e.consumer != nil || e.polling {
 		return nil, fmt.Errorf("multiple consumers for the same SEDA endpoint are not allowed: %s", e.uri)
 	}
 

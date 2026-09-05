@@ -73,13 +73,11 @@ func (c *RedisComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		}
 	}
 
-	client := redis.NewClient(&redis.Options{
-		Addr: addr,
-	})
+	options := &redis.Options{Addr: addr}
 
 	return &RedisEndpoint{
 		uri:                 uri,
-		client:              client,
+		options:             options,
 		command:             command,
 		key:                 key,
 		channel:             channel,
@@ -91,26 +89,52 @@ func (c *RedisComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 // RedisEndpoint represents a Redis connection endpoint.
 type RedisEndpoint struct {
 	uri                 string
-	client              *redis.Client
+	options             *redis.Options
+	connection          *redisConnection // guarded by mu
 	command             string
 	key                 string
 	channel             string
 	subscribe           bool
 	allowHeaderOverride bool // opt-in: CamelRedisCommand/CamelRedisKey/CamelRedisChannel headers may override URI settings
 	consumer            *RedisConsumer
-	mu                  sync.Mutex
-	closeOnce           sync.Once // guards client.Close: producer and consumer share the client
+	mu                  sync.Mutex // guards consumer and connection ownership
 }
 
-// closeClient closes the shared Redis client exactly once. Both the producer
-// and the consumer may call Stop() on the same endpoint, and closing the client
-// twice (or racing a Close against in-flight commands) is undefined.
-func (e *RedisEndpoint) closeClient() error {
-	var err error
-	e.closeOnce.Do(func() {
-		err = e.client.Close()
-	})
-	return err
+// redisConnection belongs to one endpoint lifecycle. Reference counting keeps
+// one owner from closing the client while another producer/consumer uses it.
+type redisConnection struct {
+	client    *redis.Client
+	users     int // guarded by RedisEndpoint.mu
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (e *RedisEndpoint) acquireClient() *redisConnection {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.connection == nil {
+		e.connection = &redisConnection{client: redis.NewClient(e.options)}
+	}
+	e.connection.users++
+	return e.connection
+}
+
+func (e *RedisEndpoint) releaseClient(conn *redisConnection) error {
+	if conn == nil {
+		return nil
+	}
+	e.mu.Lock()
+	conn.users--
+	last := conn.users == 0
+	if last && e.connection == conn {
+		e.connection = nil
+	}
+	e.mu.Unlock()
+	if last {
+		conn.closeOnce.Do(func() { conn.closeErr = conn.client.Close() })
+		return conn.closeErr
+	}
+	return nil
 }
 
 // URI returns the endpoint URI.
@@ -141,18 +165,35 @@ func (e *RedisEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Con
 
 // RedisProducer executes commands on Redis.
 type RedisProducer struct {
-	endpoint *RedisEndpoint
+	endpoint   *RedisEndpoint
+	mu         sync.Mutex // protects connection
+	connection *redisConnection
 }
 
 // Start starts the producer.
 func (p *RedisProducer) Start(ctx context.Context) error {
-	// Ping to verify connection
-	return p.endpoint.client.Ping(ctx).Err()
+	p.mu.Lock()
+	if p.connection != nil {
+		p.mu.Unlock()
+		return nil
+	}
+	conn := p.endpoint.acquireClient()
+	p.connection = conn
+	p.mu.Unlock()
+	if err := conn.client.Ping(ctx).Err(); err != nil {
+		_ = p.Stop()
+		return err
+	}
+	return nil
 }
 
-// Stop stops the producer and closes the Redis client.
+// Stop releases this producer's ownership, closing the last owner's client.
 func (p *RedisProducer) Stop() error {
-	return p.endpoint.closeClient()
+	p.mu.Lock()
+	conn := p.connection
+	p.connection = nil
+	p.mu.Unlock()
+	return p.endpoint.releaseClient(conn)
 }
 
 // Send executes commands (SET, GET, DEL, PUBLISH) based on parameters or exchange headers.
@@ -164,6 +205,12 @@ func (p *RedisProducer) Stop() error {
 // external metadata onto headers would otherwise hand an attacker control of
 // the target key, channel and command.
 func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
+	p.mu.Lock()
+	conn := p.connection
+	p.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("redis producer is not started")
+	}
 	ctx := exchange.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -206,7 +253,7 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 		if key == "" {
 			return fmt.Errorf("redis: key is required for SET command")
 		}
-		err := p.endpoint.client.Set(ctx, key, bodyStr, 0).Err()
+		err := conn.client.Set(ctx, key, bodyStr, 0).Err()
 		if err != nil {
 			return err
 		}
@@ -216,7 +263,7 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 		if key == "" {
 			return fmt.Errorf("redis: key is required for GET command")
 		}
-		val, err := p.endpoint.client.Get(ctx, key).Result()
+		val, err := conn.client.Get(ctx, key).Result()
 		if err != nil {
 			if err == redis.Nil {
 				exchange.Out.SetBody(nil)
@@ -230,7 +277,7 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 		if key == "" {
 			return fmt.Errorf("redis: key is required for DEL command")
 		}
-		deleted, err := p.endpoint.client.Del(ctx, key).Result()
+		deleted, err := conn.client.Del(ctx, key).Result()
 		if err != nil {
 			return err
 		}
@@ -244,7 +291,7 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 		if pubChan == "" {
 			return fmt.Errorf("redis: channel or key is required for PUBLISH command")
 		}
-		receivers, err := p.endpoint.client.Publish(ctx, pubChan, bodyStr).Result()
+		receivers, err := conn.client.Publish(ctx, pubChan, bodyStr).Result()
 		if err != nil {
 			return err
 		}
@@ -259,11 +306,14 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 
 // RedisConsumer subscribes to a Redis Pub/Sub channel.
 type RedisConsumer struct {
-	endpoint  *RedisEndpoint
-	processor gocamel.Processor
-	pubSub    *redis.PubSub
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	endpoint   *RedisEndpoint
+	processor  gocamel.Processor
+	pubSub     *redis.PubSub
+	connection *redisConnection
+	stopOnce   sync.Once
+	stopErr    error
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 // Start opens a connection, subscribes to the channel, and processes incoming messages.
@@ -283,7 +333,8 @@ func (c *RedisConsumer) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
-	c.pubSub = c.endpoint.client.Subscribe(ctx, channel)
+	c.connection = c.endpoint.acquireClient()
+	c.pubSub = c.connection.client.Subscribe(ctx, channel)
 
 	// Verify subscription
 	_, err := c.pubSub.Receive(ctx)
@@ -300,14 +351,22 @@ func (c *RedisConsumer) Start(ctx context.Context) error {
 
 // Stop unsubscribes and closes the pubsub client and Redis connection.
 func (c *RedisConsumer) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
-	}
-	if c.pubSub != nil {
-		_ = c.pubSub.Close()
-	}
-	c.wg.Wait()
-	return c.endpoint.closeClient()
+	c.stopOnce.Do(func() {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		if c.pubSub != nil {
+			_ = c.pubSub.Close()
+		}
+		c.wg.Wait()
+		c.stopErr = c.endpoint.releaseClient(c.connection)
+		c.endpoint.mu.Lock()
+		if c.endpoint.consumer == c {
+			c.endpoint.consumer = nil
+		}
+		c.endpoint.mu.Unlock()
+	})
+	return c.stopErr
 }
 
 func (c *RedisConsumer) run(ctx context.Context) {

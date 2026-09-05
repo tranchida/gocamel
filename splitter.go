@@ -1,10 +1,8 @@
 package gocamel
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
-	"sync"
 )
 
 // Splitter is a Processor that implements the Split EIP.
@@ -49,6 +47,7 @@ func (s *Splitter) SetParallelProcessing(parallel bool) *Splitter {
 
 // Process executes the split on the provided exchange
 func (s *Splitter) Process(exchange *Exchange) error {
+	propagateOutToInAndReset(exchange)
 	parts, err := s.Expression(exchange)
 	if err != nil {
 		return fmt.Errorf("split expression error: %w", err)
@@ -107,121 +106,39 @@ func (s *Splitter) Process(exchange *Exchange) error {
 	}
 
 	if !isList {
-		partExchange := exchange.Copy()
-		partExchange.In.SetBody(parts)
-		partExchange.SetProperty(CamelSplitIndex, 0)
-		partExchange.SetProperty(CamelSplitSize, 1)
-		partExchange.SetProperty(CamelSplitComplete, true)
-
-		if err := s.processPart(partExchange); err != nil {
-			if !errors.Is(err, ErrStopRouting) {
-				return err
-			}
-			// In case of Stop EIP, continue to aggregation
+		splitParts = []any{parts}
+	}
+	branches := make([]*Exchange, len(splitParts))
+	for i, part := range splitParts {
+		if s.ParallelProcessing {
+			branches[i] = exchange.DeepCopy()
+			part = deepCopyValue(part)
+		} else {
+			branches[i] = exchange.Copy()
 		}
-
-		if s.AggregationStrategy != nil {
-			aggregatedExchange := s.AggregationStrategy.Aggregate(nil, partExchange)
-			if aggregatedExchange != nil {
-				publishAggregatedResult(exchange, aggregatedExchange)
-			}
-		}
-		return nil
+		branches[i].In.SetBody(part)
+		branches[i].SetProperty(CamelSplitIndex, i)
+		branches[i].SetProperty(CamelSplitSize, len(splitParts))
+		branches[i].SetProperty(CamelSplitComplete, i == len(splitParts)-1)
 	}
-
-	length := len(splitParts)
-	if length == 0 {
-		return nil
+	aggregated, err := processFanOut(branches, s.ParallelProcessing, func(_ int, branch *Exchange) error {
+		return s.processPart(branch)
+	}, s.AggregationStrategy)
+	if err != nil {
+		return fmt.Errorf("split: %w", err)
 	}
-
-	if s.ParallelProcessing {
-		return s.processParallel(exchange, splitParts)
+	if s.AggregationStrategy != nil {
+		publishAggregatedResult(exchange, aggregated)
 	}
-
-	var aggregatedExchange *Exchange
-	for i := 0; i < length; i++ {
-		part := splitParts[i]
-
-		// For each part, create a copy of the original exchange
-		partExchange := exchange.Copy()
-		partExchange.In.SetBody(part)
-
-		// Can add split-specific properties (index, total, etc.)
-		partExchange.SetProperty(CamelSplitIndex, i)
-		partExchange.SetProperty(CamelSplitSize, length)
-		partExchange.SetProperty(CamelSplitComplete, i == length-1)
-
-		if err := s.processPart(partExchange); err != nil {
-			if !errors.Is(err, ErrStopRouting) {
-				return err
-			}
-			// In case of Stop EIP, ignore the error and continue to the next part
-		}
-
-		if s.AggregationStrategy != nil {
-			aggregatedExchange = s.AggregationStrategy.Aggregate(aggregatedExchange, partExchange)
-		}
-	}
-
-	if s.AggregationStrategy != nil && aggregatedExchange != nil {
-		// Update the original exchange with the aggregation result
-		publishAggregatedResult(exchange, aggregatedExchange)
-	}
-
 	return nil
 }
 
 func (s *Splitter) processPart(exchange *Exchange) error {
 	for _, p := range s.processors {
+		propagateOutToInAndReset(exchange)
 		if err := p.Process(exchange); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func (s *Splitter) processParallel(exchange *Exchange, splitParts []any) error {
-	length := len(splitParts)
-	parts := make([]*Exchange, length)
-	for i, part := range splitParts {
-		partExchange := exchange.DeepCopy()
-		partExchange.In.SetBody(part)
-		partExchange.SetProperty(CamelSplitIndex, i)
-		partExchange.SetProperty(CamelSplitSize, length)
-		partExchange.SetProperty(CamelSplitComplete, i == length-1)
-		parts[i] = partExchange
-	}
-
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var aggregatedExchange *Exchange
-	var firstErr error
-
-	for i := range parts {
-		wg.Add(1)
-		go func(partExchange *Exchange) {
-			defer wg.Done()
-			err := safeProcess(func() error { return s.processPart(partExchange) })
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil && !errors.Is(err, ErrStopRouting) {
-				if firstErr == nil {
-					firstErr = err
-				}
-				return
-			}
-			if s.AggregationStrategy != nil {
-				aggregatedExchange = s.AggregationStrategy.Aggregate(aggregatedExchange, partExchange)
-			}
-		}(parts[i])
-	}
-	wg.Wait()
-
-	if firstErr != nil {
-		return fmt.Errorf("split parallel error: %w", firstErr)
-	}
-	if s.AggregationStrategy != nil && aggregatedExchange != nil {
-		publishAggregatedResult(exchange, aggregatedExchange)
 	}
 	return nil
 }

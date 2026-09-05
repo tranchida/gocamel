@@ -88,7 +88,9 @@ type Route struct {
 	processors     []Processor
 	lazyProducers  []*lazyProducer // static To() producers; stopped at Route.Stop().
 	started        bool
-	startLock      sync.RWMutex // Protects started state for concurrent access.
+	starting       bool         // guarded by startLock
+	stopping       bool         // guarded by startLock
+	startLock      sync.RWMutex // Protects started, starting and stopping.
 	err            error        // Accumulated during construction, surfaced at Start().
 	errorHandler   ErrorHandler // Error handler for this route (nil means propagate).
 	interceptors   []RouteInterceptor
@@ -142,7 +144,7 @@ func (lp *lazyProducer) Process(exchange *Exchange) error {
 	if err != nil {
 		return err
 	}
-	exchange.PropagateOutToIn()
+	propagateOutToInAndReset(exchange)
 	return prod.Send(exchange)
 }
 
@@ -248,6 +250,7 @@ func (r *Route) doProcess(exchange *Exchange) error {
 func (r *Route) processFrom(exchange *Exchange, start int) error {
 	for i := start; i < len(r.processors); {
 		processor := r.processors[i]
+		propagateOutToInAndReset(exchange)
 
 		// Named stepStart, not start: shadowing the loop's start parameter
 		// here made the function hard to read for no benefit.
@@ -309,10 +312,12 @@ func (r *Route) nodeIDFor(i int, processor Processor) string {
 
 	r.nodeIDMu.RLock()
 	cache := r.nodeIDCache
-	r.nodeIDMu.RUnlock()
 	if i < len(cache) && cache[i] != "" {
-		return cache[i]
+		id := cache[i]
+		r.nodeIDMu.RUnlock()
+		return id
 	}
+	r.nodeIDMu.RUnlock()
 
 	id := reflect.TypeOf(processor).String()
 
@@ -367,39 +372,36 @@ func (r *Route) Validate() error {
 }
 
 // Start starts the route.
-func (r *Route) Start(ctx context.Context) error {
+func (r *Route) Start(ctx context.Context) (err error) {
 	r.startLock.Lock()
-	defer r.startLock.Unlock()
-
-	if r.started {
-		return fmt.Errorf("route is already started")
+	if r.started || r.starting || r.stopping {
+		r.startLock.Unlock()
+		return fmt.Errorf("route is already started or changing lifecycle state")
 	}
-
+	r.starting = true
+	r.startLock.Unlock()
+	defer func() {
+		r.startLock.Lock()
+		r.starting = false
+		r.started = err == nil
+		r.startLock.Unlock()
+	}()
 	if r.err != nil {
 		return r.err
 	}
-
 	if r.from == nil {
 		return fmt.Errorf("no source endpoint defined")
 	}
-
 	consumer, err := r.from.CreateConsumer(r)
 	if err != nil {
 		return fmt.Errorf("error creating consumer: %w", err)
 	}
 	r.consumer = consumer
 	r.configureAggregatorTimeouts(ctx)
-
 	if err := consumer.Start(ctx); err != nil {
-		r.stopAggregatorTimeouts()
 		r.consumer = nil
-		if stopErr := consumer.Stop(); stopErr != nil {
-			return fmt.Errorf("error starting consumer: %w; cleanup failed: %v", err, stopErr)
-		}
-		return fmt.Errorf("error starting consumer: %w", err)
+		return errors.Join(fmt.Errorf("error starting consumer: %w", err), consumer.Stop(), r.stopAggregatorTimeouts())
 	}
-
-	r.started = true
 	return nil
 }
 
@@ -408,12 +410,22 @@ func (r *Route) Start(ctx context.Context) error {
 // returned combined so one failing producer cannot leak the others.
 func (r *Route) Stop() error {
 	r.startLock.Lock()
-	defer r.startLock.Unlock()
-
+	if r.starting || r.stopping {
+		r.startLock.Unlock()
+		return fmt.Errorf("route is changing lifecycle state")
+	}
 	if !r.started {
+		r.startLock.Unlock()
 		return nil
 	}
-
+	r.stopping = true
+	r.startLock.Unlock()
+	defer func() {
+		r.startLock.Lock()
+		r.started = false
+		r.stopping = false
+		r.startLock.Unlock()
+	}()
 	var errs []error
 
 	if r.consumer != nil {
@@ -446,7 +458,6 @@ func (r *Route) Stop() error {
 		}
 	}
 
-	r.started = false
 	return errors.Join(errs...)
 }
 

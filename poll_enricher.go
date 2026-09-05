@@ -45,7 +45,7 @@ func NewPollEnricher(camelContext *CamelContext, uri string, strategy Aggregatio
 }
 
 // Process implements Processor.
-func (p *PollEnricher) Process(exchange *Exchange) error {
+func (p *PollEnricher) Process(exchange *Exchange) (resultErr error) {
 	ctx := exchange.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -69,61 +69,28 @@ func (p *PollEnricher) Process(exchange *Exchange) error {
 		return fmt.Errorf("pollEnrich: failed to create endpoint %q: %w", targetURI, err)
 	}
 
-	polledChan := make(chan *Exchange, 1)
-
-	// Create temporary consumer that captures a single message
-	consumer, err := endpoint.CreateConsumer(ProcessorFunc(func(polled *Exchange) error {
-		select {
-		case polledChan <- polled.Copy():
-		default:
-		}
-		return nil
-	}))
+	polling, ok := endpoint.(PollingEndpoint)
+	if !ok {
+		return fmt.Errorf("pollEnrich: endpoint %q does not support single-message polling", targetURI)
+	}
+	polledExchange, err := polling.Poll(ctx, p.timeout)
 	if err != nil {
-		return fmt.Errorf("pollEnrich: failed to create consumer for %q: %w", targetURI, err)
+		return fmt.Errorf("pollEnrich: receive from %q: %w", targetURI, err)
 	}
-
-	consumerCtx, cancelConsumer := context.WithCancel(ctx)
-	defer cancelConsumer()
-
-	if err := consumer.Start(consumerCtx); err != nil {
-		return fmt.Errorf("pollEnrich: failed to start consumer for %q: %w", targetURI, err)
-	}
-	defer consumer.Stop()
-
-	var polledExchange *Exchange
-
-	if p.timeout < 0 {
-		// Block indefinitely until message or context cancellation
-		select {
-		case polledExchange = <-polledChan:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	} else if p.timeout == 0 {
-		// Non-blocking poll: check channel or yield shortly
-		select {
-		case polledExchange = <-polledChan:
-		case <-time.After(10 * time.Millisecond):
-			// No message available immediately
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	} else {
-		// Wait up to timeout
-		select {
-		case polledExchange = <-polledChan:
-		case <-time.After(p.timeout):
-			// Timeout reached; polledExchange remains nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	if polledExchange != nil {
+		defer func() { resultErr = CompleteExchange(polledExchange, resultErr) }()
 	}
 
 	if polledExchange != nil {
 		polledExchange.PropagateOutToIn()
 		if p.strategy != nil {
-			merged := p.strategy.Aggregate(exchange, polledExchange)
+			var merged *Exchange
+			if err := safeProcess(func() error {
+				merged = p.strategy.Aggregate(exchange, polledExchange)
+				return nil
+			}); err != nil {
+				return err
+			}
 			if merged != nil {
 				exchange.In = merged.In
 				exchange.Out = merged.Out

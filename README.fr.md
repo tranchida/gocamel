@@ -4,7 +4,8 @@
 
 **Framework d'Intégration d'Entreprise pour Go**
 
-[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org/)
+[![Release](https://img.shields.io/badge/version-v0.12.0-blue)](https://gitlab.com/tranchida/gocamel/-/tags/v0.12.0)
+[![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 🌐 **Langue / Language**: [**🇺🇸 English**](./README.md) | 🇫🇷 Français
@@ -34,13 +35,17 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 
 ## 📦 Installation
 
+La version **v0.12.0** inclut les corrections de fiabilité du routage et des composants. Consultez les [notes de version](hugo-site/content/fr/releases/v0.12.0.md) pour les changements de migration.
+
+Go **1.27.0 ou ultérieur** est requis pour le cœur, les composants et les exemples. Le workspace, la CI et `.go-version` utilisent Go 1.27.0 par défaut.
+
 Le module core (moteur de routage, EIPs, Simple Language et tous les
 composants sans dépendance externe : direct, seda, chan, timer, http, exec,
 template, sql) n'a **aucune dépendance externe à l'exécution** et se compile sans
 CGO (les tests utilisent le driver pure-Go `modernc.org/sqlite`) :
 
 ```bash
-go get gitlab.com/tranchida/gocamel
+go get gitlab.com/tranchida/gocamel@v0.12.0
 ```
 
 Les composants qui s'appuient sur des bibliothèques tierces vivent dans leurs
@@ -48,23 +53,23 @@ propres modules Go — vous ne récupérez que les dépendances de ce que vous
 utilisez réellement :
 
 ```bash
-go get gitlab.com/tranchida/gocamel/components/kafka     # segmentio/kafka-go
-go get gitlab.com/tranchida/gocamel/components/grpc      # google.golang.org/grpc
-go get gitlab.com/tranchida/gocamel/components/redis    # go-redis
-go get gitlab.com/tranchida/gocamel/components/nats     # nats.go
-go get gitlab.com/tranchida/gocamel/components/mongodb  # mongo-driver
-go get gitlab.com/tranchida/gocamel/components/mail     # SMTP/IMAP/POP3
-go get gitlab.com/tranchida/gocamel/components/ftp
-go get gitlab.com/tranchida/gocamel/components/sftp
-go get gitlab.com/tranchida/gocamel/components/smb
-go get gitlab.com/tranchida/gocamel/components/telegram
-go get gitlab.com/tranchida/gocamel/components/openai
-go get gitlab.com/tranchida/gocamel/components/anthropic
-go get gitlab.com/tranchida/gocamel/components/ollama
-go get gitlab.com/tranchida/gocamel/components/cron     # robfig/cron
-go get gitlab.com/tranchida/gocamel/components/file     # watcher fsnotify
-go get gitlab.com/tranchida/gocamel/observability/prometheus
-go get gitlab.com/tranchida/gocamel/observability/otel
+go get gitlab.com/tranchida/gocamel/components/kafka@v0.12.0     # segmentio/kafka-go
+go get gitlab.com/tranchida/gocamel/components/grpc@v0.12.0      # google.golang.org/grpc
+go get gitlab.com/tranchida/gocamel/components/redis@v0.12.0    # go-redis
+go get gitlab.com/tranchida/gocamel/components/nats@v0.12.0     # nats.go
+go get gitlab.com/tranchida/gocamel/components/mongodb@v0.12.0  # mongo-driver
+go get gitlab.com/tranchida/gocamel/components/mail@v0.12.0     # SMTP/IMAP/POP3
+go get gitlab.com/tranchida/gocamel/components/ftp@v0.12.0
+go get gitlab.com/tranchida/gocamel/components/sftp@v0.12.0
+go get gitlab.com/tranchida/gocamel/components/smb@v0.12.0
+go get gitlab.com/tranchida/gocamel/components/telegram@v0.12.0
+go get gitlab.com/tranchida/gocamel/components/openai@v0.12.0
+go get gitlab.com/tranchida/gocamel/components/anthropic@v0.12.0
+go get gitlab.com/tranchida/gocamel/components/ollama@v0.12.0
+go get gitlab.com/tranchida/gocamel/components/cron@v0.12.0     # robfig/cron
+go get gitlab.com/tranchida/gocamel/components/file@v0.12.0     # watcher fsnotify
+go get gitlab.com/tranchida/gocamel/observability/prometheus@v0.12.0
+go get gitlab.com/tranchida/gocamel/observability/otel@v0.12.0
 ```
 
 ```go
@@ -284,3 +289,11 @@ Licence Apache Version 2.0 - voir le fichier [LICENSE](LICENSE) pour les détail
 <div align="center">
   <sub>Fait avec ❤️ par [Giampaolo Tranchida](mailto:giampaolo@tranchida.ch) et l'équipe GoCamel</sub>
 </div>
+
+## Garanties de routage et de livraison
+
+Chaque étape reçoit la sortie de la précédente, y compris les en-têtes ; les en-têtes supprimés le restent. Utilisez `exchange.GetResponse()` pour lire le message final combiné. Les branches parallèles Split, Multicast et RecipientList terminent leurs propres callbacks ; leur agrégation suit l’ordre d’entrée et intercepte les panics.
+
+`PollEnrich` reçoit un seul message sans vider ni arrêter sa file. Il prend en charge `seda`, `chan` et les endpoints personnalisés implémentant `PollingEndpoint` ; les autres endpoints renvoient une erreur. Kafka réessaie les traitements et les commits en échec avant de lire un autre message. Configurez la gestion des erreurs de route pour résoudre les échecs permanents.
+
+Consultez les [concepts de routage](hugo-site/content/fr/concepts.md), les [contrats des EIP](hugo-site/content/fr/eip.md) et les [notes de cycle de vie des composants](hugo-site/content/fr/components.md).

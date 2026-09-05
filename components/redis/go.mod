@@ -1,6 +1,6 @@
 module gitlab.com/tranchida/gocamel/components/redis
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
@@ -15,7 +15,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
-	gitlab.com/tranchida/gocamel v0.9.0
+	gitlab.com/tranchida/gocamel v0.12.0
 	go.uber.org/atomic v1.11.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

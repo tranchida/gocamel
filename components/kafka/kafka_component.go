@@ -203,7 +203,6 @@ func (p *KafkaProducer) Start(_ context.Context) error {
 
 	w := &kafka.Writer{
 		Addr:         kafka.TCP(p.endpoint.brokers...),
-		Topic:        p.endpoint.topic,
 		Balancer:     &kafka.LeastBytes{},
 		BatchTimeout: 10 * time.Millisecond,
 	}
@@ -340,7 +339,7 @@ func (p *KafkaProducer) Send(exchange *gocamel.Exchange) error {
 type KafkaConsumer struct {
 	endpoint  *KafkaEndpoint
 	processor gocamel.Processor
-	reader    *kafka.Reader
+	reader    messageReader
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 }
@@ -396,66 +395,79 @@ func (c *KafkaConsumer) Stop() error {
 	return nil
 }
 
+// messageReader allows consumer delivery and commit ordering to be verified
+// without a broker. kafka.Reader implements this contract.
+type messageReader interface {
+	FetchMessage(context.Context) (kafka.Message, error)
+	CommitMessages(context.Context, ...kafka.Message) error
+	Close() error
+}
+
 func (c *KafkaConsumer) run(ctx context.Context) {
 	defer c.wg.Done()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			msg, err := c.reader.FetchMessage(ctx)
-			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return
-				}
-				// Reader closed or EOF
-				if strings.Contains(err.Error(), "closed") || strings.Contains(err.Error(), "EOF") {
-					return
-				}
-				time.Sleep(100 * time.Millisecond)
-				continue
+	for ctx.Err() == nil {
+		msg, err := c.reader.FetchMessage(ctx)
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+				return
 			}
-
+			if strings.Contains(err.Error(), "closed") || strings.Contains(err.Error(), "EOF") {
+				return
+			}
+			if !waitForRetry(ctx) {
+				return
+			}
+			continue
+		}
+		// Resolve this delivery before fetching another offset. Committing a later
+		// offset would otherwise acknowledge a failed message in the same partition.
+		for {
+			if ctx.Err() != nil {
+				return
+			}
 			exchange := gocamel.NewExchange(ctx)
-			exchange.In.SetBody(msg.Value)
+			exchange.In.SetBody(append([]byte(nil), msg.Value...))
 			exchange.In.SetHeader(CamelKafkaTopic, msg.Topic)
 			exchange.In.SetHeader(CamelKafkaPartition, msg.Partition)
 			exchange.In.SetHeader(CamelKafkaOffset, msg.Offset)
 			exchange.In.SetHeader(CamelKafkaKey, string(msg.Key))
 			exchange.In.SetHeader(CamelKafkaPartitionKey, string(msg.Key))
 			exchange.In.SetHeader(CamelKafkaTimestamp, msg.Time)
-
 			for _, h := range msg.Headers {
 				exchange.In.SetHeader(h.Key, string(h.Value))
 			}
-
-			if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
-				gocamel.LogError("kafka consumer processing error",
-					"uri", c.endpoint.uri,
-					"error", err,
-					"exchange_id", exchange.ID,
-				)
-			} else {
-				// Commit message on successful processing if groupID is configured.
-				// A failed commit is logged, not swallowed silently: without the
-				// commit the message will be redelivered after a rebalance or a
-				// restart, and an operator seeing the log is the only signal of
-				// the duplicated processing to come. The error cannot be returned
-				// to the route (the exchange has already completed), so the loop
-				// continues either way.
-				if c.endpoint.groupID != "" {
-					if err := c.reader.CommitMessages(ctx, msg); err != nil {
-						gocamel.LogError("kafka commit failed; message will be redelivered",
-							"uri", c.endpoint.uri,
-							"topic", msg.Topic,
-							"partition", msg.Partition,
-							"offset", msg.Offset,
-							"error", err,
-						)
-					}
+			err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
+			if err == nil {
+				break
+			}
+			gocamel.LogError("kafka processing failed; retrying before advancing offset", "topic", msg.Topic, "offset", msg.Offset, "error", err)
+			if !waitForRetry(ctx) {
+				return
+			}
+		}
+		if c.endpoint.groupID != "" {
+			// Retrying a commit must not re-run a successful processor.
+			for {
+				if err := c.reader.CommitMessages(ctx, msg); err == nil {
+					break
+				} else {
+					gocamel.LogError("kafka commit failed; retrying before advancing offset", "topic", msg.Topic, "offset", msg.Offset, "error", err)
+				}
+				if !waitForRetry(ctx) {
+					return
 				}
 			}
 		}
+	}
+}
+
+func waitForRetry(ctx context.Context) bool {
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }

@@ -115,18 +115,44 @@ func (e *FTPEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consu
 type FTPProducer struct {
 	endpoint  *FTPEndpoint
 	fileExist gocamel.FileExistBehavior
-	mu        sync.Mutex
+	mu        sync.Mutex      // protects operation initialization
+	operation chan struct{}   // exclusive connection lease for the entire transfer
 	conn      *ftp.ServerConn // persistent connection (disconnect=false)
 }
 
 func (p *FTPProducer) Start(ctx context.Context) error { return nil }
 
-func (p *FTPProducer) Stop() error {
+// acquire leases the connection for one operation without holding a mutex
+// across network I/O. A blocked sender can still cancel while waiting.
+func (p *FTPProducer) acquire(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	if p.operation == nil {
+		p.operation = make(chan struct{}, 1)
+	}
+	operation := p.operation
+	p.mu.Unlock()
+	select {
+	case operation <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *FTPProducer) release() { <-p.operation }
+
+func (p *FTPProducer) Stop() error {
+	if err := p.acquire(context.Background()); err != nil {
+		return err
+	}
+	defer p.release()
 	if p.conn != nil {
-		p.conn.Quit()
+		conn := p.conn
 		p.conn = nil
+		return conn.Quit()
 	}
 	return nil
 }
@@ -135,8 +161,6 @@ func (p *FTPProducer) getConn() (*ftp.ServerConn, error) {
 	if p.endpoint.disconnect {
 		return p.endpoint.connect()
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.conn != nil {
 		if err := p.conn.NoOp(); err == nil {
 			return p.conn, nil
@@ -160,6 +184,10 @@ func (p *FTPProducer) releaseConn(conn *ftp.ServerConn) {
 
 // Send sends the exchange content to the FTP server.
 func (p *FTPProducer) Send(exchange *gocamel.Exchange) error {
+	if err := p.acquire(exchange.Context); err != nil {
+		return err
+	}
+	defer p.release()
 	conn, err := p.getConn()
 	if err != nil {
 		return err

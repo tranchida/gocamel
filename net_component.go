@@ -233,6 +233,13 @@ func (p *NetProducer) Send(exchange *Exchange) error {
 		return fmt.Errorf("net: error dialing %s://%s: %w", p.endpoint.protocol, p.endpoint.address, err)
 	}
 	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
+	if p.endpoint.timeout > 0 {
+		if err := conn.SetDeadline(time.Now().Add(p.endpoint.timeout)); err != nil {
+			return fmt.Errorf("net: setting operation deadline: %w", err)
+		}
+	}
 
 	if _, err := conn.Write(payload); err != nil {
 		return fmt.Errorf("net: error sending to %s://%s: %w", p.endpoint.protocol, p.endpoint.address, err)

@@ -1425,3 +1425,15 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | NATS       | Messagerie   | ✅        | ✅        | `nats://subject`         |
 | Redis      | Messagerie   | ✅        | ✅        | `redis://host:port`      |
 | Go Channel | Core         | ✅        | ✅        | `chan:channelName`       |
+
+## Détails de livraison et de cycle de vie
+
+- **Kafka :** le topic résolu est porté par chaque message ; les topics configurés et surchargés par en-tête fonctionnent ensemble. Un traitement en échec est réessayé avec un nouvel échange avant la lecture suivante. Un commit en échec est réessayé sans refaire le traitement réussi. Les tentatives sont espacées de 100 ms et cessent à l’annulation. Un échec permanent bloque ce consommateur jusqu’à sa résolution par la route ou son arrêt, afin de préserver les offsets cumulatifs.
+- **FTP :** chaque producteur réserve sa connexion exclusivement pendant tout le transfert. Les envois concurrents et `Stop` ne peuvent pas entrelacer les commandes FTP ; un envoi en attente de réservation peut être annulé.
+- **MongoDB :** `save` préserve le `_id` du document entrant, même si le remplacement échoue ; le retry cible ainsi le même document.
+- **Mail :** IMAP IDLE réagit aux notifications de boîte en terminant IDLE, en recherchant les messages puis en reprenant IDLE. Une première recherche traite les messages déjà présents.
+- **Cron :** `Stop` empêche de nouvelles exécutions et attend les jobs actifs avant de retourner, y compris lors d’une pause.
+- **Redis :** les producteurs et consommateurs actifs partagent leurs clients, fermés au départ du dernier utilisateur. Arrêter un producteur laisse les autres utilisables ; les consommateurs arrêtés libèrent leur enregistrement pour permettre le redémarrage de la route.
+- **File :** une URI terminée par `/` désigne un répertoire même s’il n’existe pas encore ; `CamelFileName` sélectionne le fichier à l’intérieur.
+- **Net :** le timeout configuré borne les écritures établies ainsi que la lecture des réponses. Annuler l’échange ferme sa connexion et interrompt ces opérations.
+- **Prometheus :** des appels répétés à `Metrics()` ou `MetricsWith(registry)` réutilisent les collecteurs compatibles déjà enregistrés, ce qui permet des intercepteurs distincts sur plusieurs routes. Les définitions incompatibles échouent toujours à l’enregistrement.

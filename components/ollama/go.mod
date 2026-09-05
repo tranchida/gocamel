@@ -1,11 +1,11 @@
 module gitlab.com/tranchida/gocamel/components/ollama
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/ollama/ollama v0.32.13
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.9.0
+	gitlab.com/tranchida/gocamel v0.12.0
 )
 
 require (

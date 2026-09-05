@@ -2,6 +2,40 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.12.0] - 2026-09-05
+
+Reliability release addressing 18 code-review findings across routing, message delivery, concurrency and component lifecycle.
+
+### Changed
+
+- **Go 1.27.0** is the minimum and default version for all modules, examples and CI.
+- Published components and observability modules now require core **v0.12.0**.
+- **PollEnrich** requires `PollingEndpoint`, supported by `seda`, `chan` and custom implementations. It receives at most one message without draining or stopping the queue. Unsupported endpoints fail before consuming; zero timeout is non-blocking.
+- **Kafka** retries failed processing before fetching another record, and retries failed commits without reprocessing successful records. Permanently failing deliveries block the consumer until handled or stopped.
+- Parallel **Split, Multicast and RecipientList** aggregate serially in input order after all workers finish.
+
+### Fixed
+
+- Propagate pending output body and headers between route and nested pipeline steps, resetting `Out` so removed headers cannot reappear. `GetResponse()` combines the final input with pending output.
+- Complete branch callbacks on success and failure, preserving idempotency rollback; recover aggregation strategy panics as `ErrProcessorPanic`.
+- Copy mutable split parts before parallel processing and protect message-history cache reads.
+- Release lifecycle locks before starting/stopping consumers, allowing status queries from processors without deadlocks.
+- **Kafka:** resolve topics per message to avoid conflicting writer/message topic configuration; prevent cumulative commits from acknowledging failed deliveries.
+- **MongoDB:** retain the input document's `_id` when `save` fails, preserving retry identity.
+- **FTP:** reserve the connection exclusively for complete transfers and coordinate closure with concurrent sends.
+- **Mail:** react to IMAP IDLE mailbox notifications, search existing messages and re-enter IDLE after processing.
+- **Cron:** prevent new executions and join active jobs on stop or pause.
+- **Net:** interrupt established connections on exchange cancellation and bound writes with the configured timeout.
+- **Redis:** release consumer registrations on stop, recreate clients on restart and preserve clients still owned by other producers/consumers.
+- **File:** preserve trailing-slash directory intent for destinations that do not yet exist.
+- **Resequence:** keep the DSL usable after an invalid expression, reporting errors at build time.
+- **Prometheus:** reuse compatible collectors when multiple routes independently register metrics.
+
+### Validation
+
+- Added 23 regression tests, including local protocol simulations and parallel branch cases.
+- Build, vet and race-detector tests cover all 19 workspace modules; external production services are not required.
+
 ## [v0.11.0] - 2026-09-03
 
 Hardening, robustness, and performance improvements across core EIPs and components following an in-depth code audit.
@@ -409,6 +443,7 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.12.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.12.0
 [v0.11.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.11.0
 [v0.10.1]: https://gitlab.com/tranchida/gocamel/-/tags/v0.10.1
 [v0.10.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.10.0

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	gocamel "gitlab.com/tranchida/gocamel"
 )
@@ -22,28 +21,27 @@ type metricFamilies struct {
 }
 
 func newMetricFamilies(reg prometheus.Registerer) *metricFamilies {
-	f := promauto.With(reg)
 
-	total := f.NewCounterVec(prometheus.CounterOpts{
+	total := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "gocamel_exchanges_total",
 		Help: "The total number of processed exchanges",
 	}, []string{"route_id", "status"})
 
-	duration := f.NewHistogramVec(prometheus.HistogramOpts{
+	duration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "gocamel_exchange_duration_seconds",
 		Help:    "The duration of exchange processing in seconds",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"route_id"})
 
-	inFlight := f.NewGaugeVec(prometheus.GaugeOpts{
+	inFlight := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "gocamel_exchanges_inflight",
 		Help: "The number of exchanges currently being processed",
 	}, []string{"route_id"})
 
 	return &metricFamilies{
-		exchangesTotal:    total,
-		exchangesDuration: duration,
-		exchangesInFlight: inFlight,
+		exchangesTotal:    registerMetric(reg, total),
+		exchangesDuration: registerMetric(reg, duration),
+		exchangesInFlight: registerMetric(reg, inFlight),
 	}
 }
 
@@ -60,8 +58,8 @@ func Metrics() gocamel.RouteInterceptor {
 // interceptor in an application that already owns a registry (custom
 // collectors, push gateway setups) or to isolate test registrations.
 //
-// The returned interceptors created from a single MetricsWith call share one
-// set of metric families; each route still gets its own route_id label value.
+// Calls using the same registry reuse its compatible metric families; each
+// route still gets its own route_id label value.
 func MetricsWith(reg prometheus.Registerer) gocamel.RouteInterceptor {
 	families := newMetricFamilies(reg)
 
@@ -86,4 +84,22 @@ func MetricsWith(reg prometheus.Registerer) gocamel.RouteInterceptor {
 			return err
 		}
 	}
+}
+
+// registerMetric reuses the existing family when independently constructed
+// interceptors target the same registry. Register handles concurrent callers.
+func registerMetric[T prometheus.Collector](reg prometheus.Registerer, collector T) T {
+	if reg == nil {
+		return collector
+	}
+	if err := reg.Register(collector); err != nil {
+		var registered prometheus.AlreadyRegisteredError
+		if errors.As(err, &registered) {
+			if existing, ok := registered.ExistingCollector.(T); ok {
+				return existing
+			}
+		}
+		panic(err) // incompatible collector definitions remain configuration errors
+	}
+	return collector
 }

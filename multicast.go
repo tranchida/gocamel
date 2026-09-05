@@ -1,11 +1,5 @@
 package gocamel
 
-import (
-	"errors"
-	"fmt"
-	"sync"
-)
-
 // Multicast is a Processor that implements the Multicast EIP.
 // It sends a copy of the message to multiple destinations or processors.
 type Multicast struct {
@@ -46,103 +40,26 @@ func (m *Multicast) SetParallelProcessing(parallel bool) *Multicast {
 
 // Process executes the multicast on the provided exchange
 func (m *Multicast) Process(exchange *Exchange) error {
-	if len(m.processors) == 0 {
-		return nil
-	}
-
-	if m.ParallelProcessing {
-		return m.processParallel(exchange)
-	}
-
-	return m.processSequential(exchange)
-}
-
-func (m *Multicast) processSequential(exchange *Exchange) error {
-	var aggregatedExchange *Exchange
-
-	for i, p := range m.processors {
-		// For each branch, create a copy of the original exchange
-		branchExchange := exchange.Copy()
-
-		// Can add multicast-specific properties
-		branchExchange.SetProperty(CamelMulticastIndex, i)
-		branchExchange.SetProperty(CamelMulticastSize, len(m.processors))
-		branchExchange.SetProperty(CamelMulticastComplete, i == len(m.processors)-1)
-
-		if err := p.Process(branchExchange); err != nil {
-			if !errors.Is(err, ErrStopRouting) {
-				return err
-			}
-			// In case of Stop EIP, ignore the error and continue to the next branch
-		}
-
-		if m.AggregationStrategy != nil {
-			aggregatedExchange = m.AggregationStrategy.Aggregate(aggregatedExchange, branchExchange)
-		}
-	}
-
-	if m.AggregationStrategy != nil && aggregatedExchange != nil {
-		// Update the original exchange with the aggregation result
-		publishAggregatedResult(exchange, aggregatedExchange)
-	}
-
-	return nil
-}
-
-func (m *Multicast) processParallel(exchange *Exchange) error {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var aggregatedExchange *Exchange
-	var firstErr error
-
-	// Copy and configure each branch exchange in the caller goroutine BEFORE
-	// spawning workers. Doing the Copy inside each goroutine would cause N
-	// concurrent reads of the parent exchange maps (Properties, Headers),
-	// which is safe in Go but trips the race detector under load and couples
-	// the branches to the parent's lifetime in subtle ways.
-	// DeepCopy (not Copy): branches run concurrently, so a shared mutable body
-	// ([]byte, map, ...) mutated by two branches would be a data race.
+	propagateOutToInAndReset(exchange)
 	branches := make([]*Exchange, len(m.processors))
-	for i := range m.processors {
-		branchExchange := exchange.DeepCopy()
-		branchExchange.SetProperty(CamelMulticastIndex, i)
-		branchExchange.SetProperty(CamelMulticastSize, len(m.processors))
-		branchExchange.SetProperty(CamelMulticastComplete, i == len(m.processors)-1)
-		branches[i] = branchExchange
+	for i := range branches {
+		if m.ParallelProcessing {
+			branches[i] = exchange.DeepCopy()
+		} else {
+			branches[i] = exchange.Copy()
+		}
+		branches[i].SetProperty(CamelMulticastIndex, i)
+		branches[i].SetProperty(CamelMulticastSize, len(branches))
+		branches[i].SetProperty(CamelMulticastComplete, i == len(branches)-1)
 	}
-
-	for i, p := range m.processors {
-		wg.Add(1)
-		go func(index int, processor Processor, branchExchange *Exchange) {
-			defer wg.Done()
-
-			err := safeProcess(func() error { return processor.Process(branchExchange) })
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			if err != nil && !errors.Is(err, ErrStopRouting) {
-				if firstErr == nil {
-					firstErr = err
-				}
-				return
-			}
-
-			if m.AggregationStrategy != nil {
-				aggregatedExchange = m.AggregationStrategy.Aggregate(aggregatedExchange, branchExchange)
-			}
-		}(i, p, branches[i])
+	aggregated, err := processFanOut(branches, m.ParallelProcessing, func(i int, branch *Exchange) error {
+		return m.processors[i].Process(branch)
+	}, m.AggregationStrategy)
+	if err != nil {
+		return err
 	}
-
-	wg.Wait()
-
-	if firstErr != nil {
-		return fmt.Errorf("multicast parallel error: %w", firstErr)
+	if m.AggregationStrategy != nil {
+		publishAggregatedResult(exchange, aggregated)
 	}
-
-	if m.AggregationStrategy != nil && aggregatedExchange != nil {
-		publishAggregatedResult(exchange, aggregatedExchange)
-	}
-
 	return nil
 }

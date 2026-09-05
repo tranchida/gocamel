@@ -25,10 +25,12 @@ type MailConsumer struct {
 	wg        sync.WaitGroup
 	client    *imapclient.Client
 	mu        sync.Mutex
+	changes   chan struct{} // initialized before connecting; notifications are coalesced
 }
 
 // Start starts the mail consumer.
 func (c *MailConsumer) Start(ctx context.Context) error {
+	c.changes = make(chan struct{}, 1)
 	c.wg.Add(1)
 	go c.run(ctx)
 	return nil
@@ -80,104 +82,81 @@ func (c *MailConsumer) runPolling(ctx context.Context) {
 // Returns an error if IDLE is not supported or fails.
 func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 	ep := c.endpoint
-
-	if ep.debugMode {
-		gocamel.LogInfo("Mail IMAP IDLE started", "address", ep.address(), "folder", ep.folderName)
+	if c.changes == nil {
+		c.changes = make(chan struct{}, 1)
 	}
-
-	// Connect to server
 	ctx, cancel := context.WithTimeout(parentCtx, ep.connectionTimeout)
 	defer cancel()
-
 	if err := c.connect(ctx); err != nil {
 		return fmt.Errorf("connection error for IDLE: %w", err)
 	}
-
-	// Select folder
+	// Poll once before IDLE so mail already present is not left waiting for a
+	// future notification. The selected mailbox also enables unilateral updates.
 	if _, err := c.selectFolder(ep.folderName); err != nil {
-		c.disconnect()
-		return fmt.Errorf("folder selection error for IDLE: %w", err)
+		return err
 	}
-
+	if err := c.processNewMessages(parentCtx); err != nil {
+		return err
+	}
 	for {
+		select {
+		case <-c.stopChan:
+			return nil
+		case <-parentCtx.Done():
+			return nil
+		default:
+		}
 		c.mu.Lock()
 		client := c.client
 		c.mu.Unlock()
-
 		if client == nil {
-			c.disconnect()
 			return errors.New("client disconnected during IDLE")
 		}
-
-		// Start IDLE
-		idleCmd, err := client.Idle()
+		idle, err := client.Idle()
 		if err != nil {
-			c.disconnect()
 			return fmt.Errorf("IDLE start error: %w", err)
 		}
-
-		if ep.debugMode {
-			gocamel.LogDebug("Mail IDLE active, waiting for notifications")
-		}
-
-		// Wait for either a notification or a stop signal.
-		// The inner goroutine is tracked by idleWG so we can guarantee it
-		// has fully unwound before returning from the iteration — otherwise
-		// a future imap client whose Wait() ignored Close() would leak a
-		// goroutine per IDLE cycle.
-		idleDone := make(chan error, 1)
-		var idleWG sync.WaitGroup
-		idleWG.Add(1)
-		go func() {
-			defer idleWG.Done()
-			// Wait blocks until a notification arrives or IDLE ends
-			err := idleCmd.Wait()
-			idleDone <- err
-		}()
-
+		done := make(chan error, 1)
+		go func() { done <- idle.Wait() }()
+		stopping := false
 		select {
 		case <-c.stopChan:
-			// Stop requested
-			idleCmd.Close()
-			idleWG.Wait()
-
-			return nil
-
+			stopping = true
 		case <-parentCtx.Done():
-			// Context cancelled
-			idleCmd.Close()
-			idleWG.Wait()
-
-			return nil
-
-		case err := <-idleDone:
-			// IDLE ended (notification or error)
-			idleCmd.Close()
-			idleWG.Wait()
-
-			if err != nil {
-				if ep.debugMode {
-					gocamel.LogError("Mail IDLE terminated with error", "error", err)
-				}
-				c.disconnect()
-				return err
+			stopping = true
+		case <-c.changes:
+		case err := <-done:
+			_ = idle.Close()
+			if err == nil {
+				err = errors.New("IDLE ended unexpectedly")
 			}
-
-			// Notification received — process new messages
-			if ep.debugMode {
-				gocamel.LogDebug("Mail IDLE detected change, processing")
-			}
-
-			if processErr := c.processNewMessages(parentCtx); processErr != nil {
-				if !ep.skipFailedMessage {
-					gocamel.LogError("Mail error processing messages", "error", processErr)
-				}
-			}
-
-			// Small delay to avoid tight loop
-			time.Sleep(100 * time.Millisecond)
-			// Continue the loop to restart IDLE
+			return err
 		}
+		// Close must precede Wait: EXISTS notifications do not complete IDLE.
+		if err := idle.Close(); err != nil {
+			_ = client.Close()
+			<-done
+			return err
+		}
+		if err := <-done; err != nil {
+			return err
+		}
+		if stopping {
+			return nil
+		}
+		if err := c.processNewMessages(parentCtx); err != nil {
+			gocamel.LogError("Mail error processing IDLE notification", "error", err)
+		}
+	}
+}
+
+func (c *MailConsumer) mailboxChanged(data *imapclient.UnilateralDataMailbox) {
+	if data.NumMessages == nil {
+		return
+	}
+	select {
+	case c.changes <- struct{}{}:
+	default:
 	}
 }
 
@@ -212,11 +191,6 @@ func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 		uids = uids[:ep.fetchSize]
 	}
 
-	selected, err := c.selectFolder(ep.folderName)
-	if err != nil {
-		return fmt.Errorf("folder selection error: %w", err)
-	}
-
 	// Process each message
 	for _, uid := range uids {
 		select {
@@ -227,7 +201,7 @@ func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 		default:
 		}
 
-		if err := c.processMessage(parentCtx, uid, selected); err != nil {
+		if err := c.processMessage(parentCtx, uid, nil); err != nil {
 			if ep.handleFailedMessage {
 				if err2 := c.handleFailedMessage(parentCtx, uid, err); err2 != nil {
 					gocamel.LogError("Mail error in error handler", "error", err2)
@@ -372,12 +346,14 @@ func (c *MailConsumer) connect(ctx context.Context) error {
 	if ep.isSecure() {
 		// IMAPS native TLS (port 993)
 		client, err = imapclient.DialTLS(ep.address(), &imapclient.Options{
-			TLSConfig: tlsConfig,
+			TLSConfig:             tlsConfig,
+			UnilateralDataHandler: &imapclient.UnilateralDataHandler{Mailbox: c.mailboxChanged},
 		})
 	} else {
 		// IMAP with optional STARTTLS (port 143)
 		client, err = imapclient.DialStartTLS(ep.address(), &imapclient.Options{
-			TLSConfig: tlsConfig,
+			TLSConfig:             tlsConfig,
+			UnilateralDataHandler: &imapclient.UnilateralDataHandler{Mailbox: c.mailboxChanged},
 		})
 	}
 

@@ -404,10 +404,14 @@ func TestFileConsumer_ReadLockRename(t *testing.T) {
 	}
 	defer consumer.Stop()
 
-	time.Sleep(50 * time.Millisecond)
-
+	// Publish a fully written file: rename/marker locks do not wait for a
+	// writer that still holds an open file descriptor.
+	staged := filepath.Join(t.TempDir(), "renametest.txt")
+	if err := os.WriteFile(staged, []byte("rename-data"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	filePath := filepath.Join(dir, "renametest.txt")
-	if err := os.WriteFile(filePath, []byte("rename-data"), 0644); err != nil {
+	if err := os.Rename(staged, filePath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -418,7 +422,6 @@ func TestFileConsumer_ReadLockRename(t *testing.T) {
 	}
 
 	// Ensure lock file is cleaned up and original file is restored
-	time.Sleep(50 * time.Millisecond)
 	if _, err := os.Stat(filePath + ".camelExclusiveReadLock"); !os.IsNotExist(err) {
 		t.Errorf("lock file was not cleaned up: %v", err)
 	}
@@ -452,10 +455,14 @@ func TestFileConsumer_ReadLockMarkerFile(t *testing.T) {
 	}
 	defer consumer.Stop()
 
-	time.Sleep(50 * time.Millisecond)
-
+	// Publish a fully written file: rename/marker locks do not wait for a
+	// writer that still holds an open file descriptor.
+	staged := filepath.Join(t.TempDir(), "markertest.txt")
+	if err := os.WriteFile(staged, []byte("marker-data"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	filePath := filepath.Join(dir, "markertest.txt")
-	if err := os.WriteFile(filePath, []byte("marker-data"), 0644); err != nil {
+	if err := os.Rename(staged, filePath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -466,7 +473,6 @@ func TestFileConsumer_ReadLockMarkerFile(t *testing.T) {
 	}
 
 	// Ensure marker file was deleted after processing
-	time.Sleep(50 * time.Millisecond)
 	if _, err := os.Stat(filePath + ".camelLock"); !os.IsNotExist(err) {
 		t.Errorf("marker file was not deleted: %v", err)
 	}

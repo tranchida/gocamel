@@ -99,7 +99,7 @@ type Synchronization interface {
 // Thread-safety: Exchange is NOT safe for concurrent use. The In/Out Message
 // objects and the Properties map have no internal synchronization. Components
 // and EIPs that fan out to multiple goroutines (Multicast, Splitter,
-// RecipientList) MUST call Copy() once per branch in the parent goroutine
+// RecipientList) MUST call DeepCopy() once per branch in the parent goroutine
 // before launching workers. The parent Exchange is read-only for the duration
 // of the fan-out and only becomes writable again after wg.Wait() returns and
 // the aggregation strategy publishes its result back.
@@ -174,15 +174,18 @@ func (e *Exchange) HasOut() bool {
 	return e.Out.GetBody() != nil
 }
 
-// GetResponse returns the Out message if its body has been set,
-// otherwise returns the In message. This matches the Apache Camel InOut behavior:
-// if the processor does not set an explicit response, the input message
-// is used as the response as-is.
+// GetResponse returns In when no output is pending, otherwise a message copy
+// combining In with the pending Out body and header overrides.
 func (e *Exchange) GetResponse() *Message {
-	if e.HasOut() {
-		return e.Out
+	if !e.HasOut() && len(e.Out.Headers) == 0 {
+		return e.In
 	}
-	return e.In
+	response := e.In.Copy()
+	if e.HasOut() {
+		response.SetBody(e.Out.GetBody())
+	}
+	response.SetHeaders(e.Out.GetHeaders())
+	return response
 }
 
 func (e *Exchange) SetBody(body any) {

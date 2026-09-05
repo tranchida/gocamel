@@ -74,6 +74,7 @@ func (c *ChanComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 // ChanEndpoint represents a Go channel endpoint.
 type ChanEndpoint struct {
+	polling  bool // guarded by mu; mutually exclusive with a continuous consumer
 	uri      string
 	queue    chan *Exchange
 	consumer *ChanConsumer
@@ -97,7 +98,7 @@ func (e *ChanEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.consumer != nil {
+	if e.consumer != nil || e.polling {
 		return nil, fmt.Errorf("multiple consumers for the same channel endpoint are not allowed: %s", e.uri)
 	}
 

@@ -1409,3 +1409,15 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | NATS       | Messaging  | ✅        | ✅        | `nats://subject`          |
 | Redis      | Messaging  | ✅        | ✅        | `redis://host:port`       |
 | Go Channel | Core       | ✅        | ✅        | `chan:channelName`        |
+
+## Delivery and lifecycle details
+
+- **Kafka:** the resolved topic is set on each message, so configured and header-overridden topics work together. Failed processing is retried with a fresh exchange before fetching the next record. Commit failures retry the commit without repeating successful processing. Retries wait 100 ms and stop on cancellation. A permanent failure blocks this consumer until handled by the route or stopped; this preserves cumulative offset safety.
+- **FTP:** each producer leases its connection exclusively for the complete transfer. Concurrent sends and `Stop` cannot interleave FTP commands; a sender waiting for the lease can cancel.
+- **MongoDB:** `save` preserves the input document’s `_id`, including when replacement fails, so retry keeps targeting the same document.
+- **Mail:** IMAP IDLE reacts to mailbox notifications by ending IDLE, searching for messages and re-entering IDLE. Existing messages are searched before the first IDLE.
+- **Cron:** `Stop` prevents new executions and waits for active jobs before returning, including when pausing a job.
+- **Redis:** clients are shared by active producers and consumers and closed when the last owner stops. Stopping one producer leaves other owners usable; stopped route consumers release their registration so the route can restart.
+- **File:** a URI ending in `/` denotes a directory even before it exists; `CamelFileName` selects the file inside it.
+- **Net:** the configured timeout bounds established writes as well as reply reads. Cancelling the exchange closes its connection and interrupts either operation.
+- **Prometheus:** repeated `Metrics()` or `MetricsWith(registry)` calls reuse compatible registered collectors, allowing separate interceptors on multiple routes. Incompatible collector definitions still fail registration.

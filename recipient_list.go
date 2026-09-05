@@ -1,10 +1,8 @@
 package gocamel
 
 import (
-	"errors"
 	"fmt"
 	"strings"
-	"sync"
 )
 
 // RecipientList is a Processor that implements the Recipient List EIP.
@@ -168,88 +166,34 @@ func (r *RecipientList) sendToURI(uri string, exchange *Exchange) error {
 }
 
 func (r *RecipientList) processSequential(exchange *Exchange, uris []string) error {
-	var aggregatedExchange *Exchange
-
-	for i, uri := range uris {
-		// Create a copy of the original exchange for each recipient
-		recipientExchange := exchange.Copy()
-		recipientExchange.SetProperty(CamelRecipientListIndex, i)
-		recipientExchange.SetProperty(CamelRecipientListSize, len(uris))
-		recipientExchange.SetProperty(CamelRecipientListComplete, i == len(uris)-1)
-
-		processErr := r.sendToURI(uri, recipientExchange)
-
-		if processErr != nil {
-			if !errors.Is(processErr, ErrStopRouting) {
-				return fmt.Errorf("recipient list error sending to %s: %w", uri, processErr)
-			}
-			// In case of Stop EIP, ignore the error and continue to the next recipient
-		}
-
-		if r.AggregationStrategy != nil {
-			aggregatedExchange = r.AggregationStrategy.Aggregate(aggregatedExchange, recipientExchange)
-		}
-	}
-
-	if r.AggregationStrategy != nil && aggregatedExchange != nil {
-		publishAggregatedResult(exchange, aggregatedExchange)
-	}
-
-	return nil
+	return r.processRecipients(exchange, uris, false)
 }
 
 func (r *RecipientList) processParallel(exchange *Exchange, uris []string) error {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var aggregatedExchange *Exchange
-	var firstErr error
+	return r.processRecipients(exchange, uris, true)
+}
 
-	// Copy and configure each branch exchange in the caller goroutine BEFORE
-	// spawning workers (see Multicast.processParallel for rationale).
-	// DeepCopy (not Copy): branches run concurrently, so a shared mutable body
-	// ([]byte, map, ...) mutated by two branches would be a data race. Mirrors
-	// the fix already applied to Multicast.processParallel.
+func (r *RecipientList) processRecipients(exchange *Exchange, uris []string, parallel bool) error {
+	propagateOutToInAndReset(exchange)
 	branches := make([]*Exchange, len(uris))
 	for i := range uris {
-		recipientExchange := exchange.DeepCopy()
-		recipientExchange.SetProperty(CamelRecipientListIndex, i)
-		recipientExchange.SetProperty(CamelRecipientListSize, len(uris))
-		recipientExchange.SetProperty(CamelRecipientListComplete, i == len(uris)-1)
-		branches[i] = recipientExchange
+		if parallel {
+			branches[i] = exchange.DeepCopy()
+		} else {
+			branches[i] = exchange.Copy()
+		}
+		branches[i].SetProperty(CamelRecipientListIndex, i)
+		branches[i].SetProperty(CamelRecipientListSize, len(uris))
+		branches[i].SetProperty(CamelRecipientListComplete, i == len(uris)-1)
 	}
-
-	for i, uri := range uris {
-		wg.Add(1)
-		go func(index int, uri string, recipientExchange *Exchange) {
-			defer wg.Done()
-
-			err := safeProcess(func() error { return r.sendToURI(uri, recipientExchange) })
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			if err != nil && !errors.Is(err, ErrStopRouting) {
-				if firstErr == nil {
-					firstErr = fmt.Errorf("recipient list error sending to %s: %w", uri, err)
-				}
-				return
-			}
-
-			if r.AggregationStrategy != nil {
-				aggregatedExchange = r.AggregationStrategy.Aggregate(aggregatedExchange, recipientExchange)
-			}
-		}(i, uri, branches[i])
+	aggregated, err := processFanOut(branches, parallel, func(i int, branch *Exchange) error {
+		return r.sendToURI(uris[i], branch)
+	}, r.AggregationStrategy)
+	if err != nil {
+		return fmt.Errorf("recipient list: %w", err)
 	}
-
-	wg.Wait()
-
-	if firstErr != nil {
-		return fmt.Errorf("recipient list parallel error: %w", firstErr)
+	if r.AggregationStrategy != nil {
+		publishAggregatedResult(exchange, aggregated)
 	}
-
-	if r.AggregationStrategy != nil && aggregatedExchange != nil {
-		publishAggregatedResult(exchange, aggregatedExchange)
-	}
-
 	return nil
 }

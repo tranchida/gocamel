@@ -16,8 +16,9 @@ type CamelContext struct {
 	routesLock    sync.RWMutex // Protects routes slice and routeCounter
 	registry      *ComponentRegistry
 	started       bool
+	starting      bool         // guarded by startLock
 	stopping      bool         // true while Stop/GracefulStop is still tearing down
-	startLock     sync.RWMutex // Protects started and stopping lifecycle state
+	startLock     sync.RWMutex // Protects lifecycle state, ctx and cancel
 	routeCounter  int
 	usedRouteIDs  map[string]bool // ids already assigned; guarded by routesLock
 	producerCache *ProducerCache
@@ -144,147 +145,108 @@ func (c *CamelContext) GetRoutes() []*Route {
 
 // Start starts the context and all its routes.
 // If a route fails to start, previously started routes are stopped (rollback).
-func (c *CamelContext) Start() error {
+func (c *CamelContext) Start() (err error) {
 	c.startLock.Lock()
-	defer c.startLock.Unlock()
-
 	if c.stopping {
+		c.startLock.Unlock()
 		return fmt.Errorf("context is still stopping")
 	}
-	if c.started {
-		return fmt.Errorf("context is already started")
+	if c.started || c.starting {
+		c.startLock.Unlock()
+		return fmt.Errorf("context is already started or changing lifecycle state")
 	}
+	c.starting = true
+	ctx := c.ctx
+	c.startLock.Unlock()
+	defer func() {
+		c.startLock.Lock()
+		c.starting = false
+		c.started = err == nil
+		c.startLock.Unlock()
+	}()
 	c.producerCache.Resume()
-
-	c.routesLock.RLock()
-	routes := make([]*Route, len(c.routes))
-	copy(routes, c.routes)
-	c.routesLock.RUnlock()
-
-	// Start all routes with rollback on failure
+	routes := c.GetRoutes()
 	for i, route := range routes {
-		if err := route.Start(c.ctx); err != nil {
-			// Rollback: stop already-started routes
+		if err := route.Start(ctx); err != nil {
+			errs := []error{fmt.Errorf("error starting route %s: %w", route.ID, err)}
 			for j := i - 1; j >= 0; j-- {
-				if stopErr := routes[j].Stop(); stopErr != nil {
-					err = fmt.Errorf("%w; rollback stop error for route %s: %v", err, routes[j].ID, stopErr)
-				}
+				errs = append(errs, routes[j].Stop())
 			}
-			return fmt.Errorf("error starting route %s: %w", route.ID, err)
+			errs = append(errs, c.producerCache.Stop())
+			return errors.Join(errs...)
 		}
 	}
-
-	c.started = true
 	return nil
 }
 
-// Stop stops the context and all its routes.
-// All routes are stopped even if some fail; errors are collected and returned as a combined error.
-//
-// Stop has no deadline: if a consumer's Stop() blocks (e.g. an HTTP shutdown
-// waiting on an idle keep-alive), Stop() blocks with it. Use GracefulStop
-// to bound the total shutdown time.
-func (c *CamelContext) Stop() error {
+// beginStop reserves the shutdown transition without holding a lock while
+// consumers call application code or wait for their workers.
+func (c *CamelContext) beginStop() (bool, error) {
 	c.startLock.Lock()
 	defer c.startLock.Unlock()
-
-	if c.stopping {
-		return fmt.Errorf("context is still stopping")
+	if c.starting || c.stopping {
+		return false, fmt.Errorf("context is changing lifecycle state")
 	}
 	if !c.started {
-		return nil
+		return false, nil
 	}
-
 	c.stopping = true
+	return true, nil
+}
 
-	c.routesLock.RLock()
-	routes := make([]*Route, len(c.routes))
-	copy(routes, c.routes)
-	c.routesLock.RUnlock()
-
+func (c *CamelContext) stopResources() error {
 	var errs []error
-	for _, route := range routes {
+	for _, route := range c.GetRoutes() {
 		if err := route.Stop(); err != nil {
 			errs = append(errs, fmt.Errorf("route %s: %w", route.ID, err))
 		}
 	}
-
-	c.cancel()
-	c.started = false
-
 	if err := c.producerCache.Stop(); err != nil {
 		errs = append(errs, err)
 	}
-
+	c.startLock.Lock()
+	c.cancel()
+	c.started = false
 	c.resetContext()
 	c.stopping = false
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors stopping routes: %v", errs)
-	}
-	return nil
+	c.startLock.Unlock()
+	return errors.Join(errs...)
 }
 
-// GracefulStop is like Stop but bounded by timeout. It cancels the context
-// before stopping routes so consumers observing ctx.Done() unwind their work
-// loops as early as possible, then waits up to timeout for every route to
-// finish stopping. Routes still running after the deadline are abandoned and
-// an error is returned so the caller can decide whether to escalate (e.g. log
-// and exit).
+// Stop stops all routes and cached producers. Lifecycle queries remain usable
+// from application processors during shutdown. Use GracefulStop to bound waiting.
+func (c *CamelContext) Stop() error {
+	stop, err := c.beginStop()
+	if err != nil || !stop {
+		return err
+	}
+	return c.stopResources()
+}
+
+// GracefulStop cancels the parent context and bounds the wait for shutdown.
+// A timed-out shutdown continues in the background; Start rejects a restart
+// until every resource has finished stopping.
 func (c *CamelContext) GracefulStop(timeout time.Duration) error {
-	c.startLock.Lock()
-	defer c.startLock.Unlock()
-
-	if c.stopping {
-		return fmt.Errorf("context is still stopping")
+	stop, err := c.beginStop()
+	if err != nil || !stop {
+		return err
 	}
-	if !c.started {
-		return nil
-	}
-
-	// Cancel the parent context first so consumers using ctx.Done()
-	// short-circuit their work loops immediately.
+	c.startLock.RLock()
 	c.cancel()
-
-	c.routesLock.RLock()
-	routes := make([]*Route, len(c.routes))
-	copy(routes, c.routes)
-	c.routesLock.RUnlock()
-
+	c.startLock.RUnlock()
 	done := make(chan error, 1)
-	go func() {
-		var errs []error
-		for _, route := range routes {
-			if err := route.Stop(); err != nil {
-				errs = append(errs, fmt.Errorf("route %s: %w", route.ID, err))
-			}
-		}
-		if err := c.producerCache.Stop(); err != nil {
-			errs = append(errs, err)
-		}
-		if len(errs) > 0 {
-			done <- fmt.Errorf("errors stopping routes: %v", errs)
-			return
-		}
-		done <- nil
-	}()
-
+	go func() { done <- c.stopResources() }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case err := <-done:
-		c.started = false
-		c.resetContext()
-		c.stopping = false
 		return err
-	case <-time.After(timeout):
-		c.started = false
-		c.stopping = true
-		go func() {
-			<-done
-			c.startLock.Lock()
-			c.resetContext()
-			c.stopping = false
-			c.startLock.Unlock()
-		}()
+	case <-timer.C:
+		c.startLock.Lock()
+		if c.stopping {
+			c.started = false
+		}
+		c.startLock.Unlock()
 		return fmt.Errorf("graceful stop timed out after %s; one or more routes are still shutting down", timeout)
 	}
 }
@@ -309,6 +271,8 @@ func (c *CamelContext) resetContext() {
 
 // GetContext retrieves the underlying Go context
 func (c *CamelContext) GetContext() context.Context {
+	c.startLock.RLock()
+	defer c.startLock.RUnlock()
 	return c.ctx
 }
 
@@ -347,7 +311,13 @@ func (c *CamelContext) RemoveRoute(route *Route) error {
 		return nil
 	}
 	c.startLock.Lock()
-	defer c.startLock.Unlock()
+	if c.starting || c.stopping {
+		c.startLock.Unlock()
+		return fmt.Errorf("context is changing lifecycle state")
+	}
+	c.stopping = true
+	c.startLock.Unlock()
+	defer func() { c.startLock.Lock(); c.stopping = false; c.startLock.Unlock() }()
 	stopErr := route.Stop()
 
 	c.routesLock.Lock()

@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# Point to Go 1.26.0 installed via mise
-GOROOT="$HOME/.local/share/mise/installs/go/1.26.0"
-export GOROOT
-export PATH="$GOROOT/bin:$PATH"
+# Use Go 1.27+ from PATH; go.mod and .go-version select the project default.
 export GOPATH="$(pwd)/.cache/go"
 export PATH="$GOPATH/bin:$PATH"
 

@@ -115,6 +115,8 @@ func (r *RoutingSlip) Process(exchange *Exchange) error {
 }
 
 func propagateOutToInAndReset(exchange *Exchange) {
-	exchange.PropagateOutToIn()
-	exchange.Out = NewMessage()
+	if exchange.Out.Body != nil || len(exchange.Out.Headers) > 0 {
+		exchange.PropagateOutToIn()
+		exchange.Out = NewMessage()
+	}
 }

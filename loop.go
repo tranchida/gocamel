@@ -125,6 +125,7 @@ func (l *LoopProcessor) Process(exchange *Exchange) error {
 
 		// Process the exchange through all nested processors in the loop
 		for _, p := range l.processors {
+			propagateOutToInAndReset(exchange)
 			if err := p.Process(exchange); err != nil {
 				if errors.Is(err, ErrStopRouting) {
 					// Stop EIP stops the loop without propagating a failure

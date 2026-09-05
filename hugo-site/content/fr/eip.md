@@ -394,6 +394,8 @@ builder.From("direct:start").
 
 Consommation ponctuelle à la demande depuis un endpoint consommateur (avec timeout et stratégie d'agrégation).
 
+Les endpoints pris en charge sont `seda`, `chan` et les implémentations personnalisées de `PollingEndpoint`. Chaque appel reçoit au plus un échange et laisse la file ouverte avec ses autres messages. Un endpoint sans ce contrat, ou une file ayant déjà un consommateur ou une réception ponctuelle en cours, renvoie une erreur avant toute consommation. Un timeout nul est non bloquant ; un timeout négatif attend un message ou l’annulation du contexte. Un timeout positif laisse le message initial inchangé si aucun message n’arrive.
+
 ```go
 // Consommation depuis une file d'attente avec timeout de 2 secondes
 builder.From("direct:start").
@@ -988,3 +990,9 @@ builder.From("direct:output").
 | Loop                | Contrôle       | Itération avec compteur statique/dynamique   |
 | Saga                | Contrôle       | Pattern transactionnel Saga                  |
 | Message History     | Diagnostics    | Suivi du parcours de traitement des messages |
+
+## Fin des branches et agrégation
+
+Split, Multicast et RecipientList terminent chaque branche traitée, en succès comme en échec, notamment ses callbacks de rollback d’idempotence. Avant de lancer les workers parallèles, ils copient les corps mutables pris en charge, y compris chaque élément du Split. Les types mutables personnalisés exigent toujours une copie applicative ou un usage immuable. L’agrégation commence après la fin des workers ; la stratégie est appelée séquentiellement dans l’ordre d’entrée et ses panics deviennent des erreurs `ErrProcessorPanic`. Le traitement séquentiel s’arrête à la première branche en échec.
+
+Une expression `Resequence` invalide accumule une erreur de construction tout en laissant la chaîne DSL utilisable ; `Timeout`, `Capacity` et `End` ne paniquent pas à cause de cette erreur antérieure.

@@ -55,17 +55,19 @@ func (c *FileComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	}
 
 	return &FileEndpoint{
-		uri:  uri,
-		url:  u,
-		path: filepath.Clean(path),
+		uri:       uri,
+		url:       u,
+		path:      filepath.Clean(path),
+		directory: strings.HasSuffix(path, string(filepath.Separator)),
 	}, nil
 }
 
 // FileEndpoint represents a File endpoint
 type FileEndpoint struct {
-	uri  string
-	url  *url.URL
-	path string
+	directory bool // preserves a trailing separator before path normalization
+	uri       string
+	url       *url.URL
+	path      string
 }
 
 // URI returns the endpoint URI
@@ -77,6 +79,7 @@ func (e *FileEndpoint) URI() string {
 func (e *FileEndpoint) CreateProducer() (gocamel.Producer, error) {
 	return &FileProducer{
 		path:      e.path,
+		directory: e.directory,
 		fileExist: gocamel.ParseFileExist(e.url),
 	}, nil
 }
@@ -92,6 +95,7 @@ func (e *FileEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Cons
 
 // FileProducer represents a File producer
 type FileProducer struct {
+	directory bool
 	path      string
 	fileExist gocamel.FileExistBehavior
 }
@@ -112,7 +116,7 @@ func (p *FileProducer) Stop() error {
 func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 	targetPath := p.path
 	info, statErr := os.Stat(targetPath)
-	if (statErr == nil && info.IsDir()) || (statErr != nil && strings.HasSuffix(targetPath, string(filepath.Separator))) {
+	if (statErr == nil && info.IsDir()) || (statErr != nil && p.directory) {
 		if fileName, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
 			name := fmt.Sprintf("%v", fileName)
 			if err := confinedFileName(name); err != nil {

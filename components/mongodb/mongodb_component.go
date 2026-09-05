@@ -446,7 +446,6 @@ func (p *MongoDBProducer) execSave(ctx context.Context, exchange *gocamel.Exchan
 	// Extract _id for the filter
 	if id, ok := doc["_id"]; ok && id != nil {
 		filter := bson.M{"_id": id}
-		delete(doc, "_id")
 
 		opts := options.Replace().SetUpsert(true)
 		result, err := coll.ReplaceOne(ctx, filter, doc, opts)

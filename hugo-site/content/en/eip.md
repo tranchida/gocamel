@@ -176,6 +176,8 @@ builder.From("direct:start").
 
 Poll on-demand from a consumer endpoint (with timeout and optional aggregation strategy).
 
+Supported endpoints are `seda`, `chan`, and custom implementations of `PollingEndpoint`. One call receives at most one exchange and leaves the queue open with its remaining messages intact. Endpoints without this contract, or queues with an existing consumer or concurrent poll, return an error before consuming a message. A zero timeout is non-blocking; a negative timeout waits until a message arrives or the exchange context is cancelled. A positive timeout leaves the original message unchanged when no message arrives.
+
 ```go
 // Poll from a queue with 2 seconds timeout and custom merge strategy
 builder.From("direct:start").
@@ -991,3 +993,9 @@ builder.From("direct:output").
 | Loop                | Control        | Iterate with static/dynamic counter|
 | Saga                | Control        | Saga transactional pattern         |
 | Message History     | Diagnostics    | Track message processing trace     |
+
+## Branch completion and aggregation
+
+Split, Multicast and RecipientList complete each processed branch on success or failure, including idempotency rollback callbacks. Parallel branches copy supported mutable bodies, including each split part, before workers start. Custom mutable types still require application-defined copying or immutable use. Workers finish before aggregation begins; the strategy is called serially in input order, and strategy panics become `ErrProcessorPanic` errors. Sequential processing stops at the first failing branch.
+
+Invalid `Resequence` expressions accumulate a build error while leaving the DSL chain usable; `Timeout`, `Capacity` and `End` do not panic because an earlier expression was invalid.

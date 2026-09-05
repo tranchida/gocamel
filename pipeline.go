@@ -29,15 +29,7 @@ func (p *Pipeline) childProcessors() []Processor {
 // Errors (including the ErrStopRouting control signal) are returned immediately.
 func (p *Pipeline) Process(exchange *Exchange) error {
 	for _, processor := range p.processors {
-		// Propagate Out → In if the previous processor set an output.
-		// Headers-only outputs propagate too: the body is only overwritten
-		// when the previous processor actually produced one.
-		if exchange.Out.Body != nil || len(exchange.Out.Headers) > 0 {
-			exchange.PropagateOutToIn()
-			// Reuse the Out message by resetting it instead of allocating a new one
-			exchange.Out.Body = nil
-			exchange.Out.Headers = make(map[string]any)
-		}
+		propagateOutToInAndReset(exchange)
 
 		if err := processor.Process(exchange); err != nil {
 			return err

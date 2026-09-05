@@ -257,7 +257,7 @@ func (b *RouteBuilder) Resequence(expression any, startSeq int64) *ResequencerDe
 		template, err := ParseSimpleTemplate(expr)
 		if err != nil {
 			b.err = fmt.Errorf("resequencer: failed to parse simple expression: %w", err)
-			return &ResequencerDefinition{parent: b}
+			return &ResequencerDefinition{parent: b, resequencer: NewResequencer(nil, startSeq, time.Second), mainBuilder: &RouteBuilder{context: b.context, route: b.route, container: NewPipeline()}}
 		}
 		exprFn = func(e *Exchange) (int64, error) {
 			val, ok := template.EvaluateAsInt(e)
@@ -277,7 +277,7 @@ func (b *RouteBuilder) Resequence(expression any, startSeq int64) *ResequencerDe
 		}
 	default:
 		b.err = fmt.Errorf("resequencer: unsupported expression type %T", expression)
-		return &ResequencerDefinition{parent: b}
+		return &ResequencerDefinition{parent: b, resequencer: NewResequencer(nil, startSeq, time.Second), mainBuilder: &RouteBuilder{context: b.context, route: b.route, container: NewPipeline()}}
 	}
 
 	r := NewResequencer(exprFn, startSeq, 1*time.Second)
