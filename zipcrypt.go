@@ -97,8 +97,9 @@ func newZipCryptoReader(r io.Reader, password string) *zipCryptoReader {
 }
 
 // checkHeader reads and decrypts the 12-byte encryption header and verifies the
-// password check byte. expectedCheck is the high byte of the entry CRC-32 when
-// available (methods < 99), or 0 to fall back to the mod-time byte check.
+// password check byte. expectedCheck is the high byte of the entry CRC-32, or
+// the high byte of the MS-DOS modification time when the data descriptor bit
+// is set (the caller resolves which one applies).
 func (z *zipCryptoReader) checkHeader(expectedCheck byte) error {
 	header := make([]byte, 12)
 	if _, err := io.ReadFull(z.r, header); err != nil {
@@ -107,15 +108,9 @@ func (z *zipCryptoReader) checkHeader(expectedCheck byte) error {
 	for i, c := range header {
 		header[i] = z.keys.decryptByte(c)
 	}
-	check := header[11]
-	if expectedCheck != 0 {
-		if check != expectedCheck {
-			return errZipCryptoPassword
-		}
-		return nil
+	if header[11] != expectedCheck {
+		return errZipCryptoPassword
 	}
-	// Legacy check against the mod-time high byte; a mismatch is only fatal in
-	// strict mode, but we keep the classic behaviour of rejecting it.
 	return nil
 }
 
@@ -137,7 +132,8 @@ func (z *zipCryptoReader) Read(p []byte) (int, error) {
 // WinZip AES constants (AES extra field, method 99).
 const (
 	zipAESExtraID       = 0x9901 // stored little-endian as bytes 01 99
-	zipAESMethodVendID  = 0x01   // AE version: 1 (AE-1) or 2 (AE-2)
+	zipAESVendorAE1     = 1      // AE-1: CRC-32 stored in the central directory
+	zipAESVendorAE2     = 2      // AE-2: no CRC, HMAC-SHA1 provides integrity
 	zipAESStrength128   = 0x01
 	zipAESStrength192   = 0x02
 	zipAESStrength256   = 0x03
@@ -162,12 +158,8 @@ func parseAESExtra(data []byte) (*zipAESExtra, error) {
 		strength:      int(data[4]),
 		realMethod:    uint16(data[5]) | uint16(data[6])<<8,
 	}
-	if e.vendorVersion != zipAESMethodVendID {
-		// Vendor version 2 is the common AE-2. Version 1 keeps the CRC in the
-		// central directory. Anything else is not WinZip AES.
-		if e.vendorVersion != 2 {
-			return nil, fmt.Errorf("zip aes: unsupported vendor version %d", e.vendorVersion)
-		}
+	if e.vendorVersion != zipAESVendorAE1 && e.vendorVersion != zipAESVendorAE2 {
+		return nil, fmt.Errorf("zip aes: unsupported vendor version %d", e.vendorVersion)
 	}
 	if e.strength < zipAESStrength128 || e.strength > zipAESStrength256 {
 		return nil, fmt.Errorf("zip aes: unsupported strength %d", e.strength)
@@ -406,7 +398,7 @@ func aesEncryptEntry(r io.Reader, password string, strength int) (data []byte, e
 	out = append(out, mac.Sum(nil)[:macLen]...)
 
 	extra = make([]byte, 7)
-	extra[0] = 2 // vendor version: 2 = AE-2 (no CRC stored)
+	extra[0] = zipAESVendorAE2 // vendor version: 2 = AE-2 (no CRC stored)
 	extra[1] = 0
 	extra[2] = 'A'
 	extra[3] = 'E'

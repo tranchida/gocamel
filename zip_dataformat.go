@@ -4,8 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/flate"
-	"crypto/subtle"
-	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -374,7 +372,7 @@ func (f *ZipDataFormat) openEntry(file *zip.File) (io.ReadCloser, error) {
 	case zip.Store:
 		return io.NopCloser(zr), nil
 	case zip.Deflate:
-		return newFlateReadCloser(zr), nil
+		return flate.NewReader(zr), nil
 	default:
 		return nil, fmt.Errorf("zip unmarshal: entry %q uses unsupported compression method %d", file.Name, file.Method)
 	}
@@ -397,7 +395,7 @@ func (f *ZipDataFormat) openAESEntry(file *zip.File, extra *zipAESExtra) (io.Rea
 	case zip.Store:
 		return io.NopCloser(ae), nil
 	case zip.Deflate:
-		return newFlateReadCloser(ae), nil
+		return flate.NewReader(ae), nil
 	default:
 		return nil, fmt.Errorf("zip unmarshal: entry %q uses unsupported inner compression method %d", file.Name, extra.realMethod)
 	}
@@ -457,28 +455,3 @@ func validateZipEntryReadName(name string) (string, error) {
 	}
 	return clean, nil
 }
-
-// newFlateReadCloser wraps a deflate stream with Close propagation.
-func newFlateReadCloser(r io.Reader) io.ReadCloser {
-	pr, pw := io.Pipe()
-	go func() {
-		fr := flate.NewReader(r)
-		if _, err := io.Copy(pw, fr); err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		if fr, ok := fr.(io.Closer); ok {
-			_ = fr.Close()
-		}
-		pw.Close()
-	}()
-	return pr
-}
-
-// constant-time comparison helper kept for password checks.
-func zipPasswordsMatch(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
-
-var _ = zipPasswordsMatch
-var _ = errors.Is
