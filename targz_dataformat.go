@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -27,6 +28,8 @@ type TarGzDataFormat struct {
 	// gzipLevel is the compression level (gzip.DefaultCompression by default).
 	gzipLevel    int
 	maxEntrySize int64
+	maxTotalSize int64
+	maxEntries   int64
 }
 
 // TarGzFile is a named entry of a tar.gz archive.
@@ -73,12 +76,26 @@ func TarGzMaxEntrySize(max int64) TarGzOption {
 	return func(f *TarGzDataFormat) { f.maxEntrySize = max }
 }
 
+// TarGzMaxTotalSize bounds the sum of decompressed entry sizes while
+// unmarshalling. Non-positive values disable the check; the default is 1 GiB.
+func TarGzMaxTotalSize(max int64) TarGzOption {
+	return func(f *TarGzDataFormat) { f.maxTotalSize = max }
+}
+
+// TarGzMaxEntries bounds the number of regular-file entries while unmarshalling.
+// Non-positive values disable the check; the default is 4096.
+func TarGzMaxEntries(max int64) TarGzOption {
+	return func(f *TarGzDataFormat) { f.maxEntries = max }
+}
+
 // NewTarGzDataFormat creates a tar.gz data format with the provided options.
 func NewTarGzDataFormat(opts ...TarGzOption) *TarGzDataFormat {
 	format := &TarGzDataFormat{
 		entryName:    "data",
 		gzipLevel:    gzip.DefaultCompression,
 		maxEntrySize: 512 << 20,
+		maxTotalSize: 1 << 30,
+		maxEntries:   4096,
 	}
 	for _, opt := range opts {
 		if opt != nil {
