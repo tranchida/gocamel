@@ -239,6 +239,7 @@ type winZipCTR struct {
 	b   cipher.Block
 	ctr [16]byte
 	out [16]byte
+	off int // next unused keystream index; 16 means the block is spent
 }
 
 func newWinZipCTR(key []byte) (*winZipCTR, error) {
@@ -246,30 +247,26 @@ func newWinZipCTR(key []byte) (*winZipCTR, error) {
 	if err != nil {
 		return nil, fmt.Errorf("zip aes: %w", err)
 	}
-	c := &winZipCTR{b: block}
+	c := &winZipCTR{b: block, off: 16}
 	c.ctr[0] = 1 // counter starts at 1
 	return c, nil
 }
 
 func (c *winZipCTR) XORKeyStream(dst, src []byte) {
-	for len(src) > 0 {
-		c.b.Encrypt(c.out[:], c.ctr[:])
-		n := len(src)
-		if n > 16 {
-			n = 16
-		}
-		for i := 0; i < n; i++ {
-			dst[i] = src[i] ^ c.out[i]
-		}
-		dst = dst[n:]
-		src = src[n:]
-		// Increment the counter little-endian, starting at byte 0.
-		for i := 0; i < len(c.ctr); i++ {
-			c.ctr[i]++
-			if c.ctr[i] != 0 {
-				break
+	for i := 0; i < len(src); i++ {
+		if c.off == 16 {
+			c.b.Encrypt(c.out[:], c.ctr[:])
+			c.off = 0
+			// Increment the counter little-endian, starting at byte 0.
+			for j := 0; j < len(c.ctr); j++ {
+				c.ctr[j]++
+				if c.ctr[j] != 0 {
+					break
+				}
 			}
 		}
+		dst[i] = src[i] ^ c.out[c.off]
+		c.off++
 	}
 }
 
