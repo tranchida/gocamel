@@ -4,7 +4,7 @@
 
 **Framework d'Intégration d'Entreprise pour Go**
 
-[![Release](https://img.shields.io/badge/version-v0.13.0-blue)](https://gitlab.com/tranchida/gocamel/-/tags/v0.13.0)
+[![Release](https://img.shields.io/badge/version-v0.13.1-blue)](https://gitlab.com/tranchida/gocamel/-/tags/v0.13.1)
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -35,7 +35,7 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 
 ## 📦 Installation
 
-La version **v0.13.0** ajoute les formats de données d'archive ZIP et tar.gz avec prise en charge des mots de passe, ainsi que le nouveau composant STOMP/ActiveMQ avec SSL/TLS. Consultez les [notes de version](hugo-site/content/fr/releases/v0.13.0.md) pour les détails.
+La version **v0.13.1** est un correctif de sécurité pour ZIP/tar.gz (HMAC WinZip AES, noms d'entrées absolus, plafonds d'archive). Consultez les [notes de version](hugo-site/content/fr/releases/v0.13.1.md) pour les détails.
 
 Go **1.27.0 ou ultérieur** est requis pour le cœur, les composants et les exemples. Le workspace, la CI et `.go-version` utilisent Go 1.27.0 par défaut.
 
@@ -45,7 +45,7 @@ template, sql) n'a **aucune dépendance externe à l'exécution** et se compile 
 CGO (les tests utilisent le driver pure-Go `modernc.org/sqlite`) :
 
 ```bash
-go get gitlab.com/tranchida/gocamel@v0.13.0
+go get gitlab.com/tranchida/gocamel@v0.13.1
 ```
 
 Les composants qui s'appuient sur des bibliothèques tierces vivent dans leurs
