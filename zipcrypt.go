@@ -279,6 +279,7 @@ type zipAESReader struct {
 	stream    cipher.Stream
 	mac       hash.Hash
 	remaining int64 // compressed payload bytes left before the 10-byte MAC
+	macDone   bool
 }
 
 func newZipAESReader(r io.Reader, password string, extra *zipAESExtra, compressedSize int64) (*zipAESReader, error) {
@@ -317,8 +318,19 @@ func newZipAESReader(r io.Reader, password string, extra *zipAESExtra, compresse
 	}, nil
 }
 
+func (z *zipAESReader) finishMAC() error {
+	if z.macDone {
+		return nil
+	}
+	z.macDone = true
+	return z.verifyMAC()
+}
+
 func (z *zipAESReader) Read(p []byte) (int, error) {
 	if z.remaining == 0 {
+		if err := z.finishMAC(); err != nil {
+			return 0, err
+		}
 		return 0, io.EOF
 	}
 	if int64(len(p)) > z.remaining {
@@ -327,14 +339,13 @@ func (z *zipAESReader) Read(p []byte) (int, error) {
 	n, err := z.data.Read(p)
 	if n > 0 {
 		z.remaining -= int64(n)
-		if _, macErr := z.mac.Write(p); macErr != nil {
+		if _, macErr := z.mac.Write(p[:n]); macErr != nil {
 			return n, macErr
 		}
 		z.stream.XORKeyStream(p[:n], p[:n])
 	}
-	if err == nil && z.remaining == 0 {
-		// Verify the trailing HMAC-SHA1 (10 bytes) before signalling EOF.
-		if macErr := z.verifyMAC(); macErr != nil {
+	if z.remaining == 0 && (err == nil || err == io.EOF) {
+		if macErr := z.finishMAC(); macErr != nil {
 			return n, macErr
 		}
 	}
