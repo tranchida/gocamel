@@ -181,10 +181,19 @@ func (f *TarGzDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 	tr := tar.NewReader(zr)
 	contents := make(map[string][]byte)
 	var names []string
+	var total int64
 
 	limit := f.maxEntrySize
 	if limit <= 0 {
 		limit = 1 << 62
+	}
+	maxEntries := f.maxEntries
+	if maxEntries <= 0 {
+		maxEntries = 1 << 30
+	}
+	maxTotal := f.maxTotalSize
+	if maxTotal <= 0 {
+		maxTotal = 1 << 62
 	}
 
 	for {
@@ -197,6 +206,9 @@ func (f *TarGzDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue // skip directories, symlinks and special files
+		}
+		if int64(len(names)+1) > maxEntries {
+			return nil, fmt.Errorf("tar.gz unmarshal: archive exceeds the maximum of %d entries (possible tar bomb)", maxEntries)
 		}
 		name, err := validateTarEntryReadName(hdr.Name)
 		if err != nil {
@@ -212,6 +224,10 @@ func (f *TarGzDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 		if int64(len(content)) > limit {
 			return nil, fmt.Errorf("tar.gz unmarshal: entry %q exceeds the maximum size of %d bytes (possible tar bomb)", name, limit)
 		}
+		if total+int64(len(content)) > maxTotal {
+			return nil, fmt.Errorf("tar.gz unmarshal: archive exceeds the maximum total size of %d bytes (possible tar bomb)", maxTotal)
+		}
+		total += int64(len(content))
 		contents[name] = content
 		names = append(names, name)
 	}
@@ -289,6 +305,9 @@ func validateTarEntryName(name string) error {
 	clean := path.Clean(name)
 	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return fmt.Errorf("tar.gz marshal: entry name %q escapes the archive root", name)
+	}
+	if path.IsAbs(clean) || strings.HasPrefix(clean, "/") || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
+		return fmt.Errorf("tar.gz marshal: entry name %q is absolute", name)
 	}
 	return nil
 }
