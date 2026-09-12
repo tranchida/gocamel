@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.13.1] - 2026-09-12
+
+Patch release for ZIP/tar.gz integrity and archive limits.
+
+### Fixed
+
+- **WinZip AES reader**: HMAC is computed over the bytes actually read (`p[:n]`) and verified when the payload is consumed, including `io.EOF` and empty entries (AE-2 has no CRC).
+- **ZIP/tar marshal**: reject absolute entry names (`/etc/passwd`, Windows volumes), matching unmarshal zip-slip rules.
+- **ZIP/tar unmarshal**: cap the number of entries (default 4096) and the total decompressed size (default 1 GiB) in addition to the existing 512 MiB per-entry limit.
+
+### Notes
+
+- Published components and observability modules now require core **v0.13.1**.
+
 ## [v0.13.0] - 2026-09-05
 
 Feature release adding archive data formats and the STOMP/ActiveMQ component.

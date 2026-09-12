@@ -7,7 +7,7 @@ require (
 	github.com/emersion/go-message v0.18.2
 	github.com/knadh/go-pop3 v1.0.2
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.13.0
+	gitlab.com/tranchida/gocamel v0.13.1
 )
 
 require (

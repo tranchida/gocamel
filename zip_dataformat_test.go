@@ -118,7 +118,7 @@ func TestZipDataFormat_MarshalFlat(t *testing.T) {
 func TestZipDataFormat_MarshalRejectsTraversal(t *testing.T) {
 	f := NewZipDataFormat()
 
-	for _, name := range []string{"../evil.txt", "dir/../../evil.txt", "a\x00b"} {
+	for _, name := range []string{"../evil.txt", "dir/../../evil.txt", "/etc/passwd", "a\x00b"} {
 		_, err := f.Marshal(nil, ZipFiles{{Name: name, Content: []byte("x")}})
 		require.Error(t, err, "entry name %q must be rejected", name)
 		assert.Contains(t, err.Error(), "zip marshal")

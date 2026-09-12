@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -40,6 +41,8 @@ type ZipDataFormat struct {
 	comment      string
 	modTime      time.Time
 	maxEntrySize int64
+	maxTotalSize int64
+	maxEntries   int64
 }
 
 // ZipOption configures a ZipDataFormat.
@@ -86,11 +89,25 @@ func ZipMaxEntrySize(max int64) ZipOption {
 	return func(f *ZipDataFormat) { f.maxEntrySize = max }
 }
 
+// ZipMaxTotalSize bounds the sum of decompressed entry sizes while
+// unmarshalling. Non-positive values disable the check; the default is 1 GiB.
+func ZipMaxTotalSize(max int64) ZipOption {
+	return func(f *ZipDataFormat) { f.maxTotalSize = max }
+}
+
+// ZipMaxEntries bounds the number of regular-file entries while unmarshalling.
+// Non-positive values disable the check; the default is 4096.
+func ZipMaxEntries(max int64) ZipOption {
+	return func(f *ZipDataFormat) { f.maxEntries = max }
+}
+
 // NewZipDataFormat creates a ZIP data format with the provided options.
 func NewZipDataFormat(opts ...ZipOption) *ZipDataFormat {
 	format := &ZipDataFormat{
 		entryName:    "data",
 		maxEntrySize: 512 << 20,
+		maxTotalSize: 1 << 30,
+		maxEntries:   4096,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -279,10 +296,22 @@ func (f *ZipDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 	var (
 		contents = make(map[string][]byte, len(zr.File))
 		names    []string
+		total    int64
 	)
+	maxEntries := f.maxEntries
+	if maxEntries <= 0 {
+		maxEntries = 1 << 30
+	}
+	maxTotal := f.maxTotalSize
+	if maxTotal <= 0 {
+		maxTotal = 1 << 62
+	}
 	for _, file := range zr.File {
 		if file.FileInfo().IsDir() {
 			continue
+		}
+		if int64(len(names)+1) > maxEntries {
+			return nil, fmt.Errorf("zip unmarshal: archive exceeds the maximum of %d entries (possible zip bomb)", maxEntries)
 		}
 		name, err := validateZipEntryReadName(file.Name)
 		if err != nil {
@@ -292,6 +321,10 @@ func (f *ZipDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		if total+int64(len(content)) > maxTotal {
+			return nil, fmt.Errorf("zip unmarshal: archive exceeds the maximum total size of %d bytes (possible zip bomb)", maxTotal)
+		}
+		total += int64(len(content))
 		contents[name] = content
 		names = append(names, name)
 	}
@@ -430,6 +463,9 @@ func validateZipEntryName(name string) error {
 	clean := path.Clean(name)
 	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return fmt.Errorf("zip marshal: entry name %q escapes the archive root", name)
+	}
+	if path.IsAbs(clean) || strings.HasPrefix(clean, "/") || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
+		return fmt.Errorf("zip marshal: entry name %q is absolute", name)
 	}
 	return nil
 }
