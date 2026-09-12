@@ -53,24 +53,24 @@ propres modules Go — vous ne récupérez que les dépendances de ce que vous
 utilisez réellement :
 
 ```bash
-go get gitlab.com/tranchida/gocamel/components/kafka@v0.13.0     # segmentio/kafka-go
-go get gitlab.com/tranchida/gocamel/components/grpc@v0.13.0      # google.golang.org/grpc
-go get gitlab.com/tranchida/gocamel/components/redis@v0.13.0    # go-redis
-go get gitlab.com/tranchida/gocamel/components/nats@v0.13.0     # nats.go
-go get gitlab.com/tranchida/gocamel/components/mongodb@v0.13.0  # mongo-driver
-go get gitlab.com/tranchida/gocamel/components/mail@v0.13.0     # SMTP/IMAP/POP3
-go get gitlab.com/tranchida/gocamel/components/ftp@v0.13.0
-go get gitlab.com/tranchida/gocamel/components/sftp@v0.13.0
-go get gitlab.com/tranchida/gocamel/components/smb@v0.13.0
-go get gitlab.com/tranchida/gocamel/components/telegram@v0.13.0
-go get gitlab.com/tranchida/gocamel/components/openai@v0.13.0
-go get gitlab.com/tranchida/gocamel/components/anthropic@v0.13.0
-go get gitlab.com/tranchida/gocamel/components/ollama@v0.13.0
-go get gitlab.com/tranchida/gocamel/components/cron@v0.13.0     # robfig/cron
-go get gitlab.com/tranchida/gocamel/components/file@v0.13.0     # watcher fsnotify
-go get gitlab.com/tranchida/gocamel/components/stomp@v0.13.0    # go-stomp (ActiveMQ/JMS)
-go get gitlab.com/tranchida/gocamel/observability/prometheus@v0.13.0
-go get gitlab.com/tranchida/gocamel/observability/otel@v0.13.0
+go get gitlab.com/tranchida/gocamel/components/kafka@v0.13.1     # segmentio/kafka-go
+go get gitlab.com/tranchida/gocamel/components/grpc@v0.13.1      # google.golang.org/grpc
+go get gitlab.com/tranchida/gocamel/components/redis@v0.13.1    # go-redis
+go get gitlab.com/tranchida/gocamel/components/nats@v0.13.1     # nats.go
+go get gitlab.com/tranchida/gocamel/components/mongodb@v0.13.1  # mongo-driver
+go get gitlab.com/tranchida/gocamel/components/mail@v0.13.1     # SMTP/IMAP/POP3
+go get gitlab.com/tranchida/gocamel/components/ftp@v0.13.1
+go get gitlab.com/tranchida/gocamel/components/sftp@v0.13.1
+go get gitlab.com/tranchida/gocamel/components/smb@v0.13.1
+go get gitlab.com/tranchida/gocamel/components/telegram@v0.13.1
+go get gitlab.com/tranchida/gocamel/components/openai@v0.13.1
+go get gitlab.com/tranchida/gocamel/components/anthropic@v0.13.1
+go get gitlab.com/tranchida/gocamel/components/ollama@v0.13.1
+go get gitlab.com/tranchida/gocamel/components/cron@v0.13.1     # robfig/cron
+go get gitlab.com/tranchida/gocamel/components/file@v0.13.1     # watcher fsnotify
+go get gitlab.com/tranchida/gocamel/components/stomp@v0.13.1    # go-stomp (ActiveMQ/JMS)
+go get gitlab.com/tranchida/gocamel/observability/prometheus@v0.13.1
+go get gitlab.com/tranchida/gocamel/observability/otel@v0.13.1
 ```
 
 ```go

@@ -12,6 +12,10 @@ Patch release for ZIP/tar.gz integrity and archive limits.
 - **ZIP/tar marshal**: reject absolute entry names (`/etc/passwd`, Windows volumes), matching unmarshal zip-slip rules.
 - **ZIP/tar unmarshal**: cap the number of entries (default 4096) and the total decompressed size (default 1 GiB) in addition to the existing 512 MiB per-entry limit.
 
+### Notes
+
+- Published components and observability modules now require core **v0.13.1**.
+
 ## [v0.13.0] - 2026-09-05
 
 Feature release adding archive data formats and the STOMP/ActiveMQ component.
