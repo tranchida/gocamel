@@ -112,10 +112,14 @@ lint:
       if ! command -v gosec >/dev/null 2>&1; then
         go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
       fi
-      for mod in $(find . -name go.mod -not -path '*/.*' -not -path './hugo-site/*'); do
+      # Lint every module before failing: with set -e the job stopped at the
+      # first module with a finding, so the modules after it (including the
+      # root module) were never linted in CI.
+      has_errors=0
+      for mod in $(find . -name go.mod -not -path '*/.*' -not -path './hugo-site/*' | sort); do
         dir=$(dirname "$mod")
         echo "== staticcheck $dir =="
-        (cd "$dir" && staticcheck ./...)
+        (cd "$dir" && staticcheck ./...) || has_errors=1
         echo "== gosec $dir =="
         # gosec excludes the test files (which legitimately use weak patterns
         # like math/rand or fixed test secrets).
@@ -129,8 +133,12 @@ lint:
         if [ "$dir" = "." ]; then
           gosec_opts="$gosec_opts -exclude-dir=components -exclude-dir=examples -exclude-dir=observability -exclude-dir=.cache -exclude-dir=.claude"
         fi
-        (cd "$dir" && gosec $gosec_opts -severity medium ./...)
+        (cd "$dir" && gosec $gosec_opts -severity medium ./...) || has_errors=1
       done
+      if [ "$has_errors" -ne 0 ]; then
+        echo "Linter issues detected."
+        exit 1
+      fi
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH

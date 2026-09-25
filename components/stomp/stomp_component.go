@@ -85,7 +85,7 @@ func buildTLSConfig(u *url.URL, host string) (*tls.Config, error) {
 		if !gocamel.IsSafePath(caFile, false) {
 			return nil, tlsError("sslCAFile", caFile, errors.New("unsafe path: directory traversal or null byte"))
 		}
-		caPEM, err := os.ReadFile(caFile)
+		caPEM, err := os.ReadFile(caFile) // #nosec G304 -- trusted endpoint configuration, checked by IsSafePath above
 		if err != nil {
 			return nil, tlsError("sslCAFile", caFile, err)
 		}
