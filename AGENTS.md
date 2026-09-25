@@ -321,7 +321,7 @@ for mod in $(find . -name go.mod -not -path '*/.*'); do
   (cd "$dir" && go build ./... && go vet ./... && go test -race ./...)
 done
 
-# Linting (matches GitLab CI non-blocking jobs)
+# Linting (matches the blocking GitLab CI lint job; ./lint.sh runs it locally)
 staticcheck ./...
 gosec -exclude-dir=hugo-site ./...
 ```

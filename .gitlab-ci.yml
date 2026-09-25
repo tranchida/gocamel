@@ -84,15 +84,12 @@ coverage:
 # injection). Both are installed via `go install` from pinned versions so the
 # job is reproducible and needs no pre-baked image.
 #
-# The lint job is non-blocking (allow_failure: true): the codebase has a number
-# of pre-existing findings (deprecated strings.Title/rand.Read, unused fields,
-# nil contexts in tests) that are safe but would take a dedicated cleanup pass
-# to resolve. Keeping the job non-blocking surfaces findings in every pipeline
-# log without gating merges; tighten it to blocking once the backlog is cleared.
+# The lint job is blocking: every module is clean, so a new finding fails the
+# pipeline. Fix it, or silence a proven false positive with a justified
+# `#nosec <rule> -- reason` / `//lint:ignore <check> reason` comment.
 lint:
   stage: test
   image: golang:1.27
-  allow_failure: true
   cache:
     key:
       files:
