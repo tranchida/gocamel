@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+Fixes from the 2026-09 security and code review.
+
+### Security
+
+- **ToD option injection**: `ToD` now resolves templates with the new `InterpolateURI`, which escapes exchange values by position (query-escaped in the query string, `?`/`#` escaped in the path). A header such as `x&allowHeaderOverride=true` could previously enable header overrides on an `exec:` or `sql:` endpoint and lead to command execution. Whole-URI placeholders (`ToD("${header.uri}")`) are still inserted verbatim and must be trusted.
+- **HTTP header isolation**: the consumer no longer emits internal `Camel*` headers in responses (`CamelHttpQuery` leaked query-string secrets, `CamelFileName` internal paths) and drops inbound `Camel*` request headers; the producer never sends `Camel*` headers upstream.
+- **HTTP credential relay**: the producer no longer forwards a client's unchanged `Authorization`/`Cookie` received by the HTTP consumer. New `HTTPComponent.SetForwardInboundCredentials(true)` opt-in for pass-through proxies.
+- **Template `json` XSS**: the function now uses `encoding/json` (HTML-safe escaping); non-string values used to be rendered raw into HTML.
+- **Bounded producer cache**: the shared `ProducerCache` is an LRU bounded by `DefaultProducerCacheSize` (1000), configurable with `CamelContext.SetProducerCacheSize`. In-use and pinned (`GetProducer`) producers are never evicted.
+- **TCP consumer**: new `maxConnections` option (default 1024), and a transient `Accept` error (e.g. `EMFILE`) no longer stops the consumer permanently.
+
+### Fixed
+
+- **SEDA/chan context**: consumers process exchanges under their own context instead of the sender's (already cancelled when an HTTP request enqueued the message and returned).
+- **SEDA/chan shutdown**: `Stop` finishes the queued exchanges, bounded by the new `shutdownTimeout` option (default 30 s), instead of discarding them. SEDA warns when a queue is referenced again with different options.
+- **HTTP producer body**: `io.Reader` bodies are sent; unsupported body types return an error instead of an empty request. Repeated response headers (`Set-Cookie`) are kept as `[]string`, and the consumer emits `[]string` headers as repeated headers.
+- **Dynamic Router**: each step's reply now becomes the input of the next step (it was discarded).
+- **ErrorHandler contract**: documented that `nil` means "retry the step"; retries are bounded by `MaxErrorHandlerRetries` (error wraps `ErrTooManyRetries`). New `DeadLetterHandled(true)` option.
+- **File producer**: `Override`/`Fail`/`Ignore` writes go through a hidden temporary file published by rename/hard link, so consumers never read a partial file; `Close` errors are reported.
+- **Template cache**: compiled templates are keyed by path and delimiters.
+- ToD, RecipientList, RoutingSlip, DynamicRouter and WireTap reset `Out` consistently after propagating it; `ProducerCache.Stop` joins errors with `errors.Join`.
+
+### Documentation
+
+- `ValidatePath`, `ValidateRemotePath` and `IsSafePath` document that absolute paths are accepted (use `ValidatePathInDir` / `ConfineFileName` for header-derived paths).
+
 ## [v0.13.1] - 2026-09-12
 
 Patch release for ZIP/tar.gz integrity and archive limits.

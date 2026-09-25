@@ -281,24 +281,43 @@ filters prevent that:
 - **Hop-by-hop and framing headers are never emitted** (`Connection`,
   `Keep-Alive`, `Transfer-Encoding`, `Content-Length`, `Host`, ...). Echoing
   the request's `Content-Length` corrupted the response framing.
+- **Internal `Camel*` headers never cross the HTTP boundary.** They are not
+  emitted in the response (`CamelHttpQuery` used to echo query-string secrets
+  and `CamelFileName` internal paths), and a client cannot set them on the
+  exchange: inbound request headers starting with `Camel` are dropped.
+
+A header holding a `[]string` is sent as a repeated header (e.g. several
+`Set-Cookie`). Symmetrically, the producer stores a repeated response header
+as a `[]string` on `Out`; single-valued headers remain a `string`.
 
 The same hop-by-hop filter applies to the producer, so a `From(http://...)`
 → `To(http://...)` bridge does not forward the inbound `Content-Length` or
 `Host` to the upstream.
 
-The producer forwards every other inbound header by default, including
-`Cookie` and `Authorization` — the normal behaviour for a generic HTTP client
-that calls an authenticated upstream. In a proxy/bridge scenario where that
-would leak a downstream client's credentials to a third-party upstream, strip
-them explicitly:
+The producer never sends internal `Camel*` headers upstream. It forwards the
+other headers, with one exception for credentials: the `Authorization` and
+`Cookie` values a client sent to the HTTP consumer are **not** relayed
+unchanged to the upstream, so a `From(http://...)` → `To(http://...)` bridge
+does not leak a client's credentials to a third party. A credential the route
+sets itself (e.g. a service token) is always sent. For a deliberate
+authenticating pass-through proxy, opt in:
 
 ```go
 http := gocamel.NewHTTPComponent()
+http.SetForwardInboundCredentials(true)
+```
+
+To strip `Authorization` and `Cookie` from every outbound request produced by
+the component, including the ones the route sets:
+
+```go
 http.SetSkipAuthorizationHeaders(true)
 ```
 
-When enabled, `Authorization` and `Cookie` are dropped from every outbound
-request produced by this component.
+**Request body.** The producer sends `[]byte`, `string` and `io.Reader`
+bodies; a `nil` body sends no content. Any other type (a map, a struct) is
+rejected with an error instead of being silently sent as an empty body:
+marshal it first (e.g. `MarshalJSON`).
 
 #### Response status
 
@@ -392,6 +411,7 @@ builder.To("net:tcp://localhost:9090")
 | `timeout`    | int    | `30000`  | Producer dial/reply timeout in ms (0 = none)   |
 | `keepAlive`  | bool   | `false`  | TCP keepalive on connections                   |
 | `readTimeout`| int    | `60000`  | Consumer read deadline in ms (0 = none)        |
+| `maxConnections` | int | `1024` | Maximum concurrent TCP connections of the consumer (0 = unlimited); extra connections are closed immediately |
 
 **URI forms** — both `net:tcp://host:port` and `net:tcp:host:port` are
 accepted; the same applies to `udp`. An omitted host defaults to `localhost`.
@@ -428,6 +448,11 @@ builder.From("net:tcp://localhost:9090").
 - The consumer sets a `readTimeout` (default 60 s) on each connection so a
   slowloris-style client cannot pin a goroutine open indefinitely; set it to
   `0` to disable.
+- `maxConnections` (default 1024) bounds the concurrent TCP connections, so a
+  flood of clients cannot exhaust the process's file descriptors.
+- A transient `Accept` error (such as `EMFILE`, too many open files) no longer
+  stops the consumer: it logs a warning and retries with a backoff capped at
+  one second, like `net/http.Server`.
 - Panics in route processors are contained (`ProcessSafely`): a misbehaving
   route fails its exchange, never the consumer.
 
@@ -750,6 +775,7 @@ builder.To("chan:orders")
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `bufferSize` | int | `100` | Capacity of the internal buffered channel |
+| `shutdownTimeout` | int | `30000` | How long `Stop` keeps processing the queued exchanges, in ms (0 = discard them) |
 
 **Notes:**
 
@@ -758,6 +784,10 @@ builder.To("chan:orders")
   `From("chan:orders")` fails at startup).
 - URI options are applied when the endpoint is **first created**; later references with
   different options log a warning and reuse the existing endpoint.
+- The consumer processes each exchange under **its own context**, not the sender's: an
+  HTTP request that enqueued a message and returned does not cancel the asynchronous leg.
+- `Stop` rejects new sends, then finishes the exchanges already queued for up to
+  `shutdownTimeout` before cancelling the rest (see SEDA in the EIP page).
 
 ---
 
@@ -1366,7 +1396,14 @@ builder.To("template:default.tmpl?allowTemplateFromHeader=true")
 {{.Body | trim}}
 {{now | formatDate "2006-01-02 15:04:05"}}
 {{"hello" | contains "ell"}}
+{"order": {{json .Body}}, "meta": {{json .Headers.meta}}}
 ```
+
+`json` encodes any value (string, number, map, slice) with `encoding/json`.
+Its output escapes `<`, `>` and `&`, so it is safe in HTML as well as in JSON
+payloads. Inside a `<script>` block, write `{{.Body}}` instead: the template
+engine already encodes values as JavaScript there. The compiled-template cache
+(`contentCache`) is keyed by path **and** delimiters.
 
 ---
 

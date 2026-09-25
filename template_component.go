@@ -3,6 +3,7 @@ package gocamel
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"os"
@@ -235,7 +236,7 @@ func (p *TemplateProducer) Send(exchange *Exchange) error {
 func (p *TemplateProducer) executeTemplate(content string, data any, name string) (string, error) {
 	// Check the cache if contentCache is enabled.
 	if p.endpoint.contentCache {
-		if tmpl := p.endpoint.component.getCachedTemplate(name); tmpl != nil {
+		if tmpl := p.endpoint.component.getCachedTemplate(p.cacheKey(name)); tmpl != nil {
 			var buf bytes.Buffer
 			if err := tmpl.Execute(&buf, data); err != nil {
 				return "", err
@@ -276,7 +277,7 @@ func (p *TemplateProducer) executeTemplate(content string, data any, name string
 
 	// Cache the template if enabled.
 	if p.endpoint.contentCache {
-		p.endpoint.component.cacheTemplate(name, tmpl)
+		p.endpoint.component.cacheTemplate(p.cacheKey(name), tmpl)
 	}
 
 	var buf bytes.Buffer
@@ -285,6 +286,13 @@ func (p *TemplateProducer) executeTemplate(content string, data any, name string
 	}
 
 	return buf.String(), nil
+}
+
+// cacheKey identifies a compiled template in the component-wide cache. The
+// delimiters are part of the key: two endpoints reading the same file with
+// different delimiters compile different templates.
+func (p *TemplateProducer) cacheKey(name string) string {
+	return p.endpoint.startDelimiter + "\x00" + p.endpoint.endDelimiter + "\x00" + name
 }
 
 // getCachedTemplate retrieves a template from the cache.
@@ -354,23 +362,14 @@ func templateFuncs() template.FuncMap {
 			return strings.ReplaceAll(s, old, new)
 		},
 		"replaceN": strings.Replace,
-		// Function for JSON-escaping values. The escaping below is the safety
-		// boundary; returning template.HTML prevents html/template from
-		// re-escaping the quoted JSON (gosec G203).
-		"json": func(v any) template.HTML {
-			switch val := v.(type) {
-			case string:
-				// Escape special JSON characters.
-				result := strings.ReplaceAll(val, "\\", "\\\\")
-				result = strings.ReplaceAll(result, "\"", "\\\"")
-				result = strings.ReplaceAll(result, "\n", "\\n")
-				result = strings.ReplaceAll(result, "\r", "\\r")
-				result = strings.ReplaceAll(result, "\t", "\\t")
-				return template.HTML(fmt.Sprintf("\"%s\"", result)) // #nosec G203
-			default:
-				return template.HTML(toString(val)) // #nosec G203
-			}
-		},
+		// json encodes a value as JSON for JSON payload templates. The value
+		// is marshalled by encoding/json, which escapes '<', '>', '&', U+2028
+		// and U+2029 as \uXXXX: the output can neither open an HTML tag nor
+		// end a <script> block, so returning template.HTML (to keep the JSON
+		// quotes intact in text context) is safe for any value. Inside a
+		// <script> block use {{.Body}} instead: html/template already
+		// JSON-encodes values in JavaScript context (gosec G203).
+		"json": templateJSON,
 		// Function for marking content as safe (no HTML escaping). Deliberate
 		// escape hatch for already-trusted content (gosec G203).
 		"safeHTML": func(v any) template.HTML {
@@ -424,6 +423,18 @@ func templateFuncs() template.FuncMap {
 			return 0
 		},
 	}
+}
+
+// templateJSON implements the "json" template function (see templateFuncs).
+func templateJSON(v any) (template.HTML, error) {
+	if b, ok := v.([]byte); ok {
+		v = string(b) // a []byte body is text, not base64 data
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("json: %w", err)
+	}
+	return template.HTML(out), nil // #nosec G203 -- HTML-safe JSON, see templateFuncs
 }
 
 // toString converts any value to a string.

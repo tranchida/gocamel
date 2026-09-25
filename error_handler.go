@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -11,10 +12,17 @@ import (
 // In the EIP catalog, this is the Error Handler pattern.
 type ErrorHandler interface {
 	// HandleError processes a failed exchange. It receives the exchange that caused
-	// the error and the error itself. It can modify the exchange (e.g., set headers
-	// with error details) and may itself return an error if handling fails.
-	// Returning nil means the error was successfully handled and the exchange
-	// processing should continue (e.g., after redelivery succeeds).
+	// the error and the error itself, and may modify the exchange (e.g. set
+	// headers with error details).
+	//
+	// The return value drives the route:
+	//   - nil asks the route to RETRY the processor that failed (redelivery).
+	//     It does not mean "swallow the error and move on": a handler that
+	//     always returns nil would retry forever, so the route gives up after
+	//     MaxErrorHandlerRetries consecutive retries of the same step.
+	//   - an error wrapping ErrStopRouting ends routing without failing the
+	//     exchange (the error was handled, e.g. dead-lettered).
+	//   - any other error fails the exchange with that error.
 	HandleError(exchange *Exchange, err error) error
 }
 
@@ -24,6 +32,16 @@ type ErrorHandler interface {
 type RetryResettable interface {
 	ResetRetryState(exchangeID string)
 }
+
+// MaxErrorHandlerRetries bounds how many consecutive times a route retries a
+// failing processor because its ErrorHandler returned nil. It is a safety net
+// against a handler that returns nil to "ignore" an error, which would
+// otherwise spin on the failing step forever.
+const MaxErrorHandlerRetries = 10000
+
+// ErrTooManyRetries is wrapped (together with the processor's last error) by
+// the error a route returns when MaxErrorHandlerRetries is exceeded.
+var ErrTooManyRetries = errors.New("error handler requested too many retries")
 
 // NoErrorHandler is the default error handler: errors are propagated immediately
 // without any redelivery or dead-letter routing.
@@ -50,6 +68,7 @@ type DeadLetterChannel struct {
 	redeliveryDelay       time.Duration
 	useExponentialBackoff bool
 	backoffMultiplier     float64
+	handled               bool
 	mu                    sync.Mutex
 	retryAttempts         map[string]int      // keyed by exchange.ID; protected by mu
 	synchronized          map[string]struct{} // exchange IDs with a cleanup callback registered
@@ -80,6 +99,18 @@ func ExponentialBackoff(multiplier float64) DeadLetterChannelOption {
 	return func(dlc *DeadLetterChannel) {
 		dlc.useExponentialBackoff = true
 		dlc.backoffMultiplier = multiplier
+	}
+}
+
+// DeadLetterHandled marks exchanges successfully sent to the dead letter
+// endpoint as handled (Apache Camel semantics): the route stops and the
+// consumer sees a success, e.g. the HTTP consumer answers with the exchange
+// instead of a 500. The returned error still wraps the original error (and
+// ErrStopRouting) for callers inspecting it. By default the original error is
+// propagated to the consumer after dead-lettering.
+func DeadLetterHandled(handled bool) DeadLetterChannelOption {
+	return func(dlc *DeadLetterChannel) {
+		dlc.handled = handled
 	}
 }
 
@@ -207,7 +238,7 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 	// re-open a connection on exactly the path where the system is already
 	// under stress; the cache keeps one started producer per URI and
 	// CamelContext.Stop() owns its lifecycle.
-	producer, prodErr := dlc.context.GetProducer(dlc.deadLetterURI)
+	producer, release, prodErr := dlc.context.acquireProducer(dlc.deadLetterURI)
 	if prodErr != nil {
 		return fmt.Errorf("dead letter channel: failed to obtain producer for %s: %w (original error: %v)",
 			dlc.deadLetterURI, prodErr, err)
@@ -215,13 +246,18 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 
 	// Send the failed exchange to the dead letter queue
 	sendErr := producer.Send(exchange)
+	release()
 	if sendErr != nil {
 		return fmt.Errorf("dead letter channel: failed to send to %s: %w (original error: %v)",
 			dlc.deadLetterURI, sendErr, err)
 	}
 
-	// The exchange has been successfully sent to dead letter.
-	// Return the original error so the caller knows processing failed.
+	// The exchange has been successfully sent to dead letter. By default the
+	// original error is returned so the consumer knows processing failed;
+	// with DeadLetterHandled(true) the exchange counts as handled.
+	if dlc.handled {
+		return fmt.Errorf("%w: dead-lettered to %s: %w", ErrStopRouting, dlc.deadLetterURI, err)
+	}
 	return err
 }
 

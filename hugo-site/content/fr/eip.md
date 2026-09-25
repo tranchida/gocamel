@@ -548,11 +548,26 @@ builder.To("seda:traitement")
 
 - `size` : La capacité de la file d'attente (défaut 1000).
 - `concurrentConsumers` : Le nombre de goroutines esclaves traitant la file (défaut 1).
+- `shutdownTimeout` : Durée pendant laquelle `Stop` continue de traiter les exchanges
+  en file, en ms (défaut 30000 ; `0` les abandonne immédiatement).
 
 Les valeurs invalides (`size` négatif, `concurrentConsumers` non positif) retombent sur
 les valeurs par défaut avec un avertissement. Les paramètres sont appliqués à la
 **première création** de l'endpoint ; les références ultérieures au même nom de file
-réutilisent l'endpoint existant.
+réutilisent l'endpoint existant, et une référence avec des options différentes émet un
+avertissement.
+
+**Contexte.** Les workers traitent chaque exchange sous le contexte du consumer, et non
+celui de l'émetteur. Une route comme `From("http://...").To("seda:travail")` rend la
+main dès que le message est en file, ce qui annule le contexte de la requête HTTP ; la
+partie asynchrone n'est pas affectée et ses appels HTTP, délais et requêtes SQL
+s'exécutent normalement.
+
+**Arrêt.** `Stop` refuse d'abord les nouveaux envois (et débloque les producteurs en
+attente sur une file pleine), puis laisse les workers terminer les exchanges déjà en
+file, pendant au plus `shutdownTimeout`. Il annule ensuite le contexte du consumer ; les
+exchanges restant en file sont complétés en échec. `CamelContext.GracefulStop` annule
+le contexte d'emblée et n'attend donc pas la file.
 
 ---
 
@@ -649,6 +664,25 @@ builder.From("direct:start").
 - `${header.<name>}` — Valeur d'en-tête
 - `${property.<name>}` — Valeur de propriété
 - `${body}` — Corps du message
+
+**Échappement.** Les valeurs de l'exchange sont des données, pas de la syntaxe
+d'URI. Chaque valeur est échappée selon la position de son placeholder dans le
+template (`InterpolateURI`) :
+
+- dans la query string, elle est échappée comme valeur de requête : un header
+  comme `a&allowHeaderOverride=true` reste dans son option et ne peut pas en
+  activer une autre ;
+- dans le chemin, `?` et `#` sont échappés : une valeur ne peut pas ouvrir une
+  query string.
+
+Un placeholder qui représente l'URI entière ou son schéma (`ToD("${header.dest}")`)
+est inséré tel quel : la route laisse explicitement les données de l'exchange
+choisir l'endpoint, ces données doivent donc provenir d'une source de confiance.
+
+Chaque URI distincte conserve un producer démarré dans le cache de producers du
+contexte, borné à `DefaultProducerCacheSize` (1000) producers. Au-delà, les
+producers inactifs les moins récemment utilisés sont arrêtés. Modifiez la borne
+avec `CamelContext.SetProducerCacheSize(n)` (`n <= 0` = illimité).
 
 ---
 
@@ -786,6 +820,31 @@ builder.From("direct:start").
 3. Si une correspondance est trouvée, l'erreur est considérée comme "gérée" et le routage continue après le bloc
    `DoTry` (sauf si le bloc catch échoue lui-même).
 4. Le bloc `DoFinally` est **toujours** exécuté, qu'il y ait eu une erreur ou non.
+
+### Error handler de route et Dead Letter Channel
+
+Un `ErrorHandler` de route reçoit chaque erreur renvoyée par une étape. Sa
+valeur de retour pilote la route :
+
+- `nil` demande à la route de **rejouer l'étape en échec** (redelivery). Cela
+  ne veut pas dire « ignorer l'erreur et continuer » : la route abandonne après
+  `MaxErrorHandlerRetries` (10000) rejeux consécutifs de la même étape et
+  renvoie une erreur qui enveloppe `ErrTooManyRetries`.
+- une erreur qui enveloppe `ErrStopRouting` arrête le routage sans mettre
+  l'exchange en échec.
+- toute autre erreur met l'exchange en échec.
+
+`DeadLetterChannel` réessaie jusqu'à `MaxRedeliveries`, envoie ensuite
+l'exchange vers l'endpoint dead letter et, par défaut, renvoie quand même
+l'erreur d'origine au consumer (le consumer HTTP répond 500). Avec
+`DeadLetterHandled(true)`, un exchange envoyé en dead letter est considéré comme
+traité, comme dans Apache Camel :
+
+```go
+builder.From("http://0.0.0.0:8080/commandes").
+    DeadLetterChannel("seda:dead", gocamel.MaxRedeliveries(3), gocamel.DeadLetterHandled(true)).
+    To("direct:traitement")
+```
 
 ---
 

@@ -203,6 +203,9 @@ GoCamel includes built-in security utilities to protect against common vulnerabi
 - **No Credential Reflection** - The HTTP consumer never echoes inbound request headers (`Cookie`, `Authorization`, ...) back in its response
 - **Bounded Body Reads** - HTTP request and response bodies are size-limited (32 MiB by default) to prevent memory exhaustion
 - **Panic Containment** - A panicking processor fails its exchange rather than the whole process
+- **Escaped Dynamic URIs** - `ToD` escapes exchange values by position, so a header cannot inject endpoint options such as `allowHeaderOverride=true`
+- **Header Isolation** - Internal `Camel*` headers never cross the HTTP boundary, and a client's `Authorization`/`Cookie` are not relayed to an upstream unless opted in
+- **Bounded Resources** - The shared producer cache (1000 producers) and TCP consumer connections (`maxConnections=1024`) are bounded by default
 
 ### Security Utilities (`security.go`)
 
@@ -273,6 +276,31 @@ Two further behaviour changes are unlikely to need action: splitting a
 `[]byte` body now yields a single part instead of one exchange per byte, and
 the HTTP consumer no longer echoes unchanged inbound request headers in its
 response.
+
+**Security review fixes (unreleased).** These changes may affect existing routes:
+
+- `ToD` escapes interpolated values by position (query-escaped in the query
+  string; `?` and `#` escaped in the path). A template that relied on a header
+  to inject raw query text must now build the whole URI in one placeholder
+  (`ToD("${header.uri}")`), which is inserted as-is and must be trusted.
+- The HTTP consumer drops inbound `Camel*` request headers and never emits
+  `Camel*` headers in its response; the producer never sends them upstream.
+- The HTTP producer no longer relays a client's unchanged `Authorization` or
+  `Cookie` to the upstream. Restore it for a pass-through proxy with
+  `SetForwardInboundCredentials(true)`.
+- The HTTP producer rejects body types other than `[]byte`, `string`,
+  `io.Reader` and `nil` (they used to be sent as an empty body). Repeated
+  response headers are stored as `[]string`.
+- The template `json` function now outputs real JSON for every value (a map
+  used to render as `map[k:v]`) and escapes `<`, `>` and `&`.
+- SEDA and chan consumers process exchanges under their own context and finish
+  the queued exchanges on `Stop` (bounded by `shutdownTimeout`, default 30 s).
+- The shared producer cache holds at most 1000 producers
+  (`SetProducerCacheSize`), and the TCP consumer at most 1024 connections
+  (`maxConnections`).
+- An `ErrorHandler` returning `nil` retries the failed step; the retries are
+  now bounded (`MaxErrorHandlerRetries`). `DeadLetterHandled(true)` makes a
+  dead-lettered exchange count as handled.
 
 ## 📚 Documentation
 

@@ -283,24 +283,46 @@ elle-même. Deux filtres l'en empêchent :
 - **Les headers hop-by-hop et de cadrage ne sont jamais émis** (`Connection`,
   `Keep-Alive`, `Transfer-Encoding`, `Content-Length`, `Host`, ...). Renvoyer
   le `Content-Length` de la requête corrompait le cadrage de la réponse.
+- **Les headers internes `Camel*` ne franchissent jamais la frontière HTTP.**
+  Ils ne sont pas émis dans la réponse (`CamelHttpQuery` renvoyait les secrets
+  de la query string et `CamelFileName` des chemins internes), et un client ne
+  peut pas les poser sur l'exchange : les headers de requête commençant par
+  `Camel` sont ignorés.
+
+Un header contenant un `[]string` est émis comme header répété (par exemple
+plusieurs `Set-Cookie`). Symétriquement, le producer stocke un header de
+réponse répété sous forme de `[]string` sur `Out` ; les headers à valeur
+unique restent des `string`.
 
 Le même filtre s'applique au producer : un pont `From(http://...)` →
 `To(http://...)` ne transmet donc pas le `Content-Length` ni le `Host` entrants
 au service amont.
 
-Le producer transmet par défaut tous les autres headers entrants, y compris
-`Cookie` et `Authorization` — le comportement normal d'un client HTTP générique
-qui appelle un service amont authentifié. Dans un scénario de pont/proxy où cela
-fuirait les identifiants d'un client vers un amont tiers, supprimez-les
-explicitement :
+Le producer n'envoie jamais les headers internes `Camel*` au service amont. Il
+transmet les autres headers, avec une exception pour les identifiants : les
+valeurs `Authorization` et `Cookie` envoyées par un client au consumer HTTP ne
+sont **pas** relayées telles quelles vers l'amont, afin qu'un pont
+`From(http://...)` → `To(http://...)` ne fasse pas fuiter les identifiants d'un
+client vers un tiers. Un identifiant posé par la route elle-même (par exemple
+un jeton de service) est toujours envoyé. Pour un proxy qui doit volontairement
+relayer l'authentification du client, activez l'option :
 
 ```go
 http := gocamel.NewHTTPComponent()
+http.SetForwardInboundCredentials(true)
+```
+
+Pour retirer `Authorization` et `Cookie` de toutes les requêtes sortantes du
+composant, y compris celles posées par la route :
+
+```go
 http.SetSkipAuthorizationHeaders(true)
 ```
 
-Une fois activée, `Authorization` et `Cookie` sont retirés de toute requête
-sortante produite par ce composant.
+**Corps de la requête.** Le producer envoie les corps `[]byte`, `string` et
+`io.Reader` ; un corps `nil` n'envoie aucun contenu. Tout autre type (map,
+struct) est rejeté avec une erreur au lieu d'être envoyé silencieusement comme
+un corps vide : sérialisez-le d'abord (par exemple `MarshalJSON`).
 
 #### Statut de la réponse
 
@@ -396,6 +418,7 @@ builder.To("net:tcp://localhost:9090")
 | `timeout`    | int    | `30000` | Délai d'attente de connexion/réponse du producer en ms (0 = aucun) |
 | `keepAlive`  | bool   | `false` | Keepalive TCP sur les connexions                 |
 | `readTimeout`| int    | `60000` | Délai de lecture du consumer en ms (0 = aucun)    |
+| `maxConnections` | int | `1024` | Nombre maximal de connexions TCP simultanées du consumer (0 = illimité) ; les connexions en trop sont fermées immédiatement |
 
 **Formes d'URI** — `net:tcp://hôte:port` et `net:tcp:hôte:port` sont acceptées ;
 idem pour `udp`. Un hôte omis prend la valeur `localhost`. Le port `0` demande
@@ -433,6 +456,12 @@ builder.From("net:tcp://localhost:9090").
 - Le consumer fixe un `readTimeout` (défaut 60 s) sur chaque connexion afin
   qu'un client de type slowloris ne puisse pas monopoliser une goroutine
   indéfiniment ; mettez-le à `0` pour le désactiver.
+- `maxConnections` (défaut 1024) borne le nombre de connexions TCP
+  simultanées, afin qu'un afflux de clients ne puisse pas épuiser les
+  descripteurs de fichiers du processus.
+- Une erreur transitoire d'`Accept` (comme `EMFILE`, trop de fichiers ouverts)
+  n'arrête plus le consumer : il journalise un avertissement et réessaie avec
+  un délai croissant plafonné à une seconde, comme `net/http.Server`.
 - Les paniques dans les processeurs de route sont contenues
   (`ProcessSafely`) : une route défectueuse échoue son exchange, jamais le
   consumer.
@@ -759,6 +788,7 @@ builder.To("chan:orders")
 | Option       | Type | Défaut | Description                              |
 |--------------|------|--------|------------------------------------------|
 | `bufferSize` | int  | `100`  | Capacité du canal interne bufferisé      |
+| `shutdownTimeout` | int | `30000` | Durée pendant laquelle `Stop` continue de traiter les exchanges en file, en ms (0 = les abandonner) |
 
 **Notes :**
 
@@ -768,6 +798,11 @@ builder.To("chan:orders")
 - Les options URI sont appliquées lorsque l'endpoint est **créé pour la première
   fois** ; les références ultérieures avec des options différentes émettent un
   avertissement et réutilisent l'endpoint existant.
+- Le consumer traite chaque exchange sous **son propre contexte**, et non celui de
+  l'émetteur : une requête HTTP qui a mis un message en file puis s'est terminée
+  n'annule pas la partie asynchrone.
+- `Stop` refuse les nouveaux envois, puis termine les exchanges déjà en file pendant au
+  plus `shutdownTimeout` avant d'annuler le reste (voir SEDA dans la page EIP).
 
 ---
 
@@ -1383,7 +1418,15 @@ builder.To("template:default.tmpl?allowTemplateFromHeader=true")
 {{.Body | trim}}
 {{now | formatDate "2006-01-02 15:04:05"}}
 {{"hello" | contains "ell"}}
+{"order": {{json .Body}}, "meta": {{json .Headers.meta}}}
 ```
+
+`json` encode n'importe quelle valeur (chaîne, nombre, map, slice) avec
+`encoding/json`. Sa sortie échappe `<`, `>` et `&` : elle est donc sûre en HTML
+comme dans une charge utile JSON. Dans un bloc `<script>`, écrivez plutôt
+`{{.Body}}` : le moteur de templates y encode déjà les valeurs en JavaScript.
+Le cache des templates compilés (`contentCache`) est indexé par chemin **et**
+par délimiteurs.
 
 ---
 

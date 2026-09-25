@@ -206,6 +206,9 @@ GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre
 - **Aucune Réflexion d'Identifiants** - Le consommateur HTTP ne renvoie jamais les en-têtes de la requête entrante (`Cookie`, `Authorization`, ...) dans sa réponse
 - **Lectures de Corps Bornées** - Les corps de requête et de réponse HTTP sont limités en taille (32 Mio par défaut) pour prévenir l'épuisement mémoire
 - **Confinement des Panics** - Un processeur qui panique fait échouer son exchange, pas le processus entier
+- **URI Dynamiques Échappées** - `ToD` échappe les valeurs de l'exchange selon leur position : un en-tête ne peut pas injecter d'option d'endpoint comme `allowHeaderOverride=true`
+- **Isolation des En-têtes** - Les en-têtes internes `Camel*` ne franchissent jamais la frontière HTTP, et les `Authorization`/`Cookie` d'un client ne sont pas relayés vers un service amont sans activation explicite
+- **Ressources Bornées** - Le cache partagé de producers (1000 producers) et les connexions du consommateur TCP (`maxConnections=1024`) sont bornés par défaut
 
 ### Utilitaires de Sécurité (`security.go`)
 
@@ -276,6 +279,35 @@ Deux autres changements ne nécessitent probablement aucune action : découper u
 corps `[]byte` produit désormais une seule part au lieu d'un exchange par
 octet, et le consommateur HTTP ne renvoie plus les en-têtes entrants inchangés
 dans sa réponse.
+
+**Correctifs de la revue de sécurité (non publiés).** Ces changements peuvent
+affecter des routes existantes :
+
+- `ToD` échappe les valeurs interpolées selon leur position (échappement de
+  requête dans la query string ; `?` et `#` échappés dans le chemin). Un
+  template qui comptait sur un en-tête pour injecter du texte de requête brut
+  doit désormais construire l'URI entière dans un seul placeholder
+  (`ToD("${header.uri}")`), inséré tel quel et qui doit être de confiance.
+- Le consommateur HTTP ignore les en-têtes de requête `Camel*` et n'émet jamais
+  d'en-têtes `Camel*` dans sa réponse ; le producteur ne les envoie jamais au
+  service amont.
+- Le producteur HTTP ne relaie plus les `Authorization` ou `Cookie` inchangés
+  d'un client vers le service amont. Pour un proxy qui doit les relayer :
+  `SetForwardInboundCredentials(true)`.
+- Le producteur HTTP rejette les corps autres que `[]byte`, `string`,
+  `io.Reader` et `nil` (ils étaient envoyés comme un corps vide). Les en-têtes
+  de réponse répétés sont stockés en `[]string`.
+- La fonction de template `json` produit désormais du vrai JSON pour toute
+  valeur (une map s'affichait `map[k:v]`) et échappe `<`, `>` et `&`.
+- Les consommateurs SEDA et chan traitent les exchanges sous leur propre
+  contexte et terminent les exchanges en file lors du `Stop` (borné par
+  `shutdownTimeout`, 30 s par défaut).
+- Le cache partagé de producers contient au plus 1000 producers
+  (`SetProducerCacheSize`), et le consommateur TCP au plus 1024 connexions
+  (`maxConnections`).
+- Un `ErrorHandler` qui renvoie `nil` rejoue l'étape en échec ; ces rejeux sont
+  désormais bornés (`MaxErrorHandlerRetries`). `DeadLetterHandled(true)` fait
+  considérer un exchange envoyé en dead letter comme traité.
 
 ## 📚 Documentation
 

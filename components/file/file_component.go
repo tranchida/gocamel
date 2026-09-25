@@ -151,31 +151,108 @@ func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 		return fmt.Errorf("unsupported body type: %T", exchange.GetIn().GetBody())
 	}
 
-	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	switch p.fileExist {
-	case gocamel.FileExistFail, gocamel.FileExistIgnore:
-		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
-	case gocamel.FileExistAppend:
-		flags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	if p.fileExist == gocamel.FileExistAppend {
+		return writeDirect(targetPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, content)
 	}
 
-	// targetPath was confined above via ValidatePathInDir. 0644 is the deliberate
-	// default: produced files are meant to be read by other processes, and the
-	// effective mode still respects the process umask.
-	file, err := confinedOpen(targetPath, flags, 0644) // #nosec G302,G304
+	// Override, Fail and Ignore write a hidden temporary file next to the
+	// target and publish it in one step, so a consumer polling the directory
+	// never reads a half-written file. Override renames over the target;
+	// Fail and Ignore hard-link it, which fails atomically if the target
+	// already exists (the O_EXCL semantics without the partial-file window).
+	tmpPath, err := writeTemp(targetPath, content)
 	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpPath) // no-op after a successful rename
+
+	if p.fileExist == gocamel.FileExistOverride || p.fileExist == "" {
+		if err := os.Rename(tmpPath, targetPath); err != nil {
+			return fmt.Errorf("error publishing file %s: %w", targetPath, err)
+		}
+		return nil
+	}
+
+	err = os.Link(tmpPath, targetPath)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, os.ErrExist):
+		if p.fileExist == gocamel.FileExistIgnore {
+			return nil
+		}
+		return fmt.Errorf("file already exists: %s", targetPath)
+	default:
+		// Hard links are unsupported on some filesystems (FAT, some network
+		// shares): fall back to an exclusive direct write.
+		err := writeDirect(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, content)
 		if errors.Is(err, os.ErrExist) {
 			if p.fileExist == gocamel.FileExistIgnore {
 				return nil
 			}
 			return fmt.Errorf("file already exists: %s", targetPath)
 		}
-		return fmt.Errorf("error opening file: %v", err)
+		return err
 	}
-	defer file.Close()
+}
 
+// tempFileSuffix marks the producer's in-progress files; the consumer skips them.
+const tempFileSuffix = ".camelTmp"
+
+// producedFileMode is the mode of produced files. 0644 is the deliberate
+// default: produced files are meant to be read by other processes.
+const producedFileMode = 0644
+
+// writeTemp writes content to a new hidden temporary file in the directory of
+// targetPath and returns its path. The file is fully written and closed (with
+// the close error checked) before it is published.
+func writeTemp(targetPath string, content []byte) (string, error) {
+	dir, base := filepath.Split(targetPath)
+	if dir == "" {
+		dir = "."
+	}
+	// CreateTemp opens with O_EXCL, so it never follows a planted symlink.
+	tmp, err := os.CreateTemp(dir, "."+base+".*"+tempFileSuffix)
+	if err != nil {
+		return "", fmt.Errorf("error creating temporary file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	fail := func(err error) (string, error) {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if _, err := tmp.Write(content); err != nil {
+		return fail(fmt.Errorf("error writing to file: %w", err))
+	}
+	if err := tmp.Chmod(producedFileMode); err != nil {
+		return fail(fmt.Errorf("error setting file mode: %w", err))
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("error closing file: %w", err)
+	}
+	return tmpPath, nil
+}
+
+// writeDirect writes content to path in place (append mode, or the fallback
+// when hard links are unavailable). The close error is returned: on network
+// filesystems it is where a failed write surfaces.
+func writeDirect(path string, flags int, content []byte) error {
+	// path was confined by the caller via ValidatePathInDir.
+	file, err := confinedOpen(path, flags, producedFileMode) // #nosec G302,G304
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return err
+		}
+		return fmt.Errorf("error opening file: %w", err)
+	}
 	if _, err := file.Write(content); err != nil {
-		return fmt.Errorf("error writing to file: %v", err)
+		_ = file.Close()
+		return fmt.Errorf("error writing to file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("error closing file: %w", err)
 	}
 	return nil
 }
@@ -398,7 +475,8 @@ func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.Pol
 		return
 	}
 	filename := filepath.Base(path)
-	if strings.HasSuffix(filename, ".camelLock") || strings.HasSuffix(filename, ".camelExclusiveReadLock") {
+	if strings.HasSuffix(filename, ".camelLock") || strings.HasSuffix(filename, ".camelExclusiveReadLock") ||
+		strings.HasSuffix(filename, tempFileSuffix) {
 		return
 	}
 	if !gocamel.MatchFileName(filename, opts.Include, opts.Exclude) {

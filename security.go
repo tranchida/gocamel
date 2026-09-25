@@ -12,7 +12,11 @@ import (
 // to prevent various injection and traversal attacks.
 
 // ValidateRemotePath validates paths for remote protocols (FTP, SFTP, SMB)
-// These paths may be Unix-style even on Windows
+// These paths may be Unix-style even on Windows.
+//
+// It only rejects '..' traversal and null bytes: an absolute path such as
+// "/etc/passwd" is accepted. For a file name taken from a message header use
+// ConfineFileName or JoinRemotePath, which also reject absolute paths.
 func ValidateRemotePath(path string) error {
 	if path == "" {
 		return nil
@@ -262,6 +266,7 @@ func containsTraversal(path string) bool {
 }
 
 // IsSafePath checks if a path is safe (exported for use in components).
+// Like ValidatePath it does not confine the path: absolute paths are accepted.
 // A path is considered unsafe if any '..' component drives the effective
 // depth below zero (directory traversal) or if the path contains a null byte.
 // Filenames that merely contain two adjacent dots (e.g. "report..v2.txt")
@@ -288,6 +293,10 @@ func IsSafePath(path string, checkExistence bool) bool {
 // base (depth below zero). Filenames containing '..' as part of a longer
 // token (e.g. "foo..bar") are accepted. A post-clean traversal check catches
 // cases that filepath.Clean alone would not.
+//
+// ValidatePath does NOT confine a path: absolute paths ("/etc/passwd") are
+// accepted. For paths derived from message headers use ValidatePathInDir
+// (containment in a base directory, symlinks resolved) or ConfineFileName.
 func ValidatePath(path string) error {
 	if path == "" {
 		return fmt.Errorf("path cannot be empty")

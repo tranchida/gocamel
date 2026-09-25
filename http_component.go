@@ -3,6 +3,7 @@ package gocamel
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +53,68 @@ var authorizationHeaders = map[string]bool{
 	"Cookie":        true,
 }
 
+// isCamelHeader reports whether key is an internal Camel* header. These carry
+// routing metadata (request path and query, file names, SQL row counts...)
+// and must never cross the HTTP boundary in either direction: an inbound
+// request cannot set them, and neither a response nor an outbound request
+// exposes them. The match is case-insensitive because net/http canonicalizes
+// header names ("Camelfilename").
+func isCamelHeader(key string) bool {
+	return len(key) >= 5 && strings.EqualFold(key[:5], "camel")
+}
+
+// httpInboundCredentialsProperty records fingerprints of the credential
+// headers (Authorization, Cookie) received by the HTTP consumer, so the
+// producer can recognize and drop them when they would be forwarded unchanged
+// to an upstream. Only SHA-256 digests are stored, never the secrets.
+const httpInboundCredentialsProperty = "CamelHttpInboundCredentials"
+
+func credentialFingerprint(key, value string) [sha256.Size]byte {
+	return sha256.Sum256([]byte(http.CanonicalHeaderKey(key) + "\x00" + value))
+}
+
+// isForwardedInboundCredential reports whether key/value is a credential
+// header the HTTP consumer received and the route did not change.
+func isForwardedInboundCredential(exchange *Exchange, key, value string) bool {
+	if !authorizationHeaders[http.CanonicalHeaderKey(key)] {
+		return false
+	}
+	v, ok := exchange.GetProperty(httpInboundCredentialsProperty)
+	if !ok {
+		return false
+	}
+	fingerprints, ok := v.(map[[sha256.Size]byte]struct{})
+	if !ok {
+		return false
+	}
+	_, found := fingerprints[credentialFingerprint(key, value)]
+	return found
+}
+
+// headerValues returns the string values of a header set on a message: a
+// string, or a []string for a multi-valued header such as Set-Cookie. Other
+// types are not representable as HTTP headers and are skipped.
+func headerValues(value any) ([]string, bool) {
+	switch v := value.(type) {
+	case string:
+		return []string{v}, true
+	case []string:
+		return v, len(v) > 0
+	default:
+		return nil, false
+	}
+}
+
+// messageHeaderValue converts received HTTP header values to a message header
+// value: a string for the common single-valued case, a []string when the
+// header was repeated (Set-Cookie, Via...) so no value is lost.
+func messageHeaderValue(values []string) any {
+	if len(values) == 1 {
+		return values[0]
+	}
+	return append([]string(nil), values...)
+}
+
 // HTTPComponent represents the HTTP component.
 //
 // The optional consumer-side Middleware is applied to every incoming request
@@ -64,6 +127,7 @@ type HTTPComponent struct {
 	maxBodySize              int64
 	throwExceptionOnFailure  bool
 	skipAuthorizationHeaders bool
+	forwardInboundCreds      bool
 }
 
 // NewHTTPComponent creates a new HTTPComponent instance with default timeouts.
@@ -118,6 +182,16 @@ func (c *HTTPComponent) SetSkipAuthorizationHeaders(v bool) {
 	c.skipAuthorizationHeaders = v
 }
 
+// SetForwardInboundCredentials controls whether the producer forwards the
+// Authorization and Cookie headers a client sent to the HTTP consumer when the
+// route passes them on unchanged. Disabled by default so a consumer -> producer
+// route does not leak a client's credentials to the upstream; credentials the
+// route sets itself are always sent (unless SetSkipAuthorizationHeaders).
+// Enable it for a deliberate authenticating pass-through proxy.
+func (c *HTTPComponent) SetForwardInboundCredentials(v bool) {
+	c.forwardInboundCreds = v
+}
+
 // CreateEndpoint creates a new HTTP endpoint
 func (c *HTTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	if _, err := ParseURI(uri); err != nil {
@@ -131,6 +205,7 @@ func (c *HTTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		maxBodySize:              c.maxBodySize,
 		throwExceptionOnFailure:  c.throwExceptionOnFailure,
 		skipAuthorizationHeaders: c.skipAuthorizationHeaders,
+		forwardInboundCreds:      c.forwardInboundCreds,
 	}, nil
 }
 
@@ -142,6 +217,7 @@ type HTTPEndpoint struct {
 	maxBodySize              int64
 	throwExceptionOnFailure  bool
 	skipAuthorizationHeaders bool
+	forwardInboundCreds      bool
 }
 
 // URI returns the endpoint URI
@@ -157,6 +233,7 @@ func (e *HTTPEndpoint) CreateProducer() (Producer, error) {
 		maxBodySize:              e.maxBodySize,
 		throwExceptionOnFailure:  e.throwExceptionOnFailure,
 		skipAuthorizationHeaders: e.skipAuthorizationHeaders,
+		forwardInboundCreds:      e.forwardInboundCreds,
 	}, nil
 }
 
@@ -183,6 +260,7 @@ type HTTPProducer struct {
 	maxBodySize              int64
 	throwExceptionOnFailure  bool
 	skipAuthorizationHeaders bool
+	forwardInboundCreds      bool
 }
 
 // Start starts the HTTP producer
@@ -197,12 +275,19 @@ func (p *HTTPProducer) Stop() error {
 
 // Send sends a message via HTTP
 func (p *HTTPProducer) Send(exchange *Exchange) error {
-	// Creating the request
+	// Creating the request. Any other body type used to be sent as an empty
+	// body without error; marshal it first (e.g. MarshalJSON) instead.
 	var bodyReader io.Reader
-	if body, ok := exchange.GetIn().GetBody().([]byte); ok {
+	switch body := exchange.GetIn().GetBody().(type) {
+	case nil:
+	case []byte:
 		bodyReader = bytes.NewReader(body)
-	} else if body, ok := exchange.GetIn().GetBody().(string); ok {
-		bodyReader = bytes.NewReader([]byte(body))
+	case string:
+		bodyReader = strings.NewReader(body)
+	case io.Reader:
+		bodyReader = body
+	default:
+		return fmt.Errorf("http: unsupported body type %T; marshal it to []byte or string first", body)
 	}
 
 	// HTTP method: the CamelHttpMethod header overrides the default POST.
@@ -225,15 +310,25 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	// downstream of the HTTP consumer, the In message still carries the
 	// inbound request's Content-Length/Host, and forwarding those would
 	// misframe the outbound request.
+	// Internal Camel* headers stay inside the route, and a client's
+	// credentials received by the HTTP consumer are not relayed unchanged to
+	// the upstream unless SetForwardInboundCredentials(true).
 	for key, value := range exchange.GetIn().GetHeaders() {
-		if isHopByHopHeader(key) {
+		if isHopByHopHeader(key) || isCamelHeader(key) {
 			continue
 		}
 		if p.skipAuthorizationHeaders && authorizationHeaders[http.CanonicalHeaderKey(key)] {
 			continue
 		}
-		if strValue, ok := value.(string); ok {
-			if err := setSafeHTTPHeader(req.Header, key, strValue); err != nil {
+		values, ok := headerValues(value)
+		if !ok {
+			continue
+		}
+		for i, v := range values {
+			if !p.forwardInboundCreds && isForwardedInboundCredential(exchange, key, v) {
+				continue
+			}
+			if err := addSafeHTTPHeader(req.Header, key, v, i == 0); err != nil {
 				return fmt.Errorf("error setting HTTP request header: %w", err)
 			}
 		}
@@ -255,8 +350,10 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 
 	// Updating the exchange with the response
 	exchange.GetOut().SetBody(body)
-	for key, value := range resp.Header {
-		exchange.GetOut().SetHeader(key, value[0])
+	for key, values := range resp.Header {
+		if len(values) > 0 {
+			exchange.GetOut().SetHeader(key, messageHeaderValue(values))
+		}
 	}
 	exchange.GetOut().SetHeader(CamelHttpResponseCode, resp.StatusCode)
 	exchange.GetOut().SetHeader(CamelHttpResponseText, resp.Status)
@@ -371,11 +468,24 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			exchange.SetHeader(CamelHttpUrl, r.URL.String())
 		}
 		requestHeaders := make(map[string]string, len(r.Header))
+		var credentials map[[sha256.Size]byte]struct{}
 		for key, values := range r.Header {
-			if len(values) > 0 {
-				exchange.SetHeader(key, values[0])
-				requestHeaders[key] = values[0]
+			// A client must not be able to set internal Camel* headers
+			// (e.g. CamelFileName, CamelSqlQuery) on the exchange.
+			if len(values) == 0 || isCamelHeader(key) {
+				continue
 			}
+			exchange.SetHeader(key, values[0])
+			requestHeaders[key] = values[0]
+			if authorizationHeaders[key] {
+				if credentials == nil {
+					credentials = make(map[[sha256.Size]byte]struct{})
+				}
+				credentials[credentialFingerprint(key, values[0])] = struct{}{}
+			}
+		}
+		if credentials != nil {
+			exchange.SetProperty(httpInboundCredentialsProperty, credentials)
 		}
 
 		if err := CompleteExchange(exchange, ProcessSafely(c.processor, exchange)); err != nil {
@@ -395,12 +505,14 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		// echoing them leaks credentials (Cookie, Authorization) and reinjects
 		// the request's Content-Length, which corrupts the response framing.
 		for key, value := range response.GetHeaders() {
-			// The status-carrying headers drive WriteHeader below; emitting
-			// them as literal response headers too would be noise.
-			if isHopByHopHeader(key) || key == CamelHttpResponseCode || key == "Status-Code" {
+			// Internal Camel* headers (request path and query, file names...)
+			// are routing metadata, never response headers: echoing them
+			// leaked query-string secrets and internal paths. The status code
+			// headers drive WriteHeader below.
+			if isHopByHopHeader(key) || isCamelHeader(key) || key == "Status-Code" {
 				continue
 			}
-			strValue, ok := value.(string)
+			values, ok := headerValues(value)
 			if !ok {
 				continue
 			}
@@ -409,13 +521,15 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			// (e.g. "authorization" vs the "Authorization" recorded in
 			// requestHeaders) must still be recognized as unchanged rather than
 			// bypassing the echo guard and leaking the credential.
-			if prev, echoed := requestHeaders[http.CanonicalHeaderKey(key)]; echoed && prev == strValue {
+			if prev, echoed := requestHeaders[http.CanonicalHeaderKey(key)]; echoed && len(values) == 1 && prev == values[0] {
 				continue
 			}
-			if err := setSafeHTTPHeader(w.Header(), key, strValue); err != nil {
-				LogError("HTTP consumer: invalid response header", "uri", c.uri, "error", err)
-				http.Error(w, "internal server error", http.StatusInternalServerError)
-				return
+			for i, v := range values {
+				if err := addSafeHTTPHeader(w.Header(), key, v, i == 0); err != nil {
+					LogError("HTTP consumer: invalid response header", "uri", c.uri, "error", err)
+					http.Error(w, "internal server error", http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 
@@ -540,16 +654,23 @@ func writeResponseBody(w http.ResponseWriter, body []byte, uri string) {
 	}
 }
 
-// setSafeHTTPHeader sets an HTTP header after rejecting CRLF in the key or
+// addSafeHTTPHeader sets an HTTP header after rejecting CRLF in the key or
 // value. CRLF in either field allows an attacker to inject arbitrary headers
 // or split the HTTP response (CWE-113, HTTP Response Splitting).
-func setSafeHTTPHeader(h http.Header, key, value string) error {
+//
+// For multi-valued headers, replace sets the first value and later values are
+// appended.
+func addSafeHTTPHeader(h http.Header, key, value string, replace bool) error {
 	if strings.ContainsAny(key, "\r\n") {
 		return fmt.Errorf("header name contains CRLF: %q", key)
 	}
 	if strings.ContainsAny(value, "\r\n") {
 		return fmt.Errorf("header %q value contains CRLF", key)
 	}
-	h.Set(key, value)
+	if replace {
+		h.Set(key, value)
+	} else {
+		h.Add(key, value)
+	}
 	return nil
 }

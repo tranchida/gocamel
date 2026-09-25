@@ -329,10 +329,24 @@ builder.To("seda:process")
 
 - `size`: The capacity of the internal queue (default 1000).
 - `concurrentConsumers`: The number of worker goroutines (default 1).
+- `shutdownTimeout`: How long `Stop` keeps processing the queued exchanges, in ms
+  (default 30000; `0` discards them immediately).
 
 Invalid values (negative `size`, non-positive `concurrentConsumers`) fall back to the
 defaults with a warning. Parameters are applied when the endpoint is **first created**;
-later references to the same queue name reuse the existing endpoint.
+later references to the same queue name reuse the existing endpoint, and a reference
+with different options logs a warning.
+
+**Context.** Workers process each exchange under the consumer's context, not the
+sender's. A route such as `From("http://...").To("seda:work")` returns as soon as the
+message is queued, which cancels the HTTP request context; the asynchronous leg is not
+affected and its HTTP calls, delays and SQL queries run normally.
+
+**Shutdown.** `Stop` first rejects new sends (and unblocks producers waiting on a full
+queue), then lets the workers finish the exchanges already queued, for up to
+`shutdownTimeout`. It then cancels the consumer context; exchanges still queued are
+completed as failures. `CamelContext.GracefulStop` cancels the context up front, so it
+does not wait for the queue.
 
 ---
 
@@ -656,6 +670,23 @@ builder.From("direct:start").
     ToD("file://output/${header.filename}")
 ```
 
+**Escaping.** Exchange values are data, not URI syntax. Each value is escaped
+according to where its placeholder sits in the template (`InterpolateURI`):
+
+- in the query string, it is query-escaped, so a header such as
+  `a&allowHeaderOverride=true` stays inside its option and cannot enable
+  another one;
+- in the path, `?` and `#` are escaped, so a value cannot start a query string.
+
+A placeholder that stands for the whole URI or its scheme (`ToD("${header.dest}")`)
+is inserted as-is: the route explicitly lets exchange data choose the endpoint,
+so that data must come from a trusted source.
+
+Each distinct URI keeps a started producer in the context's producer cache,
+bounded to `DefaultProducerCacheSize` (1000) producers. Beyond that, the least
+recently used idle producers are stopped. Change the bound with
+`CamelContext.SetProducerCacheSize(n)` (`n <= 0` = unbounded).
+
 ---
 
 ### Recipient List
@@ -891,6 +922,29 @@ builder.From("direct:start").
 3. If a match is found, the error is considered "handled" and routing continues after the `DoTry` block (unless the
    catch block itself fails).
 4. The `DoFinally` block is **always** executed, regardless of whether an error occurred or was caught.
+
+### Route error handler and Dead Letter Channel
+
+A route-level `ErrorHandler` receives every error a step returns. Its return
+value drives the route:
+
+- `nil` asks the route to **retry the failed step** (redelivery). It does not
+  mean "ignore the error and continue": the route gives up after
+  `MaxErrorHandlerRetries` (10000) consecutive retries of the same step and
+  returns an error wrapping `ErrTooManyRetries`.
+- an error wrapping `ErrStopRouting` ends routing without failing the exchange.
+- any other error fails the exchange.
+
+`DeadLetterChannel` retries up to `MaxRedeliveries`, then sends the exchange to
+the dead letter endpoint and, by default, still returns the original error to
+the consumer (the HTTP consumer answers 500). With `DeadLetterHandled(true)` a
+dead-lettered exchange counts as handled, as in Apache Camel:
+
+```go
+builder.From("http://0.0.0.0:8080/orders").
+    DeadLetterChannel("seda:dead", gocamel.MaxRedeliveries(3), gocamel.DeadLetterHandled(true)).
+    To("direct:process")
+```
 
 ---
 

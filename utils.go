@@ -44,8 +44,8 @@ func ParseInt64Option(value string) int64 {
 var interpolateRegex = regexp.MustCompile(`\${(header|property|body)(?:\.([^}]+))?}`)
 
 // Interpolate replaces ${header.name}, ${property.name} and ${body} placeholders
-// in a string with values from the Exchange. Used by ToD (To Dynamic) for
-// runtime URI resolution.
+// in a string with values from the Exchange. Values are inserted verbatim;
+// use InterpolateURI when the result is an endpoint URI.
 //
 // SECURITY: inputs larger than MaxSimpleInputBytes are returned unchanged.
 // This caps the worst-case cost of the substitution regex and prevents an
@@ -61,30 +61,92 @@ func Interpolate(text string, exchange *Exchange) string {
 		if len(submatches) < 2 {
 			return match
 		}
-
-		kind := submatches[1]
-		key := ""
-		if len(submatches) > 2 {
-			key = submatches[2]
-		}
-
-		switch kind {
-		case "header":
-			if val, ok := exchange.In.GetHeader(key); ok {
-				return fmt.Sprintf("%v", val)
-			}
-		case "property":
-			if val, ok := exchange.GetProperty(key); ok {
-				return fmt.Sprintf("%v", val)
-			}
-		case "body":
-			if body := exchange.In.GetBody(); body != nil {
-				return fmt.Sprintf("%v", body)
-			}
-		}
-
-		return "" // Return empty string when the placeholder is not found (Camel behaviour).
+		return resolvePlaceholder(submatches[1], submatches[2], exchange)
 	})
+}
+
+// resolvePlaceholder returns the string value of one ${kind.key} placeholder,
+// or "" when it is not set (Camel behaviour).
+func resolvePlaceholder(kind, key string, exchange *Exchange) string {
+	switch kind {
+	case "header":
+		if val, ok := exchange.In.GetHeader(key); ok {
+			return fmt.Sprintf("%v", val)
+		}
+	case "property":
+		if val, ok := exchange.GetProperty(key); ok {
+			return fmt.Sprintf("%v", val)
+		}
+	case "body":
+		if body := exchange.In.GetBody(); body != nil {
+			return fmt.Sprintf("%v", body)
+		}
+	}
+	return ""
+}
+
+// uriPathEscaper escapes the characters that would let a value placed in the
+// path (or opaque) part of a URI start a query string or a fragment.
+var uriPathEscaper = strings.NewReplacer("?", "%3F", "#", "%23")
+
+// InterpolateURI is Interpolate for endpoint URIs (ToD). Exchange values are
+// data, not URI syntax, so each substituted value is escaped according to
+// where its placeholder sits in the template:
+//
+//   - in the query string (after a literal '?'): url.QueryEscape, so a value
+//     cannot add endpoint options such as "&allowHeaderOverride=true";
+//   - in the path or opaque part: '?' and '#' are escaped, so a value cannot
+//     start a query string or a fragment.
+//
+// A placeholder that appears before the template's scheme separator (e.g. the
+// whole-URI template "${header.target}") is inserted verbatim: the route author
+// explicitly delegated the choice of endpoint to exchange data, which must
+// then come from a trusted source.
+func InterpolateURI(text string, exchange *Exchange) string {
+	if len(text) > MaxSimpleInputBytes {
+		LogError("InterpolateURI: input exceeds MaxSimpleInputBytes; returning unchanged",
+			"size", len(text), "limit", MaxSimpleInputBytes)
+		return text
+	}
+	matches := interpolateRegex.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+
+	var sb strings.Builder
+	sawScheme, inQuery := false, false
+	last := 0
+	scanLiteral := func(literal string) {
+		if !sawScheme && strings.Contains(literal, ":") {
+			sawScheme = true
+		}
+		if strings.ContainsAny(literal, "?#") {
+			inQuery = true
+		}
+	}
+	for _, m := range matches {
+		literal := text[last:m[0]]
+		sb.WriteString(literal)
+		scanLiteral(literal)
+
+		key := ""
+		if m[4] >= 0 {
+			key = text[m[4]:m[5]]
+		}
+		value := resolvePlaceholder(text[m[2]:m[3]], key, exchange)
+		switch {
+		case !sawScheme:
+			// Whole-URI or scheme placeholder: trusted by construction.
+		case inQuery:
+			value = url.QueryEscape(value)
+		default:
+			value = uriPathEscaper.Replace(value)
+		}
+		sb.WriteString(value)
+		last = m[1]
+	}
+	sb.WriteString(text[last:])
+	return sb.String()
 }
 
 // patternToRegex converts a pattern with '*' wildcards into a Regexp.

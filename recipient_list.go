@@ -157,11 +157,12 @@ func (r *RecipientList) Process(exchange *Exchange) error {
 // Out is propagated to In so the next recipient/step sees the response, mirroring
 // the behaviour of ToD and WireTap.
 func (r *RecipientList) sendToURI(uri string, exchange *Exchange) error {
-	producer, err := r.context.GetProducer(uri)
+	producer, release, err := r.context.acquireProducer(uri)
 	if err != nil {
 		return fmt.Errorf("recipient list: producer error for %s: %w", uri, err)
 	}
-	exchange.PropagateOutToIn()
+	defer release()
+	propagateOutToInAndReset(exchange)
 	return producer.Send(exchange)
 }
 

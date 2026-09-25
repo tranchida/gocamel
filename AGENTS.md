@@ -54,6 +54,7 @@ gocamel/
 │   ├── redis/                     # Redis component (redis/go-redis)
 │   ├── sftp/                      # SFTP component (pkg/sftp)
 │   ├── smb/                       # SMB component (hirochachacha/go-smb2)
+│   ├── stomp/                     # STOMP component (go-stomp, ActiveMQ/JMS)
 │   └── telegram/                  # Telegram component (go-telegram-bot-api)
 ├── observability/                 # Metrics & Tracing modules
 │   ├── prometheus/                # Prometheus metrics interceptor
