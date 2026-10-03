@@ -2,9 +2,9 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [v0.14.0] - 2026-10-03
 
-Fixes from the 2026-09 and 2026-10 security and code reviews.
+Security and reliability release with the fixes from the 2026-09 and 2026-10 security and code reviews. Some defaults changed: see the Changed sections before upgrading.
 
 ### Changed (2026-10 review)
 
@@ -53,6 +53,11 @@ Fixes from the 2026-09 and 2026-10 security and code reviews.
 ### Documentation
 
 - `ValidatePath`, `ValidateRemotePath` and `IsSafePath` document that absolute paths are accepted (use `ValidatePathInDir` / `ConfineFileName` for header-derived paths).
+- The Management API page now lists the real endpoints (`/api/context`, `/api/routes`, `/api/routes/{id}/start|stop`).
+
+### Notes
+
+- Published components and observability modules now require core **v0.14.0** (the Kafka, STOMP and gRPC components use APIs added in this release).
 
 ## [v0.13.1] - 2026-09-12
 
