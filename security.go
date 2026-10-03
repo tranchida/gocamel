@@ -104,7 +104,12 @@ func JoinRemotePath(dir, name string) (string, error) {
 // parameterised binding.
 //
 // Only ';' characters that fall OUTSIDE string literals are considered, so a
-// semicolon inside a quoted value does not trip the check.
+// semicolon inside a quoted value does not trip the check. Whether a backslash
+// escapes a quote depends on the dialect (MySQL: yes; standard SQL, SQLite,
+// PostgreSQL: no), so the query is scanned both ways and rejected if either
+// reading stacks statements: "SELECT 'a\'; DROP TABLE t; --'" is one statement
+// for MySQL but two for SQLite. Escape a quote by doubling it, which is
+// portable.
 //
 // IMPORTANT: this is NOT a security boundary. When an endpoint opts in with
 // allowHeaderOverride=true, the CamelSqlQuery header replaces the statement
@@ -113,7 +118,7 @@ func JoinRemotePath(dir, name string) (string, error) {
 // this check unchanged. The real boundary is the opt-in flag, which defaults to
 // false — do not enable it where headers can be influenced by untrusted input.
 func validateSQLQuery(query string) error {
-	if hasNonTrailingSemicolonOutsideStrings(query) {
+	if hasNonTrailingSemicolonOutsideStrings(query, true) || hasNonTrailingSemicolonOutsideStrings(query, false) {
 		return fmt.Errorf("query contains stacked SQL statements: %s", query)
 	}
 	return nil
@@ -121,8 +126,9 @@ func validateSQLQuery(query string) error {
 
 // hasNonTrailingSemicolonOutsideStrings reports whether a statement terminator
 // is followed by SQL code. Whitespace and comments may follow a single trailing
-// semicolon, while "SELECT 1; DROP TABLE t" is rejected.
-func hasNonTrailingSemicolonOutsideStrings(query string) bool {
+// semicolon, while "SELECT 1; DROP TABLE t" is rejected. backslashEscapes
+// selects whether a backslash escapes the next character in a '...' literal.
+func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) bool {
 	inSingle := false
 	inDouble := false
 	inBacktick := false
@@ -145,7 +151,7 @@ func hasNonTrailingSemicolonOutsideStrings(query string) bool {
 			continue
 		}
 		if inSingle {
-			if c == '\\' && i+1 < len(query) {
+			if backslashEscapes && c == '\\' && i+1 < len(query) {
 				i++
 				continue
 			}

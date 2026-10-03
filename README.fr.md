@@ -207,8 +207,10 @@ GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre
 - **Lectures de Corps Bornées** - Les corps de requête et de réponse HTTP sont limités en taille (32 Mio par défaut) pour prévenir l'épuisement mémoire
 - **Confinement des Panics** - Un processeur qui panique fait échouer son exchange, pas le processus entier
 - **URI Dynamiques Échappées** - `ToD` échappe les valeurs de l'exchange selon leur position : un en-tête ne peut pas injecter d'option d'endpoint comme `allowHeaderOverride=true`
-- **Isolation des En-têtes** - Les en-têtes internes `Camel*` ne franchissent jamais la frontière HTTP, et les `Authorization`/`Cookie` d'un client ne sont pas relayés vers un service amont sans activation explicite
-- **Ressources Bornées** - Le cache partagé de producers (1000 producers) et les connexions du consommateur TCP (`maxConnections=1024`) sont bornés par défaut
+- **Isolation des En-têtes** - Les en-têtes internes `Camel*` ne franchissent jamais la frontière HTTP, les `Authorization`/`Cookie` d'un client ne sont pas relayés vers un service amont sans activation explicite, et les en-têtes de réponse comme `Set-Cookie` ne sont pas renvoyés à l'appel HTTP suivant
+- **Ressources Bornées** - Le cache partagé de producers (1000 producers), les connexions du consommateur TCP (`maxConnections=1024`) et les branches d'un Split/RecipientList parallèle (`MaxConcurrency`, 10) sont bornés par défaut
+- **Liste Blanche Exec** - Un en-tête `CamelExecCommandExecutable` ne peut choisir que l'exécutable de l'URI ou l'un de ceux listés dans `allowedExecutables`
+- **API de Management Protégée** - Protection contre le DNS rebinding et le CSRF, jeton bearer optionnel (`SetAuthToken`)
 
 ### Utilitaires de Sécurité (`security.go`)
 

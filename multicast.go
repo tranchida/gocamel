@@ -52,7 +52,7 @@ func (m *Multicast) Process(exchange *Exchange) error {
 		branches[i].SetProperty(CamelMulticastSize, len(branches))
 		branches[i].SetProperty(CamelMulticastComplete, i == len(branches)-1)
 	}
-	aggregated, err := processFanOut(branches, m.ParallelProcessing, func(i int, branch *Exchange) error {
+	aggregated, err := processFanOut(branches, m.ParallelProcessing, 0, func(i int, branch *Exchange) error {
 		return m.processors[i].Process(branch)
 	}, m.AggregationStrategy)
 	if err != nil {

@@ -2,8 +2,11 @@ package gocamel
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,16 +15,27 @@ import (
 
 // ManagementServer exposes a REST API for monitoring and controlling routes.
 //
-// SECURITY: the REST API is unauthenticated by default and allows starting or
-// stopping any route by ID. Bind to a loopback address (e.g. "127.0.0.1:8081")
-// or put it behind a reverse proxy enforcing authentication/authorization
-// before exposing it to anything other than localhost. A future revision may
-// add a middleware hook similar to HTTPComponent.SetMiddleware.
+// SECURITY: the API allows starting or stopping any route by ID. Every request
+// goes through these checks:
+//   - Host: only IP literals, "localhost" and the names given to
+//     SetAllowedHosts are accepted, which defeats DNS rebinding (a web page
+//     resolving its own domain to 127.0.0.1 to reach a loopback server);
+//   - cross-origin POSTs from a browser are rejected
+//     (http.CrossOriginProtection), which defeats CSRF;
+//   - with SetAuthToken, an "Authorization: Bearer <token>" header is
+//     required.
+//
+// Without a token the API is unauthenticated: bind it to a loopback address
+// (e.g. "127.0.0.1:8081") or put it behind a reverse proxy enforcing
+// authentication before exposing it beyond localhost.
 type ManagementServer struct {
-	context  *CamelContext
-	server   *http.Server
-	wg       sync.WaitGroup
-	stopOnce sync.Once
+	context      *CamelContext
+	authToken    string   // set before Start; empty = no authentication
+	allowedHosts []string // set before Start; extra accepted Host names
+	server       *http.Server
+	listener     net.Listener
+	wg           sync.WaitGroup
+	stopOnce     sync.Once
 }
 
 // NewManagementServer creates a new ManagementServer instance.
@@ -46,33 +60,107 @@ type ContextInfo struct {
 	StartedRoutes int  `json:"startedRoutes"`
 }
 
-// Start starts the management REST server on the given address (e.g. ":8081").
+// SetAuthToken requires every request to carry "Authorization: Bearer <token>".
+// It must be called before Start; an empty token disables authentication.
+func (m *ManagementServer) SetAuthToken(token string) *ManagementServer {
+	m.authToken = token
+	return m
+}
+
+// SetAllowedHosts adds host names (without port) accepted in the Host header,
+// e.g. the name of a reverse proxy in front of the API. IP literals and
+// "localhost" are always accepted. It must be called before Start.
+func (m *ManagementServer) SetAllowedHosts(hosts ...string) *ManagementServer {
+	m.allowedHosts = append(m.allowedHosts, hosts...)
+	return m
+}
+
+// Start starts the management REST server on the given address (e.g.
+// "127.0.0.1:8081"). It returns an error when the address cannot be bound.
 func (m *ManagementServer) Start(addr string) error {
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/api/context", m.handleContext)
-	mux.HandleFunc("/api/routes", m.handleRoutes)
-	mux.HandleFunc("/api/routes/", m.handleRouteAction)
-
+	if m.server != nil {
+		return errors.New("management server: already started")
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("management server: error listening on %s: %w", addr, err)
+	}
+	m.listener = listener
 	m.server = &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Handler: m.handler(),
 		// Bound the time a client may take to send its headers (slowloris).
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// Starting the server. The WaitGroup is signalled when ListenAndServe
-	// returns, so Stop() can wait for the goroutine to fully unwind before
-	// returning — mirroring the HTTP consumer shutdown pattern.
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		if err := m.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	// The WaitGroup is signalled when Serve returns, so Stop() can wait for
+	// the goroutine to fully unwind before returning — mirroring the HTTP
+	// consumer shutdown pattern.
+	m.wg.Go(func() {
+		if err := m.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			LogError("Management REST server error", "error", err)
 		}
-	}()
-
+	})
 	return nil
+}
+
+// Addr returns the address the server listens on (useful with port 0), or
+// nil before Start.
+func (m *ManagementServer) Addr() net.Addr {
+	if m.listener == nil {
+		return nil
+	}
+	return m.listener.Addr()
+}
+
+// handler returns the API routes wrapped in the security checks described on
+// ManagementServer.
+func (m *ManagementServer) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/context", m.handleContext)
+	mux.HandleFunc("/api/routes", m.handleRoutes)
+	mux.HandleFunc("/api/routes/", m.handleRouteAction)
+
+	csrf := http.NewCrossOriginProtection()
+	protected := csrf.Handler(mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !m.isAllowedHost(r.Host) {
+			http.Error(w, "Forbidden host", http.StatusForbidden)
+			return
+		}
+		if m.authToken != "" && !m.isAuthorized(r) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="gocamel-management"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		protected.ServeHTTP(w, r)
+	})
+}
+
+// isAllowedHost reports whether the Host header names this server rather than
+// a domain rebound to it.
+func (m *ManagementServer) isAllowedHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.Trim(host, "[]"), ".")
+	if host == "" {
+		return false
+	}
+	if net.ParseIP(host) != nil || strings.EqualFold(host, "localhost") {
+		return true
+	}
+	for _, allowed := range m.allowedHosts {
+		if strings.EqualFold(host, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *ManagementServer) isAuthorized(r *http.Request) bool {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && subtle.ConstantTimeCompare([]byte(token), []byte(m.authToken)) == 1
 }
 
 // Stop stops the management REST server. Safe to call multiple times: server
@@ -173,8 +261,16 @@ func (m *ManagementServer) handleStartAction(w http.ResponseWriter, route *Route
 		http.Error(w, "Route already started", http.StatusBadRequest)
 		return
 	}
+	// A route started while the context is stopped would never be stopped:
+	// CamelContext.Stop returns early when the context is not started.
+	if !m.context.IsStarted() {
+		http.Error(w, "Camel context not started", http.StatusConflict)
+		return
+	}
 	if err := route.Start(m.context.GetContext()); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to start route: %v", err), http.StatusInternalServerError)
+		// Details stay in the logs: they may expose hosts or credentials.
+		LogError("Management API: failed to start route", "route", route.ID, "error", err)
+		http.Error(w, "Failed to start route", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -187,7 +283,8 @@ func (m *ManagementServer) handleStopAction(w http.ResponseWriter, route *Route)
 		return
 	}
 	if err := route.Stop(); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to stop route: %v", err), http.StatusInternalServerError)
+		LogError("Management API: failed to stop route", "route", route.ID, "error", err)
+		http.Error(w, "Failed to stop route", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

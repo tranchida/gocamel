@@ -98,23 +98,14 @@ func TestManagementServer_RouteAction(t *testing.T) {
 	route := ctx.CreateRoute()
 	route.ID = "test-route"
 	route.From("mock:source")
-
-	// Test Start
-	req := httptest.NewRequest(http.MethodPost, "/api/routes/test-route/start", nil)
-	w := httptest.NewRecorder()
-	mgmt.handleRouteAction(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status OK for start, got %v: %s", w.Code, w.Body.String())
+	if err := ctx.Start(); err != nil {
+		t.Fatalf("Failed to start context: %v", err)
 	}
-
-	if !route.IsStarted() {
-		t.Errorf("Expected route to be started")
-	}
+	defer ctx.Stop()
 
 	// Test Stop
-	req = httptest.NewRequest(http.MethodPost, "/api/routes/test-route/stop", nil)
-	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/routes/test-route/stop", nil)
+	w := httptest.NewRecorder()
 	mgmt.handleRouteAction(w, req)
 
 	if w.Code != http.StatusOK {
@@ -123,6 +114,19 @@ func TestManagementServer_RouteAction(t *testing.T) {
 
 	if route.IsStarted() {
 		t.Errorf("Expected route to be stopped")
+	}
+
+	// Test Start
+	req = httptest.NewRequest(http.MethodPost, "/api/routes/test-route/start", nil)
+	w = httptest.NewRecorder()
+	mgmt.handleRouteAction(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status OK for start, got %v: %s", w.Code, w.Body.String())
+	}
+
+	if !route.IsStarted() {
+		t.Errorf("Expected route to be started")
 	}
 
 	// Test Invalid Action

@@ -156,17 +156,33 @@ When("${date:now:yyyy-MM-dd}")
 Monitor and control routes via HTTP:
 
 ```go
-mgmt := gocamel.NewManagementServer(context)
-mgmt.Start(":8081")
+mgmt := gocamel.NewManagementServer(context).
+    SetAuthToken(os.Getenv("MGMT_TOKEN")) // optional: require "Authorization: Bearer <token>"
+if err := mgmt.Start("127.0.0.1:8081"); err != nil { // returns bind errors
+    log.Fatal(err)
+}
+defer mgmt.Stop()
 ```
 
 **Endpoints:**
 
-- `GET /routes` — List routes
-- `GET /routes/{id}` — Route details
-- `POST /routes/{id}/start` — Start route
-- `POST /routes/{id}/stop` — Stop route
-- `GET /health` — Health check
+- `GET /api/context` — Context status and route counts
+- `GET /api/routes` — List routes
+- `POST /api/routes/{id}/start` — Start a route (`409` while the context is stopped)
+- `POST /api/routes/{id}/stop` — Stop a route
+
+**Security:** the API can stop any route, so every request is checked:
+
+- the `Host` header must be an IP address, `localhost` or a name given to
+  `SetAllowedHosts(...)`: this defeats DNS rebinding, where a web page points
+  its own domain at `127.0.0.1` to reach a loopback server;
+- cross-origin browser `POST`s are rejected (`http.CrossOriginProtection`),
+  which defeats CSRF;
+- with `SetAuthToken`, requests without the bearer token get `401`.
+
+Without a token the API is unauthenticated: bind it to a loopback address or
+put it behind an authenticating reverse proxy. Errors are logged; responses
+only carry a generic message.
 
 ### Configuration
 

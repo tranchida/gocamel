@@ -204,8 +204,10 @@ GoCamel includes built-in security utilities to protect against common vulnerabi
 - **Bounded Body Reads** - HTTP request and response bodies are size-limited (32 MiB by default) to prevent memory exhaustion
 - **Panic Containment** - A panicking processor fails its exchange rather than the whole process
 - **Escaped Dynamic URIs** - `ToD` escapes exchange values by position, so a header cannot inject endpoint options such as `allowHeaderOverride=true`
-- **Header Isolation** - Internal `Camel*` headers never cross the HTTP boundary, and a client's `Authorization`/`Cookie` are not relayed to an upstream unless opted in
-- **Bounded Resources** - The shared producer cache (1000 producers) and TCP consumer connections (`maxConnections=1024`) are bounded by default
+- **Header Isolation** - Internal `Camel*` headers never cross the HTTP boundary, a client's `Authorization`/`Cookie` are not relayed to an upstream unless opted in, and response headers such as `Set-Cookie` are not replayed to the next HTTP call
+- **Bounded Resources** - The shared producer cache (1000 producers), TCP consumer connections (`maxConnections=1024`) and parallel Split/RecipientList branches (`MaxConcurrency`, 10) are bounded by default
+- **Exec Allowlist** - A `CamelExecCommandExecutable` header may only select the URI executable or one listed in `allowedExecutables`
+- **Protected Management API** - DNS rebinding and CSRF protection, optional bearer token (`SetAuthToken`)
 
 ### Security Utilities (`security.go`)
 

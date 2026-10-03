@@ -43,6 +43,42 @@ func isHopByHopHeader(key string) bool {
 	return hopByHopHeaders[http.CanonicalHeaderKey(key)]
 }
 
+// responseOnlyHeaders describe an HTTP response and have no meaning in a
+// request. The producer stores the upstream response headers on the message,
+// so in a chain such as To("http://a").To("http://b") they used to be sent to
+// b: A's session cookie (Set-Cookie), server banner and status leaked to
+// another service. They are never sent upstream.
+var responseOnlyHeaders = map[string]bool{
+	"Accept-Ranges":                    true,
+	"Access-Control-Allow-Credentials": true,
+	"Access-Control-Allow-Headers":     true,
+	"Access-Control-Allow-Methods":     true,
+	"Access-Control-Allow-Origin":      true,
+	"Access-Control-Expose-Headers":    true,
+	"Access-Control-Max-Age":           true,
+	"Age":                              true,
+	"Alt-Svc":                          true,
+	"Content-Security-Policy":          true,
+	"Date":                             true,
+	"Etag":                             true,
+	"Expires":                          true,
+	"Last-Modified":                    true,
+	"Location":                         true,
+	"Retry-After":                      true,
+	"Server":                           true,
+	"Set-Cookie":                       true,
+	"Set-Cookie2":                      true,
+	"Status-Code":                      true,
+	"Strict-Transport-Security":        true,
+	"Vary":                             true,
+	"Www-Authenticate":                 true,
+	"X-Powered-By":                     true,
+}
+
+func isResponseOnlyHeader(key string) bool {
+	return responseOnlyHeaders[http.CanonicalHeaderKey(key)]
+}
+
 // authorizationHeaders are request headers that carry a client's credentials
 // (cookie, bearer token). When the HTTP producer is configured with
 // SetSkipAuthorizationHeaders(true), these are not forwarded to the upstream,
@@ -312,11 +348,12 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	// downstream of the HTTP consumer, the In message still carries the
 	// inbound request's Content-Length/Host, and forwarding those would
 	// misframe the outbound request.
-	// Internal Camel* headers stay inside the route, and a client's
-	// credentials received by the HTTP consumer are not relayed unchanged to
-	// the upstream unless SetForwardInboundCredentials(true).
+	// Internal Camel* headers stay inside the route, response-only headers
+	// left by a previous HTTP call are not replayed as request headers, and a
+	// client's credentials received by the HTTP consumer are not relayed
+	// unchanged to the upstream unless SetForwardInboundCredentials(true).
 	for key, value := range exchange.GetIn().GetHeaders() {
-		if isHopByHopHeader(key) || IsCamelHeader(key) {
+		if isHopByHopHeader(key) || IsCamelHeader(key) || isResponseOnlyHeader(key) {
 			continue
 		}
 		if p.skipAuthorizationHeaders && authorizationHeaders[http.CanonicalHeaderKey(key)] {

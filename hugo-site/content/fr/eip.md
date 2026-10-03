@@ -19,6 +19,15 @@ builder.From("direct:start").
     End()
 ```
 
+**Traitement parallèle :**
+
+```go
+builder.From("file:/data/in").
+    Split(lines).ParallelProcessing(true).MaxConcurrency(20). // 10 par défaut
+        To("http://api/items").
+    End()
+```
+
 **Propriétés de l'Exchange:**
 
 - `CamelSplitIndex` — Index actuel (0-based)
@@ -122,6 +131,13 @@ repo := gocamel.NewMemoryAggregationRepository()
 // Persistance SQLite
 repo := gocamel.NewSQLAggregationRepository(db, "schema")
 ```
+
+Au démarrage d'une route avec un timeout de complétion, les groupes déjà
+présents dans le dépôt reçoivent à nouveau un `CompletionTimeout` complet : un
+groupe laissé en attente par une route arrêtée, ou persisté en SQL lors d'un
+redémarrage du processus, expire au lieu d'attendre indéfiniment sa taille ou
+son prédicat. Un dépôt personnalisé en bénéficie en implémentant
+`ListableAggregationRepository` (`Keys`).
 
 ---
 
@@ -701,6 +717,10 @@ Envoie un message à plusieurs destinataires calculés dynamiquement à l'exécu
 builder.From("direct:start").
     SetHeader("recipients", "direct:a,direct:b,direct:c").
     RecipientList("${header.recipients}")
+
+// Appeler les destinataires en parallèle, 5 au plus à la fois (10 par défaut)
+builder.From("direct:start").
+    RecipientList("${header.recipients}").ParallelProcessing().MaxConcurrency(5).End()
 ```
 
 ---
@@ -1058,6 +1078,6 @@ builder.From("direct:output").
 
 ## Fin des branches et agrégation
 
-Split, Multicast et RecipientList terminent chaque branche traitée, en succès comme en échec, notamment ses callbacks de rollback d’idempotence. Avant de lancer les workers parallèles, ils copient les corps mutables pris en charge, y compris chaque élément du Split. Les types mutables personnalisés exigent toujours une copie applicative ou un usage immuable. L’agrégation commence après la fin des workers ; la stratégie est appelée séquentiellement dans l’ordre d’entrée et ses panics deviennent des erreurs `ErrProcessorPanic`. Le traitement séquentiel s’arrête à la première branche en échec.
+Split, Multicast et RecipientList terminent chaque branche traitée, en succès comme en échec, notamment ses callbacks de rollback d’idempotence. Avant de lancer les workers parallèles, ils copient les corps mutables pris en charge, y compris chaque élément du Split. Les types mutables personnalisés exigent toujours une copie applicative ou un usage immuable. L’agrégation commence après la fin des workers ; la stratégie est appelée séquentiellement dans l’ordre d’entrée et ses panics deviennent des erreurs `ErrProcessorPanic`. Le traitement séquentiel s’arrête à la première branche en échec. Un Split ou une RecipientList en parallèle traite au plus `MaxConcurrency(n)` branches à la fois (défaut `DefaultMaxConcurrency`, 10) : leur nombre de branches dépend du contenu du message, et sans borne chaque élément lançait sa propre goroutine. Un Multicast parallèle lance toutes ses branches à la fois, leur nombre étant fixé par la route.
 
 Une expression `Resequence` invalide accumule une erreur de construction tout en laissant la chaîne DSL utilisable ; `Timeout`, `Capacity` et `End` ne paniquent pas à cause de cette erreur antérieure.

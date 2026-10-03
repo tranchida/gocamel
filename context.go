@@ -448,11 +448,15 @@ const DefaultProducerCacheSize = 1000
 // neither in use nor pinned are stopped when the bound is exceeded.
 type ProducerCache struct {
 	context *CamelContext
-	mu      sync.Mutex // Protects cache, lru, stopped and maxSize.
+	mu      sync.Mutex // Protects cache, lru, stopped, epoch and maxSize.
 	cache   map[string]*cachedProducer
 	lru     *list.List // of *cachedProducer; front is most recently used.
 	entries sync.Map   // map[string]*producerEntry — per-URI creation locks
 	stopped bool
+	// epoch counts Stop calls. A producer created across a Stop was started
+	// with the context that Stop cancelled; Resume runs right after Stop, so
+	// the stopped flag alone cannot tell it apart from a fresh producer.
+	epoch   uint64
 	maxSize int
 }
 
@@ -553,6 +557,16 @@ func (pc *ProducerCache) lookupOrCreate(uri string, claim func(*cachedProducer))
 	if entry, err := pc.lookup(uri, claim); entry != nil || err != nil {
 		return entry, err
 	}
+	// Capture the epoch before reading the context the producer starts with:
+	// a Stop after this point makes the insert below fail. Resume runs only
+	// after the context was replaced, so a live epoch implies a live context.
+	pc.mu.Lock()
+	if pc.stopped {
+		pc.mu.Unlock()
+		return nil, fmt.Errorf("producer cache: context is stopping")
+	}
+	epoch := pc.epoch
+	pc.mu.Unlock()
 
 	endpoint, err := pc.context.CreateEndpoint(uri)
 	if err != nil {
@@ -567,7 +581,7 @@ func (pc *ProducerCache) lookupOrCreate(uri string, claim func(*cachedProducer))
 	}
 
 	pc.mu.Lock()
-	if pc.stopped {
+	if pc.stopped || pc.epoch != epoch {
 		pc.mu.Unlock()
 		_ = p.Stop()
 		return nil, fmt.Errorf("producer cache: context is stopping")
@@ -646,6 +660,7 @@ func (pc *ProducerCache) entryFor(uri string) *producerEntry {
 func (pc *ProducerCache) Stop() error {
 	pc.mu.Lock()
 	pc.stopped = true
+	pc.epoch++
 	cache := pc.cache
 	pc.cache = make(map[string]*cachedProducer)
 	pc.lru.Init()

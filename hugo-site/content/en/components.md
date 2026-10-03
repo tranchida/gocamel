@@ -292,7 +292,11 @@ as a `[]string` on `Out`; single-valued headers remain a `string`.
 
 The same hop-by-hop filter applies to the producer, so a `From(http://...)`
 → `To(http://...)` bridge does not forward the inbound `Content-Length` or
-`Host` to the upstream.
+`Host` to the upstream. Response-only headers (`Set-Cookie`, `Server`,
+`WWW-Authenticate`, `Location`, `ETag`, `Status-Code`...) are not sent either:
+in `To("http://a").To("http://b")` the response headers of `a` are on the
+message, and used to reach `b`, leaking `a`'s session cookie to another
+service.
 
 The producer never sends internal `Camel*` headers upstream. It forwards the
 other headers, with one exception for credentials: the `Authorization` and
@@ -1157,6 +1161,11 @@ Provide via `CamelSqlParameters` header or body as `[]any`.
 > // Statement supplied per message — only with trusted headers
 > builder.To("sql://appdb?allowHeaderOverride=true&query=SELECT+1")
 > ```
+>
+> A statement followed by another one (`SELECT 1; DROP TABLE t`) is rejected.
+> Whether `\'` escapes a quote depends on the database (MySQL: yes; SQLite,
+> PostgreSQL: no), so a `;` outside literals under either reading is
+> rejected: escape quotes as `''`, which every database accepts.
 
 
 **Output Headers:**
@@ -1442,6 +1451,7 @@ builder.To("exec:ls -la")
 | `outFile`             | string | `""`    | Read the result from this file instead of stdout     |
 | `useStderrOnEmpty`    | bool   | `false` | Use stderr as body when stdout is empty              |
 | `allowHeaderOverride` | bool   | `false` | Allow `CamelExecCommand*` headers to override the URI |
+| `allowedExecutables`  | string | `""`    | Comma-separated bare command names a `CamelExecCommandExecutable` header may select, besides the URI executable |
 
 **Per-message overrides (opt-in):**
 
@@ -1462,9 +1472,11 @@ When `allowHeaderOverride=true`, these headers override the URI settings for a s
 >
 > The **executable** and the **working directory** are validated against shell
 > metacharacters and path traversal. A header-supplied executable must
-> additionally be a **bare command name** (no path) — it is resolved via `PATH`,
-> never an absolute path — so an attacker cannot smuggle `/bin/sh` plus
-> arbitrary arguments. **Arguments are not validated**: commands run
+> additionally be a **bare command name** (no path, resolved via `PATH`) and
+> either the URI executable or one listed in `allowedExecutables`; any other
+> is rejected. A bare name alone was not enough: `sh` or `python3` with
+> header arguments such as `-c ...` run arbitrary code, so never list a shell
+> or an interpreter. **Arguments are not validated**: commands run
 > through `execve` without a shell, so `|`, `&`, `$`, `<` and `>` carry no
 > special meaning and reach the child process verbatim — which is the intent.
 > Rejecting them blocked legitimate values (a JSON document, a password
@@ -1550,7 +1562,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 
 ## Delivery and lifecycle details
 
-- **Kafka / STOMP:** failed processing is retried with a fresh exchange before fetching the next record (Kafka) or message (STOMP), with an exponential backoff from `redeliveryDelay` up to `maxRedeliveryDelay`. After `maxRedeliveries` redeliveries (default `10`, about 80 s with the default delays) the consumer gives up on the message: it logs it at error level and commits/acknowledges it so the partition or subscription is not blocked forever. Use a `DeadLetterChannel` to keep such messages, or set `maxRedeliveries=-1` to retry until the route succeeds (the consumer then stays blocked on a permanently failing message). A message the route sent to a `DeadLetterChannel` is committed/acknowledged right away and never redelivered, even with `DeadLetterHandled(false)`: redelivering it would dead-letter a duplicate on every attempt. Kafka commit failures retry the commit every 100 ms without repeating successful processing. The resolved Kafka topic is set on each message, so configured and header-overridden topics work together.
+- **Kafka / STOMP:** failed processing is retried with a fresh exchange before fetching the next record (Kafka) or message (STOMP), with an exponential backoff from `redeliveryDelay` up to `maxRedeliveryDelay`. After `maxRedeliveries` redeliveries (default `10`, about 80 s with the default delays) the consumer gives up on the message: it logs it at error level and commits/acknowledges it so the partition or subscription is not blocked forever. Use a `DeadLetterChannel` to keep such messages, or set `maxRedeliveries=-1` to retry until the route succeeds (the consumer then stays blocked on a permanently failing message). A message the route sent to a `DeadLetterChannel` is committed/acknowledged right away and never redelivered, even with `DeadLetterHandled(false)`: redelivering it would dead-letter a duplicate on every attempt. Kafka commit failures retry the commit every 100 ms without repeating successful processing. Kafka fetch errors are logged and retried every 100 ms; the consumer only ends when its reader is closed by the route stop (an error mentioning `closed` or `EOF` used to end it while the route still appeared started). The resolved Kafka topic is set on each message, so configured and header-overridden topics work together.
 - **FTP:** each producer leases its connection exclusively for the complete transfer. Concurrent sends and `Stop` cannot interleave FTP commands; a sender waiting for the lease can cancel.
 - **MongoDB:** `save` preserves the input document’s `_id`, including when replacement fails, so retry keeps targeting the same document.
 - **Mail:** IMAP IDLE reacts to mailbox notifications by ending IDLE, searching for messages and re-entering IDLE. Existing messages are searched before the first IDLE.

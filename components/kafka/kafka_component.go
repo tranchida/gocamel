@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -425,9 +426,15 @@ func (c *KafkaConsumer) run(ctx context.Context) {
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 				return
 			}
-			if strings.Contains(err.Error(), "closed") || strings.Contains(err.Error(), "EOF") {
+			// kafka-go returns exactly io.EOF once the reader is closed (it
+			// turns an EOF from the broker into io.ErrUnexpectedEOF). Any
+			// other error, even one mentioning "closed" or "EOF", is
+			// transient: stopping on it would leave the route started with
+			// no consumer goroutine.
+			if errors.Is(err, io.EOF) {
 				return
 			}
+			gocamel.LogWarn("kafka fetch failed; retrying", "topic", c.endpoint.topic, "error", err)
 			if !waitForRetry(ctx) {
 				return
 			}

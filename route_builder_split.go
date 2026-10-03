@@ -52,6 +52,13 @@ func (d *SplitDefinition) ParallelProcessing(parallel bool) *SplitDefinition {
 	return d
 }
 
+// MaxConcurrency bounds the parts processed at the same time with
+// ParallelProcessing (default DefaultMaxConcurrency).
+func (d *SplitDefinition) MaxConcurrency(n int) *SplitDefinition {
+	d.splitter.SetMaxConcurrency(n)
+	return d
+}
+
 // Process adds a processor to the current container and stays in the split context.
 func (d *SplitDefinition) Process(processor Processor) *SplitDefinition {
 	d.RouteBuilder.Process(processor)

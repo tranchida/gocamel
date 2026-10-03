@@ -490,6 +490,15 @@ builder.From("direct:start").
     End()
 ```
 
+**Parallel processing:**
+
+```go
+builder.From("file:/data/in").
+    Split(lines).ParallelProcessing(true).MaxConcurrency(20). // default 10
+        To("http://api/items").
+    End()
+```
+
 **Exchange Properties during Split:**
 
 | Property             | Type | Description             |
@@ -589,6 +598,12 @@ repo := gocamel.NewMemoryAggregationRepository()
 // SQLite persistence
 repo := gocamel.NewSQLAggregationRepository(db, "schema")
 ```
+
+When a route with a completion timeout starts, the groups already held by the
+repository get a full `CompletionTimeout` again: a group left pending by a
+stopped route, or persisted in SQL across a process restart, still expires
+instead of waiting forever for its size or predicate. Custom repositories get
+this by implementing `ListableAggregationRepository` (`Keys`).
 
 ---
 
@@ -701,6 +716,10 @@ Send to multiple recipients computed at runtime.
 builder.From("direct:start").
     SetHeader("recipients", "direct:a,direct:b,direct:c").
     RecipientList("${header.recipients}")
+
+// Call the recipients concurrently, at most 5 at a time (default 10)
+builder.From("direct:start").
+    RecipientList("${header.recipients}").ParallelProcessing().MaxConcurrency(5).End()
 ```
 
 ---
@@ -1055,6 +1074,6 @@ builder.From("direct:output").
 
 ## Branch completion and aggregation
 
-Split, Multicast and RecipientList complete each processed branch on success or failure, including idempotency rollback callbacks. Parallel branches copy supported mutable bodies, including each split part, before workers start. Custom mutable types still require application-defined copying or immutable use. Workers finish before aggregation begins; the strategy is called serially in input order, and strategy panics become `ErrProcessorPanic` errors. Sequential processing stops at the first failing branch.
+Split, Multicast and RecipientList complete each processed branch on success or failure, including idempotency rollback callbacks. Parallel branches copy supported mutable bodies, including each split part, before workers start. Custom mutable types still require application-defined copying or immutable use. Workers finish before aggregation begins; the strategy is called serially in input order, and strategy panics become `ErrProcessorPanic` errors. Sequential processing stops at the first failing branch. A parallel Split or RecipientList runs at most `MaxConcurrency(n)` branches at a time (default `DefaultMaxConcurrency`, 10): both expand from message content, so an unbounded fan-out would start one goroutine per element. A parallel Multicast runs all its branches at once, their number being fixed by the route.
 
 Invalid `Resequence` expressions accumulate a build error while leaving the DSL chain usable; `Timeout`, `Capacity` and `End` do not panic because an earlier expression was invalid.

@@ -90,6 +90,13 @@ func (d *RecipientListDefinition) ParallelProcessing() *RecipientListDefinition 
 	return d
 }
 
+// MaxConcurrency bounds the recipients called at the same time with
+// ParallelProcessing (default DefaultMaxConcurrency).
+func (d *RecipientListDefinition) MaxConcurrency(n int) *RecipientListDefinition {
+	d.recipientList.SetMaxConcurrency(n)
+	return d
+}
+
 // End terminates the RecipientList block and returns to the parent builder.
 func (d *RecipientListDefinition) End() *RouteBuilder {
 	return d.parent

@@ -4,17 +4,48 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
+
+// DefaultMaxConcurrency bounds how many parts of a parallel Split or
+// recipients of a parallel RecipientList are processed at the same time
+// (Apache Camel's default thread pool size). Both expand at runtime from
+// message content, so an unbounded fan-out would start one goroutine per
+// element, e.g. a million for a million-line file.
+const DefaultMaxConcurrency = 10
+
+// effectiveMaxConcurrency returns n, or DefaultMaxConcurrency when n <= 0.
+func effectiveMaxConcurrency(n int) int {
+	if n <= 0 {
+		return DefaultMaxConcurrency
+	}
+	return n
+}
 
 // processFanOut owns the lifecycle of every branch. Parallel workers only run
 // processors; aggregation and completion run in input order after they join.
 // This keeps user strategies and callbacks from racing over aggregated state.
-func processFanOut(branches []*Exchange, parallel bool, process func(int, *Exchange) error, strategy AggregationStrategy) (*Exchange, error) {
+// In parallel mode at most maxConcurrency branches run at the same time;
+// maxConcurrency <= 0 runs every branch in its own goroutine.
+func processFanOut(branches []*Exchange, parallel bool, maxConcurrency int, process func(int, *Exchange) error, strategy AggregationStrategy) (*Exchange, error) {
 	results := make([]error, len(branches))
 	if parallel {
+		workers := len(branches)
+		if maxConcurrency > 0 && maxConcurrency < workers {
+			workers = maxConcurrency
+		}
+		var next atomic.Int64
 		var wg sync.WaitGroup
-		for i, branch := range branches {
-			wg.Go(func() { results[i] = safeProcess(func() error { return process(i, branch) }) })
+		for range workers {
+			wg.Go(func() {
+				for {
+					i := int(next.Add(1) - 1)
+					if i >= len(branches) {
+						return
+					}
+					results[i] = safeProcess(func() error { return process(i, branches[i]) })
+				}
+			})
 		}
 		wg.Wait()
 	}

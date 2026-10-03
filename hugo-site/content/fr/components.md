@@ -296,7 +296,11 @@ unique restent des `string`.
 
 Le même filtre s'applique au producer : un pont `From(http://...)` →
 `To(http://...)` ne transmet donc pas le `Content-Length` ni le `Host` entrants
-au service amont.
+au service amont. Les headers propres aux réponses (`Set-Cookie`, `Server`,
+`WWW-Authenticate`, `Location`, `ETag`, `Status-Code`...) ne sont pas envoyés
+non plus : dans `To("http://a").To("http://b")`, les headers de réponse de `a`
+restent sur le message et parvenaient à `b`, ce qui transmettait le cookie de
+session de `a` à un autre service.
 
 Le producer n'envoie jamais les headers internes `Camel*` au service amont. Il
 transmet les autres headers, avec une exception pour les identifiants : les
@@ -1178,6 +1182,11 @@ Fournis via le header `CamelSqlParameters` ou le corps comme `[]any`.
 > // Requête fournie par message — uniquement avec des headers de confiance
 > builder.To("sql://appdb?allowHeaderOverride=true&query=SELECT+1")
 > ```
+>
+> Une instruction suivie d'une autre (`SELECT 1; DROP TABLE t`) est rejetée.
+> Selon la base, `\'` échappe ou non une apostrophe (MySQL : oui ; SQLite,
+> PostgreSQL : non) ; un `;` hors littéral dans l'une ou l'autre lecture est
+> donc rejeté : échappez les apostrophes avec `''`, accepté partout.
 
 
 **Headers de sortie :**
@@ -1466,6 +1475,7 @@ builder.To("exec:ls -la")
 | `outFile`             | string | `""`    | Lire le résultat depuis ce fichier au lieu de stdout |
 | `useStderrOnEmpty`    | bool   | `false` | Utiliser stderr comme corps quand stdout est vide    |
 | `allowHeaderOverride` | bool   | `false` | Autoriser les headers `CamelExecCommand*` à surcharger l'URI |
+| `allowedExecutables`  | string | `""`    | Noms de commandes simples, séparés par des virgules, qu'un header `CamelExecCommandExecutable` peut choisir en plus de l'exécutable de l'URI |
 
 **Surcharges par message (opt-in) :**
 
@@ -1486,9 +1496,11 @@ Quand `allowHeaderOverride=true`, ces headers surchargent les paramètres URI po
 >
 > L'**exécutable** et le **répertoire de travail** sont validés contre les
 > métacaractères shell et le path traversal. Un exécutable fourni par header
-> doit en outre être un **nom de commande simple** (sans chemin) — il est résolu
-> via `PATH`, jamais par un chemin absolu — afin qu'un attaquant ne puisse pas
-> injecter `/bin/sh` avec des arguments arbitraires. Les **arguments ne le sont
+> doit en outre être un **nom de commande simple** (sans chemin, résolu via
+> `PATH`), et soit l'exécutable de l'URI, soit l'un de ceux listés dans
+> `allowedExecutables` ; tout autre est rejeté. Un nom simple ne suffisait pas :
+> `sh` ou `python3` avec des arguments de header comme `-c ...` exécutent du
+> code arbitraire, ne listez donc jamais un shell ni un interpréteur. Les **arguments ne le sont
 > pas** : les commandes sont lancées via `execve`, sans shell, donc `|`, `&`,
 > `$`, `<` et `>` n'ont aucune signification particulière et parviennent
 > verbatim au processus fils — c'est précisément l'intention. Les rejeter
@@ -1575,7 +1587,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 
 ## Détails de livraison et de cycle de vie
 
-- **Kafka / STOMP :** un traitement en échec est réessayé avec un nouvel échange avant la lecture du record (Kafka) ou du message (STOMP) suivant, avec un backoff exponentiel de `redeliveryDelay` jusqu’à `maxRedeliveryDelay`. Après `maxRedeliveries` redélivraisons (`10` par défaut, environ 80 s avec les délais par défaut), le consommateur abandonne le message : il le journalise en erreur puis le commite/acquitte pour ne pas bloquer indéfiniment la partition ou l’abonnement. Utilisez un `DeadLetterChannel` pour conserver ces messages, ou `maxRedeliveries=-1` pour réessayer jusqu’au succès de la route (le consommateur reste alors bloqué sur un message en échec permanent). Un message que la route a envoyé dans un `DeadLetterChannel` est commité/acquitté immédiatement et jamais redélivré, même avec `DeadLetterHandled(false)` : le redélivrer l’enverrait en double dans la DLQ à chaque tentative. Un commit Kafka en échec est réessayé toutes les 100 ms sans refaire le traitement réussi. Le topic Kafka résolu est porté par chaque message ; les topics configurés et surchargés par en-tête fonctionnent ensemble.
+- **Kafka / STOMP :** un traitement en échec est réessayé avec un nouvel échange avant la lecture du record (Kafka) ou du message (STOMP) suivant, avec un backoff exponentiel de `redeliveryDelay` jusqu’à `maxRedeliveryDelay`. Après `maxRedeliveries` redélivraisons (`10` par défaut, environ 80 s avec les délais par défaut), le consommateur abandonne le message : il le journalise en erreur puis le commite/acquitte pour ne pas bloquer indéfiniment la partition ou l’abonnement. Utilisez un `DeadLetterChannel` pour conserver ces messages, ou `maxRedeliveries=-1` pour réessayer jusqu’au succès de la route (le consommateur reste alors bloqué sur un message en échec permanent). Un message que la route a envoyé dans un `DeadLetterChannel` est commité/acquitté immédiatement et jamais redélivré, même avec `DeadLetterHandled(false)` : le redélivrer l’enverrait en double dans la DLQ à chaque tentative. Un commit Kafka en échec est réessayé toutes les 100 ms sans refaire le traitement réussi. Les erreurs de lecture Kafka sont journalisées et réessayées toutes les 100 ms ; le consommateur ne s’arrête que lorsque l’arrêt de la route ferme son reader (une erreur contenant `closed` ou `EOF` l’arrêtait alors que la route semblait toujours démarrée). Le topic Kafka résolu est porté par chaque message ; les topics configurés et surchargés par en-tête fonctionnent ensemble.
 - **FTP :** chaque producteur réserve sa connexion exclusivement pendant tout le transfert. Les envois concurrents et `Stop` ne peuvent pas entrelacer les commandes FTP ; un envoi en attente de réservation peut être annulé.
 - **MongoDB :** `save` préserve le `_id` du document entrant, même si le remplacement échoue ; le retry cible ainsi le même document.
 - **Mail :** IMAP IDLE réagit aux notifications de boîte en terminant IDLE, en recherchant les messages puis en reprenant IDLE. Une première recherche traite les messages déjà présents.

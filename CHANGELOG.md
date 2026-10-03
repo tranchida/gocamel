@@ -10,10 +10,14 @@ Fixes from the 2026-09 and 2026-10 security and code reviews.
 
 - **`direct:` and `ErrStopRouting`**: a Filter, an incomplete Aggregator, a Resequencer or a handled dead letter in a route called through `direct:` now only ends that route; the caller carries on and `DirectProducer.Send` returns `nil` (Apache Camel semantics). The `Stop()` EIP still ends the whole exchange: it sets the new `CamelRouteStop` property and `Send` returns `ErrStopRouting`. Tests that used `direct:` as a harness and asserted `ErrStopRouting` must now assert success.
 - **Kafka/STOMP poison messages**: a message whose route keeps failing is now given up on after 10 redeliveries (`maxRedeliveries`, about 80 s with the default backoff): it is logged at error level and committed/acknowledged instead of blocking the partition or subscription forever. Use a `DeadLetterChannel` to keep such messages, or `maxRedeliveries=-1` to restore the retry-forever behaviour.
+- **Parallel Split/RecipientList**: at most `DefaultMaxConcurrency` (10) branches run at a time, configurable with `MaxConcurrency(n)` / `SetMaxConcurrency(n)`. They used to start one goroutine per element (a million for a million-line file). A parallel Multicast is unchanged.
 
 ### Security (2026-10 review)
 
 - **Inbound `Camel*` headers**: the Kafka, STOMP and gRPC consumers drop inbound headers named `Camel*` (case-insensitive), like the HTTP consumer already did: whoever could write to a topic or destination could set `CamelFileName`, `CamelHttpMethod`, or `CamelExecCommand*`/`CamelSqlQuery` on endpoints using `allowHeaderOverride`. The check is exported as `IsCamelHeader`.
+- **Exec header override**: a `CamelExecCommandExecutable` header may only select the endpoint's executable or a bare command name listed in the new `allowedExecutables` option; any other bare name (`sh`, `python3`...) used to be accepted, which with header arguments meant arbitrary command execution.
+- **SQL stacked-statement check**: a query is now rejected if it stacks statements whether or not `\'` escapes a quote. `SELECT 'a\'; DROP TABLE t; --'` passed as one MySQL statement although SQLite and PostgreSQL run two; escape quotes with `''`.
+- **ManagementServer**: `Start` returns bind errors and new `Addr()` reports the bound address; it now rejects unknown `Host` headers (DNS rebinding, see `SetAllowedHosts`) and cross-origin browser POSTs (CSRF), supports an optional bearer token (`SetAuthToken`), refuses to start a route while the context is stopped (`409`) and no longer returns internal error details.
 
 ### Fixed (2026-10 review)
 
@@ -21,6 +25,10 @@ Fixes from the 2026-09 and 2026-10 security and code reviews.
 - **Net textline framing**: the producer terminates its request with `\n` and reads its reply up to the next `\n`, and the consumer terminates its replies with `\n`. A producer and a consumer with default options used to wait for each other until the timeout.
 - **Route.Stop**: stoppable processors nested in a container (a WireTap or Resequencer inside a Choice, Split, Multicast, CircuitBreaker...) are now stopped, before the route's producers.
 - **Resequencer.Stop** waits for a timeout delivery already in progress and arms no timer afterwards, so it no longer reaches stopped producers (recreating and leaking them).
+- **Aggregator timeouts after a restart**: when a route starts, groups already held by the repository get their completion timeout back (new `ListableAggregationRepository`, implemented by the memory and SQL repositories). A group pending across a route restart or, with `SQLAggregationRepository`, a process restart never expired.
+- **HTTP chained calls**: the producer no longer sends response-only headers (`Set-Cookie`, `Server`, `WWW-Authenticate`, `Status-Code`...) left on the message by a previous HTTP call, which leaked one service's session cookie to another.
+- **Kafka fetch errors**: the consumer only stops on `io.EOF` (reader closed) and retries other errors; any error mentioning `closed` or `EOF` used to end the consumer goroutine while the route still appeared started.
+- **ProducerCache**: a producer created while the context was stopping is no longer cached after the restart (it was started with the cancelled context).
 
 ### Security
 

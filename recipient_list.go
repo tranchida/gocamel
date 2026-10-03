@@ -20,6 +20,9 @@ type RecipientList struct {
 
 	// ParallelProcessing enables sending to all recipients concurrently.
 	ParallelProcessing bool
+	// MaxConcurrency bounds the recipients called at the same time when
+	// ParallelProcessing is set (<= 0: DefaultMaxConcurrency).
+	MaxConcurrency int
 	// AggregationStrategy is an optional strategy for aggregating results.
 	AggregationStrategy AggregationStrategy
 
@@ -54,6 +57,13 @@ func (r *RecipientList) SetURIFunc(f func(*Exchange) ([]string, error)) *Recipie
 // SetParallelProcessing enables or disables parallel processing.
 func (r *RecipientList) SetParallelProcessing(parallel bool) *RecipientList {
 	r.ParallelProcessing = parallel
+	return r
+}
+
+// SetMaxConcurrency bounds the recipients called at the same time when
+// parallel processing is enabled. n <= 0 restores DefaultMaxConcurrency.
+func (r *RecipientList) SetMaxConcurrency(n int) *RecipientList {
+	r.MaxConcurrency = n
 	return r
 }
 
@@ -187,7 +197,7 @@ func (r *RecipientList) processRecipients(exchange *Exchange, uris []string, par
 		branches[i].SetProperty(CamelRecipientListSize, len(uris))
 		branches[i].SetProperty(CamelRecipientListComplete, i == len(uris)-1)
 	}
-	aggregated, err := processFanOut(branches, parallel, func(i int, branch *Exchange) error {
+	aggregated, err := processFanOut(branches, parallel, effectiveMaxConcurrency(r.MaxConcurrency), func(i int, branch *Exchange) error {
 		return r.sendToURI(uris[i], branch)
 	}, r.AggregationStrategy)
 	if err != nil {

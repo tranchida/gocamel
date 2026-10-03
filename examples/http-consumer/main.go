@@ -38,7 +38,10 @@ func main() {
 	}
 
 	mgmt := gocamel.NewManagementServer(context)
-	mgmt.Start(":8081")
+	if err := mgmt.Start("127.0.0.1:8081"); err != nil {
+		fmt.Printf("Error starting management API: %v\n", err)
+		return
+	}
 
 	fmt.Println("Server started on http://localhost:8080/echo")
 	fmt.Println("Press Ctrl+C to stop")
