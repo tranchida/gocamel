@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [v0.14.1] - 2026-10-03
+
+Release fix for the v0.14.0 module tags. No code change in the core.
+
+### Fixed
+
+- **Module tags**: the `components/*/v0.14.0` and `observability/*/v0.14.0` tags were created before the release commit, so their `go.mod` still required core v0.13.1. Without a direct requirement on core v0.14.0, the Kafka, STOMP and gRPC components failed to build (`undefined: gocamel.ConsumerRedeliveryPolicy`, `IsCamelHeader`...). The v0.14.1 modules require core v0.14.0, and their `go.sum` holds its published checksums.
+
+### Notes
+
+- Use v0.14.1 for the core and every component and observability module. Core v0.14.1 has the same code as v0.14.0; only the CHANGELOG, READMEs and documentation differ.
+
 ## [v0.14.0] - 2026-10-03
 
 Security and reliability release with the fixes from the 2026-09 and 2026-10 security and code reviews. Some defaults changed: see the Changed sections before upgrading.
@@ -57,7 +69,7 @@ Security and reliability release with the fixes from the 2026-09 and 2026-10 sec
 
 ### Notes
 
-- Published components and observability modules now require core **v0.14.0** (the Kafka, STOMP and gRPC components use APIs added in this release).
+- Published components and observability modules now require core **v0.14.0** (the Kafka, STOMP and gRPC components use APIs added in this release). Their `v0.14.0` tags still required core v0.13.1: use **v0.14.1**.
 
 ## [v0.13.1] - 2026-09-12
 
