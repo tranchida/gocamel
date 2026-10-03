@@ -14,3 +14,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// v0.14.0 and v0.14.1 were tagged before the release commit and require
+// core v0.13.1, which lacks APIs this module uses.
+retract [v0.14.0, v0.14.1]

@@ -2,17 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
-## [v0.14.1] - 2026-10-03
+## [v0.14.2] - 2026-10-03
 
-Release fix for the v0.14.0 module tags. No code change in the core.
+Release fix for the v0.14.0 and v0.14.1 module tags. No code change in the core.
 
 ### Fixed
 
-- **Module tags**: the `components/*/v0.14.0` and `observability/*/v0.14.0` tags were created before the release commit, so their `go.mod` still required core v0.13.1. Without a direct requirement on core v0.14.0, the Kafka, STOMP and gRPC components failed to build (`undefined: gocamel.ConsumerRedeliveryPolicy`, `IsCamelHeader`...). The v0.14.1 modules require core v0.14.0, and their `go.sum` holds its published checksums.
+- **Module tags**: the `components/*` and `observability/*` tags `v0.14.0` and `v0.14.1` were created before the release commit, so their `go.mod` still required core v0.13.1. Without a direct requirement on core v0.14.0 or later, the Kafka, STOMP and gRPC components failed to build (`undefined: gocamel.ConsumerRedeliveryPolicy`, `IsCamelHeader`...). The v0.14.2 modules require core v0.14.0, and their `go.sum` holds its published checksums.
+- The Kafka, STOMP and gRPC modules retract v0.14.0 and v0.14.1.
 
 ### Notes
 
-- Use v0.14.1 for the core and every component and observability module. Core v0.14.1 has the same code as v0.14.0; only the CHANGELOG, READMEs and documentation differ.
+- Use v0.14.2 for the core and every component and observability module. Core v0.14.1 and v0.14.2 have the same code as v0.14.0; only the CHANGELOG, READMEs and documentation differ.
+
+## [v0.14.1] - 2026-10-03
+
+Tagged on the same commit as v0.14.0 by mistake, with the same module tag problem: use v0.14.2.
 
 ## [v0.14.0] - 2026-10-03
 
@@ -69,7 +74,7 @@ Security and reliability release with the fixes from the 2026-09 and 2026-10 sec
 
 ### Notes
 
-- Published components and observability modules now require core **v0.14.0** (the Kafka, STOMP and gRPC components use APIs added in this release). Their `v0.14.0` tags still required core v0.13.1: use **v0.14.1**.
+- Published components and observability modules now require core **v0.14.0** (the Kafka, STOMP and gRPC components use APIs added in this release). Their `v0.14.0` tags still required core v0.13.1: use **v0.14.2**.
 
 ## [v0.13.1] - 2026-09-12
 
