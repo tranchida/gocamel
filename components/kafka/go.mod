@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/segmentio/kafka-go v0.4.47
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.13.1
+	gitlab.com/tranchida/gocamel v0.14.0
 )
 
 require (
@@ -17,3 +17,7 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// v0.14.0 and v0.14.1 were tagged before the release commit and require
+// core v0.13.1, which lacks APIs this module uses.
+retract [v0.14.0, v0.14.1]

@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/go-stomp/stomp v2.1.4+incompatible
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.13.1
+	gitlab.com/tranchida/gocamel v0.14.0
 )
 
 require (
@@ -14,3 +14,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// v0.14.0 and v0.14.1 were tagged before the release commit and require
+// core v0.13.1, which lacks APIs this module uses.
+retract [v0.14.0, v0.14.1]
