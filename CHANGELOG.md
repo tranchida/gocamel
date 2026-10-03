@@ -2,6 +2,58 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+Fixes from the 2026-09 and 2026-10 security and code reviews.
+
+### Changed (2026-10 review)
+
+- **`direct:` and `ErrStopRouting`**: a Filter, an incomplete Aggregator, a Resequencer or a handled dead letter in a route called through `direct:` now only ends that route; the caller carries on and `DirectProducer.Send` returns `nil` (Apache Camel semantics). The `Stop()` EIP still ends the whole exchange: it sets the new `CamelRouteStop` property and `Send` returns `ErrStopRouting`. Tests that used `direct:` as a harness and asserted `ErrStopRouting` must now assert success.
+- **Kafka/STOMP poison messages**: a message whose route keeps failing is now given up on after 10 redeliveries (`maxRedeliveries`, about 80 s with the default backoff): it is logged at error level and committed/acknowledged instead of blocking the partition or subscription forever. Use a `DeadLetterChannel` to keep such messages, or `maxRedeliveries=-1` to restore the retry-forever behaviour.
+- **Parallel Split/RecipientList**: at most `DefaultMaxConcurrency` (10) branches run at a time, configurable with `MaxConcurrency(n)` / `SetMaxConcurrency(n)`. They used to start one goroutine per element (a million for a million-line file). A parallel Multicast is unchanged.
+
+### Security (2026-10 review)
+
+- **Inbound `Camel*` headers**: the Kafka, STOMP and gRPC consumers drop inbound headers named `Camel*` (case-insensitive), like the HTTP consumer already did: whoever could write to a topic or destination could set `CamelFileName`, `CamelHttpMethod`, or `CamelExecCommand*`/`CamelSqlQuery` on endpoints using `allowHeaderOverride`. The check is exported as `IsCamelHeader`.
+- **Exec header override**: a `CamelExecCommandExecutable` header may only select the endpoint's executable or a bare command name listed in the new `allowedExecutables` option; any other bare name (`sh`, `python3`...) used to be accepted, which with header arguments meant arbitrary command execution.
+- **SQL stacked-statement check**: a query is now rejected if it stacks statements whether or not `\'` escapes a quote. `SELECT 'a\'; DROP TABLE t; --'` passed as one MySQL statement although SQLite and PostgreSQL run two; escape quotes with `''`.
+- **ManagementServer**: `Start` returns bind errors and new `Addr()` reports the bound address; it now rejects unknown `Host` headers (DNS rebinding, see `SetAllowedHosts`) and cross-origin browser POSTs (CSRF), supports an optional bearer token (`SetAuthToken`), refuses to start a route while the context is stopped (`409`) and no longer returns internal error details.
+
+### Fixed (2026-10 review)
+
+- **Kafka/STOMP redelivery**: failed messages are redelivered with an exponential backoff (new `redeliveryDelay`, `maxRedeliveryDelay` options) instead of every 100 ms, and the new `maxRedeliveries` option bounds the redeliveries of a poison message. A message dead-lettered by a `DeadLetterChannel` is committed/acknowledged instead of redelivered, which dead-lettered a duplicate every 100 ms. New `ConsumerRedeliveryPolicy`, `IsDeadLettered` and `CamelDeadLettered`.
+- **Net textline framing**: the producer terminates its request with `\n` and reads its reply up to the next `\n`, and the consumer terminates its replies with `\n`. A producer and a consumer with default options used to wait for each other until the timeout.
+- **Route.Stop**: stoppable processors nested in a container (a WireTap or Resequencer inside a Choice, Split, Multicast, CircuitBreaker...) are now stopped, before the route's producers.
+- **Resequencer.Stop** waits for a timeout delivery already in progress and arms no timer afterwards, so it no longer reaches stopped producers (recreating and leaking them).
+- **Aggregator timeouts after a restart**: when a route starts, groups already held by the repository get their completion timeout back (new `ListableAggregationRepository`, implemented by the memory and SQL repositories). A group pending across a route restart or, with `SQLAggregationRepository`, a process restart never expired.
+- **HTTP chained calls**: the producer no longer sends response-only headers (`Set-Cookie`, `Server`, `WWW-Authenticate`, `Status-Code`...) left on the message by a previous HTTP call, which leaked one service's session cookie to another.
+- **Kafka fetch errors**: the consumer only stops on `io.EOF` (reader closed) and retries other errors; any error mentioning `closed` or `EOF` used to end the consumer goroutine while the route still appeared started.
+- **ProducerCache**: a producer created while the context was stopping is no longer cached after the restart (it was started with the cancelled context).
+
+### Security
+
+- **ToD option injection**: `ToD` now resolves templates with the new `InterpolateURI`, which escapes exchange values by position (query-escaped in the query string, `?`/`#` escaped in the path). A header such as `x&allowHeaderOverride=true` could previously enable header overrides on an `exec:` or `sql:` endpoint and lead to command execution. Whole-URI placeholders (`ToD("${header.uri}")`) are still inserted verbatim and must be trusted.
+- **HTTP header isolation**: the consumer no longer emits internal `Camel*` headers in responses (`CamelHttpQuery` leaked query-string secrets, `CamelFileName` internal paths) and drops inbound `Camel*` request headers; the producer never sends `Camel*` headers upstream.
+- **HTTP credential relay**: the producer no longer forwards a client's unchanged `Authorization`/`Cookie` received by the HTTP consumer. New `HTTPComponent.SetForwardInboundCredentials(true)` opt-in for pass-through proxies.
+- **Template `json` XSS**: the function now uses `encoding/json` (HTML-safe escaping); non-string values used to be rendered raw into HTML.
+- **Bounded producer cache**: the shared `ProducerCache` is an LRU bounded by `DefaultProducerCacheSize` (1000), configurable with `CamelContext.SetProducerCacheSize`. In-use and pinned (`GetProducer`) producers are never evicted.
+- **TCP consumer**: new `maxConnections` option (default 1024), and a transient `Accept` error (e.g. `EMFILE`) no longer stops the consumer permanently.
+
+### Fixed
+
+- **SEDA/chan context**: consumers process exchanges under their own context instead of the sender's (already cancelled when an HTTP request enqueued the message and returned).
+- **SEDA/chan shutdown**: `Stop` finishes the queued exchanges, bounded by the new `shutdownTimeout` option (default 30 s), instead of discarding them. SEDA warns when a queue is referenced again with different options.
+- **HTTP producer body**: `io.Reader` bodies are sent; unsupported body types return an error instead of an empty request. Repeated response headers (`Set-Cookie`) are kept as `[]string`, and the consumer emits `[]string` headers as repeated headers.
+- **Dynamic Router**: each step's reply now becomes the input of the next step (it was discarded).
+- **ErrorHandler contract**: documented that `nil` means "retry the step"; retries are bounded by `MaxErrorHandlerRetries` (error wraps `ErrTooManyRetries`). New `DeadLetterHandled(true)` option.
+- **File producer**: `Override`/`Fail`/`Ignore` writes go through a hidden temporary file published by rename/hard link, so consumers never read a partial file; `Close` errors are reported.
+- **Template cache**: compiled templates are keyed by path and delimiters.
+- ToD, RecipientList, RoutingSlip, DynamicRouter and WireTap reset `Out` consistently after propagating it; `ProducerCache.Stop` joins errors with `errors.Join`.
+
+### Documentation
+
+- `ValidatePath`, `ValidateRemotePath` and `IsSafePath` document that absolute paths are accepted (use `ValidatePathInDir` / `ConfineFileName` for header-derived paths).
+
 ## [v0.13.1] - 2026-09-12
 
 Patch release for ZIP/tar.gz integrity and archive limits.

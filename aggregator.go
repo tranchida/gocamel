@@ -207,7 +207,34 @@ func (a *Aggregator) configureTimeout(ctx context.Context, processor Processor) 
 	a.timeoutProcessor = processor
 	a.timeoutConfigured = true
 	a.timeoutActive = true
+	timeoutCtx := a.timeoutContext
 	a.lifecycleMu.Unlock()
+
+	a.restoreTimeouts(timeoutCtx)
+}
+
+// restoreTimeouts re-arms the completion timeout of the groups the repository
+// already holds when the route starts. A timeout is only started by the first
+// message of a group, so a group left pending by a previous run (a stopped
+// route, or a persistent repository across a process restart) would otherwise
+// never expire. As in Apache Camel, a restored group gets a full
+// CompletionTimeout from the restart.
+func (a *Aggregator) restoreTimeouts(ctx context.Context) {
+	repo, ok := a.AggregationRepository.(ListableAggregationRepository)
+	if !ok || a.CompletionTimeout <= 0 {
+		return
+	}
+	keys, err := repo.Keys(ctx)
+	if err != nil {
+		LogWarn("Aggregator: failed to list pending groups; their completion timeout is not restored", "error", err)
+		return
+	}
+	for _, key := range keys {
+		st := a.lockForKey(key)
+		gen := st.gen
+		st.mu.Unlock()
+		a.startTimeout(key, ctx, gen, st)
+	}
 }
 
 func (a *Aggregator) startTimeout(key string, fallback context.Context, gen uint64, st *keyState) {

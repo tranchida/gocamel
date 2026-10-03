@@ -248,6 +248,7 @@ func (r *Route) doProcess(exchange *Exchange) error {
 // to resume routing after a completion timeout without re-running processors
 // that already handled the exchange.
 func (r *Route) processFrom(exchange *Exchange, start int) error {
+	retries := 0 // consecutive retries of processor i requested by the error handler
 	for i := start; i < len(r.processors); {
 		processor := r.processors[i]
 		propagateOutToInAndReset(exchange)
@@ -286,12 +287,19 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 				if handleErr := r.errorHandler.HandleError(exchange, err); handleErr != nil {
 					return handleErr
 				}
-				// A nil handler result means the failed processor should be retried.
+				// A nil handler result means the failed processor should be
+				// retried. Bound it so a handler returning nil to "ignore" the
+				// error cannot spin on this step forever.
+				retries++
+				if retries > MaxErrorHandlerRetries {
+					return fmt.Errorf("route %s: %w (%d) at processor[%d]: %w", r.ID, ErrTooManyRetries, MaxErrorHandlerRetries, i, err)
+				}
 				continue
 			}
 			return err
 		}
 		r.resetErrorHandlerState(exchange)
+		retries = 0
 		i++
 	}
 	return nil
@@ -441,20 +449,26 @@ func (r *Route) Stop() error {
 		errs = append(errs, err)
 	}
 
-	for _, lp := range r.lazyProducers {
-		if err := lp.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("error stopping producer for %s: %w", lp.uri, err))
-		}
-	}
-
-	for _, p := range r.processors {
-		if _, isAggregator := p.(*Aggregator); isAggregator {
-			continue // already stopped before producers above
+	// Stoppable processors (WireTap, Resequencer...) may be nested in a
+	// container (Choice, Split, Multicast, CircuitBreaker...), so the whole
+	// tree is walked. They are stopped before the producers: until then a
+	// Resequencer timeout can still deliver downstream, and a lazy producer
+	// used after its Stop would be recreated and leaked.
+	r.forEachProcessor(func(p Processor) {
+		switch p.(type) {
+		case *Aggregator, *lazyProducer:
+			return // stopped above / below
 		}
 		if stoppable, ok := p.(interface{ Stop() error }); ok {
 			if err := stoppable.Stop(); err != nil {
 				errs = append(errs, err)
 			}
+		}
+	})
+
+	for _, lp := range r.lazyProducers {
+		if err := lp.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("error stopping producer for %s: %w", lp.uri, err))
 		}
 	}
 
@@ -515,19 +529,26 @@ func (r *Route) stopAggregatorTimeouts() error {
 // forEachAggregator visits every aggregator in the route, including those
 // nested inside containers, so that Stop() joins their timeout goroutines.
 func (r *Route) forEachAggregator(visit func(*Aggregator)) {
+	r.forEachProcessor(func(p Processor) {
+		if aggregator, ok := p.(*Aggregator); ok {
+			visit(aggregator)
+		}
+	})
+}
+
+// forEachProcessor visits every processor of the route depth-first, a
+// container before its children.
+func (r *Route) forEachProcessor(visit func(Processor)) {
 	for _, processor := range r.processors {
-		r.walkAggregators(processor, visit)
+		walkProcessors(processor, visit)
 	}
 }
 
-func (r *Route) walkAggregators(processor Processor, visit func(*Aggregator)) {
-	if aggregator, ok := processor.(*Aggregator); ok {
-		visit(aggregator)
-		return
-	}
+func walkProcessors(processor Processor, visit func(Processor)) {
+	visit(processor)
 	if container, ok := processor.(childProcessorContainer); ok {
 		for _, child := range container.childProcessors() {
-			r.walkAggregators(child, visit)
+			walkProcessors(child, visit)
 		}
 	}
 }
@@ -644,16 +665,18 @@ func createToDProcessor(context *CamelContext, uriTemplate string) Processor {
 }
 
 func (t *toDProcessor) Process(exchange *Exchange) error {
-	// Resolve the dynamic URI
-	uri := Interpolate(t.uriTemplate, exchange)
+	// Resolve the dynamic URI. InterpolateURI escapes the exchange values so
+	// that a header cannot inject endpoint options into the URI.
+	uri := InterpolateURI(t.uriTemplate, exchange)
 
-	// Fetch started producer from the global cache
-	producer, err := t.context.GetProducer(uri)
+	// Fetch a started producer from the bounded context cache.
+	producer, release, err := t.context.acquireProducer(uri)
 	if err != nil {
 		return fmt.Errorf("toD dynamic producer error: %w", err)
 	}
+	defer release()
 
-	exchange.PropagateOutToIn()
+	propagateOutToInAndReset(exchange)
 	return producer.Send(exchange)
 }
 

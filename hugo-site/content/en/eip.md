@@ -55,6 +55,9 @@ builder.From("direct:start").
 ### Filter
 
 Filter messages based on a condition. Exchanges that do not match are silently dropped (`ErrStopRouting`).
+The drop only ends the current route: when that route was called through `direct:`, the
+caller carries on (as with an incomplete Aggregator or a Resequencer). Use `Stop()` to end
+the exchange everywhere.
 
 ```go
 // Simple Language expression (comparison inside ${...})
@@ -329,10 +332,24 @@ builder.To("seda:process")
 
 - `size`: The capacity of the internal queue (default 1000).
 - `concurrentConsumers`: The number of worker goroutines (default 1).
+- `shutdownTimeout`: How long `Stop` keeps processing the queued exchanges, in ms
+  (default 30000; `0` discards them immediately).
 
 Invalid values (negative `size`, non-positive `concurrentConsumers`) fall back to the
 defaults with a warning. Parameters are applied when the endpoint is **first created**;
-later references to the same queue name reuse the existing endpoint.
+later references to the same queue name reuse the existing endpoint, and a reference
+with different options logs a warning.
+
+**Context.** Workers process each exchange under the consumer's context, not the
+sender's. A route such as `From("http://...").To("seda:work")` returns as soon as the
+message is queued, which cancels the HTTP request context; the asynchronous leg is not
+affected and its HTTP calls, delays and SQL queries run normally.
+
+**Shutdown.** `Stop` first rejects new sends (and unblocks producers waiting on a full
+queue), then lets the workers finish the exchanges already queued, for up to
+`shutdownTimeout`. It then cancels the consumer context; exchanges still queued are
+completed as failures. `CamelContext.GracefulStop` cancels the context up front, so it
+does not wait for the queue.
 
 ---
 
@@ -473,6 +490,15 @@ builder.From("direct:start").
     End()
 ```
 
+**Parallel processing:**
+
+```go
+builder.From("file:/data/in").
+    Split(lines).ParallelProcessing(true).MaxConcurrency(20). // default 10
+        To("http://api/items").
+    End()
+```
+
 **Exchange Properties during Split:**
 
 | Property             | Type | Description             |
@@ -573,6 +599,12 @@ repo := gocamel.NewMemoryAggregationRepository()
 repo := gocamel.NewSQLAggregationRepository(db, "schema")
 ```
 
+When a route with a completion timeout starts, the groups already held by the
+repository get a full `CompletionTimeout` again: a group left pending by a
+stopped route, or persisted in SQL across a process restart, still expires
+instead of waiting forever for its size or predicate. Custom repositories get
+this by implementing `ListableAggregationRepository` (`Keys`).
+
 ---
 
 ### Transformer
@@ -656,6 +688,23 @@ builder.From("direct:start").
     ToD("file://output/${header.filename}")
 ```
 
+**Escaping.** Exchange values are data, not URI syntax. Each value is escaped
+according to where its placeholder sits in the template (`InterpolateURI`):
+
+- in the query string, it is query-escaped, so a header such as
+  `a&allowHeaderOverride=true` stays inside its option and cannot enable
+  another one;
+- in the path, `?` and `#` are escaped, so a value cannot start a query string.
+
+A placeholder that stands for the whole URI or its scheme (`ToD("${header.dest}")`)
+is inserted as-is: the route explicitly lets exchange data choose the endpoint,
+so that data must come from a trusted source.
+
+Each distinct URI keeps a started producer in the context's producer cache,
+bounded to `DefaultProducerCacheSize` (1000) producers. Beyond that, the least
+recently used idle producers are stopped. Change the bound with
+`CamelContext.SetProducerCacheSize(n)` (`n <= 0` = unbounded).
+
 ---
 
 ### Recipient List
@@ -667,6 +716,10 @@ Send to multiple recipients computed at runtime.
 builder.From("direct:start").
     SetHeader("recipients", "direct:a,direct:b,direct:c").
     RecipientList("${header.recipients}")
+
+// Call the recipients concurrently, at most 5 at a time (default 10)
+builder.From("direct:start").
+    RecipientList("${header.recipients}").ParallelProcessing().MaxConcurrency(5).End()
 ```
 
 ---
@@ -746,7 +799,9 @@ builder.From("direct:start").
     EndChoice()
 ```
 
-**Note:** Subsequent processors won't be executed.
+**Note:** Subsequent processors won't be executed. Unlike `Filter`, `Stop()` ends the whole
+exchange (it sets the `CamelRouteStop` property): a route that called this one through
+`direct:` stops too, and its `Send` returns `ErrStopRouting`.
 
 ---
 
@@ -892,6 +947,29 @@ builder.From("direct:start").
    catch block itself fails).
 4. The `DoFinally` block is **always** executed, regardless of whether an error occurred or was caught.
 
+### Route error handler and Dead Letter Channel
+
+A route-level `ErrorHandler` receives every error a step returns. Its return
+value drives the route:
+
+- `nil` asks the route to **retry the failed step** (redelivery). It does not
+  mean "ignore the error and continue": the route gives up after
+  `MaxErrorHandlerRetries` (10000) consecutive retries of the same step and
+  returns an error wrapping `ErrTooManyRetries`.
+- an error wrapping `ErrStopRouting` ends routing without failing the exchange.
+- any other error fails the exchange.
+
+`DeadLetterChannel` retries up to `MaxRedeliveries`, then sends the exchange to
+the dead letter endpoint and, by default, still returns the original error to
+the consumer (the HTTP consumer answers 500). With `DeadLetterHandled(true)` a
+dead-lettered exchange counts as handled, as in Apache Camel:
+
+```go
+builder.From("http://0.0.0.0:8080/orders").
+    DeadLetterChannel("seda:dead", gocamel.MaxRedeliveries(3), gocamel.DeadLetterHandled(true)).
+    To("direct:process")
+```
+
 ---
 
 ## Transactions & Sagas
@@ -996,6 +1074,6 @@ builder.From("direct:output").
 
 ## Branch completion and aggregation
 
-Split, Multicast and RecipientList complete each processed branch on success or failure, including idempotency rollback callbacks. Parallel branches copy supported mutable bodies, including each split part, before workers start. Custom mutable types still require application-defined copying or immutable use. Workers finish before aggregation begins; the strategy is called serially in input order, and strategy panics become `ErrProcessorPanic` errors. Sequential processing stops at the first failing branch.
+Split, Multicast and RecipientList complete each processed branch on success or failure, including idempotency rollback callbacks. Parallel branches copy supported mutable bodies, including each split part, before workers start. Custom mutable types still require application-defined copying or immutable use. Workers finish before aggregation begins; the strategy is called serially in input order, and strategy panics become `ErrProcessorPanic` errors. Sequential processing stops at the first failing branch. A parallel Split or RecipientList runs at most `MaxConcurrency(n)` branches at a time (default `DefaultMaxConcurrency`, 10): both expand from message content, so an unbounded fan-out would start one goroutine per element. A parallel Multicast runs all its branches at once, their number being fixed by the route.
 
 Invalid `Resequence` expressions accumulate a build error while leaving the DSL chain usable; `Timeout`, `Capacity` and `End` do not panic because an earlier expression was invalid.

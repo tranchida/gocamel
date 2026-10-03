@@ -109,8 +109,10 @@ func TestTracingInterceptor_WrappedStopRoutingNotRecordedAsError(t *testing.T) {
 	require.NoError(t, producer.Start(context.Background()))
 	defer producer.Stop()
 
+	// The interceptor sees the wrapped ErrStopRouting inside the route; the
+	// direct: producer does not propagate a called route's stop to its caller.
 	err = producer.Send(gocamel.NewExchange(context.Background()))
-	require.ErrorIs(t, err, gocamel.ErrStopRouting)
+	require.NoError(t, err)
 
 	spans := exporter.GetSpans()
 	require.Len(t, spans, 1)

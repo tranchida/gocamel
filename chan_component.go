@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 )
 
 // ChanComponent represents the native Go channel component.
@@ -23,7 +24,9 @@ func NewChanComponent() *ChanComponent {
 
 // CreateEndpoint creates a new ChanEndpoint from a URI.
 // Supported parameters:
-// - bufferSize: The capacity of the internal channel (default 100).
+//   - bufferSize: The capacity of the internal channel (default 100).
+//   - shutdownTimeout: how long Stop keeps processing the queued exchanges, in
+//     milliseconds (default 30000; 0 discards them immediately).
 //
 // Endpoints are cached by channel name so that all producers and consumers of
 // the same channel share ONE endpoint instance — this is what makes the
@@ -65,8 +68,9 @@ func (c *ChanComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	endpoint := &ChanEndpoint{
-		uri:   uri,
-		queue: make(chan *Exchange, bufferSize),
+		uri:             uri,
+		queue:           make(chan *Exchange, bufferSize),
+		shutdownTimeout: parseShutdownTimeout(u, "chan"),
 	}
 	c.endpoints[channelName] = endpoint
 	return endpoint, nil
@@ -78,9 +82,11 @@ type ChanEndpoint struct {
 	uri      string
 	queue    chan *Exchange
 	consumer *ChanConsumer
-	mu       sync.Mutex
-	stopCh   chan struct{} // closed when the consumer stops; nil until first Start
-	stopped  bool          // true after Stop until the next Start
+	// shutdownTimeout bounds draining queued exchanges at Stop.
+	shutdownTimeout time.Duration
+	mu              sync.Mutex
+	stopCh          chan struct{} // closed when the consumer stops; nil until first Start
+	stopped         bool          // true after Stop until the next Start
 }
 
 // URI returns the endpoint URI.
@@ -165,6 +171,7 @@ type ChanConsumer struct {
 	endpoint  *ChanEndpoint
 	processor Processor
 	cancel    context.CancelFunc
+	drain     chan struct{} // closed by Stop: finish the queued exchanges, then exit
 	wg        sync.WaitGroup
 }
 
@@ -172,6 +179,8 @@ type ChanConsumer struct {
 func (c *ChanConsumer) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+	drain := make(chan struct{})
+	c.drain = drain
 
 	c.endpoint.mu.Lock()
 	c.endpoint.stopped = false
@@ -179,19 +188,19 @@ func (c *ChanConsumer) Start(ctx context.Context) error {
 	c.endpoint.mu.Unlock()
 
 	c.wg.Add(1)
-	go c.run(ctx)
+	go func() {
+		defer c.wg.Done()
+		runQueueWorker(ctx, drain, c.endpoint.queue, c.processor, "chan consumer processing error", c.endpoint.uri)
+	}()
 
 	return nil
 }
 
-// Stop stops the consumer worker, unblocks producers waiting on a full
-// queue, and discards leftover exchanges so they cannot leak after shutdown.
+// Stop rejects new sends and unblocks producers waiting on a full queue, then
+// lets the worker finish the exchanges already queued before returning. If
+// the parent context is cancelled first, leftover exchanges are discarded as
+// failures so they cannot leak after shutdown (see SedaConsumer.Stop).
 func (c *ChanConsumer) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
-	}
-	c.wg.Wait()
-
 	c.endpoint.mu.Lock()
 	c.endpoint.stopped = true
 	if c.endpoint.stopCh != nil {
@@ -201,6 +210,12 @@ func (c *ChanConsumer) Stop() error {
 			close(c.endpoint.stopCh)
 		}
 	}
+	c.endpoint.mu.Unlock()
+
+	stopQueueWorkers(c.drain, &c.wg, c.cancel, c.endpoint.shutdownTimeout)
+	c.drain = nil
+
+	c.endpoint.mu.Lock()
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}
@@ -208,26 +223,4 @@ func (c *ChanConsumer) Stop() error {
 
 	drainExchangeQueue(c.endpoint.queue, fmt.Errorf("chan: discarded because the consumer stopped"))
 	return nil
-}
-
-func (c *ChanConsumer) run(ctx context.Context) {
-	defer c.wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case exchange, ok := <-c.endpoint.queue:
-			if !ok {
-				return
-			}
-			err := safeProcess(func() error { return c.processor.Process(exchange) })
-			if err := CompleteExchange(exchange, err); err != nil {
-				LogError("chan consumer processing error",
-					"uri", c.endpoint.uri,
-					"error", err,
-					"exchange_id", exchange.ID,
-				)
-			}
-		}
-	}
 }

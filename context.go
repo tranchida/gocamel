@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -402,18 +403,71 @@ func (c *CamelContext) CreateEndpoint(uri string) (Endpoint, error) {
 	return c.registry.CreateEndpoint(uri)
 }
 
-// GetProducer retrieves a started producer from the global cache, creating it if necessary.
+// GetProducer retrieves a started producer from the global cache, creating it
+// if necessary. The returned producer is pinned: the caller may keep it, so it
+// is never evicted and stays started until the context stops. Internal EIPs
+// use acquireProducer instead so that dynamic URIs do not pin the cache.
 func (c *CamelContext) GetProducer(uri string) (Producer, error) {
 	return c.producerCache.Get(uri)
 }
 
-// ProducerCache caches Producers thread-safely to reuse them.
+// SetProducerCacheSize bounds the number of producers kept in the shared
+// producer cache used by ToD, RecipientList, RoutingSlip, DynamicRouter,
+// WireTap, Enrich and the DeadLetterChannel. Once the bound is exceeded the
+// least recently used producers that are not in use are stopped. n <= 0
+// disables the bound. Defaults to DefaultProducerCacheSize.
+func (c *CamelContext) SetProducerCacheSize(n int) {
+	c.producerCache.SetMaxSize(n)
+}
+
+// acquireProducer returns a started producer for uri together with a release
+// function the caller must invoke once the send has completed. Until then the
+// producer cannot be evicted.
+func (c *CamelContext) acquireProducer(uri string) (Producer, func(), error) {
+	return c.producerCache.acquire(uri)
+}
+
+// sendToURI sends exchange to uri through the shared producer cache.
+func (c *CamelContext) sendToURI(uri string, exchange *Exchange) error {
+	producer, release, err := c.acquireProducer(uri)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return producer.Send(exchange)
+}
+
+// DefaultProducerCacheSize is the default bound of the shared producer cache.
+// Every distinct URI resolved by ToD or a RecipientList creates a started
+// producer; without a bound, URIs that embed per-message values would grow the
+// cache (and its open connections) for the lifetime of the context.
+const DefaultProducerCacheSize = 1000
+
+// ProducerCache caches started Producers thread-safely so they can be reused.
+// It is bounded (see SetMaxSize): the least recently used producers that are
+// neither in use nor pinned are stopped when the bound is exceeded.
 type ProducerCache struct {
 	context *CamelContext
-	cache   map[string]Producer
-	mu      sync.RWMutex
-	entries sync.Map // map[string]*producerEntry — per-URI creation locks
+	mu      sync.Mutex // Protects cache, lru, stopped, epoch and maxSize.
+	cache   map[string]*cachedProducer
+	lru     *list.List // of *cachedProducer; front is most recently used.
+	entries sync.Map   // map[string]*producerEntry — per-URI creation locks
 	stopped bool
+	// epoch counts Stop calls. A producer created across a Stop was started
+	// with the context that Stop cancelled; Resume runs right after Stop, so
+	// the stopped flag alone cannot tell it apart from a fresh producer.
+	epoch   uint64
+	maxSize int
+}
+
+// cachedProducer is one cache slot. refs counts in-flight users (acquire);
+// pinned marks producers handed out by Get, which callers may hold forever.
+type cachedProducer struct {
+	uri      string
+	producer Producer
+	refs     int
+	pinned   bool
+	elem     *list.Element
 }
 
 // producerEntry single-flights the creation of one URI's producer.
@@ -421,71 +475,180 @@ type producerEntry struct {
 	once sync.Mutex
 }
 
-// NewProducerCache creates a new ProducerCache.
+// NewProducerCache creates a new ProducerCache bounded by DefaultProducerCacheSize.
 func NewProducerCache(context *CamelContext) *ProducerCache {
 	return &ProducerCache{
 		context: context,
-		cache:   make(map[string]Producer),
+		cache:   make(map[string]*cachedProducer),
+		lru:     list.New(),
+		maxSize: DefaultProducerCacheSize,
 	}
 }
 
-// Get retrieves a started producer from the cache, creating and starting it if missing.
+// SetMaxSize changes the cache bound (n <= 0 means unbounded) and evicts
+// idle producers above the new bound.
+func (pc *ProducerCache) SetMaxSize(n int) {
+	pc.mu.Lock()
+	pc.maxSize = n
+	evicted := pc.evictLocked()
+	pc.mu.Unlock()
+	stopEvicted(evicted)
+}
+
+// Size returns the number of producers currently cached.
+func (pc *ProducerCache) Size() int {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	return len(pc.cache)
+}
+
+// Get retrieves a started producer from the cache, creating and starting it if
+// missing. The producer is pinned and never evicted (see CamelContext.GetProducer).
+func (pc *ProducerCache) Get(uri string) (Producer, error) {
+	entry, err := pc.lookupOrCreate(uri, func(e *cachedProducer) { e.pinned = true })
+	if err != nil {
+		return nil, err
+	}
+	return entry.producer, nil
+}
+
+// acquire retrieves a started producer and marks it in use until release is
+// called. release is idempotent.
+func (pc *ProducerCache) acquire(uri string) (Producer, func(), error) {
+	entry, err := pc.lookupOrCreate(uri, func(e *cachedProducer) { e.refs++ })
+	if err != nil {
+		return nil, nil, err
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			pc.mu.Lock()
+			entry.refs--
+			evicted := pc.evictLocked()
+			pc.mu.Unlock()
+			stopEvicted(evicted)
+		})
+	}
+	return entry.producer, release, nil
+}
+
+// lookupOrCreate returns the cache slot for uri, creating and starting the
+// producer if needed. claim runs under the cache lock on the returned slot so
+// the slot cannot be evicted between lookup and use.
 //
 // Creation happens outside the cache-wide lock: CreateProducer and Start can
 // perform network I/O (connecting to a broker, opening a session), and holding
-// the write lock across that would serialise every other endpoint behind the
+// the lock across that would serialise every other endpoint behind the
 // slowest one. A per-URI entry lock keeps creation single-flighted so a given
-// producer is still built only once.
-func (pc *ProducerCache) Get(uri string) (Producer, error) {
-	pc.mu.RLock()
-	if pc.stopped {
-		pc.mu.RUnlock()
-		return nil, fmt.Errorf("producer cache: context is stopping")
-	}
-	prod, exists := pc.cache[uri]
-	pc.mu.RUnlock()
-	if exists {
-		return prod, nil
+// producer is normally built only once.
+func (pc *ProducerCache) lookupOrCreate(uri string, claim func(*cachedProducer)) (*cachedProducer, error) {
+	if entry, err := pc.lookup(uri, claim); entry != nil || err != nil {
+		return entry, err
 	}
 
-	entry := pc.entryFor(uri)
-	entry.once.Lock()
-	defer entry.once.Unlock()
+	lock := pc.entryFor(uri)
+	lock.once.Lock()
+	defer lock.once.Unlock()
+	// The creation lock is only needed while the producer is missing; dropping
+	// it once the slot is published keeps entries from growing with every
+	// distinct URI ever seen.
+	defer pc.entries.CompareAndDelete(uri, lock)
 
-	pc.mu.RLock()
+	if entry, err := pc.lookup(uri, claim); entry != nil || err != nil {
+		return entry, err
+	}
+	// Capture the epoch before reading the context the producer starts with:
+	// a Stop after this point makes the insert below fail. Resume runs only
+	// after the context was replaced, so a live epoch implies a live context.
+	pc.mu.Lock()
 	if pc.stopped {
-		pc.mu.RUnlock()
+		pc.mu.Unlock()
 		return nil, fmt.Errorf("producer cache: context is stopping")
 	}
-	prod, exists = pc.cache[uri]
-	pc.mu.RUnlock()
-	if exists {
-		return prod, nil
-	}
+	epoch := pc.epoch
+	pc.mu.Unlock()
 
 	endpoint, err := pc.context.CreateEndpoint(uri)
 	if err != nil {
-		return nil, fmt.Errorf("producer cache: endpoint creation failed for %s: %w", uri, err)
+		return nil, fmt.Errorf("producer cache: endpoint creation failed for %s: %w", RedactURI(uri), err)
 	}
-
 	p, err := endpoint.CreateProducer()
 	if err != nil {
-		return nil, fmt.Errorf("producer cache: producer creation failed for %s: %w", uri, err)
+		return nil, fmt.Errorf("producer cache: producer creation failed for %s: %w", RedactURI(uri), err)
 	}
-
 	if err := p.Start(pc.context.GetContext()); err != nil {
-		return nil, fmt.Errorf("producer cache: producer start failed for %s: %w", uri, err)
+		return nil, fmt.Errorf("producer cache: producer start failed for %s: %w", RedactURI(uri), err)
 	}
 
 	pc.mu.Lock()
-	if pc.stopped {
+	if pc.stopped || pc.epoch != epoch {
 		pc.mu.Unlock()
 		_ = p.Stop()
 		return nil, fmt.Errorf("producer cache: context is stopping")
 	}
-	pc.cache[uri] = p
+	if existing, ok := pc.cache[uri]; ok {
+		// Another creator won a race across an eviction; keep its producer.
+		pc.lru.MoveToFront(existing.elem)
+		claim(existing)
+		pc.mu.Unlock()
+		_ = p.Stop()
+		return existing, nil
+	}
+	entry := &cachedProducer{uri: uri, producer: p}
+	entry.elem = pc.lru.PushFront(entry)
+	pc.cache[uri] = entry
+	claim(entry)
+	evicted := pc.evictLocked()
 	pc.mu.Unlock()
-	return p, nil
+	stopEvicted(evicted)
+	return entry, nil
+}
+
+// lookup returns the cached slot for uri (claimed), nil if missing, or an
+// error when the cache is stopped.
+func (pc *ProducerCache) lookup(uri string, claim func(*cachedProducer)) (*cachedProducer, error) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	if pc.stopped {
+		return nil, fmt.Errorf("producer cache: context is stopping")
+	}
+	entry, ok := pc.cache[uri]
+	if !ok {
+		return nil, nil
+	}
+	pc.lru.MoveToFront(entry.elem)
+	claim(entry)
+	return entry, nil
+}
+
+// evictLocked removes least recently used idle, unpinned slots until the
+// cache fits maxSize, returning them so the caller stops them outside the
+// lock. Slots in use are skipped: the cache may temporarily exceed its bound.
+// Caller must hold mu.
+func (pc *ProducerCache) evictLocked() []*cachedProducer {
+	if pc.maxSize <= 0 || len(pc.cache) <= pc.maxSize {
+		return nil
+	}
+	var evicted []*cachedProducer
+	for e := pc.lru.Back(); e != nil && len(pc.cache) > pc.maxSize; {
+		prev := e.Prev()
+		entry := e.Value.(*cachedProducer)
+		if entry.refs == 0 && !entry.pinned {
+			pc.lru.Remove(e)
+			delete(pc.cache, entry.uri)
+			evicted = append(evicted, entry)
+		}
+		e = prev
+	}
+	return evicted
+}
+
+func stopEvicted(evicted []*cachedProducer) {
+	for _, entry := range evicted {
+		if err := entry.producer.Stop(); err != nil {
+			LogWarn("producer cache: error stopping evicted producer", "uri", RedactURI(entry.uri), "error", err)
+		}
+	}
 }
 
 // entryFor returns the per-URI creation lock, allocating it on first use.
@@ -497,22 +660,20 @@ func (pc *ProducerCache) entryFor(uri string) *producerEntry {
 func (pc *ProducerCache) Stop() error {
 	pc.mu.Lock()
 	pc.stopped = true
+	pc.epoch++
 	cache := pc.cache
-	pc.cache = make(map[string]Producer)
+	pc.cache = make(map[string]*cachedProducer)
+	pc.lru.Init()
 	pc.entries.Clear()
 	pc.mu.Unlock()
 
 	var errs []error
-	for uri, prod := range cache {
-		if err := prod.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("producer cache: error stopping producer for %s: %w", uri, err))
+	for uri, entry := range cache {
+		if err := entry.producer.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("producer cache: error stopping producer for %s: %w", RedactURI(uri), err))
 		}
 	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("producer cache: errors stopping producers: %v", errs)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Resume allows Get after CamelContext.Stop so a subsequent Start can create producers.

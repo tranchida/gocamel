@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -107,7 +108,21 @@ func (p *DirectProducer) Send(exchange *Exchange) error {
 	if consumer == nil {
 		return fmt.Errorf("no consumers available on endpoint: %s", p.endpoint.uri)
 	}
-	return ProcessSafely(consumer.processor, exchange)
+	err := ProcessSafely(consumer.processor, exchange)
+	if errors.Is(err, ErrStopRouting) && !isRouteStopRequested(exchange) {
+		// A Filter, an incomplete Aggregator, a Resequencer or a handled dead
+		// letter only ends the called route (Apache Camel semantics): the
+		// caller carries on. Only the Stop EIP (CamelRouteStop) stops the
+		// exchange across the direct: boundary.
+		return nil
+	}
+	return err
+}
+
+// isRouteStopRequested reports whether the Stop EIP marked the exchange.
+func isRouteStopRequested(exchange *Exchange) bool {
+	stop, _ := exchange.GetPropertyAsBool(CamelRouteStop)
+	return stop
 }
 
 // DirectConsumer represents a direct consumer

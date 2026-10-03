@@ -55,18 +55,15 @@ func (p *DynamicRouter) Process(exchange *Exchange) error {
 		// per URI, stopped with the context) instead of creating and tearing
 		// down a producer — and potentially a connection — on every step of
 		// every message. Mirrors ToD and WireTap.
-		producer, err := p.context.GetProducer(uri)
-		if err != nil {
-			return fmt.Errorf("dynamic router: producer error for %s: %w", uri, err)
-		}
-		exchange.PropagateOutToIn()
-		processErr := producer.Send(exchange)
-		if processErr != nil {
-			return fmt.Errorf("dynamic router: error sending to %s: %w", uri, processErr)
+		propagateOutToInAndReset(exchange)
+		if err := p.context.sendToURI(uri, exchange); err != nil {
+			return fmt.Errorf("dynamic router: error sending to %s: %w", uri, err)
 		}
 
-		// Prepare exchange for next step
-		exchange.Out = NewMessage()
+		// The step's response becomes the input of the next step (and of the
+		// control function deciding it). Resetting Out without propagating it
+		// discarded every endpoint's reply.
+		propagateOutToInAndReset(exchange)
 	}
 
 	return fmt.Errorf("dynamic router: exceeded maximum of %d iterations", limit)

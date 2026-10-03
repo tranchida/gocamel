@@ -281,24 +281,47 @@ filters prevent that:
 - **Hop-by-hop and framing headers are never emitted** (`Connection`,
   `Keep-Alive`, `Transfer-Encoding`, `Content-Length`, `Host`, ...). Echoing
   the request's `Content-Length` corrupted the response framing.
+- **Internal `Camel*` headers never cross the HTTP boundary.** They are not
+  emitted in the response (`CamelHttpQuery` used to echo query-string secrets
+  and `CamelFileName` internal paths), and a client cannot set them on the
+  exchange: inbound request headers starting with `Camel` are dropped.
+
+A header holding a `[]string` is sent as a repeated header (e.g. several
+`Set-Cookie`). Symmetrically, the producer stores a repeated response header
+as a `[]string` on `Out`; single-valued headers remain a `string`.
 
 The same hop-by-hop filter applies to the producer, so a `From(http://...)`
 → `To(http://...)` bridge does not forward the inbound `Content-Length` or
-`Host` to the upstream.
+`Host` to the upstream. Response-only headers (`Set-Cookie`, `Server`,
+`WWW-Authenticate`, `Location`, `ETag`, `Status-Code`...) are not sent either:
+in `To("http://a").To("http://b")` the response headers of `a` are on the
+message, and used to reach `b`, leaking `a`'s session cookie to another
+service.
 
-The producer forwards every other inbound header by default, including
-`Cookie` and `Authorization` — the normal behaviour for a generic HTTP client
-that calls an authenticated upstream. In a proxy/bridge scenario where that
-would leak a downstream client's credentials to a third-party upstream, strip
-them explicitly:
+The producer never sends internal `Camel*` headers upstream. It forwards the
+other headers, with one exception for credentials: the `Authorization` and
+`Cookie` values a client sent to the HTTP consumer are **not** relayed
+unchanged to the upstream, so a `From(http://...)` → `To(http://...)` bridge
+does not leak a client's credentials to a third party. A credential the route
+sets itself (e.g. a service token) is always sent. For a deliberate
+authenticating pass-through proxy, opt in:
 
 ```go
 http := gocamel.NewHTTPComponent()
+http.SetForwardInboundCredentials(true)
+```
+
+To strip `Authorization` and `Cookie` from every outbound request produced by
+the component, including the ones the route sets:
+
+```go
 http.SetSkipAuthorizationHeaders(true)
 ```
 
-When enabled, `Authorization` and `Cookie` are dropped from every outbound
-request produced by this component.
+**Request body.** The producer sends `[]byte`, `string` and `io.Reader`
+bodies; a `nil` body sends no content. Any other type (a map, a struct) is
+rejected with an error instead of being silently sent as an empty body:
+marshal it first (e.g. `MarshalJSON`).
 
 #### Response status
 
@@ -387,11 +410,12 @@ builder.To("net:tcp://localhost:9090")
 | Option       | Type   | Default  | Description                                    |
 |--------------|--------|----------|------------------------------------------------|
 | `sync`       | bool   | `true`   | Request-reply: the consumer writes the route's response back to the peer; the producer waits for a reply |
-| `textline`   | bool   | `true`   | Newline-delimited messages (TCP only). `false` = one message per read |
+| `textline`   | bool   | `true`   | Newline-delimited messages (TCP only): requests and replies are terminated by `\n`. `false` = one message per read |
 | `bufferSize` | int    | `8192`   | Maximum message/datagram size in bytes         |
 | `timeout`    | int    | `30000`  | Producer dial/reply timeout in ms (0 = none)   |
 | `keepAlive`  | bool   | `false`  | TCP keepalive on connections                   |
 | `readTimeout`| int    | `60000`  | Consumer read deadline in ms (0 = none)        |
+| `maxConnections` | int | `1024` | Maximum concurrent TCP connections of the consumer (0 = unlimited); extra connections are closed immediately |
 
 **URI forms** — both `net:tcp://host:port` and `net:tcp:host:port` are
 accepted; the same applies to `udp`. An omitted host defaults to `localhost`.
@@ -400,8 +424,11 @@ from `NetConsumer.Address()`.
 
 **Framing.** TCP is a byte stream, so the component needs a message boundary.
 With `textline=true` (default) each newline-terminated line is one message
-(the trailing `\r\n` or `\n` is stripped). With `textline=false` each read
-is one message. UDP datagrams need no framing: each datagram is one message.
+(the trailing `\r\n` or `\n` is stripped). The producer appends a `\n` to a
+request that lacks one and reads its reply up to the next `\n`; the consumer
+terminates each reply with `\n` the same way, so a GoCamel producer and
+consumer interoperate with the default options. With `textline=false` each
+read is one message. UDP datagrams need no framing: each datagram is one message.
 
 ```go
 // Request-reply echo server
@@ -428,6 +455,11 @@ builder.From("net:tcp://localhost:9090").
 - The consumer sets a `readTimeout` (default 60 s) on each connection so a
   slowloris-style client cannot pin a goroutine open indefinitely; set it to
   `0` to disable.
+- `maxConnections` (default 1024) bounds the concurrent TCP connections, so a
+  flood of clients cannot exhaust the process's file descriptors.
+- A transient `Accept` error (such as `EMFILE`, too many open files) no longer
+  stops the consumer: it logs a warning and retries with a backoff capped at
+  one second, like `net/http.Server`.
 - Panics in route processors are contained (`ProcessSafely`): a misbehaving
   route fails its exchange, never the consumer.
 
@@ -522,6 +554,9 @@ builder.From("direct:publish").
 | `clientId` | string | `""` | Client identifier |
 | `allowHeaderOverride` | bool | `false` | Allow `CamelKafkaTopic`, `CamelKafkaPartitionKey` and `CamelKafkaKey` to override the URI when producing |
 | `forwardHeaders` | string | `""` | Comma-separated allowlist of exchange headers forwarded as Kafka record headers; when set, ONLY those headers are propagated |
+| `maxRedeliveries` | int | `10` | Consumer: redeliveries of a message whose route failed before it is logged and acknowledged anyway (`-1` = retry forever, `0` = acknowledge on the first failure) |
+| `redeliveryDelay` | int | `100` | Consumer: first redelivery delay in ms, doubled on each attempt |
+| `maxRedeliveryDelay` | int | `30000` | Consumer: cap of the redelivery backoff in ms |
 
 **Headers:**
 - `CamelKafkaTopic` - Overrides (with `allowHeaderOverride=true`) or reads the target topic.
@@ -541,6 +576,10 @@ builder.From("direct:publish").
 > sitting downstream of the HTTP consumer does not leak client credentials.
 > Set `forwardHeaders` for an explicit allowlist when you want stricter
 > control.
+>
+> Inbound record headers named `Camel*` (case-insensitive) are dropped by the
+> consumer: whoever can write to the topic must not drive internal headers
+> such as `CamelFileName` or `CamelHttpMethod`.
 
 When a `groupId` is configured, each successfully processed message is
 committed to the consumer group. A failed commit is logged (with
@@ -583,6 +622,9 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 | `ack` | string | `auto` | Acknowledgement mode: `auto`, `client`, `client-individual` (consumer only) |
 | `allowHeaderOverride` | bool | `false` | Allow `CamelStompDestination` to override the URI when producing |
 | `forwardHeaders` | string | `""` | Comma-separated allowlist of exchange headers forwarded as STOMP frame headers; when set, ONLY those headers are propagated |
+| `maxRedeliveries` | int | `10` | Consumer: redeliveries of a message whose route failed before it is logged and acknowledged anyway (`-1` = retry forever, `0` = acknowledge on the first failure) |
+| `redeliveryDelay` | int | `100` | Consumer: first redelivery delay in ms, doubled on each attempt |
+| `maxRedeliveryDelay` | int | `30000` | Consumer: cap of the redelivery backoff in ms |
 | `ssl` | bool | `false` | Connect over TLS |
 | `sslCAFile` | string | system roots | PEM file of the certificate authority verifying the broker certificate |
 | `sslCertFile` | string | `""` | PEM file of the client certificate for mutual TLS (requires `sslKeyFile`) |
@@ -605,11 +647,15 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 > sitting downstream of the HTTP consumer does not leak client credentials.
 > Set `forwardHeaders` for an explicit allowlist when you want stricter
 > control.
+>
+> Inbound frame headers named `Camel*` (case-insensitive) are dropped by the
+> consumer: a client sending to the destination must not drive internal
+> headers such as `CamelFileName` or `CamelHttpMethod`.
 
 With `ack=client` or `ack=client-individual`, a message is acknowledged only
 after the route processed it successfully; a processing failure is retried
-before any acknowledgement is sent, so the broker redelivers the message if
-the connection drops in the meantime. With `ack=auto` (default), the broker
+(see `maxRedeliveries`) before any acknowledgement is sent, so the broker
+redelivers the message if the connection drops in the meantime. With `ack=auto` (default), the broker
 considers a message delivered as soon as it is sent.
 
 **SSL/TLS:** set `ssl=true` to connect to the broker over TLS (e.g. the
@@ -750,6 +796,7 @@ builder.To("chan:orders")
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `bufferSize` | int | `100` | Capacity of the internal buffered channel |
+| `shutdownTimeout` | int | `30000` | How long `Stop` keeps processing the queued exchanges, in ms (0 = discard them) |
 
 **Notes:**
 
@@ -758,6 +805,10 @@ builder.To("chan:orders")
   `From("chan:orders")` fails at startup).
 - URI options are applied when the endpoint is **first created**; later references with
   different options log a warning and reuse the existing endpoint.
+- The consumer processes each exchange under **its own context**, not the sender's: an
+  HTTP request that enqueued a message and returned does not cancel the asynchronous leg.
+- `Stop` rejects new sends, then finishes the exchanges already queued for up to
+  `shutdownTimeout` before cancelling the rest (see SEDA in the EIP page).
 
 ---
 
@@ -1110,6 +1161,11 @@ Provide via `CamelSqlParameters` header or body as `[]any`.
 > // Statement supplied per message — only with trusted headers
 > builder.To("sql://appdb?allowHeaderOverride=true&query=SELECT+1")
 > ```
+>
+> A statement followed by another one (`SELECT 1; DROP TABLE t`) is rejected.
+> Whether `\'` escapes a quote depends on the database (MySQL: yes; SQLite,
+> PostgreSQL: no), so a `;` outside literals under either reading is
+> rejected: escape quotes as `''`, which every database accepts.
 
 
 **Output Headers:**
@@ -1366,7 +1422,14 @@ builder.To("template:default.tmpl?allowTemplateFromHeader=true")
 {{.Body | trim}}
 {{now | formatDate "2006-01-02 15:04:05"}}
 {{"hello" | contains "ell"}}
+{"order": {{json .Body}}, "meta": {{json .Headers.meta}}}
 ```
+
+`json` encodes any value (string, number, map, slice) with `encoding/json`.
+Its output escapes `<`, `>` and `&`, so it is safe in HTML as well as in JSON
+payloads. Inside a `<script>` block, write `{{.Body}}` instead: the template
+engine already encodes values as JavaScript there. The compiled-template cache
+(`contentCache`) is keyed by path **and** delimiters.
 
 ---
 
@@ -1388,6 +1451,7 @@ builder.To("exec:ls -la")
 | `outFile`             | string | `""`    | Read the result from this file instead of stdout     |
 | `useStderrOnEmpty`    | bool   | `false` | Use stderr as body when stdout is empty              |
 | `allowHeaderOverride` | bool   | `false` | Allow `CamelExecCommand*` headers to override the URI |
+| `allowedExecutables`  | string | `""`    | Comma-separated bare command names a `CamelExecCommandExecutable` header may select, besides the URI executable |
 
 **Per-message overrides (opt-in):**
 
@@ -1408,9 +1472,11 @@ When `allowHeaderOverride=true`, these headers override the URI settings for a s
 >
 > The **executable** and the **working directory** are validated against shell
 > metacharacters and path traversal. A header-supplied executable must
-> additionally be a **bare command name** (no path) — it is resolved via `PATH`,
-> never an absolute path — so an attacker cannot smuggle `/bin/sh` plus
-> arbitrary arguments. **Arguments are not validated**: commands run
+> additionally be a **bare command name** (no path, resolved via `PATH`) and
+> either the URI executable or one listed in `allowedExecutables`; any other
+> is rejected. A bare name alone was not enough: `sh` or `python3` with
+> header arguments such as `-c ...` run arbitrary code, so never list a shell
+> or an interpreter. **Arguments are not validated**: commands run
 > through `execve` without a shell, so `|`, `&`, `$`, `<` and `>` carry no
 > special meaning and reach the child process verbatim — which is the intent.
 > Rejecting them blocked legitimate values (a JSON document, a password
@@ -1496,7 +1562,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 
 ## Delivery and lifecycle details
 
-- **Kafka:** the resolved topic is set on each message, so configured and header-overridden topics work together. Failed processing is retried with a fresh exchange before fetching the next record. Commit failures retry the commit without repeating successful processing. Retries wait 100 ms and stop on cancellation. A permanent failure blocks this consumer until handled by the route or stopped; this preserves cumulative offset safety.
+- **Kafka / STOMP:** failed processing is retried with a fresh exchange before fetching the next record (Kafka) or message (STOMP), with an exponential backoff from `redeliveryDelay` up to `maxRedeliveryDelay`. After `maxRedeliveries` redeliveries (default `10`, about 80 s with the default delays) the consumer gives up on the message: it logs it at error level and commits/acknowledges it so the partition or subscription is not blocked forever. Use a `DeadLetterChannel` to keep such messages, or set `maxRedeliveries=-1` to retry until the route succeeds (the consumer then stays blocked on a permanently failing message). A message the route sent to a `DeadLetterChannel` is committed/acknowledged right away and never redelivered, even with `DeadLetterHandled(false)`: redelivering it would dead-letter a duplicate on every attempt. Kafka commit failures retry the commit every 100 ms without repeating successful processing. Kafka fetch errors are logged and retried every 100 ms; the consumer only ends when its reader is closed by the route stop (an error mentioning `closed` or `EOF` used to end it while the route still appeared started). The resolved Kafka topic is set on each message, so configured and header-overridden topics work together.
 - **FTP:** each producer leases its connection exclusively for the complete transfer. Concurrent sends and `Stop` cannot interleave FTP commands; a sender waiting for the lease can cancel.
 - **MongoDB:** `save` preserves the input document’s `_id`, including when replacement fails, so retry keeps targeting the same document.
 - **Mail:** IMAP IDLE reacts to mailbox notifications by ending IDLE, searching for messages and re-entering IDLE. Existing messages are searched before the first IDLE.

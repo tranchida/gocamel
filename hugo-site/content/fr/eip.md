@@ -19,6 +19,15 @@ builder.From("direct:start").
     End()
 ```
 
+**Traitement parallèle :**
+
+```go
+builder.From("file:/data/in").
+    Split(lines).ParallelProcessing(true).MaxConcurrency(20). // 10 par défaut
+        To("http://api/items").
+    End()
+```
+
 **Propriétés de l'Exchange:**
 
 - `CamelSplitIndex` — Index actuel (0-based)
@@ -122,6 +131,13 @@ repo := gocamel.NewMemoryAggregationRepository()
 // Persistance SQLite
 repo := gocamel.NewSQLAggregationRepository(db, "schema")
 ```
+
+Au démarrage d'une route avec un timeout de complétion, les groupes déjà
+présents dans le dépôt reçoivent à nouveau un `CompletionTimeout` complet : un
+groupe laissé en attente par une route arrêtée, ou persisté en SQL lors d'un
+redémarrage du processus, expire au lieu d'attendre indéfiniment sa taille ou
+son prédicat. Un dépôt personnalisé en bénéficie en implémentant
+`ListableAggregationRepository` (`Keys`).
 
 ---
 
@@ -269,7 +285,9 @@ ignorées. Si aucune condition ne correspond et qu'`Otherwise` est présent, il 
 ## Filter
 
 Filtre les messages selon une condition. Les exchanges qui ne correspondent pas sont silencieusement supprimés (
-`ErrStopRouting`).
+`ErrStopRouting`). La suppression ne termine que la route courante : si cette route a été appelée
+via `direct:`, l'appelant continue (comme pour un Aggregator incomplet ou un Resequencer).
+Utilisez `Stop()` pour arrêter l'exchange partout.
 
 ```go
 // Expression Simple Language (comparaison à l'intérieur de ${...})
@@ -548,11 +566,26 @@ builder.To("seda:traitement")
 
 - `size` : La capacité de la file d'attente (défaut 1000).
 - `concurrentConsumers` : Le nombre de goroutines esclaves traitant la file (défaut 1).
+- `shutdownTimeout` : Durée pendant laquelle `Stop` continue de traiter les exchanges
+  en file, en ms (défaut 30000 ; `0` les abandonne immédiatement).
 
 Les valeurs invalides (`size` négatif, `concurrentConsumers` non positif) retombent sur
 les valeurs par défaut avec un avertissement. Les paramètres sont appliqués à la
 **première création** de l'endpoint ; les références ultérieures au même nom de file
-réutilisent l'endpoint existant.
+réutilisent l'endpoint existant, et une référence avec des options différentes émet un
+avertissement.
+
+**Contexte.** Les workers traitent chaque exchange sous le contexte du consumer, et non
+celui de l'émetteur. Une route comme `From("http://...").To("seda:travail")` rend la
+main dès que le message est en file, ce qui annule le contexte de la requête HTTP ; la
+partie asynchrone n'est pas affectée et ses appels HTTP, délais et requêtes SQL
+s'exécutent normalement.
+
+**Arrêt.** `Stop` refuse d'abord les nouveaux envois (et débloque les producteurs en
+attente sur une file pleine), puis laisse les workers terminer les exchanges déjà en
+file, pendant au plus `shutdownTimeout`. Il annule ensuite le contexte du consumer ; les
+exchanges restant en file sont complétés en échec. `CamelContext.GracefulStop` annule
+le contexte d'emblée et n'attend donc pas la file.
 
 ---
 
@@ -632,6 +665,10 @@ builder.From("direct:start").
     Log("Jamais atteint si stop")
 ```
 
+Contrairement à `Filter`, `Stop()` termine l'exchange entier (il positionne la propriété
+`CamelRouteStop`) : une route qui a appelé celle-ci via `direct:` s'arrête aussi, et son
+`Send` renvoie `ErrStopRouting`.
+
 ---
 
 ## ToD (Dynamic To)
@@ -650,6 +687,25 @@ builder.From("direct:start").
 - `${property.<name>}` — Valeur de propriété
 - `${body}` — Corps du message
 
+**Échappement.** Les valeurs de l'exchange sont des données, pas de la syntaxe
+d'URI. Chaque valeur est échappée selon la position de son placeholder dans le
+template (`InterpolateURI`) :
+
+- dans la query string, elle est échappée comme valeur de requête : un header
+  comme `a&allowHeaderOverride=true` reste dans son option et ne peut pas en
+  activer une autre ;
+- dans le chemin, `?` et `#` sont échappés : une valeur ne peut pas ouvrir une
+  query string.
+
+Un placeholder qui représente l'URI entière ou son schéma (`ToD("${header.dest}")`)
+est inséré tel quel : la route laisse explicitement les données de l'exchange
+choisir l'endpoint, ces données doivent donc provenir d'une source de confiance.
+
+Chaque URI distincte conserve un producer démarré dans le cache de producers du
+contexte, borné à `DefaultProducerCacheSize` (1000) producers. Au-delà, les
+producers inactifs les moins récemment utilisés sont arrêtés. Modifiez la borne
+avec `CamelContext.SetProducerCacheSize(n)` (`n <= 0` = illimité).
+
 ---
 
 ## Recipient List
@@ -661,6 +717,10 @@ Envoie un message à plusieurs destinataires calculés dynamiquement à l'exécu
 builder.From("direct:start").
     SetHeader("recipients", "direct:a,direct:b,direct:c").
     RecipientList("${header.recipients}")
+
+// Appeler les destinataires en parallèle, 5 au plus à la fois (10 par défaut)
+builder.From("direct:start").
+    RecipientList("${header.recipients}").ParallelProcessing().MaxConcurrency(5).End()
 ```
 
 ---
@@ -786,6 +846,31 @@ builder.From("direct:start").
 3. Si une correspondance est trouvée, l'erreur est considérée comme "gérée" et le routage continue après le bloc
    `DoTry` (sauf si le bloc catch échoue lui-même).
 4. Le bloc `DoFinally` est **toujours** exécuté, qu'il y ait eu une erreur ou non.
+
+### Error handler de route et Dead Letter Channel
+
+Un `ErrorHandler` de route reçoit chaque erreur renvoyée par une étape. Sa
+valeur de retour pilote la route :
+
+- `nil` demande à la route de **rejouer l'étape en échec** (redelivery). Cela
+  ne veut pas dire « ignorer l'erreur et continuer » : la route abandonne après
+  `MaxErrorHandlerRetries` (10000) rejeux consécutifs de la même étape et
+  renvoie une erreur qui enveloppe `ErrTooManyRetries`.
+- une erreur qui enveloppe `ErrStopRouting` arrête le routage sans mettre
+  l'exchange en échec.
+- toute autre erreur met l'exchange en échec.
+
+`DeadLetterChannel` réessaie jusqu'à `MaxRedeliveries`, envoie ensuite
+l'exchange vers l'endpoint dead letter et, par défaut, renvoie quand même
+l'erreur d'origine au consumer (le consumer HTTP répond 500). Avec
+`DeadLetterHandled(true)`, un exchange envoyé en dead letter est considéré comme
+traité, comme dans Apache Camel :
+
+```go
+builder.From("http://0.0.0.0:8080/commandes").
+    DeadLetterChannel("seda:dead", gocamel.MaxRedeliveries(3), gocamel.DeadLetterHandled(true)).
+    To("direct:traitement")
+```
 
 ---
 
@@ -993,6 +1078,6 @@ builder.From("direct:output").
 
 ## Fin des branches et agrégation
 
-Split, Multicast et RecipientList terminent chaque branche traitée, en succès comme en échec, notamment ses callbacks de rollback d’idempotence. Avant de lancer les workers parallèles, ils copient les corps mutables pris en charge, y compris chaque élément du Split. Les types mutables personnalisés exigent toujours une copie applicative ou un usage immuable. L’agrégation commence après la fin des workers ; la stratégie est appelée séquentiellement dans l’ordre d’entrée et ses panics deviennent des erreurs `ErrProcessorPanic`. Le traitement séquentiel s’arrête à la première branche en échec.
+Split, Multicast et RecipientList terminent chaque branche traitée, en succès comme en échec, notamment ses callbacks de rollback d’idempotence. Avant de lancer les workers parallèles, ils copient les corps mutables pris en charge, y compris chaque élément du Split. Les types mutables personnalisés exigent toujours une copie applicative ou un usage immuable. L’agrégation commence après la fin des workers ; la stratégie est appelée séquentiellement dans l’ordre d’entrée et ses panics deviennent des erreurs `ErrProcessorPanic`. Le traitement séquentiel s’arrête à la première branche en échec. Un Split ou une RecipientList en parallèle traite au plus `MaxConcurrency(n)` branches à la fois (défaut `DefaultMaxConcurrency`, 10) : leur nombre de branches dépend du contenu du message, et sans borne chaque élément lançait sa propre goroutine. Un Multicast parallèle lance toutes ses branches à la fois, leur nombre étant fixé par la route.
 
 Une expression `Resequence` invalide accumule une erreur de construction tout en laissant la chaîne DSL utilisable ; `Timeout`, `Capacity` et `End` ne paniquent pas à cause de cette erreur antérieure.

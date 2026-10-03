@@ -127,7 +127,7 @@ func main() {
 
     // Management API
     mgmt := gocamel.NewManagementServer(ctx)
-    mgmt.Start(":8081")
+    mgmt.Start("127.0.0.1:8081")
 
     ctx.Start()
     select {}
@@ -729,7 +729,7 @@ func main() {
 
     // Management
     mgmt := gocamel.NewManagementServer(ctx)
-    mgmt.Start(":8081")
+    mgmt.Start("127.0.0.1:8081")
 
     ctx.Start()
     select {}

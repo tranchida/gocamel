@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"bufio"
 	"context"
 	"net"
 	"strings"
@@ -306,4 +307,62 @@ func TestNetConsumerStringBodyReply(t *testing.T) {
 	reply := messageBodyString(exchange.GetOut())
 	require.NotEmpty(t, reply)
 	assert.Equal(t, "42", reply)
+}
+
+func TestNetTCPTextlineFramesRequestAndReply(t *testing.T) {
+	// Regression: the producer did not terminate its request, so a textline
+	// consumer waited for '\n' while the producer waited for the reply until
+	// the timeout.
+	consumer := startNetConsumer(t, "net:tcp://localhost:0", ProcessorFunc(func(e *Exchange) error {
+		e.GetOut().SetBody(strings.ToUpper(messageBodyString(e.GetIn())))
+		return nil
+	}))
+	producer := newNetProducer(t, "net:tcp://"+consumer.Address().String()+"?timeout=2000")
+
+	body := make([]byte, 4, 16)
+	copy(body, "ping")
+	exchange := NewExchange(context.Background())
+	exchange.SetBody(body)
+	start := time.Now()
+	require.NoError(t, producer.Send(exchange))
+	assert.Less(t, time.Since(start), time.Second, "round trip must not wait for the timeout")
+	assert.Equal(t, "PING", messageBodyString(exchange.GetOut()))
+	assert.Equal(t, "ping", string(body[:cap(body)][:4]), "caller's body is not modified")
+	assert.Equal(t, byte(0), body[:cap(body)][4], "delimiter not written into the caller's backing array")
+}
+
+func TestNetTCPTextlineConsumerReplyIsDelimited(t *testing.T) {
+	consumer := startNetConsumer(t, "net:tcp://localhost:0", ProcessorFunc(func(e *Exchange) error {
+		e.GetOut().SetBody("reply-" + messageBodyString(e.GetIn()))
+		return nil
+	}))
+	conn, err := net.Dial("tcp", consumer.Address().String())
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, conn.SetDeadline(time.Now().Add(2*time.Second)))
+
+	// Two requests on one connection yield two distinguishable replies.
+	_, err = conn.Write([]byte("a\nb\n"))
+	require.NoError(t, err)
+	reader := bufio.NewReader(conn)
+	first, err := reader.ReadString('\n')
+	require.NoError(t, err)
+	second, err := reader.ReadString('\n')
+	require.NoError(t, err)
+	assert.Equal(t, "reply-a\n", first)
+	assert.Equal(t, "reply-b\n", second)
+}
+
+func TestNetTCPTextlineReplyLongerThanBufferSize(t *testing.T) {
+	consumer := startNetConsumer(t, "net:tcp://localhost:0", ProcessorFunc(func(e *Exchange) error {
+		e.GetOut().SetBody(strings.Repeat("x", 64))
+		return nil
+	}))
+	producer := newNetProducer(t, "net:tcp://"+consumer.Address().String()+"?timeout=2000&bufferSize=16")
+
+	exchange := NewExchange(context.Background())
+	exchange.SetBody("q")
+	err := producer.Send(exchange)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds bufferSize")
 }

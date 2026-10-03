@@ -54,6 +54,7 @@ gocamel/
 │   ├── redis/                     # Redis component (redis/go-redis)
 │   ├── sftp/                      # SFTP component (pkg/sftp)
 │   ├── smb/                       # SMB component (hirochachacha/go-smb2)
+│   ├── stomp/                     # STOMP component (go-stomp, ActiveMQ/JMS)
 │   └── telegram/                  # Telegram component (go-telegram-bot-api)
 ├── observability/                 # Metrics & Tracing modules
 │   ├── prometheus/                # Prometheus metrics interceptor
@@ -320,7 +321,7 @@ for mod in $(find . -name go.mod -not -path '*/.*'); do
   (cd "$dir" && go build ./... && go vet ./... && go test -race ./...)
 done
 
-# Linting (matches GitLab CI non-blocking jobs)
+# Linting (matches the blocking GitLab CI lint job; ./lint.sh runs it locally)
 staticcheck ./...
 gosec -exclude-dir=hugo-site ./...
 ```

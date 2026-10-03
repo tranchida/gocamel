@@ -5,7 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- mandated by WinZip AES (PBKDF2-HMAC-SHA1, HMAC-SHA1); not a design choice
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -65,7 +65,7 @@ func crc32UpdateByte(crc uint32, b byte) uint32 {
 // streamByte returns the pseudo-random byte that XORs the next ciphertext byte.
 func (k zipCryptoKeys) streamByte() byte {
 	temp := (k[2] | 2) & 0xFFFF
-	return byte((temp * (temp ^ 1)) >> 8)
+	return byte((temp * (temp ^ 1)) >> 8) // #nosec G115 -- intentional truncation to the low byte (PKWARE spec)
 }
 
 // decryptByte decrypts one byte and updates the state with the plaintext.
@@ -86,7 +86,6 @@ type zipCryptoReader struct {
 	r     io.Reader
 	keys  zipCryptoKeys
 	plain []byte // buffered decrypted header remainder
-	read  int
 }
 
 func newZipCryptoReader(r io.Reader, password string) *zipCryptoReader {
@@ -115,7 +114,7 @@ func (z *zipCryptoReader) checkHeader(expectedCheck byte) error {
 }
 
 func (z *zipCryptoReader) Read(p []byte) (int, error) {
-	if z.plain != nil && len(z.plain) > 0 {
+	if len(z.plain) > 0 {
 		n := copy(p, z.plain)
 		z.plain = z.plain[n:]
 		return n, nil
@@ -137,7 +136,7 @@ const (
 	zipAESStrength128   = 0x01
 	zipAESStrength192   = 0x02
 	zipAESStrength256   = 0x03
-	zipAESPasswordError = "zip aes: wrong password or corrupted data (authentication failed)"
+	zipAESPasswordError = "zip aes: wrong password or corrupted data (authentication failed)" // #nosec G101 -- error message, not a credential
 )
 
 // zipAESExtra is the parsed content of the WinZip AES extra field (0x9901).
@@ -410,8 +409,8 @@ func aesEncryptEntry(r io.Reader, password string, strength int) (data []byte, e
 	extra[1] = 0
 	extra[2] = 'A'
 	extra[3] = 'E'
-	extra[4] = byte(strength)
-	extra[5] = 0 // real method: Store (0) — the payload is stored by the caller
+	extra[4] = byte(strength) // #nosec G115 -- strength validated to 1..3 by aesKeySizes above
+	extra[5] = 0              // real method: Store (0) — the payload is stored by the caller
 	extra[6] = 0
 	return out, extra, nil
 }

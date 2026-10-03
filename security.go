@@ -12,7 +12,11 @@ import (
 // to prevent various injection and traversal attacks.
 
 // ValidateRemotePath validates paths for remote protocols (FTP, SFTP, SMB)
-// These paths may be Unix-style even on Windows
+// These paths may be Unix-style even on Windows.
+//
+// It only rejects '..' traversal and null bytes: an absolute path such as
+// "/etc/passwd" is accepted. For a file name taken from a message header use
+// ConfineFileName or JoinRemotePath, which also reject absolute paths.
 func ValidateRemotePath(path string) error {
 	if path == "" {
 		return nil
@@ -100,7 +104,12 @@ func JoinRemotePath(dir, name string) (string, error) {
 // parameterised binding.
 //
 // Only ';' characters that fall OUTSIDE string literals are considered, so a
-// semicolon inside a quoted value does not trip the check.
+// semicolon inside a quoted value does not trip the check. Whether a backslash
+// escapes a quote depends on the dialect (MySQL: yes; standard SQL, SQLite,
+// PostgreSQL: no), so the query is scanned both ways and rejected if either
+// reading stacks statements: "SELECT 'a\'; DROP TABLE t; --'" is one statement
+// for MySQL but two for SQLite. Escape a quote by doubling it, which is
+// portable.
 //
 // IMPORTANT: this is NOT a security boundary. When an endpoint opts in with
 // allowHeaderOverride=true, the CamelSqlQuery header replaces the statement
@@ -109,7 +118,7 @@ func JoinRemotePath(dir, name string) (string, error) {
 // this check unchanged. The real boundary is the opt-in flag, which defaults to
 // false — do not enable it where headers can be influenced by untrusted input.
 func validateSQLQuery(query string) error {
-	if hasNonTrailingSemicolonOutsideStrings(query) {
+	if hasNonTrailingSemicolonOutsideStrings(query, true) || hasNonTrailingSemicolonOutsideStrings(query, false) {
 		return fmt.Errorf("query contains stacked SQL statements: %s", query)
 	}
 	return nil
@@ -117,8 +126,9 @@ func validateSQLQuery(query string) error {
 
 // hasNonTrailingSemicolonOutsideStrings reports whether a statement terminator
 // is followed by SQL code. Whitespace and comments may follow a single trailing
-// semicolon, while "SELECT 1; DROP TABLE t" is rejected.
-func hasNonTrailingSemicolonOutsideStrings(query string) bool {
+// semicolon, while "SELECT 1; DROP TABLE t" is rejected. backslashEscapes
+// selects whether a backslash escapes the next character in a '...' literal.
+func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) bool {
 	inSingle := false
 	inDouble := false
 	inBacktick := false
@@ -141,7 +151,7 @@ func hasNonTrailingSemicolonOutsideStrings(query string) bool {
 			continue
 		}
 		if inSingle {
-			if c == '\\' && i+1 < len(query) {
+			if backslashEscapes && c == '\\' && i+1 < len(query) {
 				i++
 				continue
 			}
@@ -262,6 +272,7 @@ func containsTraversal(path string) bool {
 }
 
 // IsSafePath checks if a path is safe (exported for use in components).
+// Like ValidatePath it does not confine the path: absolute paths are accepted.
 // A path is considered unsafe if any '..' component drives the effective
 // depth below zero (directory traversal) or if the path contains a null byte.
 // Filenames that merely contain two adjacent dots (e.g. "report..v2.txt")
@@ -288,6 +299,10 @@ func IsSafePath(path string, checkExistence bool) bool {
 // base (depth below zero). Filenames containing '..' as part of a longer
 // token (e.g. "foo..bar") are accepted. A post-clean traversal check catches
 // cases that filepath.Clean alone would not.
+//
+// ValidatePath does NOT confine a path: absolute paths ("/etc/passwd") are
+// accepted. For paths derived from message headers use ValidatePathInDir
+// (containment in a base directory, symlinks resolved) or ConfineFileName.
 func ValidatePath(path string) error {
 	if path == "" {
 		return fmt.Errorf("path cannot be empty")

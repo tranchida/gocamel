@@ -157,17 +157,33 @@ When("${date:now:yyyy-MM-dd}")
 Surveiller et contrôler les routes via HTTP :
 
 ```go
-mgmt := gocamel.NewManagementServer(context)
-mgmt.Start(":8081")
+mgmt := gocamel.NewManagementServer(context).
+    SetAuthToken(os.Getenv("MGMT_TOKEN")) // optionnel : exige "Authorization: Bearer <token>"
+if err := mgmt.Start("127.0.0.1:8081"); err != nil { // renvoie les erreurs de bind
+    log.Fatal(err)
+}
+defer mgmt.Stop()
 ```
 
 **Endpoints :**
 
-- `GET /routes` — Lister les routes
-- `GET /routes/{id}` — Détails d'une route
-- `POST /routes/{id}/start` — Démarrer une route
-- `POST /routes/{id}/stop` — Arrêter une route
-- `GET /health` — Vérification de santé
+- `GET /api/context` — État du contexte et nombre de routes
+- `GET /api/routes` — Lister les routes
+- `POST /api/routes/{id}/start` — Démarrer une route (`409` tant que le contexte est arrêté)
+- `POST /api/routes/{id}/stop` — Arrêter une route
+
+**Sécurité :** l'API peut arrêter n'importe quelle route, chaque requête est donc contrôlée :
+
+- l'en-tête `Host` doit être une adresse IP, `localhost` ou un nom passé à
+  `SetAllowedHosts(...)` : cela bloque le DNS rebinding, où une page web fait
+  pointer son propre domaine vers `127.0.0.1` pour atteindre un serveur local ;
+- les `POST` cross-origin d'un navigateur sont rejetés
+  (`http.CrossOriginProtection`), ce qui bloque le CSRF ;
+- avec `SetAuthToken`, une requête sans le jeton bearer reçoit `401`.
+
+Sans jeton, l'API n'est pas authentifiée : liez-la à une adresse loopback ou
+placez-la derrière un reverse proxy qui authentifie. Les erreurs sont
+journalisées ; les réponses ne contiennent qu'un message générique.
 
 ### Configuration
 

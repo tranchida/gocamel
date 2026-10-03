@@ -12,6 +12,9 @@ type Splitter struct {
 	processors          []Processor
 	AggregationStrategy AggregationStrategy
 	ParallelProcessing  bool
+	// MaxConcurrency bounds the parts processed at the same time when
+	// ParallelProcessing is set (<= 0: DefaultMaxConcurrency).
+	MaxConcurrency int
 }
 
 // NewSplitter creates a new Splitter instance
@@ -42,6 +45,13 @@ func (s *Splitter) SetAggregationStrategy(strategy AggregationStrategy) *Splitte
 // SetParallelProcessing enables concurrent processing of split parts.
 func (s *Splitter) SetParallelProcessing(parallel bool) *Splitter {
 	s.ParallelProcessing = parallel
+	return s
+}
+
+// SetMaxConcurrency bounds the parts processed at the same time when
+// parallel processing is enabled. n <= 0 restores DefaultMaxConcurrency.
+func (s *Splitter) SetMaxConcurrency(n int) *Splitter {
+	s.MaxConcurrency = n
 	return s
 }
 
@@ -121,7 +131,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		branches[i].SetProperty(CamelSplitSize, len(splitParts))
 		branches[i].SetProperty(CamelSplitComplete, i == len(splitParts)-1)
 	}
-	aggregated, err := processFanOut(branches, s.ParallelProcessing, func(_ int, branch *Exchange) error {
+	aggregated, err := processFanOut(branches, s.ParallelProcessing, effectiveMaxConcurrency(s.MaxConcurrency), func(_ int, branch *Exchange) error {
 		return s.processPart(branch)
 	}, s.AggregationStrategy)
 	if err != nil {

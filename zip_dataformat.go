@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/flate"
+	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"path/filepath"
 	"strings"
@@ -196,10 +198,10 @@ func (f *ZipDataFormat) writeAESEntry(w *zip.Writer, name string, content []byte
 
 	// AES extra field: ID 0x9901 (little-endian), size, then vendor version
 	// (2 = AE-2), vendor ID "AE", strength and the real (inner) method.
-	extraField := make([]byte, 0, 4+len(extra))
-	extraField = append(extraField, zipAESExtraID&0xFF, zipAESExtraID>>8,
-		byte(len(extra)), byte(len(extra)>>8))
-	extraField = append(extraField, extra...)
+	extraField, err := aesExtraField(extra)
+	if err != nil {
+		return fmt.Errorf("zip marshal: entry %q: %w", name, err)
+	}
 
 	hdr := &zip.FileHeader{
 		Name:     name,
@@ -224,11 +226,15 @@ func (f *ZipDataFormat) writeAESEntry(w *zip.Writer, name string, content []byte
 
 // aesExtraField wraps the raw AES extra data in its 0x9901 container
 // (header ID + data size little-endian).
-func aesExtraField(data []byte) []byte {
-	out := make([]byte, 0, 4+len(data))
-	out = append(out, zipAESExtraID&0xFF, zipAESExtraID>>8,
-		byte(len(data)), byte(len(data)>>8))
-	return append(out, data...)
+func aesExtraField(data []byte) ([]byte, error) {
+	size := len(data)
+	if size < 0 || size > math.MaxUint16 {
+		return nil, fmt.Errorf("zip aes: extra field too large (%d bytes)", size)
+	}
+	out := make([]byte, 0, 4+size)
+	out = binary.LittleEndian.AppendUint16(out, zipAESExtraID)
+	out = binary.LittleEndian.AppendUint16(out, uint16(size))
+	return append(out, data...), nil
 }
 
 // filesForMarshal normalises the body into an ordered entry list.
@@ -415,6 +421,9 @@ const zipAESMethodPlaceholder = 99
 
 // openAESEntry decrypts a WinZip AES entry, then decompresses the real method.
 func (f *ZipDataFormat) openAESEntry(file *zip.File, extra *zipAESExtra) (io.ReadCloser, error) {
+	if file.CompressedSize64 > math.MaxInt64 {
+		return nil, fmt.Errorf("zip unmarshal: entry %q declares an invalid compressed size", file.Name)
+	}
 	raw, err := file.OpenRaw()
 	if err != nil {
 		return nil, err

@@ -85,7 +85,7 @@ func buildTLSConfig(u *url.URL, host string) (*tls.Config, error) {
 		if !gocamel.IsSafePath(caFile, false) {
 			return nil, tlsError("sslCAFile", caFile, errors.New("unsafe path: directory traversal or null byte"))
 		}
-		caPEM, err := os.ReadFile(caFile)
+		caPEM, err := os.ReadFile(caFile) // #nosec G304 -- trusted endpoint configuration, checked by IsSafePath above
 		if err != nil {
 			return nil, tlsError("sslCAFile", caFile, err)
 		}
@@ -216,6 +216,17 @@ func NewStompComponent() *StompComponent {
 //	                     (default: the host option)
 //	sslInsecureSkipVerify true to skip broker certificate verification
 //	                     (default: false — controlled environments only)
+//	maxRedeliveries      Redeliveries of a message whose route failed before
+//	                     it is acknowledged anyway (default: 10; -1 retries
+//	                     forever, 0 acknowledges a failed message right away)
+//	redeliveryDelay      First redelivery delay in ms, doubled on each attempt
+//	                     (default: 100)
+//	maxRedeliveryDelay   Cap of the redelivery backoff in ms (default: 30000)
+//
+// A message the route dead-lettered (DeadLetterChannel) is acknowledged, never
+// redelivered. Inbound frame headers named Camel* are dropped: a client
+// sending to the destination must not drive internal headers such as
+// CamelFileName.
 func (c *StompComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -279,6 +290,7 @@ func (c *StompComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		ackMode:             ackMode,
 		allowHeaderOverride: allowHeaderOverride,
 		forwardHeaders:      parseForwardHeaders(gocamel.GetConfigValue(u, "forwardHeaders")),
+		redelivery:          gocamel.ParseConsumerRedeliveryPolicy(u),
 		tlsConfig:           tlsConfig,
 	}, nil
 }
@@ -296,6 +308,9 @@ type StompEndpoint struct {
 	// listed headers are forwarded to the broker; when nil, every non-Camel,
 	// non-sensitive header is forwarded.
 	forwardHeaders map[string]bool
+	// redelivery bounds how a failed message is re-run before it is
+	// acknowledged (consumer side).
+	redelivery gocamel.ConsumerRedeliveryPolicy
 
 	// tlsConfig is non-nil when ssl=true: the connection is established over
 	// TLS using this configuration.
@@ -603,7 +618,7 @@ func (c *StompConsumer) run(ctx context.Context) {
 		// Resolve this delivery before reading another message. Acknowledging
 		// a later message would otherwise discard a failed one under the
 		// client (cumulative) ack mode.
-		for {
+		for redeliveries := 0; ; redeliveries++ {
 			if ctx.Err() != nil {
 				return
 			}
@@ -621,18 +636,43 @@ func (c *StompConsumer) run(ctx context.Context) {
 					key == "message-id" || key == "subscription" || key == "ack" {
 					continue
 				}
+				// A client sending to the destination must not set
+				// internal Camel* headers.
+				if gocamel.IsCamelHeader(key) {
+					continue
+				}
 				exchange.In.SetHeader(key, value)
 			}
 			err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
 			if err == nil {
 				break
 			}
+			if gocamel.IsDeadLettered(exchange) {
+				// Redelivering would dead-letter a duplicate on every attempt.
+				gocamel.LogWarn("stomp message dead-lettered; acknowledging",
+					"destination", c.endpoint.destination,
+					"error", err,
+					"exchange_id", exchange.ID,
+				)
+				break
+			}
+			if c.endpoint.redelivery.Exhausted(redeliveries) {
+				gocamel.LogError("stomp message failed; redeliveries exhausted, acknowledging",
+					"destination", c.endpoint.destination,
+					"redeliveries", redeliveries,
+					"error", err,
+					"exchange_id", exchange.ID,
+				)
+				break
+			}
 			gocamel.LogError("stomp processing failed; retrying before acknowledging",
 				"destination", c.endpoint.destination,
+				"redelivery", redeliveries+1,
+				"retry_in", c.endpoint.redelivery.Backoff(redeliveries),
 				"error", err,
 				"exchange_id", exchange.ID,
 			)
-			if !waitForRetry(ctx) {
+			if !c.endpoint.redelivery.Wait(ctx, redeliveries) {
 				return
 			}
 		}

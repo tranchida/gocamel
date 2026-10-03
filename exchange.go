@@ -38,12 +38,20 @@ const (
 	CamelRouteId          = "CamelRouteId"          // Route ID
 	CamelRouteGroup       = "CamelRouteGroup"       // Route group
 	CamelRouteDescription = "CamelRouteDescription" // Route description
+	// CamelRouteStop is set to true by the Stop EIP: unlike a Filter or an
+	// Aggregator that only ends the current route, it ends routing of the
+	// exchange everywhere, including in the route that called this one
+	// through direct:.
+	CamelRouteStop = "CamelRouteStop"
 
 	// Error properties
 	CamelExceptionCaught   = "CamelExceptionCaught"   // Caught exception
 	CamelFailureEndpoint   = "CamelFailureEndpoint"   // Failing endpoint
 	CamelFailureRouteId    = "CamelFailureRouteId"    // ID of the failing route
 	CamelRedeliveryCounter = "CamelRedeliveryCounter" // Redelivery counter
+	// CamelDeadLettered is set to true once a DeadLetterChannel has delivered
+	// the exchange to its dead letter endpoint (see IsDeadLettered).
+	CamelDeadLettered = "CamelDeadLettered"
 
 	// Timer properties
 	CamelTimerName      = "CamelTimerName"      // Timer name

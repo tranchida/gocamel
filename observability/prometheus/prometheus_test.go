@@ -89,10 +89,11 @@ func TestMetricsInterceptor_ClassifiesFailures(t *testing.T) {
 	ctx := newIsolatedContext(t, reg, gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
 		return gocamel.ErrStopRouting
 	}))
-	// The direct producer propagates ErrStopRouting to Send; the interceptor
-	// sees it as the route result, which is what the classification tests.
+	// The interceptor sees ErrStopRouting as the route result, which is what
+	// the classification tests; the direct: producer does not propagate a
+	// called route's stop to its caller.
 	err := sendExchange(t, ctx)
-	require.ErrorIs(t, err, gocamel.ErrStopRouting)
+	require.NoError(t, err)
 
 	body := scrape(t, reg)
 	assert.Contains(t, body, `gocamel_exchanges_total{route_id="route-1",status="success"} 1`,
@@ -108,7 +109,7 @@ func TestMetricsInterceptor_ClassifiesFailures(t *testing.T) {
 		return fmt.Errorf("filter rejected message: %w", gocamel.ErrStopRouting)
 	}))
 	err = sendExchange(t, ctx2)
-	require.ErrorIs(t, err, gocamel.ErrStopRouting)
+	require.NoError(t, err)
 
 	body = scrape(t, reg2)
 	assert.Contains(t, body, `gocamel_exchanges_total{route_id="route-1",status="success"} 1`,

@@ -79,11 +79,6 @@ func (w *WireTap) Stop() error {
 
 // sendTap sends the exchange to the tap endpoint via the shared producer cache.
 func (w *WireTap) sendTap(exchange *Exchange) error {
-	producer, err := w.context.GetProducer(w.uri)
-	if err != nil {
-		return err
-	}
-
-	exchange.PropagateOutToIn()
-	return producer.Send(exchange)
+	propagateOutToInAndReset(exchange)
+	return w.context.sendToURI(w.uri, exchange)
 }

@@ -206,6 +206,11 @@ GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre
 - **Aucune Réflexion d'Identifiants** - Le consommateur HTTP ne renvoie jamais les en-têtes de la requête entrante (`Cookie`, `Authorization`, ...) dans sa réponse
 - **Lectures de Corps Bornées** - Les corps de requête et de réponse HTTP sont limités en taille (32 Mio par défaut) pour prévenir l'épuisement mémoire
 - **Confinement des Panics** - Un processeur qui panique fait échouer son exchange, pas le processus entier
+- **URI Dynamiques Échappées** - `ToD` échappe les valeurs de l'exchange selon leur position : un en-tête ne peut pas injecter d'option d'endpoint comme `allowHeaderOverride=true`
+- **Isolation des En-têtes** - Les en-têtes internes `Camel*` ne franchissent jamais la frontière HTTP, les `Authorization`/`Cookie` d'un client ne sont pas relayés vers un service amont sans activation explicite, et les en-têtes de réponse comme `Set-Cookie` ne sont pas renvoyés à l'appel HTTP suivant
+- **Ressources Bornées** - Le cache partagé de producers (1000 producers), les connexions du consommateur TCP (`maxConnections=1024`) et les branches d'un Split/RecipientList parallèle (`MaxConcurrency`, 10) sont bornés par défaut
+- **Liste Blanche Exec** - Un en-tête `CamelExecCommandExecutable` ne peut choisir que l'exécutable de l'URI ou l'un de ceux listés dans `allowedExecutables`
+- **API de Management Protégée** - Protection contre le DNS rebinding et le CSRF, jeton bearer optionnel (`SetAuthToken`)
 
 ### Utilitaires de Sécurité (`security.go`)
 
@@ -277,6 +282,35 @@ corps `[]byte` produit désormais une seule part au lieu d'un exchange par
 octet, et le consommateur HTTP ne renvoie plus les en-têtes entrants inchangés
 dans sa réponse.
 
+**Correctifs de la revue de sécurité (non publiés).** Ces changements peuvent
+affecter des routes existantes :
+
+- `ToD` échappe les valeurs interpolées selon leur position (échappement de
+  requête dans la query string ; `?` et `#` échappés dans le chemin). Un
+  template qui comptait sur un en-tête pour injecter du texte de requête brut
+  doit désormais construire l'URI entière dans un seul placeholder
+  (`ToD("${header.uri}")`), inséré tel quel et qui doit être de confiance.
+- Le consommateur HTTP ignore les en-têtes de requête `Camel*` et n'émet jamais
+  d'en-têtes `Camel*` dans sa réponse ; le producteur ne les envoie jamais au
+  service amont.
+- Le producteur HTTP ne relaie plus les `Authorization` ou `Cookie` inchangés
+  d'un client vers le service amont. Pour un proxy qui doit les relayer :
+  `SetForwardInboundCredentials(true)`.
+- Le producteur HTTP rejette les corps autres que `[]byte`, `string`,
+  `io.Reader` et `nil` (ils étaient envoyés comme un corps vide). Les en-têtes
+  de réponse répétés sont stockés en `[]string`.
+- La fonction de template `json` produit désormais du vrai JSON pour toute
+  valeur (une map s'affichait `map[k:v]`) et échappe `<`, `>` et `&`.
+- Les consommateurs SEDA et chan traitent les exchanges sous leur propre
+  contexte et terminent les exchanges en file lors du `Stop` (borné par
+  `shutdownTimeout`, 30 s par défaut).
+- Le cache partagé de producers contient au plus 1000 producers
+  (`SetProducerCacheSize`), et le consommateur TCP au plus 1024 connexions
+  (`maxConnections`).
+- Un `ErrorHandler` qui renvoie `nil` rejoue l'étape en échec ; ces rejeux sont
+  désormais bornés (`MaxErrorHandlerRetries`). `DeadLetterHandled(true)` fait
+  considérer un exchange envoyé en dead letter comme traité.
+
 ## 📚 Documentation
 
 - [**Site de Documentation en Ligne**](https://gocamel.tranchida.cloud/fr/)
@@ -306,6 +340,6 @@ Licence Apache Version 2.0 - voir le fichier [LICENSE](LICENSE) pour les détail
 
 Chaque étape reçoit la sortie de la précédente, y compris les en-têtes ; les en-têtes supprimés le restent. Utilisez `exchange.GetResponse()` pour lire le message final combiné. Les branches parallèles Split, Multicast et RecipientList terminent leurs propres callbacks ; leur agrégation suit l’ordre d’entrée et intercepte les panics.
 
-`PollEnrich` reçoit un seul message sans vider ni arrêter sa file. Il prend en charge `seda`, `chan` et les endpoints personnalisés implémentant `PollingEndpoint` ; les autres endpoints renvoient une erreur. Kafka réessaie les traitements et les commits en échec avant de lire un autre message. Configurez la gestion des erreurs de route pour résoudre les échecs permanents.
+`PollEnrich` reçoit un seul message sans vider ni arrêter sa file. Il prend en charge `seda`, `chan` et les endpoints personnalisés implémentant `PollingEndpoint` ; les autres endpoints renvoient une erreur. Kafka et STOMP réessaient les traitements en échec (backoff exponentiel, borné par `maxRedeliveries`) et Kafka réessaie les commits avant de lire un autre message ; un message envoyé dans un `DeadLetterChannel` est commité au lieu d'être redélivré. Après `maxRedeliveries` (10 par défaut), un message en échec permanent est journalisé puis commité ; utilisez un `DeadLetterChannel` pour le conserver.
 
 Consultez les [concepts de routage](hugo-site/content/fr/concepts.md), les [contrats des EIP](hugo-site/content/fr/eip.md) et les [notes de cycle de vie des composants](hugo-site/content/fr/components.md).

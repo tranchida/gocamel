@@ -283,24 +283,50 @@ elle-même. Deux filtres l'en empêchent :
 - **Les headers hop-by-hop et de cadrage ne sont jamais émis** (`Connection`,
   `Keep-Alive`, `Transfer-Encoding`, `Content-Length`, `Host`, ...). Renvoyer
   le `Content-Length` de la requête corrompait le cadrage de la réponse.
+- **Les headers internes `Camel*` ne franchissent jamais la frontière HTTP.**
+  Ils ne sont pas émis dans la réponse (`CamelHttpQuery` renvoyait les secrets
+  de la query string et `CamelFileName` des chemins internes), et un client ne
+  peut pas les poser sur l'exchange : les headers de requête commençant par
+  `Camel` sont ignorés.
+
+Un header contenant un `[]string` est émis comme header répété (par exemple
+plusieurs `Set-Cookie`). Symétriquement, le producer stocke un header de
+réponse répété sous forme de `[]string` sur `Out` ; les headers à valeur
+unique restent des `string`.
 
 Le même filtre s'applique au producer : un pont `From(http://...)` →
 `To(http://...)` ne transmet donc pas le `Content-Length` ni le `Host` entrants
-au service amont.
+au service amont. Les headers propres aux réponses (`Set-Cookie`, `Server`,
+`WWW-Authenticate`, `Location`, `ETag`, `Status-Code`...) ne sont pas envoyés
+non plus : dans `To("http://a").To("http://b")`, les headers de réponse de `a`
+restent sur le message et parvenaient à `b`, ce qui transmettait le cookie de
+session de `a` à un autre service.
 
-Le producer transmet par défaut tous les autres headers entrants, y compris
-`Cookie` et `Authorization` — le comportement normal d'un client HTTP générique
-qui appelle un service amont authentifié. Dans un scénario de pont/proxy où cela
-fuirait les identifiants d'un client vers un amont tiers, supprimez-les
-explicitement :
+Le producer n'envoie jamais les headers internes `Camel*` au service amont. Il
+transmet les autres headers, avec une exception pour les identifiants : les
+valeurs `Authorization` et `Cookie` envoyées par un client au consumer HTTP ne
+sont **pas** relayées telles quelles vers l'amont, afin qu'un pont
+`From(http://...)` → `To(http://...)` ne fasse pas fuiter les identifiants d'un
+client vers un tiers. Un identifiant posé par la route elle-même (par exemple
+un jeton de service) est toujours envoyé. Pour un proxy qui doit volontairement
+relayer l'authentification du client, activez l'option :
 
 ```go
 http := gocamel.NewHTTPComponent()
+http.SetForwardInboundCredentials(true)
+```
+
+Pour retirer `Authorization` et `Cookie` de toutes les requêtes sortantes du
+composant, y compris celles posées par la route :
+
+```go
 http.SetSkipAuthorizationHeaders(true)
 ```
 
-Une fois activée, `Authorization` et `Cookie` sont retirés de toute requête
-sortante produite par ce composant.
+**Corps de la requête.** Le producer envoie les corps `[]byte`, `string` et
+`io.Reader` ; un corps `nil` n'envoie aucun contenu. Tout autre type (map,
+struct) est rejeté avec une erreur au lieu d'être envoyé silencieusement comme
+un corps vide : sérialisez-le d'abord (par exemple `MarshalJSON`).
 
 #### Statut de la réponse
 
@@ -391,11 +417,12 @@ builder.To("net:tcp://localhost:9090")
 | Option       | Type   | Défaut  | Description                                      |
 |--------------|--------|---------|--------------------------------------------------|
 | `sync`       | bool   | `true`  | Requête-réponse : le consumer renvoie la réponse de la route au pair ; le producer attend une réponse |
-| `textline`   | bool   | `true`  | Messages délimités par saut de ligne (TCP uniquement). `false` = un message par lecture |
+| `textline`   | bool   | `true`  | Messages délimités par saut de ligne (TCP uniquement) : requêtes et réponses se terminent par `\n`. `false` = un message par lecture |
 | `bufferSize` | int    | `8192`  | Taille maximale d'un message/datagramme en octets |
 | `timeout`    | int    | `30000` | Délai d'attente de connexion/réponse du producer en ms (0 = aucun) |
 | `keepAlive`  | bool   | `false` | Keepalive TCP sur les connexions                 |
 | `readTimeout`| int    | `60000` | Délai de lecture du consumer en ms (0 = aucun)    |
+| `maxConnections` | int | `1024` | Nombre maximal de connexions TCP simultanées du consumer (0 = illimité) ; les connexions en trop sont fermées immédiatement |
 
 **Formes d'URI** — `net:tcp://hôte:port` et `net:tcp:hôte:port` sont acceptées ;
 idem pour `udp`. Un hôte omis prend la valeur `localhost`. Le port `0` demande
@@ -404,8 +431,11 @@ un port éphémère à l'OS : lisez l'adresse réellement liée via
 
 **Cadrage.** TCP est un flux d'octets : le composant a donc besoin d'une limite
 de message. Avec `textline=true` (défaut), chaque ligne terminée par un saut
-de ligne est un message (le `\r\n` ou `\n` final est retiré). Avec
-`textline=false`, chaque lecture est un message. Les datagrammes UDP n'ont
+de ligne est un message (le `\r\n` ou `\n` final est retiré). Le producer
+ajoute un `\n` à une requête qui n'en a pas et lit sa réponse jusqu'au `\n`
+suivant ; le consumer termine chaque réponse par `\n` de la même façon, de
+sorte qu'un producer et un consumer GoCamel dialoguent avec les options par
+défaut. Avec `textline=false`, chaque lecture est un message. Les datagrammes UDP n'ont
 pas besoin de cadrage : chaque datagramme est un message.
 
 ```go
@@ -433,6 +463,12 @@ builder.From("net:tcp://localhost:9090").
 - Le consumer fixe un `readTimeout` (défaut 60 s) sur chaque connexion afin
   qu'un client de type slowloris ne puisse pas monopoliser une goroutine
   indéfiniment ; mettez-le à `0` pour le désactiver.
+- `maxConnections` (défaut 1024) borne le nombre de connexions TCP
+  simultanées, afin qu'un afflux de clients ne puisse pas épuiser les
+  descripteurs de fichiers du processus.
+- Une erreur transitoire d'`Accept` (comme `EMFILE`, trop de fichiers ouverts)
+  n'arrête plus le consumer : il journalise un avertissement et réessaie avec
+  un délai croissant plafonné à une seconde, comme `net/http.Server`.
 - Les paniques dans les processeurs de route sont contenues
   (`ProcessSafely`) : une route défectueuse échoue son exchange, jamais le
   consumer.
@@ -528,6 +564,9 @@ builder.From("direct:publish").
 | `clientId` | string | `""` | Identifiant client |
 | `allowHeaderOverride` | bool | `false` | Autorise `CamelKafkaTopic`, `CamelKafkaPartitionKey` et `CamelKafkaKey` à remplacer l'URI en production |
 | `forwardHeaders` | string | `""` | Liste de noms de headers (séparés par des virgules) propagés comme headers de record Kafka ; si définie, SEULS ces headers sont propagés |
+| `maxRedeliveries` | int | `10` | Consommateur : nombre de redélivraisons d'un message dont la route échoue avant de le journaliser et de l'acquitter malgré tout (`-1` = réessai sans fin, `0` = acquittement dès le premier échec) |
+| `redeliveryDelay` | int | `100` | Consommateur : délai de la première redélivraison en ms, doublé à chaque tentative |
+| `maxRedeliveryDelay` | int | `30000` | Consommateur : plafond du backoff de redélivraison en ms |
 
 **Headers d'Exchange :**
 - `CamelKafkaTopic` - Surcharge (avec `allowHeaderOverride=true`) ou lecture du topic cible.
@@ -547,6 +586,10 @@ builder.From("direct:publish").
 > qu'un producteur en aval du consommateur HTTP ne fuite pas les identifiants
 > du client. Définissez `forwardHeaders` pour une liste explicite si vous
 > souhaitez un contrôle plus strict.
+>
+> Les headers de record entrants nommés `Camel*` (insensible à la casse) sont
+> ignorés par le consommateur : quiconque peut écrire dans le topic ne doit
+> pas piloter des headers internes comme `CamelFileName` ou `CamelHttpMethod`.
 
 Quand un `groupId` est configuré, chaque message traité avec succès est
 committé auprès du groupe de consommateurs. Un échec de commit est journalisé
@@ -589,6 +632,9 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 | `ack` | string | `auto` | Mode d'accusé de réception : `auto`, `client`, `client-individual` (consommateur uniquement) |
 | `allowHeaderOverride` | bool | `false` | Autorise `CamelStompDestination` à remplacer l'URI en production |
 | `forwardHeaders` | string | `""` | Liste de noms de headers (séparés par des virgules) propagés comme headers de trame STOMP ; si définie, SEULS ces headers sont propagés |
+| `maxRedeliveries` | int | `10` | Consommateur : nombre de redélivraisons d'un message dont la route échoue avant de le journaliser et de l'acquitter malgré tout (`-1` = réessai sans fin, `0` = acquittement dès le premier échec) |
+| `redeliveryDelay` | int | `100` | Consommateur : délai de la première redélivraison en ms, doublé à chaque tentative |
+| `maxRedeliveryDelay` | int | `30000` | Consommateur : plafond du backoff de redélivraison en ms |
 | `ssl` | bool | `false` | Connexion au broker via TLS |
 | `sslCAFile` | string | racines système | Fichier PEM de l'autorité de certification vérifiant le certificat du broker |
 | `sslCertFile` | string | `""` | Fichier PEM du certificat client pour le TLS mutuel (nécessite `sslKeyFile`) |
@@ -611,10 +657,15 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 > qu'un producteur en aval du consommateur HTTP ne fuite pas les identifiants
 > du client. Définissez `forwardHeaders` pour une liste explicite si vous
 > souhaitez un contrôle plus strict.
+>
+> Les headers de trame entrants nommés `Camel*` (insensible à la casse) sont
+> ignorés par le consommateur : un client qui envoie vers la destination ne
+> doit pas piloter des headers internes comme `CamelFileName` ou
+> `CamelHttpMethod`.
 
 Avec `ack=client` ou `ack=client-individual`, un message n'est accusé reçu
 qu'après que la route l'ait traité avec succès ; un échec de traitement est
-retenté avant tout accusé de réception, le broker redélivre donc le message si
+retenté (voir `maxRedeliveries`) avant tout accusé de réception, le broker redélivre donc le message si
 la connexion tombe entre-temps. Avec `ack=auto` (défaut), le broker considère
 le message comme délivré dès son envoi.
 
@@ -759,6 +810,7 @@ builder.To("chan:orders")
 | Option       | Type | Défaut | Description                              |
 |--------------|------|--------|------------------------------------------|
 | `bufferSize` | int  | `100`  | Capacité du canal interne bufferisé      |
+| `shutdownTimeout` | int | `30000` | Durée pendant laquelle `Stop` continue de traiter les exchanges en file, en ms (0 = les abandonner) |
 
 **Notes :**
 
@@ -768,6 +820,11 @@ builder.To("chan:orders")
 - Les options URI sont appliquées lorsque l'endpoint est **créé pour la première
   fois** ; les références ultérieures avec des options différentes émettent un
   avertissement et réutilisent l'endpoint existant.
+- Le consumer traite chaque exchange sous **son propre contexte**, et non celui de
+  l'émetteur : une requête HTTP qui a mis un message en file puis s'est terminée
+  n'annule pas la partie asynchrone.
+- `Stop` refuse les nouveaux envois, puis termine les exchanges déjà en file pendant au
+  plus `shutdownTimeout` avant d'annuler le reste (voir SEDA dans la page EIP).
 
 ---
 
@@ -1125,6 +1182,11 @@ Fournis via le header `CamelSqlParameters` ou le corps comme `[]any`.
 > // Requête fournie par message — uniquement avec des headers de confiance
 > builder.To("sql://appdb?allowHeaderOverride=true&query=SELECT+1")
 > ```
+>
+> Une instruction suivie d'une autre (`SELECT 1; DROP TABLE t`) est rejetée.
+> Selon la base, `\'` échappe ou non une apostrophe (MySQL : oui ; SQLite,
+> PostgreSQL : non) ; un `;` hors littéral dans l'une ou l'autre lecture est
+> donc rejeté : échappez les apostrophes avec `''`, accepté partout.
 
 
 **Headers de sortie :**
@@ -1383,7 +1445,15 @@ builder.To("template:default.tmpl?allowTemplateFromHeader=true")
 {{.Body | trim}}
 {{now | formatDate "2006-01-02 15:04:05"}}
 {{"hello" | contains "ell"}}
+{"order": {{json .Body}}, "meta": {{json .Headers.meta}}}
 ```
+
+`json` encode n'importe quelle valeur (chaîne, nombre, map, slice) avec
+`encoding/json`. Sa sortie échappe `<`, `>` et `&` : elle est donc sûre en HTML
+comme dans une charge utile JSON. Dans un bloc `<script>`, écrivez plutôt
+`{{.Body}}` : le moteur de templates y encode déjà les valeurs en JavaScript.
+Le cache des templates compilés (`contentCache`) est indexé par chemin **et**
+par délimiteurs.
 
 ---
 
@@ -1405,6 +1475,7 @@ builder.To("exec:ls -la")
 | `outFile`             | string | `""`    | Lire le résultat depuis ce fichier au lieu de stdout |
 | `useStderrOnEmpty`    | bool   | `false` | Utiliser stderr comme corps quand stdout est vide    |
 | `allowHeaderOverride` | bool   | `false` | Autoriser les headers `CamelExecCommand*` à surcharger l'URI |
+| `allowedExecutables`  | string | `""`    | Noms de commandes simples, séparés par des virgules, qu'un header `CamelExecCommandExecutable` peut choisir en plus de l'exécutable de l'URI |
 
 **Surcharges par message (opt-in) :**
 
@@ -1425,9 +1496,11 @@ Quand `allowHeaderOverride=true`, ces headers surchargent les paramètres URI po
 >
 > L'**exécutable** et le **répertoire de travail** sont validés contre les
 > métacaractères shell et le path traversal. Un exécutable fourni par header
-> doit en outre être un **nom de commande simple** (sans chemin) — il est résolu
-> via `PATH`, jamais par un chemin absolu — afin qu'un attaquant ne puisse pas
-> injecter `/bin/sh` avec des arguments arbitraires. Les **arguments ne le sont
+> doit en outre être un **nom de commande simple** (sans chemin, résolu via
+> `PATH`), et soit l'exécutable de l'URI, soit l'un de ceux listés dans
+> `allowedExecutables` ; tout autre est rejeté. Un nom simple ne suffisait pas :
+> `sh` ou `python3` avec des arguments de header comme `-c ...` exécutent du
+> code arbitraire, ne listez donc jamais un shell ni un interpréteur. Les **arguments ne le sont
 > pas** : les commandes sont lancées via `execve`, sans shell, donc `|`, `&`,
 > `$`, `<` et `>` n'ont aucune signification particulière et parviennent
 > verbatim au processus fils — c'est précisément l'intention. Les rejeter
@@ -1514,7 +1587,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 
 ## Détails de livraison et de cycle de vie
 
-- **Kafka :** le topic résolu est porté par chaque message ; les topics configurés et surchargés par en-tête fonctionnent ensemble. Un traitement en échec est réessayé avec un nouvel échange avant la lecture suivante. Un commit en échec est réessayé sans refaire le traitement réussi. Les tentatives sont espacées de 100 ms et cessent à l’annulation. Un échec permanent bloque ce consommateur jusqu’à sa résolution par la route ou son arrêt, afin de préserver les offsets cumulatifs.
+- **Kafka / STOMP :** un traitement en échec est réessayé avec un nouvel échange avant la lecture du record (Kafka) ou du message (STOMP) suivant, avec un backoff exponentiel de `redeliveryDelay` jusqu’à `maxRedeliveryDelay`. Après `maxRedeliveries` redélivraisons (`10` par défaut, environ 80 s avec les délais par défaut), le consommateur abandonne le message : il le journalise en erreur puis le commite/acquitte pour ne pas bloquer indéfiniment la partition ou l’abonnement. Utilisez un `DeadLetterChannel` pour conserver ces messages, ou `maxRedeliveries=-1` pour réessayer jusqu’au succès de la route (le consommateur reste alors bloqué sur un message en échec permanent). Un message que la route a envoyé dans un `DeadLetterChannel` est commité/acquitté immédiatement et jamais redélivré, même avec `DeadLetterHandled(false)` : le redélivrer l’enverrait en double dans la DLQ à chaque tentative. Un commit Kafka en échec est réessayé toutes les 100 ms sans refaire le traitement réussi. Les erreurs de lecture Kafka sont journalisées et réessayées toutes les 100 ms ; le consommateur ne s’arrête que lorsque l’arrêt de la route ferme son reader (une erreur contenant `closed` ou `EOF` l’arrêtait alors que la route semblait toujours démarrée). Le topic Kafka résolu est porté par chaque message ; les topics configurés et surchargés par en-tête fonctionnent ensemble.
 - **FTP :** chaque producteur réserve sa connexion exclusivement pendant tout le transfert. Les envois concurrents et `Stop` ne peuvent pas entrelacer les commandes FTP ; un envoi en attente de réservation peut être annulé.
 - **MongoDB :** `save` préserve le `_id` du document entrant, même si le remplacement échoue ; le retry cible ainsi le même document.
 - **Mail :** IMAP IDLE réagit aux notifications de boîte en terminant IDLE, en recherchant les messages puis en reprenant IDLE. Une première recherche traite les messages déjà présents.

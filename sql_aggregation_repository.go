@@ -169,3 +169,24 @@ func (r *SQLAggregationRepository) Remove(ctx context.Context, key string) error
 	_, err := r.db.ExecContext(ctx, query, key)
 	return err
 }
+
+// Keys returns the correlation keys of the stored groups.
+func (r *SQLAggregationRepository) Keys(ctx context.Context) ([]string, error) {
+	if r.initErr != nil {
+		return nil, r.initErr
+	}
+	rows, err := r.db.QueryContext(ctx, fmt.Sprintf("SELECT correlation_key FROM %s", r.tableName))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list aggregation keys: %w", err)
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("failed to scan aggregation key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}

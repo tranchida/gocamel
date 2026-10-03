@@ -83,7 +83,7 @@ func TestConsumerResolvesProcessingAndCommitBeforeFetchingNext(t *testing.T) {
 	defer cancel()
 	reader := &scriptedReader{cancel: cancel}
 	attempts := 0
-	c := &KafkaConsumer{endpoint: &KafkaEndpoint{groupID: "group"}, reader: reader}
+	c := &KafkaConsumer{endpoint: &KafkaEndpoint{groupID: "group", redelivery: gocamel.NewConsumerRedeliveryPolicy()}, reader: reader}
 	c.processor = gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
 		attempts++
 		reader.events = append(reader.events, "process")

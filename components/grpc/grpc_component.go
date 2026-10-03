@@ -536,7 +536,8 @@ func (c *GRPCConsumer) handler(srv any, stream grpc.ServerStream) error {
 
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		for k, vals := range md {
-			if len(vals) > 0 {
+			// A client must not set internal Camel* headers.
+			if len(vals) > 0 && !gocamel.IsCamelHeader(k) {
 				exchange.In.SetHeader(k, vals[0])
 			}
 		}

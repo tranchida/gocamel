@@ -203,6 +203,11 @@ GoCamel includes built-in security utilities to protect against common vulnerabi
 - **No Credential Reflection** - The HTTP consumer never echoes inbound request headers (`Cookie`, `Authorization`, ...) back in its response
 - **Bounded Body Reads** - HTTP request and response bodies are size-limited (32 MiB by default) to prevent memory exhaustion
 - **Panic Containment** - A panicking processor fails its exchange rather than the whole process
+- **Escaped Dynamic URIs** - `ToD` escapes exchange values by position, so a header cannot inject endpoint options such as `allowHeaderOverride=true`
+- **Header Isolation** - Internal `Camel*` headers never cross the HTTP boundary, a client's `Authorization`/`Cookie` are not relayed to an upstream unless opted in, and response headers such as `Set-Cookie` are not replayed to the next HTTP call
+- **Bounded Resources** - The shared producer cache (1000 producers), TCP consumer connections (`maxConnections=1024`) and parallel Split/RecipientList branches (`MaxConcurrency`, 10) are bounded by default
+- **Exec Allowlist** - A `CamelExecCommandExecutable` header may only select the URI executable or one listed in `allowedExecutables`
+- **Protected Management API** - DNS rebinding and CSRF protection, optional bearer token (`SetAuthToken`)
 
 ### Security Utilities (`security.go`)
 
@@ -274,6 +279,31 @@ Two further behaviour changes are unlikely to need action: splitting a
 the HTTP consumer no longer echoes unchanged inbound request headers in its
 response.
 
+**Security review fixes (unreleased).** These changes may affect existing routes:
+
+- `ToD` escapes interpolated values by position (query-escaped in the query
+  string; `?` and `#` escaped in the path). A template that relied on a header
+  to inject raw query text must now build the whole URI in one placeholder
+  (`ToD("${header.uri}")`), which is inserted as-is and must be trusted.
+- The HTTP consumer drops inbound `Camel*` request headers and never emits
+  `Camel*` headers in its response; the producer never sends them upstream.
+- The HTTP producer no longer relays a client's unchanged `Authorization` or
+  `Cookie` to the upstream. Restore it for a pass-through proxy with
+  `SetForwardInboundCredentials(true)`.
+- The HTTP producer rejects body types other than `[]byte`, `string`,
+  `io.Reader` and `nil` (they used to be sent as an empty body). Repeated
+  response headers are stored as `[]string`.
+- The template `json` function now outputs real JSON for every value (a map
+  used to render as `map[k:v]`) and escapes `<`, `>` and `&`.
+- SEDA and chan consumers process exchanges under their own context and finish
+  the queued exchanges on `Stop` (bounded by `shutdownTimeout`, default 30 s).
+- The shared producer cache holds at most 1000 producers
+  (`SetProducerCacheSize`), and the TCP consumer at most 1024 connections
+  (`maxConnections`).
+- An `ErrorHandler` returning `nil` retries the failed step; the retries are
+  now bounded (`MaxErrorHandlerRetries`). `DeadLetterHandled(true)` makes a
+  dead-lettered exchange count as handled.
+
 ## 📚 Documentation
 
 - [**Live Documentation Website**](https://gocamel.tranchida.cloud/)
@@ -303,6 +333,6 @@ Apache License, Version 2.0 - see [LICENSE](LICENSE) file for details.
 
 Route steps consume the preceding step’s output, including headers; removed headers stay removed. Read the final combined message with `exchange.GetResponse()`. Parallel Split, Multicast and RecipientList branches complete their own callbacks, and their aggregation runs in input order with panic recovery.
 
-`PollEnrich` receives one message without draining or stopping its queue. It supports `seda`, `chan` and custom endpoints implementing `PollingEndpoint`; other endpoints return an error. Kafka retries failed processing and commits before fetching another record. Configure route error handling to resolve permanently failing messages.
+`PollEnrich` receives one message without draining or stopping its queue. It supports `seda`, `chan` and custom endpoints implementing `PollingEndpoint`; other endpoints return an error. Kafka and STOMP retry failed processing (exponential backoff, bounded by `maxRedeliveries`) and Kafka retries commits before fetching another record; a message sent to a `DeadLetterChannel` is committed instead of redelivered. After `maxRedeliveries` (default 10) a permanently failing message is logged and committed; use a `DeadLetterChannel` to keep it.
 
 See the [routing concepts](hugo-site/content/en/concepts.md), [EIP contracts](hugo-site/content/en/eip.md) and [component lifecycle notes](hugo-site/content/en/components.md) for details.

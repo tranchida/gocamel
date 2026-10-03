@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -64,17 +65,20 @@ func validateExecWorkingDir(dir string) error {
 	return nil
 }
 
-// validateExecOverride applies an extra restriction to an executable taken from
-// the CamelExecCommandExecutable header: only a bare command name (resolved via
-// PATH) is allowed, never a path. The endpoint URI can legitimately pin an
-// absolute path like /usr/bin/ffmpeg, but a header-controlled executable must
-// not — combined with attacker-chosen args, an absolute path (e.g. /bin/sh)
-// would turn allowHeaderOverride into arbitrary command execution.
-func validateExecOverride(executable string) error {
+// validateExecOverride applies extra restrictions to an executable taken from
+// the CamelExecCommandExecutable header. It must be a bare command name
+// (resolved via PATH), never a path, and either the endpoint's own executable
+// or one listed in the allowedExecutables option. A bare name alone is not
+// enough: with header-controlled args, "sh -c ..." or "python3 -c ..." would
+// turn allowHeaderOverride into arbitrary command execution.
+func validateExecOverride(executable, endpointExecutable string, allowed []string) error {
 	if strings.ContainsAny(executable, "/\\") {
 		return fmt.Errorf("executable from header must be a bare command name (no path): %s", executable)
 	}
-	return nil
+	if executable == endpointExecutable || slices.Contains(allowed, executable) {
+		return nil
+	}
+	return fmt.Errorf("executable from header is not in allowedExecutables: %s", executable)
 }
 
 // validateExecArgs validates command arguments.
@@ -113,14 +117,15 @@ func NewExecComponent() *ExecComponent {
 }
 
 // CreateEndpoint creates an ExecEndpoint from the URI
-// Format: exec:executable[?args=arg1+arg2&workingDir=/tmp&timeout=5000&outFile=result.txt&useStderrOnEmpty=true&allowHeaderOverride=true]
+// Format: exec:executable[?args=arg1+arg2&workingDir=/tmp&timeout=5000&outFile=result.txt&useStderrOnEmpty=true&allowHeaderOverride=true&allowedExecutables=ls,du]
 //
 // SECURITY: by default the executable, arguments, working directory and
 // timeout are fixed by the URI. Set allowHeaderOverride=true to let the
 // CamelExecCommand* headers override them per message — only do this when
 // headers cannot be influenced by untrusted input (they would allow running
-// an arbitrary binary). When enabled, the executable may only be a bare
-// command name, never a path (see validateExecOverride).
+// an arbitrary binary). When enabled, a header may only switch to the
+// endpoint's executable or to a bare command name listed in the
+// comma-separated allowedExecutables option (see validateExecOverride).
 func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	parsedURL, err := ParseURI(uri)
 	if err != nil {
@@ -173,6 +178,12 @@ func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 
+	for name := range strings.SplitSeq(query.Get("allowedExecutables"), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			endpoint.allowedExecutables = append(endpoint.allowedExecutables, name)
+		}
+	}
+
 	return endpoint, nil
 }
 
@@ -185,7 +196,8 @@ type ExecEndpoint struct {
 	timeoutMs           int64
 	outFile             string
 	useStderrOnEmpty    bool
-	allowHeaderOverride bool // opt-in: CamelExecCommand* headers may override URI settings
+	allowHeaderOverride bool     // opt-in: CamelExecCommand* headers may override URI settings
+	allowedExecutables  []string // executables a CamelExecCommandExecutable header may select
 }
 
 // URI returns the endpoint URI
@@ -237,7 +249,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		return fmt.Errorf("exec: invalid executable: %w", err)
 	}
 	if fromHeader {
-		if err := validateExecOverride(executable); err != nil {
+		if err := validateExecOverride(executable, p.endpoint.executable, p.endpoint.allowedExecutables); err != nil {
 			return fmt.Errorf("exec: %w", err)
 		}
 	}

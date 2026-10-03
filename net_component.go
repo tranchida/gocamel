@@ -36,13 +36,18 @@ func NewNetComponent() *NetComponent {
 //
 // Supported parameters:
 //   - sync:       request-reply mode (default true)
-//   - textline:   newline-delimited messages, TCP only (default true)
+//   - textline:   newline-delimited messages, TCP only (default true). The
+//     producer request and the consumer reply get a trailing '\n' when it is
+//     missing, and the producer reads its reply up to the next '\n'.
 //   - bufferSize: maximum message size in bytes (default 8192)
 //   - timeout:    producer dial/reply timeout in ms (default 30000, 0 = none)
 //   - keepAlive:  TCP keepalive on connections (default false)
 //   - readTimeout: consumer read deadline in ms (default 60000, 0 = none).
 //     Bounds how long a connection may stay idle before it is closed, so a
 //     slowloris-style client cannot hold a goroutine open indefinitely.
+//   - maxConnections: maximum concurrent TCP connections accepted by the
+//     consumer (default 1024, 0 = unlimited). Connections above the limit are
+//     closed immediately so a flood of clients cannot exhaust file descriptors.
 func (c *NetComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	u, err := ParseURI(uri)
 	if err != nil {
@@ -63,6 +68,7 @@ func (c *NetComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		bufferSize:  8192,
 		timeout:     30 * time.Second,
 		readTimeout: 60 * time.Second,
+		maxConns:    DefaultNetMaxConnections,
 	}
 
 	if val := GetConfigValue(u, "sync"); val != "" {
@@ -105,6 +111,13 @@ func (c *NetComponent) CreateEndpoint(uri string) (Endpoint, error) {
 			endpoint.readTimeout = time.Duration(v) * time.Millisecond
 		} else {
 			LogWarn("net: invalid readTimeout; using default", "value", val, "default", endpoint.readTimeout)
+		}
+	}
+	if val := GetConfigValue(u, "maxConnections"); val != "" {
+		if v, err := strconv.Atoi(val); err == nil && v >= 0 {
+			endpoint.maxConns = v
+		} else {
+			LogWarn("net: invalid maxConnections; using default", "value", val, "default", endpoint.maxConns)
 		}
 	}
 
@@ -161,7 +174,11 @@ type NetEndpoint struct {
 	timeout     time.Duration
 	keepAlive   bool
 	readTimeout time.Duration
+	maxConns    int // consumer: max concurrent TCP connections, 0 = unlimited
 }
+
+// DefaultNetMaxConnections is the default maxConnections of a TCP consumer.
+const DefaultNetMaxConnections = 1024
 
 // URI returns the endpoint URI.
 func (e *NetEndpoint) URI() string {
@@ -209,7 +226,9 @@ func (p *NetProducer) Stop() error {
 // Send dials the endpoint address, writes the In message body, and — when the
 // endpoint is in sync mode — waits for a reply that is published on Out.
 // Only []byte and string bodies are sent; other types send an empty payload,
-// matching the HTTP producer.
+// matching the HTTP producer. In textline mode (TCP) the request is
+// terminated by '\n' and the reply is read up to the next '\n', so a sync
+// producer interoperates with a textline consumer.
 func (p *NetProducer) Send(exchange *Exchange) error {
 	var payload []byte
 	switch body := exchange.GetIn().GetBody().(type) {
@@ -217,6 +236,10 @@ func (p *NetProducer) Send(exchange *Exchange) error {
 		payload = body
 	case string:
 		payload = []byte(body)
+	}
+	textline := p.endpoint.textline && p.endpoint.protocol == "tcp"
+	if textline {
+		payload = withLineDelimiter(payload)
 	}
 
 	ctx := exchange.Context
@@ -255,12 +278,25 @@ func (p *NetProducer) Send(exchange *Exchange) error {
 			return fmt.Errorf("net: error setting read deadline: %w", err)
 		}
 	}
-	buf := make([]byte, p.endpoint.bufferSize)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return fmt.Errorf("net: error reading reply from %s://%s: %w", p.endpoint.protocol, p.endpoint.address, err)
+	var reply []byte
+	if textline {
+		line, err := readTextLine(bufio.NewReaderSize(conn, p.endpoint.bufferSize))
+		if err != nil && (len(line) == 0 || !errors.Is(err, io.EOF)) {
+			if errors.Is(err, bufio.ErrBufferFull) {
+				err = fmt.Errorf("reply exceeds bufferSize (%d bytes): %w", p.endpoint.bufferSize, err)
+			}
+			return fmt.Errorf("net: error reading reply from %s://%s: %w", p.endpoint.protocol, p.endpoint.address, err)
+		}
+		reply = bytes.Clone(line)
+	} else {
+		buf := make([]byte, p.endpoint.bufferSize)
+		n, err := conn.Read(buf)
+		if err != nil {
+			return fmt.Errorf("net: error reading reply from %s://%s: %w", p.endpoint.protocol, p.endpoint.address, err)
+		}
+		reply = buf[:n]
 	}
-	exchange.GetOut().SetBody(buf[:n])
+	exchange.GetOut().SetBody(reply)
 	exchange.GetOut().SetHeader(CamelNetLocalAddress, conn.LocalAddr().String())
 	return nil
 }
@@ -367,12 +403,36 @@ func (c *NetConsumer) Stop() error {
 // acceptLoop accepts connections until the listener is closed (Stop).
 func (c *NetConsumer) acceptLoop(ctx context.Context, ln net.Listener, stop <-chan struct{}) {
 	defer c.wg.Done()
+	var backoff time.Duration
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			// Listener closed (Stop) or fatal error: the consumer is done.
-			return
+			if errors.Is(err, net.ErrClosed) {
+				return // listener closed by Stop
+			}
+			// Any other error (typically EMFILE/ENFILE when file descriptors
+			// run out) is transient: exiting here left a "started" route
+			// that silently never accepted again. Back off and retry, like
+			// net/http.Server does.
+			if backoff == 0 {
+				backoff = 5 * time.Millisecond
+			} else if backoff *= 2; backoff > time.Second {
+				backoff = time.Second
+			}
+			LogWarn("net: accept error; retrying", "address", c.endpoint.address, "error", err, "retry_in", backoff)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-stop:
+				timer.Stop()
+				return
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			continue
 		}
+		backoff = 0
 		if c.endpoint.keepAlive {
 			if tc, ok := conn.(*net.TCPConn); ok {
 				_ = tc.SetKeepAlive(true)
@@ -384,6 +444,13 @@ func (c *NetConsumer) acceptLoop(ctx context.Context, ln net.Listener, stop <-ch
 			c.mu.Unlock()
 			_ = conn.Close()
 			return
+		}
+		if c.endpoint.maxConns > 0 && len(c.conns) >= c.endpoint.maxConns {
+			c.mu.Unlock()
+			_ = conn.Close()
+			LogWarn("net: maxConnections reached; connection rejected",
+				"address", c.endpoint.address, "limit", c.endpoint.maxConns)
+			continue
 		}
 		c.conns[conn] = struct{}{}
 		c.wg.Add(1)
@@ -407,6 +474,11 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn) {
 
 	reader := bufio.NewReaderSize(conn, c.endpoint.bufferSize)
 	writeReply := func(resp []byte) error {
+		// Frame the reply like the request so a textline peer can tell
+		// where it ends.
+		if c.endpoint.textline {
+			resp = withLineDelimiter(resp)
+		}
 		_, err := conn.Write(resp)
 		return err
 	}
@@ -465,6 +537,15 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn) {
 			return
 		}
 	}
+}
+
+// withLineDelimiter returns b terminated by '\n', without modifying the
+// caller's slice.
+func withLineDelimiter(b []byte) []byte {
+	if bytes.HasSuffix(b, []byte("\n")) {
+		return b
+	}
+	return append(b[:len(b):len(b)], '\n')
 }
 
 // readTextLine reads one newline-terminated line, stripped of its trailing

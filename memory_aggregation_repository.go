@@ -37,6 +37,17 @@ func (r *MemoryAggregationRepository) Get(ctx context.Context, key string) (*Exc
 	return exchange, nil
 }
 
+// Keys returns the correlation keys of the stored groups.
+func (r *MemoryAggregationRepository) Keys(ctx context.Context) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	keys := make([]string, 0, len(r.store))
+	for key := range r.store {
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
 // Remove removes an exchange from the repository.
 func (r *MemoryAggregationRepository) Remove(ctx context.Context, key string) error {
 	r.mu.Lock()
