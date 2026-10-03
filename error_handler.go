@@ -251,6 +251,7 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 		return fmt.Errorf("dead letter channel: failed to send to %s: %w (original error: %v)",
 			dlc.deadLetterURI, sendErr, err)
 	}
+	exchange.SetProperty(CamelDeadLettered, true)
 
 	// The exchange has been successfully sent to dead letter. By default the
 	// original error is returned so the consumer knows processing failed;
@@ -259,6 +260,16 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 		return fmt.Errorf("%w: dead-lettered to %s: %w", ErrStopRouting, dlc.deadLetterURI, err)
 	}
 	return err
+}
+
+// IsDeadLettered reports whether a DeadLetterChannel delivered the exchange to
+// its dead letter endpoint. Even when the route still returns the original
+// error (DeadLetterHandled(false), the default), the message has been taken
+// care of: a broker consumer must acknowledge it rather than redeliver it,
+// otherwise every redelivery would dead-letter a duplicate.
+func IsDeadLettered(exchange *Exchange) bool {
+	v, _ := exchange.GetPropertyAsBool(CamelDeadLettered)
+	return v
 }
 
 // ResetRetryState clears the retry counter for a specific exchange ID.

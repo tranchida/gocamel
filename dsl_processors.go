@@ -153,9 +153,12 @@ func logHeadersProcessor(message, routeID string) Processor {
 }
 
 // stopProcessor returns the sentinel Processor that aborts route execution
-// via ErrStopRouting without flagging it as a failure.
+// via ErrStopRouting without flagging it as a failure. It also marks the
+// exchange with CamelRouteStop so the stop is not confined to the current
+// route: a caller reaching this route through direct: stops as well.
 func stopProcessor() Processor {
-	return ProcessorFunc(func(*Exchange) error {
+	return ProcessorFunc(func(exchange *Exchange) error {
+		exchange.SetProperty(CamelRouteStop, true)
 		return ErrStopRouting
 	})
 }

@@ -406,7 +406,7 @@ builder.To("net:tcp://localhost:9090")
 | Option       | Type   | Default  | Description                                    |
 |--------------|--------|----------|------------------------------------------------|
 | `sync`       | bool   | `true`   | Request-reply: the consumer writes the route's response back to the peer; the producer waits for a reply |
-| `textline`   | bool   | `true`   | Newline-delimited messages (TCP only). `false` = one message per read |
+| `textline`   | bool   | `true`   | Newline-delimited messages (TCP only): requests and replies are terminated by `\n`. `false` = one message per read |
 | `bufferSize` | int    | `8192`   | Maximum message/datagram size in bytes         |
 | `timeout`    | int    | `30000`  | Producer dial/reply timeout in ms (0 = none)   |
 | `keepAlive`  | bool   | `false`  | TCP keepalive on connections                   |
@@ -420,8 +420,11 @@ from `NetConsumer.Address()`.
 
 **Framing.** TCP is a byte stream, so the component needs a message boundary.
 With `textline=true` (default) each newline-terminated line is one message
-(the trailing `\r\n` or `\n` is stripped). With `textline=false` each read
-is one message. UDP datagrams need no framing: each datagram is one message.
+(the trailing `\r\n` or `\n` is stripped). The producer appends a `\n` to a
+request that lacks one and reads its reply up to the next `\n`; the consumer
+terminates each reply with `\n` the same way, so a GoCamel producer and
+consumer interoperate with the default options. With `textline=false` each
+read is one message. UDP datagrams need no framing: each datagram is one message.
 
 ```go
 // Request-reply echo server
@@ -547,6 +550,9 @@ builder.From("direct:publish").
 | `clientId` | string | `""` | Client identifier |
 | `allowHeaderOverride` | bool | `false` | Allow `CamelKafkaTopic`, `CamelKafkaPartitionKey` and `CamelKafkaKey` to override the URI when producing |
 | `forwardHeaders` | string | `""` | Comma-separated allowlist of exchange headers forwarded as Kafka record headers; when set, ONLY those headers are propagated |
+| `maxRedeliveries` | int | `10` | Consumer: redeliveries of a message whose route failed before it is logged and acknowledged anyway (`-1` = retry forever, `0` = acknowledge on the first failure) |
+| `redeliveryDelay` | int | `100` | Consumer: first redelivery delay in ms, doubled on each attempt |
+| `maxRedeliveryDelay` | int | `30000` | Consumer: cap of the redelivery backoff in ms |
 
 **Headers:**
 - `CamelKafkaTopic` - Overrides (with `allowHeaderOverride=true`) or reads the target topic.
@@ -566,6 +572,10 @@ builder.From("direct:publish").
 > sitting downstream of the HTTP consumer does not leak client credentials.
 > Set `forwardHeaders` for an explicit allowlist when you want stricter
 > control.
+>
+> Inbound record headers named `Camel*` (case-insensitive) are dropped by the
+> consumer: whoever can write to the topic must not drive internal headers
+> such as `CamelFileName` or `CamelHttpMethod`.
 
 When a `groupId` is configured, each successfully processed message is
 committed to the consumer group. A failed commit is logged (with
@@ -608,6 +618,9 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 | `ack` | string | `auto` | Acknowledgement mode: `auto`, `client`, `client-individual` (consumer only) |
 | `allowHeaderOverride` | bool | `false` | Allow `CamelStompDestination` to override the URI when producing |
 | `forwardHeaders` | string | `""` | Comma-separated allowlist of exchange headers forwarded as STOMP frame headers; when set, ONLY those headers are propagated |
+| `maxRedeliveries` | int | `10` | Consumer: redeliveries of a message whose route failed before it is logged and acknowledged anyway (`-1` = retry forever, `0` = acknowledge on the first failure) |
+| `redeliveryDelay` | int | `100` | Consumer: first redelivery delay in ms, doubled on each attempt |
+| `maxRedeliveryDelay` | int | `30000` | Consumer: cap of the redelivery backoff in ms |
 | `ssl` | bool | `false` | Connect over TLS |
 | `sslCAFile` | string | system roots | PEM file of the certificate authority verifying the broker certificate |
 | `sslCertFile` | string | `""` | PEM file of the client certificate for mutual TLS (requires `sslKeyFile`) |
@@ -630,11 +643,15 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 > sitting downstream of the HTTP consumer does not leak client credentials.
 > Set `forwardHeaders` for an explicit allowlist when you want stricter
 > control.
+>
+> Inbound frame headers named `Camel*` (case-insensitive) are dropped by the
+> consumer: a client sending to the destination must not drive internal
+> headers such as `CamelFileName` or `CamelHttpMethod`.
 
 With `ack=client` or `ack=client-individual`, a message is acknowledged only
 after the route processed it successfully; a processing failure is retried
-before any acknowledgement is sent, so the broker redelivers the message if
-the connection drops in the meantime. With `ack=auto` (default), the broker
+(see `maxRedeliveries`) before any acknowledgement is sent, so the broker
+redelivers the message if the connection drops in the meantime. With `ack=auto` (default), the broker
 considers a message delivered as soon as it is sent.
 
 **SSL/TLS:** set `ssl=true` to connect to the broker over TLS (e.g. the
@@ -1533,7 +1550,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 
 ## Delivery and lifecycle details
 
-- **Kafka:** the resolved topic is set on each message, so configured and header-overridden topics work together. Failed processing is retried with a fresh exchange before fetching the next record. Commit failures retry the commit without repeating successful processing. Retries wait 100 ms and stop on cancellation. A permanent failure blocks this consumer until handled by the route or stopped; this preserves cumulative offset safety.
+- **Kafka / STOMP:** failed processing is retried with a fresh exchange before fetching the next record (Kafka) or message (STOMP), with an exponential backoff from `redeliveryDelay` up to `maxRedeliveryDelay`. After `maxRedeliveries` redeliveries (default `10`, about 80 s with the default delays) the consumer gives up on the message: it logs it at error level and commits/acknowledges it so the partition or subscription is not blocked forever. Use a `DeadLetterChannel` to keep such messages, or set `maxRedeliveries=-1` to retry until the route succeeds (the consumer then stays blocked on a permanently failing message). A message the route sent to a `DeadLetterChannel` is committed/acknowledged right away and never redelivered, even with `DeadLetterHandled(false)`: redelivering it would dead-letter a duplicate on every attempt. Kafka commit failures retry the commit every 100 ms without repeating successful processing. The resolved Kafka topic is set on each message, so configured and header-overridden topics work together.
 - **FTP:** each producer leases its connection exclusively for the complete transfer. Concurrent sends and `Stop` cannot interleave FTP commands; a sender waiting for the lease can cancel.
 - **MongoDB:** `save` preserves the input document’s `_id`, including when replacement fails, so retry keeps targeting the same document.
 - **Mail:** IMAP IDLE reacts to mailbox notifications by ending IDLE, searching for messages and re-entering IDLE. Existing messages are searched before the first IDLE.

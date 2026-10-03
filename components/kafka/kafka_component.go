@@ -86,6 +86,16 @@ func NewKafkaComponent() *KafkaComponent {
 //	                    non-Camel headers except sensitive credentials
 //	                    (Authorization, Cookie, Proxy-Authorization, Set-Cookie,
 //	                    WWW-Authenticate) are forwarded.
+//	maxRedeliveries     Redeliveries of a record whose route failed before its
+//	                    offset is committed anyway (default: 10; -1 retries
+//	                    forever, 0 skips a failed record right away)
+//	redeliveryDelay     First redelivery delay in ms, doubled on each attempt
+//	                    (default: 100)
+//	maxRedeliveryDelay  Cap of the redelivery backoff in ms (default: 30000)
+//
+// A record the route dead-lettered (DeadLetterChannel) is committed, never
+// redelivered. Inbound record headers named Camel* are dropped: a producer
+// writing to the topic must not drive internal headers such as CamelFileName.
 func (c *KafkaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -139,6 +149,7 @@ func (c *KafkaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		clientID:            clientID,
 		allowHeaderOverride: allowHeaderOverride,
 		forwardHeaders:      parseForwardHeaders(gocamel.GetConfigValue(u, "forwardHeaders")),
+		redelivery:          gocamel.ParseConsumerRedeliveryPolicy(u),
 	}, nil
 }
 
@@ -155,6 +166,9 @@ type KafkaEndpoint struct {
 	// listed headers are forwarded to the broker; when nil, every non-Camel,
 	// non-sensitive header is forwarded.
 	forwardHeaders map[string]bool
+	// redelivery bounds how a failed record is re-run before its offset is
+	// committed (consumer side).
+	redelivery gocamel.ConsumerRedeliveryPolicy
 
 	writer   *kafka.Writer
 	consumer *KafkaConsumer
@@ -421,7 +435,7 @@ func (c *KafkaConsumer) run(ctx context.Context) {
 		}
 		// Resolve this delivery before fetching another offset. Committing a later
 		// offset would otherwise acknowledge a failed message in the same partition.
-		for {
+		for redeliveries := 0; ; redeliveries++ {
 			if ctx.Err() != nil {
 				return
 			}
@@ -434,14 +448,31 @@ func (c *KafkaConsumer) run(ctx context.Context) {
 			exchange.In.SetHeader(CamelKafkaPartitionKey, string(msg.Key))
 			exchange.In.SetHeader(CamelKafkaTimestamp, msg.Time)
 			for _, h := range msg.Headers {
+				// A record producer must not set internal Camel* headers.
+				if gocamel.IsCamelHeader(h.Key) {
+					continue
+				}
 				exchange.In.SetHeader(h.Key, string(h.Value))
 			}
 			err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
 			if err == nil {
 				break
 			}
-			gocamel.LogError("kafka processing failed; retrying before advancing offset", "topic", msg.Topic, "offset", msg.Offset, "error", err)
-			if !waitForRetry(ctx) {
+			if gocamel.IsDeadLettered(exchange) {
+				// Redelivering would dead-letter a duplicate on every attempt.
+				gocamel.LogWarn("kafka record dead-lettered; committing offset", "topic", msg.Topic, "offset", msg.Offset, "error", err)
+				break
+			}
+			if c.endpoint.redelivery.Exhausted(redeliveries) {
+				gocamel.LogError("kafka record failed; redeliveries exhausted, committing offset",
+					"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset,
+					"redeliveries", redeliveries, "error", err)
+				break
+			}
+			gocamel.LogError("kafka processing failed; retrying before advancing offset",
+				"topic", msg.Topic, "offset", msg.Offset, "redelivery", redeliveries+1,
+				"retry_in", c.endpoint.redelivery.Backoff(redeliveries), "error", err)
+			if !c.endpoint.redelivery.Wait(ctx, redeliveries) {
 				return
 			}
 		}

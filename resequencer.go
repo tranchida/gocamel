@@ -26,6 +26,10 @@ type Resequencer struct {
 	timer      *time.Timer
 	timerGen   uint64 // incremented each time a new timer is created; guards against stale callbacks
 	delivering bool   // one goroutine at a time delivers, without holding mu
+	stopped    bool   // set by Stop: no timer is armed until the next Process
+	// timeoutWG tracks timeout callbacks that are delivering downstream, so
+	// Stop can wait for them before the route stops its producers.
+	timeoutWG sync.WaitGroup
 }
 
 type resequencerEntry struct {
@@ -81,6 +85,9 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 	}
 
 	r.mu.Lock()
+	// An exchange only arrives while the route runs: a Process after Stop
+	// means the route was restarted.
+	r.stopped = false
 
 	if seq < r.nextSeq {
 		r.mu.Unlock()
@@ -168,7 +175,7 @@ func (r *Resequencer) updateTimer() {
 		r.timer = nil
 	}
 
-	if len(r.buffer) > 0 && r.buffer[0].seq > r.nextSeq {
+	if !r.stopped && len(r.buffer) > 0 && r.buffer[0].seq > r.nextSeq {
 		r.timerGen++
 		gen := r.timerGen
 		r.timer = time.AfterFunc(r.timeout, func() { r.onTimeout(gen) })
@@ -177,10 +184,13 @@ func (r *Resequencer) updateTimer() {
 
 func (r *Resequencer) onTimeout(gen uint64) {
 	r.mu.Lock()
-	if gen != r.timerGen {
+	if gen != r.timerGen || r.stopped {
 		r.mu.Unlock()
 		return
 	}
+	// Registered under mu, so it is ordered before a Stop that waits on it.
+	r.timeoutWG.Add(1)
+	defer r.timeoutWG.Done()
 	if len(r.buffer) == 0 || r.buffer[0].seq <= r.nextSeq {
 		r.mu.Unlock()
 		return
@@ -208,17 +218,20 @@ func (r *Resequencer) onTimeout(gen uint64) {
 
 // Stop cancels the pending completion timer so no callback fires after the
 // route has stopped (and its downstream producers are gone). The timer
-// generation is advanced so an already-in-flight callback observes a mismatch
-// and returns without delivering. Buffered exchanges that have not yet reached
-// their sequence are intentionally not flushed.
+// generation is advanced so a callback that has not started yet observes a
+// mismatch and returns without delivering, and Stop waits for a callback that
+// is already delivering downstream. Buffered exchanges that have not yet
+// reached their sequence are intentionally not flushed.
 func (r *Resequencer) Stop() error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.stopped = true
 	r.timerGen++
 	if r.timer != nil {
 		r.timer.Stop()
 		r.timer = nil
 	}
+	r.mu.Unlock()
+	r.timeoutWG.Wait()
 	return nil
 }
 

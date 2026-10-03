@@ -55,6 +55,9 @@ builder.From("direct:start").
 ### Filter
 
 Filter messages based on a condition. Exchanges that do not match are silently dropped (`ErrStopRouting`).
+The drop only ends the current route: when that route was called through `direct:`, the
+caller carries on (as with an incomplete Aggregator or a Resequencer). Use `Stop()` to end
+the exchange everywhere.
 
 ```go
 // Simple Language expression (comparison inside ${...})
@@ -777,7 +780,9 @@ builder.From("direct:start").
     EndChoice()
 ```
 
-**Note:** Subsequent processors won't be executed.
+**Note:** Subsequent processors won't be executed. Unlike `Filter`, `Stop()` ends the whole
+exchange (it sets the `CamelRouteStop` property): a route that called this one through
+`direct:` stops too, and its `Send` returns `ErrStopRouting`.
 
 ---
 

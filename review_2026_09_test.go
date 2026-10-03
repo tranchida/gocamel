@@ -221,7 +221,7 @@ func TestHTTPConsumer_DoesNotExposeOrAcceptCamelHeaders(t *testing.T) {
 
 	assert.False(t, hadInbound, "inbound Camel* header must be dropped, got %v", inbound)
 	for key := range resp.Header {
-		assert.False(t, isCamelHeader(key), "response leaks internal header %s", key)
+		assert.False(t, IsCamelHeader(key), "response leaks internal header %s", key)
 	}
 	assert.Equal(t, []string{"a=1", "b=2"}, resp.Header.Values("Set-Cookie"))
 }
@@ -257,7 +257,7 @@ func TestHTTPProxy_DoesNotForwardClientCredentialsByDefault(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamAuth = r.Header.Values("Authorization")
 		for key := range r.Header {
-			if isCamelHeader(key) {
+			if IsCamelHeader(key) {
 				upstreamCamel = append(upstreamCamel, key)
 			}
 		}

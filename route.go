@@ -449,20 +449,26 @@ func (r *Route) Stop() error {
 		errs = append(errs, err)
 	}
 
-	for _, lp := range r.lazyProducers {
-		if err := lp.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("error stopping producer for %s: %w", lp.uri, err))
-		}
-	}
-
-	for _, p := range r.processors {
-		if _, isAggregator := p.(*Aggregator); isAggregator {
-			continue // already stopped before producers above
+	// Stoppable processors (WireTap, Resequencer...) may be nested in a
+	// container (Choice, Split, Multicast, CircuitBreaker...), so the whole
+	// tree is walked. They are stopped before the producers: until then a
+	// Resequencer timeout can still deliver downstream, and a lazy producer
+	// used after its Stop would be recreated and leaked.
+	r.forEachProcessor(func(p Processor) {
+		switch p.(type) {
+		case *Aggregator, *lazyProducer:
+			return // stopped above / below
 		}
 		if stoppable, ok := p.(interface{ Stop() error }); ok {
 			if err := stoppable.Stop(); err != nil {
 				errs = append(errs, err)
 			}
+		}
+	})
+
+	for _, lp := range r.lazyProducers {
+		if err := lp.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("error stopping producer for %s: %w", lp.uri, err))
 		}
 	}
 
@@ -523,19 +529,26 @@ func (r *Route) stopAggregatorTimeouts() error {
 // forEachAggregator visits every aggregator in the route, including those
 // nested inside containers, so that Stop() joins their timeout goroutines.
 func (r *Route) forEachAggregator(visit func(*Aggregator)) {
+	r.forEachProcessor(func(p Processor) {
+		if aggregator, ok := p.(*Aggregator); ok {
+			visit(aggregator)
+		}
+	})
+}
+
+// forEachProcessor visits every processor of the route depth-first, a
+// container before its children.
+func (r *Route) forEachProcessor(visit func(Processor)) {
 	for _, processor := range r.processors {
-		r.walkAggregators(processor, visit)
+		walkProcessors(processor, visit)
 	}
 }
 
-func (r *Route) walkAggregators(processor Processor, visit func(*Aggregator)) {
-	if aggregator, ok := processor.(*Aggregator); ok {
-		visit(aggregator)
-		return
-	}
+func walkProcessors(processor Processor, visit func(Processor)) {
+	visit(processor)
 	if container, ok := processor.(childProcessorContainer); ok {
 		for _, child := range container.childProcessors() {
-			r.walkAggregators(child, visit)
+			walkProcessors(child, visit)
 		}
 	}
 }

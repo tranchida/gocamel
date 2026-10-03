@@ -331,6 +331,6 @@ Apache License, Version 2.0 - see [LICENSE](LICENSE) file for details.
 
 Route steps consume the preceding step’s output, including headers; removed headers stay removed. Read the final combined message with `exchange.GetResponse()`. Parallel Split, Multicast and RecipientList branches complete their own callbacks, and their aggregation runs in input order with panic recovery.
 
-`PollEnrich` receives one message without draining or stopping its queue. It supports `seda`, `chan` and custom endpoints implementing `PollingEndpoint`; other endpoints return an error. Kafka retries failed processing and commits before fetching another record. Configure route error handling to resolve permanently failing messages.
+`PollEnrich` receives one message without draining or stopping its queue. It supports `seda`, `chan` and custom endpoints implementing `PollingEndpoint`; other endpoints return an error. Kafka and STOMP retry failed processing (exponential backoff, bounded by `maxRedeliveries`) and Kafka retries commits before fetching another record; a message sent to a `DeadLetterChannel` is committed instead of redelivered. After `maxRedeliveries` (default 10) a permanently failing message is logged and committed; use a `DeadLetterChannel` to keep it.
 
 See the [routing concepts](hugo-site/content/en/concepts.md), [EIP contracts](hugo-site/content/en/eip.md) and [component lifecycle notes](hugo-site/content/en/components.md) for details.

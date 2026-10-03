@@ -36,7 +36,9 @@ func NewNetComponent() *NetComponent {
 //
 // Supported parameters:
 //   - sync:       request-reply mode (default true)
-//   - textline:   newline-delimited messages, TCP only (default true)
+//   - textline:   newline-delimited messages, TCP only (default true). The
+//     producer request and the consumer reply get a trailing '\n' when it is
+//     missing, and the producer reads its reply up to the next '\n'.
 //   - bufferSize: maximum message size in bytes (default 8192)
 //   - timeout:    producer dial/reply timeout in ms (default 30000, 0 = none)
 //   - keepAlive:  TCP keepalive on connections (default false)
@@ -224,7 +226,9 @@ func (p *NetProducer) Stop() error {
 // Send dials the endpoint address, writes the In message body, and — when the
 // endpoint is in sync mode — waits for a reply that is published on Out.
 // Only []byte and string bodies are sent; other types send an empty payload,
-// matching the HTTP producer.
+// matching the HTTP producer. In textline mode (TCP) the request is
+// terminated by '\n' and the reply is read up to the next '\n', so a sync
+// producer interoperates with a textline consumer.
 func (p *NetProducer) Send(exchange *Exchange) error {
 	var payload []byte
 	switch body := exchange.GetIn().GetBody().(type) {
@@ -232,6 +236,10 @@ func (p *NetProducer) Send(exchange *Exchange) error {
 		payload = body
 	case string:
 		payload = []byte(body)
+	}
+	textline := p.endpoint.textline && p.endpoint.protocol == "tcp"
+	if textline {
+		payload = withLineDelimiter(payload)
 	}
 
 	ctx := exchange.Context
@@ -270,12 +278,25 @@ func (p *NetProducer) Send(exchange *Exchange) error {
 			return fmt.Errorf("net: error setting read deadline: %w", err)
 		}
 	}
-	buf := make([]byte, p.endpoint.bufferSize)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return fmt.Errorf("net: error reading reply from %s://%s: %w", p.endpoint.protocol, p.endpoint.address, err)
+	var reply []byte
+	if textline {
+		line, err := readTextLine(bufio.NewReaderSize(conn, p.endpoint.bufferSize))
+		if err != nil && (len(line) == 0 || !errors.Is(err, io.EOF)) {
+			if errors.Is(err, bufio.ErrBufferFull) {
+				err = fmt.Errorf("reply exceeds bufferSize (%d bytes): %w", p.endpoint.bufferSize, err)
+			}
+			return fmt.Errorf("net: error reading reply from %s://%s: %w", p.endpoint.protocol, p.endpoint.address, err)
+		}
+		reply = bytes.Clone(line)
+	} else {
+		buf := make([]byte, p.endpoint.bufferSize)
+		n, err := conn.Read(buf)
+		if err != nil {
+			return fmt.Errorf("net: error reading reply from %s://%s: %w", p.endpoint.protocol, p.endpoint.address, err)
+		}
+		reply = buf[:n]
 	}
-	exchange.GetOut().SetBody(buf[:n])
+	exchange.GetOut().SetBody(reply)
 	exchange.GetOut().SetHeader(CamelNetLocalAddress, conn.LocalAddr().String())
 	return nil
 }
@@ -453,6 +474,11 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn) {
 
 	reader := bufio.NewReaderSize(conn, c.endpoint.bufferSize)
 	writeReply := func(resp []byte) error {
+		// Frame the reply like the request so a textline peer can tell
+		// where it ends.
+		if c.endpoint.textline {
+			resp = withLineDelimiter(resp)
+		}
 		_, err := conn.Write(resp)
 		return err
 	}
@@ -511,6 +537,15 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn) {
 			return
 		}
 	}
+}
+
+// withLineDelimiter returns b terminated by '\n', without modifying the
+// caller's slice.
+func withLineDelimiter(b []byte) []byte {
+	if bytes.HasSuffix(b, []byte("\n")) {
+		return b
+	}
+	return append(b[:len(b):len(b)], '\n')
 }
 
 // readTextLine reads one newline-terminated line, stripped of its trailing

@@ -53,13 +53,15 @@ var authorizationHeaders = map[string]bool{
 	"Cookie":        true,
 }
 
-// isCamelHeader reports whether key is an internal Camel* header. These carry
+// IsCamelHeader reports whether key is an internal Camel* header. These carry
 // routing metadata (request path and query, file names, SQL row counts...)
-// and must never cross the HTTP boundary in either direction: an inbound
-// request cannot set them, and neither a response nor an outbound request
-// exposes them. The match is case-insensitive because net/http canonicalizes
-// header names ("Camelfilename").
-func isCamelHeader(key string) bool {
+// and must never cross a transport boundary in either direction: an inbound
+// message (HTTP request, Kafka record, STOMP frame...) cannot set them, and
+// neither a response nor an outbound message exposes them. The match is
+// case-insensitive because transports canonicalize or lowercase header names
+// ("Camelfilename", "camelfilename"). Consumers that map transport headers
+// onto the exchange must skip the keys for which it returns true.
+func IsCamelHeader(key string) bool {
 	return len(key) >= 5 && strings.EqualFold(key[:5], "camel")
 }
 
@@ -314,7 +316,7 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	// credentials received by the HTTP consumer are not relayed unchanged to
 	// the upstream unless SetForwardInboundCredentials(true).
 	for key, value := range exchange.GetIn().GetHeaders() {
-		if isHopByHopHeader(key) || isCamelHeader(key) {
+		if isHopByHopHeader(key) || IsCamelHeader(key) {
 			continue
 		}
 		if p.skipAuthorizationHeaders && authorizationHeaders[http.CanonicalHeaderKey(key)] {
@@ -472,7 +474,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		for key, values := range r.Header {
 			// A client must not be able to set internal Camel* headers
 			// (e.g. CamelFileName, CamelSqlQuery) on the exchange.
-			if len(values) == 0 || isCamelHeader(key) {
+			if len(values) == 0 || IsCamelHeader(key) {
 				continue
 			}
 			exchange.SetHeader(key, values[0])
@@ -509,7 +511,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			// are routing metadata, never response headers: echoing them
 			// leaked query-string secrets and internal paths. The status code
 			// headers drive WriteHeader below.
-			if isHopByHopHeader(key) || isCamelHeader(key) || key == "Status-Code" {
+			if isHopByHopHeader(key) || IsCamelHeader(key) || key == "Status-Code" {
 				continue
 			}
 			values, ok := headerValues(value)

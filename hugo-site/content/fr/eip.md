@@ -269,7 +269,9 @@ ignorées. Si aucune condition ne correspond et qu'`Otherwise` est présent, il 
 ## Filter
 
 Filtre les messages selon une condition. Les exchanges qui ne correspondent pas sont silencieusement supprimés (
-`ErrStopRouting`).
+`ErrStopRouting`). La suppression ne termine que la route courante : si cette route a été appelée
+via `direct:`, l'appelant continue (comme pour un Aggregator incomplet ou un Resequencer).
+Utilisez `Stop()` pour arrêter l'exchange partout.
 
 ```go
 // Expression Simple Language (comparaison à l'intérieur de ${...})
@@ -646,6 +648,10 @@ builder.From("direct:start").
     Stop(). // Arrête ici si condition remplie
     Log("Jamais atteint si stop")
 ```
+
+Contrairement à `Filter`, `Stop()` termine l'exchange entier (il positionne la propriété
+`CamelRouteStop`) : une route qui a appelé celle-ci via `direct:` s'arrête aussi, et son
+`Send` renvoie `ErrStopRouting`.
 
 ---
 

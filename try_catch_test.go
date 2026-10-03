@@ -183,7 +183,8 @@ func TestTryCatch_IgnoresStopRouting(t *testing.T) {
 	ex := NewExchange(context.Background())
 	err = prod.Send(ex)
 
-	assert.ErrorIs(t, err, ErrStopRouting)
+	// The stop ends the called route without failing the direct: caller.
+	assert.NoError(t, err)
 	assert.False(t, caught, "ErrStopRouting should not be intercepted by catch")
 	assert.True(t, finallyExecuted, "finally block should execute on ErrStopRouting")
 }

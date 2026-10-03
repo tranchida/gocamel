@@ -2,7 +2,6 @@ package gocamel
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -69,8 +68,10 @@ func TestAggregator_CompletionTimeoutContinuesRoute(t *testing.T) {
 	exchange := NewExchange(exchangeContext)
 	exchange.SetHeader("group", "A")
 	exchange.SetBody("only-message")
+	// The incomplete group ends the aggregating route only: the direct:
+	// caller sees a success, not the internal stop signal.
 	err = producer.Send(exchange)
-	require.True(t, errors.Is(err, ErrStopRouting))
+	require.NoError(t, err)
 	cancelExchange() // timeout completion must use the longer-lived route context
 
 	select {

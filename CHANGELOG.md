@@ -4,7 +4,23 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-Fixes from the 2026-09 security and code review.
+Fixes from the 2026-09 and 2026-10 security and code reviews.
+
+### Changed (2026-10 review)
+
+- **`direct:` and `ErrStopRouting`**: a Filter, an incomplete Aggregator, a Resequencer or a handled dead letter in a route called through `direct:` now only ends that route; the caller carries on and `DirectProducer.Send` returns `nil` (Apache Camel semantics). The `Stop()` EIP still ends the whole exchange: it sets the new `CamelRouteStop` property and `Send` returns `ErrStopRouting`. Tests that used `direct:` as a harness and asserted `ErrStopRouting` must now assert success.
+- **Kafka/STOMP poison messages**: a message whose route keeps failing is now given up on after 10 redeliveries (`maxRedeliveries`, about 80 s with the default backoff): it is logged at error level and committed/acknowledged instead of blocking the partition or subscription forever. Use a `DeadLetterChannel` to keep such messages, or `maxRedeliveries=-1` to restore the retry-forever behaviour.
+
+### Security (2026-10 review)
+
+- **Inbound `Camel*` headers**: the Kafka, STOMP and gRPC consumers drop inbound headers named `Camel*` (case-insensitive), like the HTTP consumer already did: whoever could write to a topic or destination could set `CamelFileName`, `CamelHttpMethod`, or `CamelExecCommand*`/`CamelSqlQuery` on endpoints using `allowHeaderOverride`. The check is exported as `IsCamelHeader`.
+
+### Fixed (2026-10 review)
+
+- **Kafka/STOMP redelivery**: failed messages are redelivered with an exponential backoff (new `redeliveryDelay`, `maxRedeliveryDelay` options) instead of every 100 ms, and the new `maxRedeliveries` option bounds the redeliveries of a poison message. A message dead-lettered by a `DeadLetterChannel` is committed/acknowledged instead of redelivered, which dead-lettered a duplicate every 100 ms. New `ConsumerRedeliveryPolicy`, `IsDeadLettered` and `CamelDeadLettered`.
+- **Net textline framing**: the producer terminates its request with `\n` and reads its reply up to the next `\n`, and the consumer terminates its replies with `\n`. A producer and a consumer with default options used to wait for each other until the timeout.
+- **Route.Stop**: stoppable processors nested in a container (a WireTap or Resequencer inside a Choice, Split, Multicast, CircuitBreaker...) are now stopped, before the route's producers.
+- **Resequencer.Stop** waits for a timeout delivery already in progress and arms no timer afterwards, so it no longer reaches stopped producers (recreating and leaking them).
 
 ### Security
 

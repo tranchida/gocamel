@@ -413,7 +413,7 @@ builder.To("net:tcp://localhost:9090")
 | Option       | Type   | Défaut  | Description                                      |
 |--------------|--------|---------|--------------------------------------------------|
 | `sync`       | bool   | `true`  | Requête-réponse : le consumer renvoie la réponse de la route au pair ; le producer attend une réponse |
-| `textline`   | bool   | `true`  | Messages délimités par saut de ligne (TCP uniquement). `false` = un message par lecture |
+| `textline`   | bool   | `true`  | Messages délimités par saut de ligne (TCP uniquement) : requêtes et réponses se terminent par `\n`. `false` = un message par lecture |
 | `bufferSize` | int    | `8192`  | Taille maximale d'un message/datagramme en octets |
 | `timeout`    | int    | `30000` | Délai d'attente de connexion/réponse du producer en ms (0 = aucun) |
 | `keepAlive`  | bool   | `false` | Keepalive TCP sur les connexions                 |
@@ -427,8 +427,11 @@ un port éphémère à l'OS : lisez l'adresse réellement liée via
 
 **Cadrage.** TCP est un flux d'octets : le composant a donc besoin d'une limite
 de message. Avec `textline=true` (défaut), chaque ligne terminée par un saut
-de ligne est un message (le `\r\n` ou `\n` final est retiré). Avec
-`textline=false`, chaque lecture est un message. Les datagrammes UDP n'ont
+de ligne est un message (le `\r\n` ou `\n` final est retiré). Le producer
+ajoute un `\n` à une requête qui n'en a pas et lit sa réponse jusqu'au `\n`
+suivant ; le consumer termine chaque réponse par `\n` de la même façon, de
+sorte qu'un producer et un consumer GoCamel dialoguent avec les options par
+défaut. Avec `textline=false`, chaque lecture est un message. Les datagrammes UDP n'ont
 pas besoin de cadrage : chaque datagramme est un message.
 
 ```go
@@ -557,6 +560,9 @@ builder.From("direct:publish").
 | `clientId` | string | `""` | Identifiant client |
 | `allowHeaderOverride` | bool | `false` | Autorise `CamelKafkaTopic`, `CamelKafkaPartitionKey` et `CamelKafkaKey` à remplacer l'URI en production |
 | `forwardHeaders` | string | `""` | Liste de noms de headers (séparés par des virgules) propagés comme headers de record Kafka ; si définie, SEULS ces headers sont propagés |
+| `maxRedeliveries` | int | `10` | Consommateur : nombre de redélivraisons d'un message dont la route échoue avant de le journaliser et de l'acquitter malgré tout (`-1` = réessai sans fin, `0` = acquittement dès le premier échec) |
+| `redeliveryDelay` | int | `100` | Consommateur : délai de la première redélivraison en ms, doublé à chaque tentative |
+| `maxRedeliveryDelay` | int | `30000` | Consommateur : plafond du backoff de redélivraison en ms |
 
 **Headers d'Exchange :**
 - `CamelKafkaTopic` - Surcharge (avec `allowHeaderOverride=true`) ou lecture du topic cible.
@@ -576,6 +582,10 @@ builder.From("direct:publish").
 > qu'un producteur en aval du consommateur HTTP ne fuite pas les identifiants
 > du client. Définissez `forwardHeaders` pour une liste explicite si vous
 > souhaitez un contrôle plus strict.
+>
+> Les headers de record entrants nommés `Camel*` (insensible à la casse) sont
+> ignorés par le consommateur : quiconque peut écrire dans le topic ne doit
+> pas piloter des headers internes comme `CamelFileName` ou `CamelHttpMethod`.
 
 Quand un `groupId` est configuré, chaque message traité avec succès est
 committé auprès du groupe de consommateurs. Un échec de commit est journalisé
@@ -618,6 +628,9 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 | `ack` | string | `auto` | Mode d'accusé de réception : `auto`, `client`, `client-individual` (consommateur uniquement) |
 | `allowHeaderOverride` | bool | `false` | Autorise `CamelStompDestination` à remplacer l'URI en production |
 | `forwardHeaders` | string | `""` | Liste de noms de headers (séparés par des virgules) propagés comme headers de trame STOMP ; si définie, SEULS ces headers sont propagés |
+| `maxRedeliveries` | int | `10` | Consommateur : nombre de redélivraisons d'un message dont la route échoue avant de le journaliser et de l'acquitter malgré tout (`-1` = réessai sans fin, `0` = acquittement dès le premier échec) |
+| `redeliveryDelay` | int | `100` | Consommateur : délai de la première redélivraison en ms, doublé à chaque tentative |
+| `maxRedeliveryDelay` | int | `30000` | Consommateur : plafond du backoff de redélivraison en ms |
 | `ssl` | bool | `false` | Connexion au broker via TLS |
 | `sslCAFile` | string | racines système | Fichier PEM de l'autorité de certification vérifiant le certificat du broker |
 | `sslCertFile` | string | `""` | Fichier PEM du certificat client pour le TLS mutuel (nécessite `sslKeyFile`) |
@@ -640,10 +653,15 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 > qu'un producteur en aval du consommateur HTTP ne fuite pas les identifiants
 > du client. Définissez `forwardHeaders` pour une liste explicite si vous
 > souhaitez un contrôle plus strict.
+>
+> Les headers de trame entrants nommés `Camel*` (insensible à la casse) sont
+> ignorés par le consommateur : un client qui envoie vers la destination ne
+> doit pas piloter des headers internes comme `CamelFileName` ou
+> `CamelHttpMethod`.
 
 Avec `ack=client` ou `ack=client-individual`, un message n'est accusé reçu
 qu'après que la route l'ait traité avec succès ; un échec de traitement est
-retenté avant tout accusé de réception, le broker redélivre donc le message si
+retenté (voir `maxRedeliveries`) avant tout accusé de réception, le broker redélivre donc le message si
 la connexion tombe entre-temps. Avec `ack=auto` (défaut), le broker considère
 le message comme délivré dès son envoi.
 
@@ -1557,7 +1575,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 
 ## Détails de livraison et de cycle de vie
 
-- **Kafka :** le topic résolu est porté par chaque message ; les topics configurés et surchargés par en-tête fonctionnent ensemble. Un traitement en échec est réessayé avec un nouvel échange avant la lecture suivante. Un commit en échec est réessayé sans refaire le traitement réussi. Les tentatives sont espacées de 100 ms et cessent à l’annulation. Un échec permanent bloque ce consommateur jusqu’à sa résolution par la route ou son arrêt, afin de préserver les offsets cumulatifs.
+- **Kafka / STOMP :** un traitement en échec est réessayé avec un nouvel échange avant la lecture du record (Kafka) ou du message (STOMP) suivant, avec un backoff exponentiel de `redeliveryDelay` jusqu’à `maxRedeliveryDelay`. Après `maxRedeliveries` redélivraisons (`10` par défaut, environ 80 s avec les délais par défaut), le consommateur abandonne le message : il le journalise en erreur puis le commite/acquitte pour ne pas bloquer indéfiniment la partition ou l’abonnement. Utilisez un `DeadLetterChannel` pour conserver ces messages, ou `maxRedeliveries=-1` pour réessayer jusqu’au succès de la route (le consommateur reste alors bloqué sur un message en échec permanent). Un message que la route a envoyé dans un `DeadLetterChannel` est commité/acquitté immédiatement et jamais redélivré, même avec `DeadLetterHandled(false)` : le redélivrer l’enverrait en double dans la DLQ à chaque tentative. Un commit Kafka en échec est réessayé toutes les 100 ms sans refaire le traitement réussi. Le topic Kafka résolu est porté par chaque message ; les topics configurés et surchargés par en-tête fonctionnent ensemble.
 - **FTP :** chaque producteur réserve sa connexion exclusivement pendant tout le transfert. Les envois concurrents et `Stop` ne peuvent pas entrelacer les commandes FTP ; un envoi en attente de réservation peut être annulé.
 - **MongoDB :** `save` préserve le `_id` du document entrant, même si le remplacement échoue ; le retry cible ainsi le même document.
 - **Mail :** IMAP IDLE réagit aux notifications de boîte en terminant IDLE, en recherchant les messages puis en reprenant IDLE. Une première recherche traite les messages déjà présents.
