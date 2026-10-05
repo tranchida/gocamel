@@ -1288,6 +1288,7 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 | `allowDeleteAll` | bool   | No       | Allow `remove` with an empty filter (default: `false`)                    |
 | `allowUpdateAll` | bool   | No       | Allow `update` with an empty filter, i.e. mass-update the whole collection (default: `false`) |
 | `allowHeaderOverride` | bool | No    | Allow `CamelMongoDbDatabase`, `CamelMongoDbCollection`, `CamelMongoDbOperation` and `CamelMongoDbCriteria` to override the URI configuration (default: `false`) |
+| `maxResults` | int | No | Maximum documents a `find` returns (default: `10000`, `0` = unlimited). Beyond it the result is truncated, a warning is logged and `CamelMongoDbResultsTruncated` is `true` |
 
 For safety, `remove` rejects nil and empty filters. Set `allowDeleteAll=true`
 explicitly only when deleting the entire collection is intentional.
@@ -1320,6 +1321,7 @@ document. Set `allowUpdateAll=true` explicitly only when that is intentional.
 |---------------------------|--------------------------------|
 | `CamelMongoDbResultTotal` | Total documents found/affected |
 | `CamelMongoDbOid`         | ObjectID of inserted document  |
+| `CamelMongoDbResultsTruncated` | `true` when a `find` stopped at `maxResults` |
 
 #### Example
 

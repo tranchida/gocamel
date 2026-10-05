@@ -1310,6 +1310,7 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 | `allowDeleteAll` | bool   | Non    | Autorise `remove` avec un filtre vide (défaut : `false`)                 |
 | `allowUpdateAll` | bool   | Non    | Autorise `update` avec un filtre vide, c'est-à-dire une mise à jour massive de toute la collection (défaut : `false`) |
 | `allowHeaderOverride` | bool | Non | Autorise `CamelMongoDbDatabase`, `CamelMongoDbCollection`, `CamelMongoDbOperation` et `CamelMongoDbCriteria` à remplacer la configuration de l'URI (défaut : `false`) |
+| `maxResults` | int | Non | Nombre maximal de documents renvoyés par un `find` (défaut : `10000`, `0` = illimité). Au-delà, le résultat est tronqué, un avertissement est journalisé et `CamelMongoDbResultsTruncated` vaut `true` |
 
 Par sécurité, `remove` refuse les filtres nuls ou vides. Définissez
 `allowDeleteAll=true` explicitement uniquement si la suppression de toute la
@@ -1343,6 +1344,7 @@ explicitement uniquement si c'est intentionnel.
 |---------------------------|-----------------------------------|
 | `CamelMongoDbResultTotal` | Total des documents trouvés/affectés |
 | `CamelMongoDbOid`         | ObjectID du document inséré       |
+| `CamelMongoDbResultsTruncated` | `true` quand un `find` s'est arrêté à `maxResults` |
 
 #### Exemple
 

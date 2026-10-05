@@ -25,6 +25,8 @@ const (
 	CamelMongoDbLimit       = "CamelMongoDbLimit"       // Limit for find operations
 	CamelMongoDbSkip        = "CamelMongoDbSkip"        // Number of documents to skip
 	CamelMongoDbSort        = "CamelMongoDbSort"        // Sort results (e.g. {"field": 1} or {"field": -1})
+
+	CamelMongoDbResultsTruncated = "CamelMongoDbResultsTruncated" // true when find stopped at maxResults
 )
 
 // MongoDBConnection represents a shared MongoDB connection.
@@ -94,6 +96,10 @@ func (c *MongoDBComponent) lookup(name string) (*MongoDBConnection, bool) {
 //	allowHeaderOverride true to let the CamelMongoDbDatabase, CamelMongoDbCollection,
 //	                    CamelMongoDbOperation and CamelMongoDbCriteria headers replace
 //	                    the corresponding URI configuration (default false)
+//	maxResults          Maximum documents a find returns (default DefaultMaxResults,
+//	                    0 = unlimited). Extra documents are not read: the find is
+//	                    truncated, a warning is logged and CamelMongoDbResultsTruncated
+//	                    is set to true
 func (c *MongoDBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -145,8 +151,17 @@ func (c *MongoDBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) 
 		}
 	}
 
+	maxResults := int64(DefaultMaxResults)
+	if raw := gocamel.GetConfigValue(u, "maxResults"); raw != "" {
+		maxResults, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || maxResults < 0 {
+			return nil, fmt.Errorf("invalid maxResults value %q: must be a non-negative integer", raw)
+		}
+	}
+
 	return &MongoDBEndpoint{
 		uri:                 uri,
+		maxResults:          maxResults,
 		connName:            name,
 		dbConfig:            dbConfig,
 		collConfig:          collConfig,
@@ -167,9 +182,14 @@ type MongoDBEndpoint struct {
 	operation           string
 	allowDeleteAll      bool
 	allowUpdateAll      bool
-	allowHeaderOverride bool // opt-in: CamelMongoDb* headers may override URI settings
+	allowHeaderOverride bool  // opt-in: CamelMongoDb* headers may override URI settings
+	maxResults          int64 // cap on documents returned by find; 0 = unlimited
 	connection          *MongoDBConnection
 }
+
+// DefaultMaxResults is the default cap on the documents a find returns, so a
+// find without a limit on a large collection cannot exhaust memory.
+const DefaultMaxResults = 10_000
 
 // URI returns the endpoint URI.
 func (e *MongoDBEndpoint) URI() string { return e.uri }
@@ -344,20 +364,59 @@ func (p *MongoDBProducer) execFind(ctx context.Context, exchange *gocamel.Exchan
 		}
 	}
 
+	// Ask the server for one document past the cap, enough to detect
+	// truncation without fetching the rest of the collection.
+	maxResults := p.endpoint.maxResults
+	if maxResults > 0 && (opts.Limit == nil || *opts.Limit > maxResults) {
+		opts.SetLimit(maxResults + 1)
+	}
+
 	cursor, err := coll.Find(ctx, filter, opts)
 	if err != nil {
 		return fmt.Errorf("find error: %w", err)
 	}
 	defer cursor.Close(ctx)
 
-	var results []map[string]interface{}
-	if err := cursor.All(ctx, &results); err != nil {
-		return fmt.Errorf("result decoding error: %w", err)
+	results, truncated, err := drainCursor(ctx, cursor, maxResults)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		gocamel.LogWarn("mongodb: find results truncated at maxResults",
+			"endpoint", p.endpoint.uri, "maxResults", maxResults)
 	}
 
 	exchange.GetOut().SetHeader(CamelMongoDbResultTotal, len(results))
+	exchange.GetOut().SetHeader(CamelMongoDbResultsTruncated, truncated)
 	exchange.GetOut().SetBody(results)
 	return nil
+}
+
+// documentCursor is the subset of *mongo.Cursor used by drainCursor.
+type documentCursor interface {
+	Next(ctx context.Context) bool
+	Decode(val interface{}) error
+	Err() error
+}
+
+// drainCursor decodes at most maxResults documents (maxResults <= 0:
+// unlimited) and reports whether more were available.
+func drainCursor(ctx context.Context, cursor documentCursor, maxResults int64) ([]map[string]interface{}, bool, error) {
+	results := []map[string]interface{}{}
+	for cursor.Next(ctx) {
+		if maxResults > 0 && int64(len(results)) >= maxResults {
+			return results, true, nil
+		}
+		var doc map[string]interface{}
+		if err := cursor.Decode(&doc); err != nil {
+			return nil, false, fmt.Errorf("result decoding error: %w", err)
+		}
+		results = append(results, doc)
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, false, fmt.Errorf("result decoding error: %w", err)
+	}
+	return results, false, nil
 }
 
 // execFindOne executes a single-document search (findOne).
