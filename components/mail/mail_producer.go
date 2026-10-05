@@ -64,7 +64,11 @@ func (p *MailProducer) Send(exchange *gocamel.Exchange) error {
 	}
 
 	// Connect and send
-	return p.sendMail(from, recipients, message)
+	ctx := exchange.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return p.sendMail(ctx, from, recipients, message)
 }
 
 // buildMessage builds a MIME message.
@@ -139,7 +143,8 @@ func (p *MailProducer) buildMessage(from, to, cc, subject, contentType string, b
 }
 
 // sendMail sends the message via SMTP/SMTPS with retry and exponential backoff.
-func (p *MailProducer) sendMail(from string, recipients []string, message []byte) error {
+// The backoff and the connection establishment are aborted when ctx ends.
+func (p *MailProducer) sendMail(ctx context.Context, from string, recipients []string, message []byte) error {
 	ep := p.endpoint
 	addr := ep.address()
 
@@ -169,10 +174,12 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 			if ep.debugMode {
 				gocamel.LogInfo("Mail retry", "attempt", attempt+1, "max", maxRetries, "error", lastErr, "delay", delay)
 			}
-			time.Sleep(delay)
+			if !sleepWithContext(ctx, delay) {
+				return fmt.Errorf("mail send cancelled after %d attempts: %w (last error: %v)", attempt, ctx.Err(), lastErr)
+			}
 		}
 
-		err := p.trySendMail(addr, auth, from, recipients, message)
+		err := p.trySendMail(ctx, addr, auth, from, recipients, message)
 		if err == nil {
 			// Success
 			if attempt > 0 && ep.debugMode {
@@ -195,85 +202,28 @@ func (p *MailProducer) sendMail(from string, recipients []string, message []byte
 	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-// trySendMail performs a single send attempt.
-func (p *MailProducer) trySendMail(addr string, auth smtp.Auth, from string, recipients []string, message []byte) error {
+// trySendMail performs a single send attempt. Every network phase (connect,
+// TLS handshake, greeting, STARTTLS, AUTH, MAIL/RCPT, DATA, QUIT) is bounded
+// by the connection timeout so a stalled server cannot block the sender.
+//
+// Over standard SMTP, STARTTLS is opportunistic by default: the send falls
+// back to cleartext if the server does not advertise it (SECURITY). With
+// requireStartTLS=true the send fails instead, guaranteeing encryption.
+// Use ProtocolSMTPS or requireStartTLS=true to guarantee encryption.
+func (p *MailProducer) trySendMail(ctx context.Context, addr string, auth smtp.Auth, from string, recipients []string, message []byte) error {
 	ep := p.endpoint
 
-	if ep.scheme == ProtocolSMTPS {
-		// Native TLS connection (port 465)
-		tlsConfig := &tls.Config{
-			ServerName: ep.host,
-			MinVersion: tls.VersionTLS12,
-		}
-		conn, err := tls.Dial("tcp", addr, tlsConfig)
-		if err != nil {
-			return fmt.Errorf("TLS connection error: %w", err)
-		}
-		defer conn.Close()
-
-		client, err := smtp.NewClient(conn, ep.host)
-		if err != nil {
-			return fmt.Errorf("SMTP client creation error: %w", err)
-		}
-		defer client.Close()
-
-		if auth != nil {
-			if err := client.Auth(auth); err != nil {
-				return fmt.Errorf("authentication error: %w", err)
-			}
-		}
-
-		if err := client.Mail(from); err != nil {
-			return fmt.Errorf("MAIL FROM error: %w", err)
-		}
-
-		for _, rcpt := range recipients {
-			if err := client.Rcpt(rcpt); err != nil {
-				return fmt.Errorf("RCPT TO %s error: %w", rcpt, err)
-			}
-		}
-
-		w, err := client.Data()
-		if err != nil {
-			return fmt.Errorf("DATA error: %w", err)
-		}
-
-		if _, err := w.Write(message); err != nil {
-			return fmt.Errorf("message write error: %w", err)
-		}
-
-		if err := w.Close(); err != nil {
-			return fmt.Errorf("DATA close error: %w", err)
-		}
-
-		return client.Quit()
+	if ep.scheme != ProtocolSMTPS && !ep.requireStartTLS {
+		gocamel.LogError("SMTP cleartext: STARTTLS is opportunistic — credentials may travel unencrypted. "+
+			"Use smtps:// or requireStartTLS=true for guaranteed TLS.", "host", ep.host, "port", ep.port)
 	}
 
-	// Standard SMTP. By default smtp.SendMail is used, which attempts STARTTLS
-	// but silently falls back to cleartext if the server does not advertise it
-	// (SECURITY). When requireStartTLS=true, the client is driven manually and
-	// the send fails if STARTTLS is not available, guaranteeing encryption.
-	// Use ProtocolSMTPS or requireStartTLS=true to guarantee encryption.
-	if ep.requireStartTLS {
-		return p.trySendMailWithStartTLS(addr, auth, from, recipients, message)
-	}
-	gocamel.LogError("SMTP cleartext: STARTTLS is opportunistic — credentials may travel unencrypted. "+
-		"Use smtps:// or requireStartTLS=true for guaranteed TLS.", "host", ep.host, "port", ep.port)
-	return smtp.SendMail(addr, auth, from, recipients, message)
-}
-
-// trySendMailWithStartTLS performs a single SMTP send attempt that requires
-// the server to advertise and successfully negotiate STARTTLS before any
-// credentials or message data are transmitted (SECURITY).
-func (p *MailProducer) trySendMailWithStartTLS(addr string, auth smtp.Auth, from string, recipients []string, message []byte) error {
-	ep := p.endpoint
-
-	dialer := &net.Dialer{Timeout: ep.connectionTimeout}
-	conn, err := dialer.Dial("tcp", addr)
+	conn, err := p.dialSMTP(ctx, addr)
 	if err != nil {
-		return fmt.Errorf("SMTP connection error: %w", err)
+		return err
 	}
 
+	p.extendDeadline(conn)
 	client, err := smtp.NewClient(conn, ep.host)
 	if err != nil {
 		conn.Close()
@@ -281,38 +231,41 @@ func (p *MailProducer) trySendMailWithStartTLS(addr string, auth smtp.Auth, from
 	}
 	defer client.Close()
 
-	if ok, _ := client.Extension("STARTTLS"); !ok {
-		return fmt.Errorf("requireStartTLS=true but server %s does not advertise STARTTLS: refusing to send", addr)
-	}
-	tlsConfig := &tls.Config{
-		ServerName: ep.host,
-		MinVersion: tls.VersionTLS12,
-	}
-	if err := client.StartTLS(tlsConfig); err != nil {
-		return fmt.Errorf("STARTTLS negotiation error: %w", err)
-	}
-
-	// Bound all subsequent I/O with the connection timeout so a stalled
-	// server cannot block the sender indefinitely.
-	if ep.connectionTimeout > 0 {
-		_ = conn.SetDeadline(time.Now().Add(ep.connectionTimeout))
+	if ep.scheme != ProtocolSMTPS {
+		p.extendDeadline(conn)
+		ok, _ := client.Extension("STARTTLS")
+		if !ok && ep.requireStartTLS {
+			return fmt.Errorf("requireStartTLS=true but server %s does not advertise STARTTLS: refusing to send", addr)
+		}
+		if ok {
+			if err := client.StartTLS(p.tlsConfig()); err != nil {
+				return fmt.Errorf("STARTTLS negotiation error: %w", err)
+			}
+		}
 	}
 
 	if auth != nil {
+		p.extendDeadline(conn)
+		if ok, _ := client.Extension("AUTH"); !ok {
+			return errors.New("smtp: server doesn't support AUTH")
+		}
 		if err := client.Auth(auth); err != nil {
 			return fmt.Errorf("authentication error: %w", err)
 		}
 	}
 
+	p.extendDeadline(conn)
 	if err := client.Mail(from); err != nil {
 		return fmt.Errorf("MAIL FROM error: %w", err)
 	}
 	for _, rcpt := range recipients {
+		p.extendDeadline(conn)
 		if err := client.Rcpt(rcpt); err != nil {
 			return fmt.Errorf("RCPT TO %s error: %w", rcpt, err)
 		}
 	}
 
+	p.extendDeadline(conn)
 	w, err := client.Data()
 	if err != nil {
 		return fmt.Errorf("DATA error: %w", err)
@@ -324,7 +277,59 @@ func (p *MailProducer) trySendMailWithStartTLS(addr string, auth smtp.Auth, from
 		return fmt.Errorf("DATA close error: %w", err)
 	}
 
+	p.extendDeadline(conn)
 	return client.Quit()
+}
+
+// dialSMTP opens the connection of a send attempt: plain TCP for smtp (TLS
+// is negotiated later via STARTTLS), native TLS for smtps (port 465). The
+// connect and the TLS handshake are bounded by the connection timeout.
+func (p *MailProducer) dialSMTP(ctx context.Context, addr string) (net.Conn, error) {
+	ep := p.endpoint
+
+	dialer := &net.Dialer{Timeout: ep.connectionTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("SMTP connection error: %w", err)
+	}
+	if ep.scheme != ProtocolSMTPS {
+		return conn, nil
+	}
+
+	p.extendDeadline(conn)
+	tlsConn := tls.Client(conn, p.tlsConfig())
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("TLS connection error: %w", err)
+	}
+	return tlsConn, nil
+}
+
+func (p *MailProducer) tlsConfig() *tls.Config {
+	return &tls.Config{
+		ServerName: p.endpoint.host,
+		MinVersion: tls.VersionTLS12,
+	}
+}
+
+// extendDeadline bounds the next protocol phase with the connection timeout.
+// On a TLS connection the deadline also applies to the underlying TCP conn.
+func (p *MailProducer) extendDeadline(conn net.Conn) {
+	if p.endpoint.connectionTimeout > 0 {
+		_ = conn.SetDeadline(time.Now().Add(p.endpoint.connectionTimeout))
+	}
+}
+
+// sleepWithContext waits for d and reports false if ctx ended first.
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // isNonRetryableError determines whether an error should not be retried.
