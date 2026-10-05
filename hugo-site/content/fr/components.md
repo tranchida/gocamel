@@ -40,6 +40,54 @@ builder.From("timer:tick?period=5s")
 
 ---
 
+### Mock
+
+Endpoint de test, producer uniquement (enregistré par défaut), qui enregistre chaque échange reçu.
+À combiner avec `Route.AdviceWith` pour remplacer les endpoints réels d'une route construite avant `Start()`.
+
+```go
+route, _ := ctx.CreateRouteBuilder().
+    From("direct:in").
+    To("kafka:orders").
+    Build()
+
+// Remplacer l'endpoint réel par un mock avant Start.
+_ = route.AdviceWith(map[string]string{"kafka:orders": "mock:orders"})
+
+mock, _ := ctx.GetMockEndpoint("mock:orders")
+mock.ExpectedMessageCount(2)
+_ = ctx.Start()
+// ... envoyer deux échanges vers direct:in ...
+if err := mock.Wait(time.Second); err != nil {
+    t.Fatal(err) // "expected at least 2 messages but received 1 ..."
+}
+body := mock.Body(0)
+```
+
+| Méthode                       | Description                                                                 |
+|-------------------------------|-----------------------------------------------------------------------------|
+| `MessageCount()`              | Nombre d'échanges reçus                                                     |
+| `Message(i)`                  | Instantané du i-ème échange (ordre d'arrivée), `nil` hors limites           |
+| `Body(i)` / `Header(i, name)` | Corps / en-tête In du i-ème échange                                         |
+| `ExpectedMessageCount(n)`     | Attendre **au moins** `n` échanges (davantage est accepté)                  |
+| `Wait(timeout)`               | Bloque jusqu'à ce que l'attente soit satisfaite ; erreur avec les compteurs à l'expiration |
+| `Reset()`                     | Efface les échanges reçus et l'attente                                      |
+
+- Les endpoints sont identifiés par **leur nom uniquement** et mis en cache par contexte :
+  `mock:out` dans une route et `GetMockEndpoint("out")` désignent le même endpoint.
+- Chaque échange est enregistré sous forme de `DeepCopy` prise à l'envoi (ID d'échange
+  d'origine conservé) : une modification ultérieure de l'échange vivant ne change pas l'instantané.
+- Les endpoints mock n'ont pas de consumer : `From("mock:x")` échoue.
+
+`AdviceWith` substitue les URI exactes des producers statiques `To()`, y compris le multicast
+`To(a, b)` et les branches Choice / LoadBalancer / Saga. Il ne substitue **pas** l'endpoint
+`From()`, les templates `ToD` ni les autres envois dynamiques (RecipientList, RoutingSlip,
+DynamicRouter, WireTap, Enrich, DeadLetterChannel). Les URI inconnues sont ignorées ; la
+substitution est une passe unique non transitive. Il renvoie une erreur tant que la route est
+démarrée (il est de nouveau autorisé après `Stop()`).
+
+---
+
 ## Composants de Transfert de Fichiers
 
 ### File

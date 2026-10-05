@@ -250,7 +250,7 @@ func (failingConsumerComponent) CreateEndpoint(uri string) (Endpoint, error) {
 type failingConsumerEndpoint struct{ uri string }
 
 func (e failingConsumerEndpoint) URI() string                     { return e.uri }
-func (failingConsumerEndpoint) CreateProducer() (Producer, error) { return &MockProducer{}, nil }
+func (failingConsumerEndpoint) CreateProducer() (Producer, error) { return &stubProducer{}, nil }
 func (failingConsumerEndpoint) CreateConsumer(Processor) (Consumer, error) {
 	return failingConsumer{}, nil
 }
@@ -280,10 +280,10 @@ func managementRequest(h http.Handler, method, target string, headers map[string
 func newManagedContext(t *testing.T) (*CamelContext, *Route) {
 	t.Helper()
 	ctx := NewCamelContext()
-	ctx.AddComponent("mock", &MockComponent{})
+	ctx.AddComponent("stub", &stubComponent{})
 	route := ctx.CreateRoute()
 	route.ID = "managed"
-	route.From("mock:source")
+	route.From("stub:source")
 	require.NoError(t, ctx.Start())
 	t.Cleanup(func() { _ = ctx.Stop() })
 	return ctx, route
@@ -365,10 +365,10 @@ func TestManagementServer_AuthToken(t *testing.T) {
 
 func TestManagementServer_StartRouteRequiresStartedContext(t *testing.T) {
 	ctx := NewCamelContext()
-	ctx.AddComponent("mock", &MockComponent{})
+	ctx.AddComponent("stub", &stubComponent{})
 	route := ctx.CreateRoute()
 	route.ID = "idle"
-	route.From("mock:source")
+	route.From("stub:source")
 	h := NewManagementServer(ctx).handler()
 
 	w := managementRequest(h, http.MethodPost, "/api/routes/idle/start", nil)

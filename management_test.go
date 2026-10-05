@@ -205,44 +205,44 @@ func TestManagementServer_Routes(t *testing.T) {
 	}
 }
 
-// MockEndpoint is a dummy endpoint for testing
-type MockEndpoint struct {
+// stubEndpoint is a dummy endpoint for testing
+type stubEndpoint struct {
 	uri string
 }
 
-func (e *MockEndpoint) URI() string { return e.uri }
-func (e *MockEndpoint) CreateProducer() (Producer, error) {
-	return &MockProducer{}, nil
+func (e *stubEndpoint) URI() string { return e.uri }
+func (e *stubEndpoint) CreateProducer() (Producer, error) {
+	return &stubProducer{}, nil
 }
-func (e *MockEndpoint) CreateConsumer(p Processor) (Consumer, error) {
-	return &MockConsumer{}, nil
+func (e *stubEndpoint) CreateConsumer(p Processor) (Consumer, error) {
+	return &stubConsumer{}, nil
 }
 
-type MockProducer struct{}
+type stubProducer struct{}
 
-func (p *MockProducer) Start(ctx context.Context) error { return nil }
-func (p *MockProducer) Stop() error                     { return nil }
-func (p *MockProducer) Send(e *Exchange) error          { return nil }
+func (p *stubProducer) Start(ctx context.Context) error { return nil }
+func (p *stubProducer) Stop() error                     { return nil }
+func (p *stubProducer) Send(e *Exchange) error          { return nil }
 
-type MockConsumer struct{}
+type stubConsumer struct{}
 
-func (c *MockConsumer) Start(ctx context.Context) error { return nil }
-func (c *MockConsumer) Stop() error                     { return nil }
+func (c *stubConsumer) Start(ctx context.Context) error { return nil }
+func (c *stubConsumer) Stop() error                     { return nil }
 
-type MockComponent struct{}
+type stubComponent struct{}
 
-func (c *MockComponent) CreateEndpoint(uri string) (Endpoint, error) {
-	return &MockEndpoint{uri: uri}, nil
+func (c *stubComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &stubEndpoint{uri: uri}, nil
 }
 
 func TestManagementServer_RouteAction(t *testing.T) {
 	ctx := NewCamelContext()
-	ctx.AddComponent("mock", &MockComponent{})
+	ctx.AddComponent("stub", &stubComponent{})
 	mgmt := NewManagementServer(ctx)
 
 	route := ctx.CreateRoute()
 	route.ID = "test-route"
-	route.From("mock:source")
+	route.From("stub:source")
 	if err := ctx.Start(); err != nil {
 		t.Fatalf("Failed to start context: %v", err)
 	}
