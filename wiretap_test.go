@@ -3,6 +3,7 @@ package gocamel
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,12 +63,11 @@ func TestWireTap_Basic(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, mainDone, "main route should have completed")
 
-	// Wait a bit for the async tap to arrive
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	assert.True(t, tapReceived, "tap should have received the exchange")
-	mu.Unlock()
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return tapReceived
+	}, time.Second, 10*time.Millisecond, "tap should have received the exchange")
 }
 
 // TestWireTap_DeepCopy verifies that the tapped exchange is a deep copy:
@@ -131,7 +131,11 @@ func TestWireTap_DeepCopy(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for tap to arrive
-	time.Sleep(100 * time.Millisecond)
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return tapModified != nil
+	}, time.Second, 10*time.Millisecond)
 
 	mu.Lock()
 	// Main route body after its ProcessFunc should be "main-modified"
@@ -197,7 +201,11 @@ func TestWireTap_DataIntegrity(t *testing.T) {
 	err = mainRoute.Process(exchange)
 	assert.NoError(t, err)
 
-	time.Sleep(100 * time.Millisecond)
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return tapBody != nil
+	}, time.Second, 10*time.Millisecond)
 
 	mu.Lock()
 	assert.Equal(t, map[string]string{"key": "value"}, tapBody)
@@ -220,6 +228,7 @@ func TestWireTap_NonBlocking(t *testing.T) {
 		tapFinished  bool
 		mu           sync.Mutex
 		tapStarted   = make(chan struct{})
+		releaseTap   = make(chan struct{})
 	)
 
 	tapRoute, err := NewRouteBuilder(camel).
@@ -227,7 +236,7 @@ func TestWireTap_NonBlocking(t *testing.T) {
 		SetID("slow-tap-route").
 		ProcessFunc(func(e *Exchange) error {
 			close(tapStarted)
-			time.Sleep(300 * time.Millisecond)
+			<-releaseTap
 			mu.Lock()
 			tapFinished = true
 			mu.Unlock()
@@ -263,7 +272,7 @@ func TestWireTap_NonBlocking(t *testing.T) {
 
 	assert.NoError(t, err)
 
-	// Main route should complete quickly (sub-200ms, independent of the 300ms tap)
+	// Main route should complete quickly, while the tap is still blocked
 	assert.True(t, elapsed < 200*time.Millisecond,
 		"main route took %v, should finish before tap completes", elapsed)
 
@@ -275,11 +284,12 @@ func TestWireTap_NonBlocking(t *testing.T) {
 	assert.False(t, tapFinished, "tap should still be sleeping")
 	mu.Unlock()
 
-	// Wait for tap to finish (sleeps 300ms, so 400ms should be enough)
-	time.Sleep(400 * time.Millisecond)
-	mu.Lock()
-	assert.True(t, tapFinished, "tap should eventually finish")
-	mu.Unlock()
+	close(releaseTap)
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return tapFinished
+	}, time.Second, 10*time.Millisecond, "tap should eventually finish")
 }
 
 // TestWireTap_ErrorIsolation verifies that errors in the tap do not
@@ -289,13 +299,17 @@ func TestWireTap_ErrorIsolation(t *testing.T) {
 	camel := NewCamelContext()
 	camel.AddComponent("direct", NewDirectComponent())
 
-	var mainSucceeded bool
+	var (
+		mainSucceeded bool
+		tapCalled     atomic.Bool
+	)
 
 	// Tap route that always fails
 	tapRoute, err := NewRouteBuilder(camel).
 		From("direct:failing-tap").
 		SetID("failing-tap-route").
 		ProcessFunc(func(e *Exchange) error {
+			tapCalled.Store(true)
 			return assert.AnError
 		}).
 		Build()
@@ -325,7 +339,8 @@ func TestWireTap_ErrorIsolation(t *testing.T) {
 	assert.NoError(t, err, "main route should not fail even if tap fails")
 	assert.True(t, mainSucceeded, "main route processor should have executed")
 
-	time.Sleep(50 * time.Millisecond)
+	assert.Eventually(t, tapCalled.Load, 500*time.Millisecond, 10*time.Millisecond,
+		"failing tap should have been invoked")
 }
 
 // TestWireTap_Multiple verifies that multiple wiretaps can be used
@@ -377,12 +392,11 @@ func TestWireTap_Multiple(t *testing.T) {
 	err = mainRoute.Process(NewExchange(ctx))
 	assert.NoError(t, err)
 
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	assert.True(t, tapACalled, "tap A should have been called")
-	assert.True(t, tapBCalled, "tap B should have been called")
-	mu.Unlock()
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return tapACalled && tapBCalled
+	}, time.Second, 10*time.Millisecond, "taps A and B should have been called")
 }
 
 // TestWireTap_ChainedInSplit verifies that WireTap works inside a Split EIP block.
@@ -425,9 +439,9 @@ func TestWireTap_ChainedInSplit(t *testing.T) {
 	err = mainRoute.Process(NewExchange(ctx))
 	assert.NoError(t, err)
 
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	assert.Equalf(t, 3, tapCount, "expected 3 taps for 3 split parts, got %d", tapCount)
-	mu.Unlock()
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return tapCount == 3
+	}, time.Second, 10*time.Millisecond, "expected 3 taps for 3 split parts")
 }

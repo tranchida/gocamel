@@ -52,7 +52,8 @@ func TestExchange_MessageMethods(t *testing.T) {
 	// Test SetBody and GetBody
 	body := "test body"
 	initialModified := exchange.Modified
-	time.Sleep(1 * time.Millisecond) // Ensure time moves forward
+	// time.Sleep is intentional: the Modified timestamp must advance.
+	time.Sleep(1 * time.Millisecond)
 	exchange.SetBody(body)
 
 	if exchange.GetBody() != body {
@@ -67,6 +68,7 @@ func TestExchange_MessageMethods(t *testing.T) {
 	headerKey := "TestHeader"
 	headerValue := "TestValue"
 	initialModified = exchange.Modified
+	// time.Sleep is intentional: the Modified timestamp must advance.
 	time.Sleep(1 * time.Millisecond)
 	exchange.SetHeader(headerKey, headerValue)
 
@@ -221,6 +223,7 @@ func TestExchange_Copy(t *testing.T) {
 	exchange.SetHeader("H1", "V1")
 	exchange.SetProperty("P1", "V1")
 
+	// time.Sleep is intentional: the copy's timestamps must differ from the original.
 	time.Sleep(1 * time.Millisecond)
 	copy := exchange.Copy()
 

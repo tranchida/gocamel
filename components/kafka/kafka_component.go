@@ -484,19 +484,30 @@ func (c *KafkaConsumer) run(ctx context.Context) {
 			}
 		}
 		if c.endpoint.groupID != "" {
-			// Retrying a commit must not re-run a successful processor.
-			for {
-				if err := c.reader.CommitMessages(ctx, msg); err == nil {
+			// Retrying a commit must not re-run a successful processor. The
+			// backoff restarts from commitRetry.Delay for every record.
+			for attempt := 0; ; attempt++ {
+				err := c.reader.CommitMessages(ctx, msg)
+				if err == nil {
 					break
-				} else {
-					gocamel.LogError("kafka commit failed; retrying before advancing offset", "topic", msg.Topic, "offset", msg.Offset, "error", err)
 				}
-				if !waitForRetry(ctx) {
+				gocamel.LogError("kafka commit failed; retrying before advancing offset", "topic", msg.Topic, "offset", msg.Offset,
+					"attempt", attempt+1, "retry_in", commitRetry.Backoff(attempt), "error", err)
+				if !commitRetry.Wait(ctx, attempt) {
 					return
 				}
 			}
 		}
 	}
+}
+
+// commitRetry paces offset commit retries: a persistently failing commit
+// backs off exponentially from 100ms up to 5s instead of spinning, and is
+// retried until it succeeds (a negative MaxRedeliveries never gives up).
+var commitRetry = gocamel.ConsumerRedeliveryPolicy{
+	MaxRedeliveries: -1,
+	Delay:           100 * time.Millisecond,
+	MaxDelay:        5 * time.Second,
 }
 
 func waitForRetry(ctx context.Context) bool {

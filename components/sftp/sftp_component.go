@@ -619,11 +619,13 @@ func moveSFTPFile(client *sftp.Client, srcPath, destDir string) {
 	filename := filepath.Base(srcPath)
 	filename = strings.TrimSuffix(filename, ".camelExclusiveReadLock")
 	destPath := destDir + "/" + filename
-	if err := client.MkdirAll(destDir); err == nil || strings.Contains(err.Error(), "exist") {
-		if err := client.PosixRename(srcPath, destPath); err != nil {
-			gocamel.LogError("SFTP move error", "src", srcPath, "dest", destPath, "error", err)
-		}
-	} else {
+	// MkdirAll stats destDir first and returns nil when it is already a
+	// directory, so any error here means there is no usable destination.
+	if err := client.MkdirAll(destDir); err != nil {
 		gocamel.LogError("SFTP directory creation error", "directory", destDir, "error", err)
+		return
+	}
+	if err := client.PosixRename(srcPath, destPath); err != nil {
+		gocamel.LogError("SFTP move error", "src", srcPath, "dest", destPath, "error", err)
 	}
 }

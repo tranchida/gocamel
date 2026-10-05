@@ -32,6 +32,7 @@ func TestDelayer_ContextCancelled(t *testing.T) {
 	ex := NewExchange(ctx)
 
 	go func() {
+		// time.Sleep is intentional: cancel while the delay is in progress.
 		time.Sleep(30 * time.Millisecond)
 		cancel()
 	}()

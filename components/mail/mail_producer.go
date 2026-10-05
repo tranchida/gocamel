@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"strings"
 	"time"
 
@@ -333,8 +334,27 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 }
 
 // isNonRetryableError determines whether an error should not be retried.
+//
+// An SMTP reply decides first: net/smtp surfaces it as *textproto.Error, and
+// RFC 5321 defines 5xx as permanent and 4xx as transient, whatever the text.
+// Network errors are transient. Only errors carrying neither (client-side
+// failures such as net/smtp refusing PLAIN auth over cleartext) fall back to
+// keyword matching, since no structured signal is available for them.
 func isNonRetryableError(err error) bool {
 	if err == nil {
+		return false
+	}
+	var reply *textproto.Error
+	if errors.As(err, &reply) {
+		switch {
+		case reply.Code >= 500 && reply.Code < 600:
+			return true
+		case reply.Code >= 400 && reply.Code < 500:
+			return false
+		}
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
 		return false
 	}
 	errStr := strings.ToLower(err.Error())

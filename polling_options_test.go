@@ -107,6 +107,7 @@ func TestWaitForStable_SlowWriter(t *testing.T) {
 	go func() {
 		defer close(done)
 		for i := 0; i < 4; i++ {
+			// time.Sleep is intentional: simulates a file still being written.
 			time.Sleep(30 * time.Millisecond)
 			mu.Lock()
 			size += 50
@@ -146,6 +147,7 @@ func TestWaitForStable_MinLength(t *testing.T) {
 	}
 
 	go func() {
+		// time.Sleep is intentional: the file reaches minLength after a delay.
 		time.Sleep(50 * time.Millisecond)
 		atomic.StoreInt64(&size, 100)
 	}()
