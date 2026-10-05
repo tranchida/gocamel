@@ -5,7 +5,7 @@ weight = 0
   list = "always"
 +++
 
-**Dernière version : v0.14.2 · Go 1.27.0 ou ultérieur.** [Notes de version](releases/v0.14.2/)
+**Dernière version : v0.15.0 · Go 1.27.0 ou ultérieur.** [Notes de version](releases/v0.15.0/)
 
 
 **Framework d'Intégration d'Entreprise pour Go**

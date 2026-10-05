@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [v0.15.0] - 2026-10-05
+
+Security and resilience release with the fixes from a dual-model code review: NATS and STOMP consumers survive broker errors, mail and STOMP enforce network timeouts, the file consumer, `exec` and MongoDB `find` bound their memory, the Anthropic and Ollama header overrides now require `allowHeaderOverride=true` (**breaking**, see Security), and a Choice data race, Kafka commit retries, SMTP retry classification and the SFTP move are fixed. New options: STOMP `connectTimeout`, file `maxSeenEntries`, exec `maxOutputSize` and MongoDB `maxResults`.
+
 ### Security
 
 - **Anthropic and Ollama header overrides (breaking)**: the `AnthropicSystem`, `AnthropicModel`, `AnthropicMaxTokens` and `AnthropicTemperature` headers, and the `OllamaModel` and `OllamaSystem` headers, are now ignored unless the endpoint sets the new `allowHeaderOverride=true` option, like every other component. On a route fed by untrusted input they let a sender replace the system prompt (prompt injection) or pick the model and token budget (cost). **Migration**: add `allowHeaderOverride=true` to the endpoint URI to restore the old behaviour, only where headers cannot be influenced by untrusted input.
@@ -14,6 +18,16 @@ All notable changes to this project are documented in this file.
 - **File consumer memory**: the map of ingested files used to skip duplicate events grew for the consumer's lifetime. It is now capped by the new `maxSeenEntries` option (default 100000, `0` = unlimited); the oldest entries are evicted first, so a long-evicted file that is touched again may be re-ingested.
 - **Exec output memory**: stdout and stderr were buffered without limit, so a command printing gigabytes exhausted memory. Each is now capped by the new `maxOutputSize` option (default 32 MiB like HTTP bodies, `0` = unlimited); the excess is discarded and the new `CamelExecOutputTruncated` header is `true`.
 - **MongoDB find memory**: a `find` without a limit loaded the whole collection into memory. It now returns at most `maxResults` documents (new option, default 10000, `0` = unlimited); when truncated it logs a warning and sets the new `CamelMongoDbResultsTruncated` header to `true`. Raise `maxResults` or page with `CamelMongoDbLimit`/`CamelMongoDbSkip` if you relied on larger results.
+- **NATS consumer resilience**: any `NextMsg` error other than a timeout ended the consumer goroutine while the route still appeared started. The consumer now logs the error, waits with a bounded, context-aware exponential backoff, reconnects when the shared connection is closed and resubscribes when the subscription is invalid; it only exits when its context is cancelled.
+- **STOMP connect timeout and reconnection**: the broker was dialled without a timeout while `Start` held the endpoint lock, so a blackholed broker hung `Start`, `Stop` and the whole `CamelContext` shutdown. The new `connectTimeout` option (default 30 s) covers the TCP connect and the TLS and STOMP handshakes, and dialling aborts when its context ends. The consumer no longer stops on a read error or broker `ERROR` frame: it re-dials and resubscribes with a bounded exponential backoff (100 ms up to 5 s). An ack failing on a closed connection is no longer retried forever; the broker redelivers the message after the reconnection.
+- **Mail network timeouts**: the SMTPS and default SMTP paths had no network timeout, and the `requireStartTLS` path read the greeting and `EHLO` reply before setting its deadline, so a stalled server blocked the route forever. All paths now dial with the endpoint's `connectionTimeout` (bound to the exchange context) and refresh a deadline before every protocol phase. The retry backoff waits on the exchange context instead of `time.Sleep` and returns as soon as the context ends.
+- **SMTP retry classification**: retryability was decided by words such as `invalid` or `auth` in the error text, so a transient `421`/`454` was never retried while a `550` was retried pointlessly. The SMTP reply code now decides (`5xx` permanent, `4xx` transient, network errors transient); keyword matching remains only for client-side errors without a code.
+- **Kafka commit backoff**: a persistently failing offset commit was retried every 100 ms forever, flooding the logs. Commit retries now use a context-aware exponential backoff (100 ms doubling, capped at 5 s, unlimited attempts) that restarts after a successful commit.
+- **SFTP move**: `moveSFTPFile` treated any `MkdirAll` error containing `exist` as an existing directory, which also matched `file does not exist`, and attempted the rename anyway. Any `MkdirAll` error now aborts the move.
+
+### Notes
+
+- Published components and observability modules now require core v0.15.0.
 
 ## [v0.14.2] - 2026-10-03
 
