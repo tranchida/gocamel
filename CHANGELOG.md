@@ -35,6 +35,13 @@ All notable changes to this project are documented in this file.
       To("http://backend/api")
   ```
 
+- **Persistent Saga**: the Saga EIP checkpoints its state to a `SagaRepository` (`Save`/`Load`/`ListIncomplete`/`Remove`) after each completed step and each compensation, keyed by the `CamelSagaId` header (a UUID is generated when absent). `MemorySagaRepository` is the default; `SQLSagaRepository` (root module, `database/sql` only, table `gocamel_sagas`, `InitDB` creates it) survives a process crash. New `SagaDefinition` options: `Repository(repo)`, `Timeout(d)` (bounds each action and compensation; an action exceeding it fails with `ErrSagaStepTimeout` and the completed steps are compensated) and `RecoverIncomplete(true)` (opt-in: at `CamelContext.Start`, incomplete sagas are compensated last step first; when off they are only logged as warnings). `SagaProcessor.Recover(ctx, camelCtx)` runs a recovery on demand. A failed compensation stays in the repository for the next recovery. Compensation on recovery is at-least-once: compensations must be idempotent.
+  **Only compensations declared by URI (`Action(actionURI, compensationURI)`) are recoverable after a restart**: a Go function cannot be persisted, so an `ActionFunc` compensation found at recovery is reported as `ErrSagaCompensationNotRecoverable` (logged, never skipped silently) and kept in the repository for manual handling.
+
+### Fixed
+
+- **Saga**: `ActionFunc(action, nil)` no longer registers a nil function as a compensation (which panicked, recovered, when the step had to be compensated); a nil compensation now means the step has nothing to undo.
+
 ## [v0.15.0] - 2026-10-05
 
 Security and resilience release with the fixes from a dual-model code review: NATS and STOMP consumers survive broker errors, mail and STOMP enforce network timeouts, the file consumer, `exec` and MongoDB `find` bound their memory, the Anthropic and Ollama header overrides now require `allowHeaderOverride=true` (**breaking**, see Security), and a Choice data race, Kafka commit retries, SMTP retry classification and the SFTP move are fixed. New options: STOMP `connectTimeout`, file `maxSeenEntries`, exec `maxOutputSize` and MongoDB `maxResults`.

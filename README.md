@@ -26,7 +26,8 @@ provides a powerful DSL for creating integration routes to connect different sys
 - ⚙️ **Processors** - Custom logic implementation with `Processor` interface and `ProcessRef`
 - ⚖️ **Transactional Routes** - Unit of Work pattern for reliable message processing
 - 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Filter, Recipient List, Routing Slip, Wire Tap,
-  Stop, ToD, Loop, Saga, Transform, Enrich, PollEnrich, Validate, Message History
+  Stop, ToD, Loop, Saga (persistent state, per-step timeout, opt-in crash recovery), Transform, Enrich, PollEnrich,
+  Validate, Message History
 - 🚑 **Error Handling** - Route `ErrorHandler`, Dead Letter Channel, Do-Try-Catch and `OnException` per-error-type
   handlers (`errors.Is`/`errors.As` matching, redelivery with backoff, `Handled`/`Continued`)
 - 📝 **Simple Language & JSONPath** - Dynamic expressions (`${body}`, `${header.name}`, `${jsonpath:$.path}`, functions)

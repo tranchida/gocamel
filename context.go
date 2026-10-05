@@ -178,6 +178,15 @@ func (c *CamelContext) Start() (err error) {
 			return errors.Join(errs...)
 		}
 	}
+	// Saga recovery runs once every route is started so compensation
+	// endpoints served by routes of this context are reachable.
+	for _, route := range routes {
+		route.forEachProcessor(func(p Processor) {
+			if saga, ok := p.(*SagaProcessor); ok {
+				saga.recoverOnStart(ctx, c)
+			}
+		})
+	}
 	return nil
 }
 

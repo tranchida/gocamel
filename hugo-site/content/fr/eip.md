@@ -1041,6 +1041,45 @@ builder.From("direct:saga-route").
     End()
 ```
 
+Une compensation `nil` dans `ActionFunc` signifie que l'étape n'a rien à annuler.
+
+### État persistant et reprise
+
+Chaque saga s'exécute sous un identifiant lu dans l'en-tête `CamelSagaId` (un UUID est généré et placé dans l'en-tête s'il est absent). Après chaque action dont l'étape a une compensation, la saga **enregistre un point de reprise** dans un `SagaRepository` : la liste des compensations en attente et un instantané du message In (corps et en-têtes). Elle enregistre de nouveau après chaque compensation, et supprime l'état une fois la saga terminée ou entièrement compensée. Une compensation en échec reste dans le dépôt pour qu'une reprise ultérieure la retente.
+
+```go
+db, _ := sql.Open("sqlite", "sagas.db") // n'importe quel driver database/sql
+repo := gocamel.NewSQLSagaRepository(db, gocamel.SQLSagaOptions{}) // table gocamel_sagas
+_ = repo.InitDB(context.Background())
+
+builder.From("direct:saga-route").
+    Saga().
+        Repository(repo).              // défaut : en mémoire (perdu à l'arrêt du processus)
+        Timeout(5 * time.Second).      // limite pour chaque action et compensation
+        RecoverIncomplete(true).       // reprise optionnelle au CamelContext.Start
+        Action("direct:reserve-hotel", "direct:cancel-hotel").
+        Action("direct:reserve-flight", "direct:cancel-flight").
+    End()
+```
+
+| Option | Défaut | Effet |
+|---|---|---|
+| `Repository(repo)` | `MemorySagaRepository` | Où l'état est persisté. `SQLSagaRepository` (module racine, `database/sql` uniquement — le driver est fourni par l'appelant) survit à un crash du processus. |
+| `Timeout(d)` | `0` (aucun) | Limite chaque action et chaque compensation. Une action qui la dépasse échoue avec `ErrSagaStepTimeout` (qui enveloppe `context.DeadlineExceeded`) et les étapes **terminées** sont compensées ; l'étape expirée ne l'est pas, comme toute étape en échec. L'étape s'exécute sur une copie de l'échange dont le `Context` porte l'échéance : une étape qui ignore son contexte continue en arrière-plan après l'expiration et son résultat est ignoré. |
+| `RecoverIncomplete(true)` | désactivé | Au `CamelContext.Start`, une fois toutes les routes démarrées, les sagas incomplètes trouvées dans le dépôt sont compensées de la dernière étape à la première. Désactivé, chaque saga incomplète est seulement journalisée en avertissement, avec la manière d'activer la reprise. |
+
+La reprise envoie chaque compensation à son URI via le cache de producteurs du contexte, avec un échange reconstruit à partir du message du dernier point de reprise et de l'en-tête `CamelSagaId`. `SagaProcessor.Recover(ctx, camelCtx)` la déclenche à la demande. Les sagas encore en cours dans le processus courant ne sont jamais reprises.
+
+{{% notice warning %}}
+**Seules les compensations déclarées par URI d'endpoint survivent à un redémarrage du processus.** Une compensation passée à `ActionFunc` est une fonction Go : elle ne peut pas être sérialisée, donc après un redémarrage rien ne permet de la reconstruire. Ces étapes sont tout de même persistées (avec `InProcessCompensation`), et lorsque la reprise en rencontre une, elle signale `ErrSagaCompensationNotRecoverable` dans une ligne de log ERROR qui nomme la saga et l'étape — elle **ne l'ignore jamais silencieusement** — et la conserve dans le dépôt, au statut `COMPENSATING`, pour un traitement manuel. Les autres compensations par URI de cette saga s'exécutent quand même. Déclarez les étapes qui doivent pouvoir être reprises avec `Action(actionURI, compensationURI)`.
+{{% /notice %}}
+
+**Garanties de livraison.** Le point de reprise est écrit après le retour de l'action et avant le début de l'action suivante. Un crash entre une action et son point de reprise perd cette étape (sa compensation ne s'exécute pas à la reprise) ; un crash après une compensation et avant la mise à jour de l'état ré-exécute cette compensation. La compensation à la reprise est donc **au moins une fois** pour les étapes enregistrées : les compensations doivent être idempotentes. Si un point de reprise ne peut pas être enregistré, la saga échoue et compense ses étapes terminées, y compris celle qui vient de se terminer.
+
+**Format de persistance.** `SQLSagaRepository` stocke l'état en JSON (`saga_id`, `status`, `state`, `updated_at` en nanosecondes Unix) : le corps et les valeurs d'en-têtes doivent être sérialisables en JSON et reviennent sous forme de types JSON (nombres en `float64`, `[]byte` en chaîne base64). `ListIncomplete` renvoie au plus `DefaultSagaListLimit` (1000) sagas, les plus anciennes d'abord ; les suivantes sont reprises à un démarrage ultérieur, une fois les premières résolues.
+
+**Limites.** Une saga imbriquée dans l'action d'une autre saga reçoit son propre identifiant (l'en-tête de la saga englobante est restauré ensuite) ; les sagas ne sont ni propagées ni jointes entre routes. La reprise ne coordonne pas plusieurs processus partageant une même base : activez `RecoverIncomplete` sur une seule instance, sinon un processus peut compenser une saga qu'un autre exécute encore.
+
 ---
 
 ## Transformer
