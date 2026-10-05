@@ -55,6 +55,7 @@ func (c *CamelContext) registerStdlibComponents() {
 	c.AddComponent("sql", NewSQLComponent())
 	c.AddComponent("sql-stored", NewSQLStoredComponent())
 	c.AddComponent("net", NewNetComponent())
+	c.AddComponent("mock", NewMockComponent())
 }
 
 // AddRoute adds a route to the context

@@ -41,7 +41,7 @@ Go **1.27.0 ou ultérieur** est requis pour le cœur, les composants et les exem
 
 Le module core (moteur de routage, EIPs, Simple Language et tous les
 composants sans dépendance externe : direct, seda, chan, timer, http, exec,
-template, sql) n'a **aucune dépendance externe à l'exécution** et se compile sans
+template, sql, mock) n'a **aucune dépendance externe à l'exécution** et se compile sans
 CGO (les tests utilisent le driver pure-Go `modernc.org/sqlite`) :
 
 ```bash
@@ -172,6 +172,7 @@ builder.From("direct:start").
 | **XSLT/XSD**   | Transformation/validation XML  |
 | **Template**   | Templates Go natifs            |
 | **Exec**       | Exécution commandes système    |
+| **Mock**       | Endpoint de test qui enregistre les échanges, avec attentes et substitution d'endpoints via `Route.AdviceWith` |
 
 ## 🧾 Data Formats
 

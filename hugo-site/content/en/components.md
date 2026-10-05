@@ -40,6 +40,53 @@ builder.From("timer:tick?period=5s")
 
 ---
 
+### Mock
+
+Producer-only test endpoint (registered by default) that records every exchange sent to it.
+Combine it with `Route.AdviceWith` to replace real endpoints in a built route before `Start()`.
+
+```go
+route, _ := ctx.CreateRouteBuilder().
+    From("direct:in").
+    To("kafka:orders").
+    Build()
+
+// Swap the real endpoint for a mock before Start.
+_ = route.AdviceWith(map[string]string{"kafka:orders": "mock:orders"})
+
+mock, _ := ctx.GetMockEndpoint("mock:orders")
+mock.ExpectedMessageCount(2)
+_ = ctx.Start()
+// ... send two exchanges to direct:in ...
+if err := mock.Wait(time.Second); err != nil {
+    t.Fatal(err) // "expected at least 2 messages but received 1 ..."
+}
+body := mock.Body(0)
+```
+
+| Method                        | Description                                                           |
+|-------------------------------|-----------------------------------------------------------------------|
+| `MessageCount()`              | Number of exchanges received                                          |
+| `Message(i)`                  | Snapshot of the i-th exchange (arrival order), `nil` if out of range  |
+| `Body(i)` / `Header(i, name)` | In body / header of the i-th exchange                                 |
+| `ExpectedMessageCount(n)`     | Expect **at least** `n` exchanges (more is accepted)                  |
+| `Wait(timeout)`               | Block until the expectation is met; error with counts on timeout      |
+| `Reset()`                     | Clear received exchanges and the expectation                          |
+
+- Endpoints are identified by **name only** and cached per context: `mock:out` in a route and
+  `GetMockEndpoint("out")` are the same endpoint.
+- Each exchange is recorded as a `DeepCopy` taken at send time (original exchange ID kept), so
+  later mutation of the live exchange does not change the snapshot.
+- Mock endpoints have no consumer: `From("mock:x")` fails.
+
+`AdviceWith` substitutes exact URIs of static `To()` producers, including multicast `To(a, b)`
+and Choice / LoadBalancer / Saga branches. It does **not** substitute the `From()` endpoint,
+`ToD` templates or other dynamic sends (RecipientList, RoutingSlip, DynamicRouter, WireTap,
+Enrich, DeadLetterChannel). Unknown URIs are ignored; substitution is a single non-transitive
+pass. It returns an error while the route is started (it is allowed again after `Stop()`).
+
+---
+
 ## File Transfer Components
 
 ### File

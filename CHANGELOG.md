@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Mock component** (`mock:name`, stdlib, registered by default): a producer-only endpoint that records a deep-copied snapshot of every exchange sent to it, for asserting route output in tests. `CamelContext.GetMockEndpoint("mock:out")` returns the `*MockEndpoint` (`MessageCount`, `Message(i)`, `Body(i)`, `Header(i, name)`, `ExpectedMessageCount(n)` — at least `n` —, `Wait(timeout)`, `Reset`).
+- **Route advice**: `Route.AdviceWith(map[string]string)` substitutes static `To()` endpoint URIs (including multicast, Choice, LoadBalancer and Saga branches) between `Build()` and `Start()`, so a test can swap real endpoints for mocks without rebuilding the route. It returns an error once the route is started; unknown URIs are ignored. `ToD` and other dynamic sends are not substituted.
+
+  ```go
+  route, _ := ctx.CreateRouteBuilder().From("direct:in").To("kafka:orders").Build()
+  _ = route.AdviceWith(map[string]string{"kafka:orders": "mock:orders"})
+  mock, _ := ctx.GetMockEndpoint("mock:orders")
+  mock.ExpectedMessageCount(1)
+  _ = ctx.Start()
+  // ... send to direct:in ...
+  if err := mock.Wait(time.Second); err != nil { t.Fatal(err) }
+  ```
+
 ## [v0.15.0] - 2026-10-05
 
 Security and resilience release with the fixes from a dual-model code review: NATS and STOMP consumers survive broker errors, mail and STOMP enforce network timeouts, the file consumer, `exec` and MongoDB `find` bound their memory, the Anthropic and Ollama header overrides now require `allowHeaderOverride=true` (**breaking**, see Security), and a Choice data race, Kafka commit retries, SMTP retry classification and the SFTP move are fixed. New options: STOMP `connectTimeout`, file `maxSeenEntries`, exec `maxOutputSize` and MongoDB `maxResults`.

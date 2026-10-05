@@ -39,7 +39,7 @@ Release **v0.15.0** is a security and resilience release: NATS and STOMP consume
 Go **1.27.0 or later** is required for the core, components and examples. The workspace, CI and `.go-version` default to Go 1.27.0.
 
 The core module (routing engine, EIPs, Simple Language and all stdlib-only
-components: direct, seda, chan, timer, http, exec, template, sql) has **zero
+components: direct, seda, chan, timer, http, exec, template, sql, mock) has **zero
 external runtime dependencies** and builds without CGO (tests use the pure-Go
 `modernc.org/sqlite` driver):
 
@@ -170,6 +170,7 @@ EndChoice()
 | **XSLT/XSD**   | XML transformation/validation |
 | **Template**   | Go template processing        |
 | **Exec**       | System command execution      |
+| **Mock**       | Test endpoint recording exchanges, with expectations and `Route.AdviceWith` endpoint substitution |
 
 ## 🧾 Data Formats
 
