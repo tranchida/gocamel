@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.14.0
+	gitlab.com/tranchida/gocamel v0.15.0
 	go.mongodb.org/mongo-driver v1.17.9
 )
 
