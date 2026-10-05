@@ -1073,6 +1073,45 @@ builder.From("direct:saga-route").
     End()
 ```
 
+A `nil` compensation in `ActionFunc` means the step has nothing to undo.
+
+#### Persistent saga state and recovery
+
+Each saga runs under an ID taken from the `CamelSagaId` header (a UUID is generated and set on the header when it is absent). After every action whose step has a compensation, the saga **checkpoints** its state to a `SagaRepository`: the list of pending compensations plus a snapshot of the In message (body and headers). It saves again after each compensation, and removes the state once the saga has completed or been fully compensated. A compensation that fails stays in the repository so a later recovery can retry it.
+
+```go
+db, _ := sql.Open("sqlite", "sagas.db") // any database/sql driver
+repo := gocamel.NewSQLSagaRepository(db, gocamel.SQLSagaOptions{}) // table gocamel_sagas
+_ = repo.InitDB(context.Background())
+
+builder.From("direct:saga-route").
+    Saga().
+        Repository(repo).              // default: in-memory (lost on process exit)
+        Timeout(5 * time.Second).      // bound on each action and compensation
+        RecoverIncomplete(true).       // opt-in recovery at CamelContext.Start
+        Action("direct:reserve-hotel", "direct:cancel-hotel").
+        Action("direct:reserve-flight", "direct:cancel-flight").
+    End()
+```
+
+| Option | Default | Effect |
+|---|---|---|
+| `Repository(repo)` | `MemorySagaRepository` | Where the state is persisted. `SQLSagaRepository` (root module, `database/sql` only — bring your own driver) survives a process crash. |
+| `Timeout(d)` | `0` (none) | Bounds each action and each compensation. An action exceeding it fails with `ErrSagaStepTimeout` (wrapping `context.DeadlineExceeded`) and the **completed** steps are compensated; the timed-out step itself is not, as for any failed step. The step runs on a copy of the exchange whose `Context` carries the deadline: a step that ignores its context keeps running in the background after the timeout, and its result is discarded. |
+| `RecoverIncomplete(true)` | off | At `CamelContext.Start`, once every route is started, incomplete sagas found in the repository are compensated last step first. When off, each incomplete saga is only logged as a warning telling how to enable recovery. |
+
+Recovery sends each compensation to its URI through the context's producer cache, with an exchange rebuilt from the last checkpoint's message and the `CamelSagaId` header. `SagaProcessor.Recover(ctx, camelCtx)` runs it on demand. Sagas still running in the current process are never recovered.
+
+{{% notice warning %}}
+**Only compensations declared by endpoint URI survive a process restart.** A compensation passed to `ActionFunc` is a Go function: it cannot be serialised, so after a restart there is nothing to rebuild it from. Such steps are still persisted (as `InProcessCompensation`), and when recovery meets one it reports `ErrSagaCompensationNotRecoverable` in an ERROR log line naming the saga and step — it **never skips it silently** — and keeps it in the repository, status `COMPENSATING`, for manual handling. The remaining URI compensations of that saga still run. Declare steps that must be recoverable with `Action(actionURI, compensationURI)`.
+{{% /notice %}}
+
+**Delivery guarantees.** The checkpoint is written after the action returns and before the next action starts. A crash between an action and its checkpoint loses that step (its compensation does not run on recovery); a crash after a compensation and before the state update runs that compensation again. Compensation on recovery is therefore **at-least-once** for checkpointed steps: compensations must be idempotent. If a checkpoint cannot be saved, the saga fails and compensates its completed steps, including the one just completed.
+
+**Persistence format.** `SQLSagaRepository` stores the state as JSON (`saga_id`, `status`, `state`, `updated_at` as Unix nanoseconds): message body and header values must be JSON-serialisable and come back as JSON types (numbers as `float64`, `[]byte` as a base64 string). `ListIncomplete` returns at most `DefaultSagaListLimit` (1000) sagas, oldest first; the rest are picked up by a later start once earlier ones are resolved.
+
+**Limits.** A saga nested in another saga's action gets its own ID (the enclosing saga's header is restored afterwards); sagas are not propagated or joined across routes. Recovery does not coordinate several processes sharing one database: enable `RecoverIncomplete` on a single instance, otherwise one process may compensate a saga another is still running.
+
 ---
 
 ## Message Tracking & Diagnostics
