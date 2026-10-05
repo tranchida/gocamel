@@ -27,6 +27,8 @@ provides a powerful DSL for creating integration routes to connect different sys
 - ⚖️ **Transactional Routes** - Unit of Work pattern for reliable message processing
 - 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Filter, Recipient List, Routing Slip, Wire Tap,
   Stop, ToD, Loop, Saga, Transform, Enrich, PollEnrich, Validate, Message History
+- 🚑 **Error Handling** - Route `ErrorHandler`, Dead Letter Channel, Do-Try-Catch and `OnException` per-error-type
+  handlers (`errors.Is`/`errors.As` matching, redelivery with backoff, `Handled`/`Continued`)
 - 📝 **Simple Language & JSONPath** - Dynamic expressions (`${body}`, `${header.name}`, `${jsonpath:$.path}`, functions)
 - 🔌 **Multiple Components** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, Redis, NATS, Go Channel (chan), TCP/UDP (net), etc.
 - 🛠️ **REST Management API** - JMX-like monitoring and control

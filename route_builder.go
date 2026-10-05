@@ -251,6 +251,64 @@ func (b *RouteBuilder) DeadLetterChannel(deadLetterURI string, opts ...DeadLette
 	return b
 }
 
+// OnException starts a route-scoped clause handling errors that match one of
+// the targets (Apache Camel's onException). A target is either an error value,
+// matched with errors.Is (sentinels such as io.EOF), or a non-nil pointer to an
+// error or interface type, matched with errors.As (new(*MyError),
+// ErrorType[*MyError]()). A pointer to a struct whose Error method has a
+// pointer receiver (&MyError{}) is an error value and only matches itself.
+//
+// When a route processor fails, the clauses are tried in declaration order
+// and the FIRST matching one wins, so declare specific clauses before generic
+// ones. A matched clause replaces the route's ErrorHandler for that error: the
+// failed processor is redelivered up to MaximumRedeliveries times, then the
+// clause's handler processors run, then Handled/Continued decide the outcome.
+// Unmatched errors, and exchanges already dead-lettered (IsDeadLettered), keep
+// the default ErrorHandler behaviour.
+//
+// Clauses apply to errors returned by the route's top-level processors; a
+// redelivery re-runs the whole top-level step (e.g. a whole Split block).
+//
+// Example:
+//
+//	route, err := ctx.CreateRouteBuilder().
+//	    OnException(ErrorType[*ValidationError]()).
+//	        Handled(true).
+//	        To("direct:invalid").
+//	    End().
+//	    OnException(io.ErrUnexpectedEOF).
+//	        MaximumRedeliveries(3).
+//	        RedeliveryDelay(100 * time.Millisecond).
+//	    End().
+//	    From("direct:in").
+//	    To("http://backend/api").
+//	    Build()
+func (b *RouteBuilder) OnException(targets ...any) *OnExceptionDefinition {
+	clause := newOnExceptionClause()
+	d := &OnExceptionDefinition{
+		parent: b,
+		clause: clause,
+		handler: &RouteBuilder{
+			context:   b.context,
+			route:     b.route,
+			container: clause.handler,
+		},
+	}
+	if len(targets) == 0 {
+		d.fail(fmt.Errorf("OnException: at least one error target is required"))
+	}
+	for i, target := range targets {
+		matcher, err := newOnExceptionMatcher(target)
+		if err != nil {
+			d.fail(fmt.Errorf("OnException: target[%d]: %w", i, err))
+			continue
+		}
+		clause.matchers = append(clause.matchers, matcher)
+	}
+	b.route.onExceptions = append(b.route.onExceptions, clause)
+	return d
+}
+
 // Build finalizes route construction.
 // Returns the route or an error accumulated during DSL construction,
 // including From() endpoint resolution failures stored on the route.

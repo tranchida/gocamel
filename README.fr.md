@@ -27,6 +27,8 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 - ⚖️ **Routes Transactionnelles** - Pattern Unit of Work pour un traitement fiable
 - 🧩 **Enterprise Integration Patterns** - Split, Aggregate, Multicast, Choice, Filter, Recipient List, Routing Slip, Wire Tap,
   Stop, ToD, Loop, Saga, Transform, Enrich, PollEnrich, Validate, Message History
+- 🚑 **Gestion des Erreurs** - `ErrorHandler` de route, Dead Letter Channel, Do-Try-Catch et gestionnaires `OnException`
+  par type d'erreur (correspondance `errors.Is`/`errors.As`, redelivery avec backoff, `Handled`/`Continued`)
 - 📝 **Simple Language & JSONPath** - Expressions dynamiques (`${body}`, `${header.name}`, `${jsonpath:$.path}`, fonctions)
 - 🔌 **Composants Multiples** - HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, Redis, NATS, Go Channel (chan), TCP/UDP (net), etc.
 - 🛠️ **API REST de Management** - Monitoring et contrôle inspiré de JMX

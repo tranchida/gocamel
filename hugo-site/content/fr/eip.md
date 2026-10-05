@@ -872,6 +872,76 @@ builder.From("http://0.0.0.0:8080/commandes").
     To("direct:traitement")
 ```
 
+### OnException
+
+`OnException` déclare des gestionnaires de route sélectionnés **par type
+d'erreur**, comme le `onException` d'Apache Camel. Chaque clause liste une ou
+plusieurs cibles :
+
+- une **valeur d'erreur** (une sentinelle comme `io.EOF`) correspond via
+  `errors.Is` ;
+- un **pointeur non nil vers un type d'erreur ou d'interface** correspond via
+  `errors.As` : `gocamel.ErrorType[*MonErreur]()` (équivalent à
+  `new(*MonErreur)`), `&MonErreurValeur{}` pour une erreur à récepteur valeur,
+  `gocamel.ErrorType[net.Error]()`. Un `&MonErreur{}` dont la méthode `Error`
+  a un récepteur pointeur est une valeur d'erreur et ne correspond qu'à
+  elle-même.
+
+Une cible absente, `nil` ou non supportée fait échouer `Build()`.
+
+```go
+builder.
+    OnException(gocamel.ErrorType[*ValidationError]()).
+        Handled(true).
+        SetBody("commande invalide").
+    End().
+    OnException(io.ErrUnexpectedEOF, syscall.ECONNRESET).
+        MaximumRedeliveries(3).
+        RedeliveryDelay(100 * time.Millisecond).
+        To("direct:reprise").
+    End().
+    From("direct:commandes").
+    To("http://backend/commandes")
+```
+
+**Fonctionnement :**
+
+1. Quand une étape de premier niveau échoue, les clauses sont essayées dans
+   l'**ordre de déclaration** et la **première** qui correspond l'emporte :
+   déclarez d'abord les clauses spécifiques.
+2. Une clause qui correspond **remplace** l'`ErrorHandler` de la route pour
+   cette erreur. L'étape en échec est rejouée jusqu'à `MaximumRedeliveries`
+   fois (0 par défaut), en attendant `RedeliveryDelay` (1 s par défaut)
+   multiplié par `BackOffMultiplier` (2 par défaut, 1 pour un délai fixe) à
+   chaque tentative, plafonné par `MaximumRedeliveryDelay` (60 s par défaut).
+   L'attente s'interrompt si le contexte de l'exchange est annulé.
+3. Si l'étape échoue encore, les processeurs de la clause (`Process`,
+   `ProcessFunc`, `To`, `SetBody`, `SetHeader`, `Log`) s'exécutent sur le
+   message reçu par l'étape, avec les propriétés `CamelExceptionCaught`,
+   `CamelRedeliveryCounter` et `CamelFailureRouteId`.
+4. Ensuite :
+   - `Handled(true)` : le routage **s'arrête** (aucune étape suivante) et
+     **aucune erreur n'atteint le consumer ni l'émetteur**, qui reçoit
+     l'exchange tel que laissé par le gestionnaire. La route renvoie une erreur
+     qui enveloppe `ErrStopRouting` et l'erreur d'origine.
+   - `Continued(true)` : le routage **continue avec l'étape suivante** comme si
+     l'erreur n'avait pas eu lieu ; cette étape reçoit la sortie du
+     gestionnaire. `Continued` l'emporte sur `Handled`.
+   - aucun des deux (par défaut) : l'erreur d'origine est propagée.
+5. Si un processeur du gestionnaire échoue, son erreur (qui enveloppe l'erreur
+   d'origine) est renvoyée à la place.
+
+Les erreurs sans clause correspondante gardent le comportement
+`ErrorHandler`/`DeadLetterChannel`. Un exchange déjà envoyé en dead letter
+(`IsDeadLettered`), par exemple par une route appelée via `direct:` qui propage
+l'erreur d'origine, ne déclenche jamais de clause : son échec a déjà été pris
+en charge.
+
+**Limites :** les clauses sont propres à la route (pas encore d'`OnException`
+global au contexte), ne s'appliquent qu'aux erreurs des étapes de premier
+niveau — un rejeu relance toute l'étape, par exemple un bloc `Split` entier —
+et n'ont pas de prédicat `OnWhen`.
+
 ---
 
 ## Process
