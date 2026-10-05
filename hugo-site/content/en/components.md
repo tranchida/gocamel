@@ -625,6 +625,7 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 | `maxRedeliveries` | int | `10` | Consumer: redeliveries of a message whose route failed before it is logged and acknowledged anyway (`-1` = retry forever, `0` = acknowledge on the first failure) |
 | `redeliveryDelay` | int | `100` | Consumer: first redelivery delay in ms, doubled on each attempt |
 | `maxRedeliveryDelay` | int | `30000` | Consumer: cap of the redelivery backoff in ms |
+| `connectTimeout` | duration | `30s` | Timeout of the TCP connect plus the TLS and STOMP handshakes. The consumer reconnects and resubscribes (backoff 100 ms up to 5 s) when the broker connection is lost or the broker sends an ERROR frame |
 | `ssl` | bool | `false` | Connect over TLS |
 | `sslCAFile` | string | system roots | PEM file of the certificate authority verifying the broker certificate |
 | `sslCertFile` | string | `""` | PEM file of the client certificate for mutual TLS (requires `sslKeyFile`) |
