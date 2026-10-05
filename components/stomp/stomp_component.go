@@ -38,6 +38,10 @@ const (
 // the URI.
 const defaultHost = "localhost:61613"
 
+// defaultConnectTimeout bounds connection establishment when the URI sets no
+// connectTimeout option.
+const defaultConnectTimeout = 30 * time.Second
+
 // sslEnabled reports whether the URI enables SSL/TLS. Both "ssl" and
 // "useSSL" are accepted (matching the GoCamel option conventions).
 func sslEnabled(u *url.URL) bool {
@@ -222,6 +226,11 @@ func NewStompComponent() *StompComponent {
 //	redeliveryDelay      First redelivery delay in ms, doubled on each attempt
 //	                     (default: 100)
 //	maxRedeliveryDelay   Cap of the redelivery backoff in ms (default: 30000)
+//	connectTimeout       Timeout of the TCP connect plus the TLS and STOMP
+//	                     handshakes, as a Go duration (default: 30s)
+//
+// The consumer reconnects and resubscribes, with a bounded backoff, when the
+// broker connection is lost or the broker sends an ERROR frame.
 //
 // A message the route dead-lettered (DeadLetterChannel) is acknowledged, never
 // redelivered. Inbound frame headers named Camel* are dropped: a client
@@ -292,7 +301,17 @@ func (c *StompComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		forwardHeaders:      parseForwardHeaders(gocamel.GetConfigValue(u, "forwardHeaders")),
 		redelivery:          gocamel.ParseConsumerRedeliveryPolicy(u),
 		tlsConfig:           tlsConfig,
+		connectTimeout:      parseConnectTimeout(u),
 	}, nil
+}
+
+// parseConnectTimeout reads the connectTimeout option with the shared GoCamel
+// parser, keeping the STOMP default when the option is unset.
+func parseConnectTimeout(u *url.URL) time.Duration {
+	if gocamel.GetConfigValue(u, "connectTimeout") == "" {
+		return defaultConnectTimeout
+	}
+	return gocamel.ParseConnectTimeout(u)
 }
 
 // StompEndpoint represents a STOMP destination endpoint.
@@ -315,6 +334,8 @@ type StompEndpoint struct {
 	// tlsConfig is non-nil when ssl=true: the connection is established over
 	// TLS using this configuration.
 	tlsConfig *tls.Config
+	// connectTimeout bounds the TCP connect plus the TLS and STOMP handshakes.
+	connectTimeout time.Duration
 
 	conn     *stomp.Conn
 	consumer *StompConsumer
@@ -365,8 +386,9 @@ func (e *StompEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Con
 }
 
 // dial establishes a STOMP connection to the broker, over plain TCP or
-// TLS depending on the ssl option.
-func (e *StompEndpoint) dial() (*stomp.Conn, error) {
+// TLS depending on the ssl option. Connection establishment is bounded by
+// connectTimeout and aborted when ctx ends.
+func (e *StompEndpoint) dial(ctx context.Context) (*stomp.Conn, error) {
 	var opts []func(*stomp.Conn) error
 	if e.login != "" || e.passcode != "" {
 		opts = append(opts, stomp.ConnOpt.Login(e.login, e.passcode))
@@ -375,11 +397,21 @@ func (e *StompEndpoint) dial() (*stomp.Conn, error) {
 	// go-stomp has no native TLS dialer, but stomp.Connect accepts any
 	// established io.ReadWriteCloser: dial the TCP or TLS connection
 	// first, then run the STOMP handshake over it.
-	netConn, err := net.Dial("tcp", e.host)
+	dialer := &net.Dialer{Timeout: e.connectTimeout}
+	tcpConn, err := dialer.DialContext(ctx, "tcp", e.host)
 	if err != nil {
 		return nil, fmt.Errorf("stomp connect to %s failed: %w", e.host, err)
 	}
 
+	// A broker accepting the TCP connection but never answering must not
+	// block the handshakes (and the endpoint lock held by Start) forever.
+	if e.connectTimeout > 0 {
+		_ = tcpConn.SetDeadline(time.Now().Add(e.connectTimeout))
+	}
+	stopAbort := context.AfterFunc(ctx, func() { _ = tcpConn.SetDeadline(time.Unix(1, 0)) })
+	defer stopAbort()
+
+	netConn := tcpConn
 	if e.tlsConfig != nil {
 		// tls.Client performs the handshake lazily on first Read/Write in
 		// Go < 1.24; handshake immediately so certificate errors surface in
@@ -397,6 +429,13 @@ func (e *StompEndpoint) dial() (*stomp.Conn, error) {
 		_ = netConn.Close()
 		return nil, fmt.Errorf("stomp connect to %s failed: %w", e.host, err)
 	}
+	if !stopAbort() {
+		// ctx ended: the abort may already have expired the deadline.
+		_ = conn.MustDisconnect()
+		return nil, fmt.Errorf("stomp connect to %s aborted: %w", e.host, ctx.Err())
+	}
+	// The established connection is long-lived: liveness is left to STOMP.
+	_ = tcpConn.SetDeadline(time.Time{})
 	return conn, nil
 }
 
@@ -406,7 +445,7 @@ type StompProducer struct {
 }
 
 // Start starts the producer by opening a STOMP connection.
-func (p *StompProducer) Start(_ context.Context) error {
+func (p *StompProducer) Start(ctx context.Context) error {
 	p.endpoint.mu.Lock()
 	defer p.endpoint.mu.Unlock()
 
@@ -414,7 +453,7 @@ func (p *StompProducer) Start(_ context.Context) error {
 		return nil
 	}
 
-	conn, err := p.endpoint.dial()
+	conn, err := p.endpoint.dial(ctx)
 	if err != nil {
 		return err
 	}
@@ -530,7 +569,7 @@ func (c *StompConsumer) Start(ctx context.Context) error {
 	}
 
 	if c.endpoint.conn == nil {
-		conn, err := c.endpoint.dial()
+		conn, err := c.endpoint.dial(ctx)
 		if err != nil {
 			return err
 		}
@@ -590,30 +629,41 @@ type subscriptionReader interface {
 func (c *StompConsumer) run(ctx context.Context) {
 	defer c.wg.Done()
 
+	failures := 0
 	for {
 		msg, err := c.sub.Read()
+		// Server-side ERROR frames surface as a read error or as a message
+		// with Err set; either way the broker closed the connection.
+		if err == nil && msg.Err != nil {
+			err = msg.Err
+		}
 		if err != nil {
-			// Subscription closed or connection lost; ctx cancellation
-			// triggered the closure, exit normally.
-			if ctx.Err() != nil || errors.Is(err, stomp.ErrCompletedSubscription) || errors.Is(err, stomp.ErrClosedUnexpectedly) {
+			// Stop closed the connection to unblock Read: exit normally.
+			if ctx.Err() != nil {
 				return
 			}
-			gocamel.LogError("stomp subscription read failed",
-				"uri", c.endpoint.uri,
-				"error", err,
-			)
-			return
-		}
-
-		// server-side ERROR frames surface as a message with Err set
-		if msg.Err != nil {
-			gocamel.LogError("stomp broker error",
+			// Connection lost or broker ERROR: returning would leave the
+			// route started with no consumer, so reconnect until stopped.
+			delay := retryDelay(failures)
+			failures++
+			gocamel.LogWarn("stomp subscription failed; reconnecting",
 				"uri", c.endpoint.uri,
 				"destination", c.endpoint.destination,
-				"error", msg.Err,
+				"retry_in", delay,
+				"error", err,
 			)
-			return
+			if !waitForRetry(ctx, delay) {
+				return
+			}
+			if err := c.reconnect(ctx); err != nil {
+				gocamel.LogWarn("stomp reconnect failed",
+					"uri", c.endpoint.uri,
+					"error", err,
+				)
+			}
+			continue
 		}
+		failures = 0
 
 		// Resolve this delivery before reading another message. Acknowledging
 		// a later message would otherwise discard a failed one under the
@@ -680,15 +730,24 @@ func (c *StompConsumer) run(ctx context.Context) {
 		if msg.ShouldAck() {
 			// Retrying an ack must not re-run a successful processor.
 			for {
-				if err := msg.Conn.Ack(msg); err == nil {
+				err := msg.Conn.Ack(msg)
+				if err == nil {
 					break
-				} else {
-					gocamel.LogError("stomp ack failed; retrying before advancing",
+				}
+				if errors.Is(err, stomp.ErrClosedUnexpectedly) {
+					// The broker requeues the unacknowledged message; the
+					// next Read fails and triggers the reconnection.
+					gocamel.LogWarn("stomp ack failed on a closed connection; message will be redelivered",
 						"destination", c.endpoint.destination,
 						"error", err,
 					)
+					break
 				}
-				if !waitForRetry(ctx) {
+				gocamel.LogError("stomp ack failed; retrying before advancing",
+					"destination", c.endpoint.destination,
+					"error", err,
+				)
+				if !waitForRetry(ctx, ackRetryDelay) {
 					return
 				}
 			}
@@ -696,8 +755,61 @@ func (c *StompConsumer) run(ctx context.Context) {
 	}
 }
 
-func waitForRetry(ctx context.Context) bool {
-	timer := time.NewTimer(100 * time.Millisecond)
+// reconnect replaces the endpoint's shared connection with a new one and
+// resubscribes. The new connection is installed only while ctx is live:
+// Stop cancels ctx before closing the endpoint connection, so a connection
+// installed here is always closed by Stop.
+func (c *StompConsumer) reconnect(ctx context.Context) error {
+	e := c.endpoint
+	conn, err := e.dial(ctx)
+	if err != nil {
+		return err
+	}
+	sub, err := conn.Subscribe(e.destination, e.ackMode)
+	if err != nil {
+		_ = conn.MustDisconnect()
+		return fmt.Errorf("stomp subscription to %q failed: %w", e.destination, err)
+	}
+
+	e.mu.Lock()
+	if ctx.Err() != nil {
+		e.mu.Unlock()
+		_ = conn.MustDisconnect()
+		return ctx.Err()
+	}
+	old := e.conn
+	e.conn = conn
+	e.mu.Unlock()
+
+	if old != nil {
+		// The old connection is broken: a graceful Disconnect could wait
+		// forever for a RECEIPT.
+		_ = old.MustDisconnect()
+	}
+	c.sub = sub
+	return nil
+}
+
+// Delays between attempts to recover from a failure.
+const (
+	ackRetryDelay = 100 * time.Millisecond
+	minRetryDelay = 100 * time.Millisecond
+	maxRetryDelay = 5 * time.Second
+)
+
+// retryDelay returns the exponential backoff before the given reconnection
+// attempt.
+func retryDelay(attempt int) time.Duration {
+	delay := minRetryDelay
+	for i := 0; i < attempt && delay < maxRetryDelay; i++ {
+		delay *= 2
+	}
+	return min(delay, maxRetryDelay)
+}
+
+// waitForRetry sleeps for delay and reports false if ctx ended first.
+func waitForRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():

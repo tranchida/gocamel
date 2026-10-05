@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	gocamel "gitlab.com/tranchida/gocamel"
 )
@@ -228,6 +230,80 @@ func TestNATSComponent_DynamicSubject(t *testing.T) {
 	spacedExchange.In.SetBody("data")
 	err = pubProducer.Send(spacedExchange)
 	assert.ErrorContains(t, err, "invalid subject")
+}
+
+// startTestConsumer starts a consumer on subject "resilient" that forwards
+// every received body to the returned channel.
+func startTestConsumer(t *testing.T, clientURL string) (*NATSConsumer, <-chan string) {
+	endpoint, err := NewNATSComponent().CreateEndpoint("nats://resilient?servers=" + clientURL)
+	require.NoError(t, err)
+
+	received := make(chan string, 16)
+	consumer, err := endpoint.CreateConsumer(gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
+		body, _ := e.GetBody().([]byte)
+		received <- string(body)
+		return nil
+	}))
+	require.NoError(t, err)
+
+	natsConsumer := consumer.(*NATSConsumer)
+	require.NoError(t, natsConsumer.Start(context.Background()))
+	t.Cleanup(func() { _ = natsConsumer.Stop() })
+	return natsConsumer, received
+}
+
+// assertEventuallyReceived publishes body on an independent connection until
+// the consumer delivers it: messages published while the consumer is
+// resubscribing are not buffered by core NATS.
+func assertEventuallyReceived(t *testing.T, clientURL string, received <-chan string, body string) {
+	publisher, err := nats.Connect(clientURL)
+	require.NoError(t, err)
+	t.Cleanup(publisher.Close)
+
+	assert.Eventually(t, func() bool {
+		if publisher.Publish("resilient", []byte(body)) != nil {
+			return false
+		}
+		select {
+		case got := <-received:
+			return got == body
+		case <-time.After(50 * time.Millisecond):
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond, "consumer stopped receiving after a transient error")
+}
+
+// A closed connection (e.g. reconnect attempts exhausted after a broker
+// outage) must not end the consumer: it reconnects and resubscribes.
+func TestNATSConsumer_RecoversFromClosedConnection(t *testing.T) {
+	ns := runEmbeddedNatsServer(t)
+	defer ns.Shutdown()
+
+	consumer, received := startTestConsumer(t, ns.ClientURL())
+
+	consumer.endpoint.mu.Lock()
+	conn := consumer.endpoint.conn
+	consumer.endpoint.mu.Unlock()
+	conn.Close()
+
+	assertEventuallyReceived(t, ns.ClientURL(), received, "after reconnect")
+}
+
+// An invalidated subscription on a live connection is replaced.
+func TestNATSConsumer_RecoversFromInvalidSubscription(t *testing.T) {
+	ns := runEmbeddedNatsServer(t)
+	defer ns.Shutdown()
+
+	consumer, received := startTestConsumer(t, ns.ClientURL())
+	require.NoError(t, consumer.subscription().Unsubscribe())
+
+	assertEventuallyReceived(t, ns.ClientURL(), received, "after resubscribe")
+}
+
+func TestRetryDelayIsBoundedExponentialBackoff(t *testing.T) {
+	assert.Equal(t, minRetryDelay, retryDelay(0))
+	assert.Equal(t, 2*minRetryDelay, retryDelay(1))
+	assert.Equal(t, maxRetryDelay, retryDelay(100))
 }
 
 func TestNATSConsumer_StopReleasesEndpointRegistration(t *testing.T) {
