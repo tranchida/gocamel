@@ -2,10 +2,12 @@ package nats
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
@@ -210,13 +212,26 @@ func (p *NATSProducer) Send(exchange *gocamel.Exchange) error {
 	return nil
 }
 
+// Bounds of the backoff between attempts to recover from a receive error.
+const (
+	minRetryDelay = 100 * time.Millisecond
+	maxRetryDelay = 5 * time.Second
+)
+
 // NATSConsumer subscribes to a NATS subject.
 type NATSConsumer struct {
 	endpoint  *NATSEndpoint
 	processor gocamel.Processor
+	subLock   sync.Mutex // Protects sub, replaced by run on resubscription
 	sub       *nats.Subscription
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+}
+
+func (c *NATSConsumer) subscription() *nats.Subscription {
+	c.subLock.Lock()
+	defer c.subLock.Unlock()
+	return c.sub
 }
 
 // Start opens NATS connection, subscribes to subject and handles incoming messages.
@@ -245,7 +260,9 @@ func (c *NATSConsumer) Start(ctx context.Context) error {
 		cancel()
 		return fmt.Errorf("nats subscription failed: %w", err)
 	}
+	c.subLock.Lock()
 	c.sub = sub
+	c.subLock.Unlock()
 
 	c.wg.Add(1)
 	go c.run(ctx)
@@ -261,8 +278,9 @@ func (c *NATSConsumer) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	if c.sub != nil {
-		_ = c.sub.Unsubscribe()
+	// Unsubscribing wakes run up from NextMsg instead of waiting for its timeout.
+	if sub := c.subscription(); sub != nil {
+		_ = sub.Unsubscribe()
 	}
 	c.wg.Wait()
 
@@ -278,33 +296,123 @@ func (c *NATSConsumer) Stop() error {
 
 func (c *NATSConsumer) run(ctx context.Context) {
 	defer c.wg.Done()
+	// A subscription created by a resubscription racing Stop is released here.
+	defer func() {
+		if sub := c.subscription(); sub != nil {
+			_ = sub.Unsubscribe()
+		}
+	}()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			// Fetch NATS message with timeout
-			msg, err := c.sub.NextMsg(nats.DefaultTimeout)
-			if err != nil {
-				if err == nats.ErrTimeout {
-					continue // loop and check context cancellation
-				}
-				// Subscription closed or other error
+	failures := 0
+	for ctx.Err() == nil {
+		// Fetch NATS message with timeout
+		msg, err := c.subscription().NextMsg(nats.DefaultTimeout)
+		if err != nil {
+			if errors.Is(err, nats.ErrTimeout) {
+				continue // loop and check context cancellation
+			}
+			if ctx.Err() != nil {
 				return
 			}
-
-			exchange := gocamel.NewExchange(ctx)
-			exchange.In.SetBody(msg.Data)
-			exchange.In.SetHeader(CamelNATSSubject, msg.Subject)
-
-			if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
-				gocamel.LogError("nats consumer processing error",
-					"uri", c.endpoint.uri,
-					"error", err,
-					"exchange_id", exchange.ID,
-				)
+			// Connection closed, subscription invalidated, slow consumer...:
+			// returning would leave the route started with no consumer.
+			delay := retryDelay(failures)
+			failures++
+			gocamel.LogWarn("nats receive failed; retrying",
+				"uri", c.endpoint.uri, "retry_in", delay, "error", err)
+			if !waitForRetry(ctx, delay) {
+				return
 			}
+			if err := c.resubscribe(); err != nil {
+				gocamel.LogWarn("nats resubscription failed; retrying",
+					"uri", c.endpoint.uri, "error", err)
+			}
+			continue
 		}
+		failures = 0
+
+		exchange := gocamel.NewExchange(ctx)
+		exchange.In.SetBody(msg.Data)
+		exchange.In.SetHeader(CamelNATSSubject, msg.Subject)
+
+		if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
+			gocamel.LogError("nats consumer processing error",
+				"uri", c.endpoint.uri,
+				"error", err,
+				"exchange_id", exchange.ID,
+			)
+		}
+	}
+}
+
+// resubscribe replaces an invalid subscription, reconnecting first when the
+// shared connection is closed. A still-valid subscription is kept: the error
+// was transient (e.g. slow consumer) and the next NextMsg may succeed.
+func (c *NATSConsumer) resubscribe() error {
+	if c.subscription().IsValid() {
+		return nil
+	}
+
+	conn, err := c.liveConn()
+	if err != nil {
+		return err
+	}
+	sub, err := conn.SubscribeSync(c.endpoint.subject)
+	if err != nil {
+		return fmt.Errorf("nats subscription to %q failed: %w", c.endpoint.subject, err)
+	}
+
+	c.subLock.Lock()
+	c.sub = sub
+	c.subLock.Unlock()
+	return nil
+}
+
+// liveConn returns the endpoint's shared connection, replacing it when it is
+// closed. The connection is established outside the endpoint lock so that a
+// slow broker does not block the producer or Stop.
+func (c *NATSConsumer) liveConn() (*nats.Conn, error) {
+	e := c.endpoint
+	e.mu.Lock()
+	conn := e.conn
+	e.mu.Unlock()
+	if conn != nil && !conn.IsClosed() {
+		return conn, nil
+	}
+
+	newConn, err := nats.Connect(e.servers)
+	if err != nil {
+		return nil, fmt.Errorf("nats consumer reconnect failed: %w", err)
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.conn != nil && e.conn != conn && !e.conn.IsClosed() {
+		// The producer reconnected concurrently: share its connection.
+		newConn.Close()
+		return e.conn, nil
+	}
+	e.conn = newConn
+	return newConn, nil
+}
+
+// retryDelay returns the exponential backoff before the given retry attempt.
+func retryDelay(attempt int) time.Duration {
+	delay := minRetryDelay
+	for i := 0; i < attempt && delay < maxRetryDelay; i++ {
+		delay *= 2
+	}
+	return min(delay, maxRetryDelay)
+}
+
+// waitForRetry sleeps for delay and reports false if ctx ended first.
+func waitForRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
