@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Choice data race**: a `When` expression that failed to parse was parsed again by every `Process` call, which wrote the shared clause without synchronization when the re-parse succeeded (e.g. after raising `MaxSimpleInputBytes`). The expression is now parsed once in `When()`; `Process` and `Validate` return the stored parse error.
 - **File consumer memory**: the map of ingested files used to skip duplicate events grew for the consumer's lifetime. It is now capped by the new `maxSeenEntries` option (default 100000, `0` = unlimited); the oldest entries are evicted first, so a long-evicted file that is touched again may be re-ingested.
 - **Exec output memory**: stdout and stderr were buffered without limit, so a command printing gigabytes exhausted memory. Each is now capped by the new `maxOutputSize` option (default 32 MiB like HTTP bodies, `0` = unlimited); the excess is discarded and the new `CamelExecOutputTruncated` header is `true`.
 - **MongoDB find memory**: a `find` without a limit loaded the whole collection into memory. It now returns at most `maxResults` documents (new option, default 10000, `0` = unlimited); when truncated it logs a warning and sets the new `CamelMongoDbResultsTruncated` header to `true`. Raise `maxResults` or page with `CamelMongoDbLimit`/`CamelMongoDbSkip` if you relied on larger results.
