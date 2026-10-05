@@ -21,6 +21,7 @@ const (
 	CamelExecExitValue         = "CamelExecExitValue"         // Process exit code
 	CamelExecStdout            = "CamelExecStdout"            // Stdout content
 	CamelExecStderr            = "CamelExecStderr"            // Stderr content
+	CamelExecOutputTruncated   = "CamelExecOutputTruncated"   // true when stdout or stderr exceeded maxOutputSize
 )
 
 // ExecComponent represents the exec component
@@ -117,7 +118,7 @@ func NewExecComponent() *ExecComponent {
 }
 
 // CreateEndpoint creates an ExecEndpoint from the URI
-// Format: exec:executable[?args=arg1+arg2&workingDir=/tmp&timeout=5000&outFile=result.txt&useStderrOnEmpty=true&allowHeaderOverride=true&allowedExecutables=ls,du]
+// Format: exec:executable[?args=arg1+arg2&workingDir=/tmp&timeout=5000&outFile=result.txt&useStderrOnEmpty=true&allowHeaderOverride=true&allowedExecutables=ls,du&maxOutputSize=1048576]
 //
 // SECURITY: by default the executable, arguments, working directory and
 // timeout are fixed by the URI. Set allowHeaderOverride=true to let the
@@ -144,6 +145,7 @@ func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		uri:              uri,
 		executable:       executable,
 		useStderrOnEmpty: false,
+		maxOutputSize:    DefaultMaxBodySize,
 	}
 
 	query := parsedURL.Query()
@@ -178,6 +180,14 @@ func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 
+	if val := query.Get("maxOutputSize"); val != "" {
+		v, err := strconv.ParseInt(val, 10, 64)
+		if err != nil || v < 0 {
+			return nil, fmt.Errorf("invalid maxOutputSize %q: must be a non-negative integer", val)
+		}
+		endpoint.maxOutputSize = v
+	}
+
 	for name := range strings.SplitSeq(query.Get("allowedExecutables"), ",") {
 		if name = strings.TrimSpace(name); name != "" {
 			endpoint.allowedExecutables = append(endpoint.allowedExecutables, name)
@@ -198,6 +208,32 @@ type ExecEndpoint struct {
 	useStderrOnEmpty    bool
 	allowHeaderOverride bool     // opt-in: CamelExecCommand* headers may override URI settings
 	allowedExecutables  []string // executables a CamelExecCommandExecutable header may select
+	// maxOutputSize caps the bytes kept from stdout and from stderr (each).
+	// Output beyond it is discarded and CamelExecOutputTruncated is set to
+	// true; 0 means unlimited. Defaults to DefaultMaxBodySize (32 MiB).
+	maxOutputSize int64
+}
+
+// limitedBuffer keeps at most max bytes (max <= 0: unlimited) and silently
+// discards the rest, so a chatty command cannot exhaust memory. Write always
+// reports success: failing it would make the command die on a broken pipe.
+type limitedBuffer struct {
+	buf       bytes.Buffer
+	max       int64
+	truncated bool
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if b.max > 0 {
+		room := b.max - int64(b.buf.Len())
+		if int64(len(p)) > room {
+			p = p[:max(room, 0)]
+			b.truncated = true
+		}
+	}
+	b.buf.Write(p)
+	return n, nil
 }
 
 // URI returns the endpoint URI
@@ -332,9 +368,12 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		cmd.Stdin = strings.NewReader(body)
 	}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+	// Bounded buffers: the command keeps running past the limit, its extra
+	// output is discarded and CamelExecOutputTruncated reports the loss.
+	stdoutBuf := &limitedBuffer{max: p.endpoint.maxOutputSize}
+	stderrBuf := &limitedBuffer{max: p.endpoint.maxOutputSize}
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
 
 	runErr := cmd.Run()
 
@@ -343,8 +382,9 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		exitValue = cmd.ProcessState.ExitCode()
 	}
 
-	stdoutStr := stdoutBuf.String()
-	stderrStr := stderrBuf.String()
+	stdoutStr := stdoutBuf.buf.String()
+	stderrStr := stderrBuf.buf.String()
+	truncated := stdoutBuf.truncated || stderrBuf.truncated
 
 	// If outFile is defined, read the results from this file.
 	// outFile is trusted URI configuration; ValidatePath still rejects
@@ -375,6 +415,7 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		message.SetHeader(CamelExecExitValue, exitValue)
 		message.SetHeader(CamelExecStdout, stdoutStr)
 		message.SetHeader(CamelExecStderr, stderrStr)
+		message.SetHeader(CamelExecOutputTruncated, truncated)
 		message.SetBody(resultBody)
 	}
 

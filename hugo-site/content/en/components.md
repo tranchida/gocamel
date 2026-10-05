@@ -68,6 +68,7 @@ builder.To("file://output")
 | `readLockCheckInterval` | Duration | `100ms`    | Interval between read lock checks                                             |
 | `readLockMinLength`     | int64    | `0`        | Minimum file size in bytes                                                    |
 | `readLockMinAge`        | Duration | `0`        | Minimum file age                                                              |
+| `maxSeenEntries`        | int      | `100000`   | Files remembered to skip duplicate events; oldest evicted first (`0` = unlimited) |
 | `fileExist`             | string   | `Override` | Behavior if destination file exists (`Override`, `Append`, `Fail`, `Ignore`) |
 
 #### Headers
@@ -895,10 +896,11 @@ fmt.Println(exchange.GetOut().GetBody()) // Claude response
 | `system`             | string | `""`     | System prompt                                            |
 | `temperature`         | float  | unset    | Sampling temperature (0.0-1.0)                           |
 | `baseURL`            | string | Anthropic API | Override API base URL (proxies, gateways). Must be `http(s)`. |
+| `allowHeaderOverride` | bool  | `false`  | Allow the `Anthropic*` override headers below to replace the URI settings |
 
 The SDK HTTP client timeout is **60 seconds**.
 
-**Per-message override headers** (In message):
+**Per-message override headers** (In message, honored only with `allowHeaderOverride=true`):
 
 | Header                  | Type   | Description                              |
 |-------------------------|--------|------------------------------------------|
@@ -906,6 +908,13 @@ The SDK HTTP client timeout is **60 seconds**.
 | `AnthropicModel`        | string | Overrides the URI `model`                |
 | `AnthropicMaxTokens`   | string | Overrides the URI `maxTokens`            |
 | `AnthropicTemperature`  | string | Overrides the URI `temperature`         |
+
+> ⚠️ Security: the system prompt, model, token budget and temperature
+> configured in the URI are trusted configuration. The override headers are
+> ignored unless the endpoint opts in with `allowHeaderOverride=true`. Enable it
+> only where headers cannot be influenced by untrusted input: a sender could
+> otherwise replace the system prompt (prompt injection) or pick a costlier
+> model and token budget.
 
 **Out headers** (set on the response):
 
@@ -961,13 +970,20 @@ endpoint, _ := ctx.CreateEndpoint(
 | `keepAlive`  | duration | unset                     | Model retention in memory (e.g. `5m`, `30s`)            |
 | `think`      | string   | unset                     | Reasoning effort: `true`/`false`/`low`/`medium`/`high`/`max` |
 | `format`     | string   | unset                     | Structured output format (e.g. `json`)                   |
+| `allowHeaderOverride` | bool | `false`                | Allow the `OllamaModel` and `OllamaSystem` headers to replace the URI settings |
 
-**Per-message override headers** (In message):
+**Per-message override headers** (In message, honored only with `allowHeaderOverride=true`):
 
 | Header          | Type   | Description                          |
 |-----------------|--------|--------------------------------------|
 | `OllamaModel`   | string | Overrides the URI `model`            |
 | `OllamaSystem`  | string | Overrides the URI `system` (chat/generate) |
+
+> ⚠️ Security: the model and system prompt configured in the URI are trusted
+> configuration. The override headers are ignored unless the endpoint opts in
+> with `allowHeaderOverride=true`. Enable it only where headers cannot be
+> influenced by untrusted input: a sender could otherwise replace the system
+> prompt (prompt injection) or pick another model.
 
 **Out headers** (set on the response):
 
@@ -1288,6 +1304,7 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 | `allowDeleteAll` | bool   | No       | Allow `remove` with an empty filter (default: `false`)                    |
 | `allowUpdateAll` | bool   | No       | Allow `update` with an empty filter, i.e. mass-update the whole collection (default: `false`) |
 | `allowHeaderOverride` | bool | No    | Allow `CamelMongoDbDatabase`, `CamelMongoDbCollection`, `CamelMongoDbOperation` and `CamelMongoDbCriteria` to override the URI configuration (default: `false`) |
+| `maxResults` | int | No | Maximum documents a `find` returns (default: `10000`, `0` = unlimited). Beyond it the result is truncated, a warning is logged and `CamelMongoDbResultsTruncated` is `true` |
 
 For safety, `remove` rejects nil and empty filters. Set `allowDeleteAll=true`
 explicitly only when deleting the entire collection is intentional.
@@ -1320,6 +1337,7 @@ document. Set `allowUpdateAll=true` explicitly only when that is intentional.
 |---------------------------|--------------------------------|
 | `CamelMongoDbResultTotal` | Total documents found/affected |
 | `CamelMongoDbOid`         | ObjectID of inserted document  |
+| `CamelMongoDbResultsTruncated` | `true` when a `find` stopped at `maxResults` |
 
 #### Example
 
@@ -1453,6 +1471,7 @@ builder.To("exec:ls -la")
 | `useStderrOnEmpty`    | bool   | `false` | Use stderr as body when stdout is empty              |
 | `allowHeaderOverride` | bool   | `false` | Allow `CamelExecCommand*` headers to override the URI |
 | `allowedExecutables`  | string | `""`    | Comma-separated bare command names a `CamelExecCommandExecutable` header may select, besides the URI executable |
+| `maxOutputSize`       | int    | `33554432` | Bytes kept from stdout and from stderr (32 MiB, `0` = unlimited); the rest is discarded |
 
 **Per-message overrides (opt-in):**
 
@@ -1491,6 +1510,8 @@ When `allowHeaderOverride=true`, these headers override the URI settings for a s
   compatibility, so an InOut route sees the command output)
 - Header `CamelExecExitValue` = exit code
 - Headers `CamelExecStdout` / `CamelExecStderr` = raw command output
+- Header `CamelExecOutputTruncated` = `true` when stdout or stderr exceeded
+  `maxOutputSize` and was truncated (the command still runs to completion)
 
 ---
 

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -86,12 +87,30 @@ func (e *FileEndpoint) CreateProducer() (gocamel.Producer, error) {
 
 // CreateConsumer creates a File consumer
 func (e *FileEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consumer, error) {
+	maxSeen := DefaultMaxSeenEntries
+	if v := gocamel.GetConfigValue(e.url, "maxSeenEntries"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("invalid maxSeenEntries %q: must be a non-negative integer", v)
+		}
+		maxSeen = n
+	}
 	return &FileConsumer{
-		path:      e.path,
-		url:       e.url,
-		processor: processor,
+		path:           e.path,
+		url:            e.url,
+		processor:      processor,
+		maxSeenEntries: maxSeen,
 	}, nil
 }
+
+// DefaultMaxSeenEntries is the default cap on the consumer's dedup map.
+//
+// The maxSeenEntries URI option bounds how many ingested files the consumer
+// remembers to skip duplicate Create+Write events. When the cap is exceeded the
+// oldest-remembered entries are evicted first (FIFO by first ingestion), so an
+// evicted file that is modified or touched again may be re-ingested. 0 means
+// unlimited (the map grows for the consumer's lifetime).
+const DefaultMaxSeenEntries = 100_000
 
 // FileProducer represents a File producer
 type FileProducer struct {
@@ -273,6 +292,9 @@ type FileConsumer struct {
 	mu        sync.Mutex
 	ignored   map[string]struct{}
 	seen      map[string]fileStamp // last ingested size+mtime; skips Create+Write duplicates
+	seenOrder []string             // insertion order of seen keys, oldest first; guarded by mu
+
+	maxSeenEntries int // cap on len(seen); 0 = unlimited
 }
 
 func (c *FileConsumer) ignoreNext(path string) {
@@ -584,7 +606,15 @@ func (c *FileConsumer) remember(path string, size int64, mod time.Time) {
 	if c.seen == nil {
 		c.seen = make(map[string]fileStamp)
 	}
+	if _, ok := c.seen[path]; !ok {
+		c.seenOrder = append(c.seenOrder, path)
+	}
 	c.seen[path] = fileStamp{size: size, mod: mod}
+	for c.maxSeenEntries > 0 && len(c.seen) > c.maxSeenEntries {
+		delete(c.seen, c.seenOrder[0])
+		c.seenOrder[0] = ""
+		c.seenOrder = c.seenOrder[1:]
+	}
 }
 
 // watchFile reads and processes a single file, then applies post-processing options.

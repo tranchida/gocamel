@@ -33,6 +33,9 @@ func NewAnthropicComponent() *AnthropicComponent {
 //   - system             (optional) System prompt.
 //   - temperature        (optional) 0.0-1.0.
 //   - baseURL            (optional) Override API base URL (proxies, Bedrock-compatible gateways).
+//   - allowHeaderOverride (default false) true to let the AnthropicSystem,
+//     AnthropicModel, AnthropicMaxTokens and AnthropicTemperature headers
+//     replace the configured values per message.
 func (c *AnthropicComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -43,18 +46,28 @@ func (c *AnthropicComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error
 			return nil, fmt.Errorf("invalid anthropic baseURL: %w", err)
 		}
 	}
+
+	allowHeaderOverride := false
+	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
 	return &AnthropicEndpoint{
-		uri:  uri,
-		url:  u,
-		comp: c,
+		uri:                 uri,
+		url:                 u,
+		comp:                c,
+		allowHeaderOverride: allowHeaderOverride,
 	}, nil
 }
 
 // AnthropicEndpoint represents an Anthropic endpoint.
 type AnthropicEndpoint struct {
-	uri  string
-	url  *url.URL
-	comp *AnthropicComponent
+	uri                 string
+	url                 *url.URL
+	comp                *AnthropicComponent
+	allowHeaderOverride bool // opt-in: Anthropic* request headers may override URI settings
 }
 
 // URI returns the endpoint URI with credentials (apiKey, authorizationToken)
@@ -131,30 +144,36 @@ func (p *AnthropicProducer) Stop() error {
 // Send calls the Anthropic Messages API with the exchange body as the user
 // prompt and writes the first text block of the response to the Out message.
 //
-// Per-message overrides via exchange headers:
+// Per-message overrides via exchange headers (only with allowHeaderOverride=true):
 //   - AnthropicSystem       overrides the URI system prompt
 //   - AnthropicModel        overrides the URI model
 //   - AnthropicMaxTokens    overrides the URI maxTokens
-//   - AnthropicTemperature  overrides the URI temperature
+//   - AnthropicTemperature  sets the sampling temperature
+//
+// SECURITY: these headers are honoured only when the endpoint opts in with
+// allowHeaderOverride=true. Enable it only where headers cannot be influenced
+// by untrusted input: they would let a sender replace the system prompt
+// (prompt injection) and pick the model and token budget (cost).
 func (p *AnthropicProducer) Send(exchange *gocamel.Exchange) error {
 	if !p.started {
 		return fmt.Errorf("the Anthropic producer has not been started")
 	}
 
 	prompt := bodyAsString(exchange.GetIn().GetBody())
+	override := p.endpoint.allowHeaderOverride
 
 	system := p.system
-	if v, ok := getStringHeader(exchange, "AnthropicSystem"); ok && v != "" {
+	if v, ok := getStringHeader(exchange, "AnthropicSystem"); override && ok && v != "" {
 		system = v
 	}
 
 	model := p.model
-	if v, ok := getStringHeader(exchange, "AnthropicModel"); ok && v != "" {
+	if v, ok := getStringHeader(exchange, "AnthropicModel"); override && ok && v != "" {
 		model = anthropic.Model(v)
 	}
 
 	maxTokens := p.maxTokens
-	if v, ok := getStringHeader(exchange, "AnthropicMaxTokens"); ok && v != "" {
+	if v, ok := getStringHeader(exchange, "AnthropicMaxTokens"); override && ok && v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			maxTokens = n
 		}
@@ -170,7 +189,7 @@ func (p *AnthropicProducer) Send(exchange *gocamel.Exchange) error {
 	if system != "" {
 		params.System = []anthropic.TextBlockParam{{Text: system}}
 	}
-	if v, ok := getStringHeader(exchange, "AnthropicTemperature"); ok && v != "" {
+	if v, ok := getStringHeader(exchange, "AnthropicTemperature"); override && ok && v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			params.Temperature = anthropic.Float(f)
 		}

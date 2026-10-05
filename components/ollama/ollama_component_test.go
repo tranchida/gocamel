@@ -112,7 +112,7 @@ func TestOllamaProducer_Chat(t *testing.T) {
 func TestOllamaProducer_Chat_SystemFromHeader(t *testing.T) {
 	stub := newStubServer(t, http.StatusOK, `{"model":"m","created_at":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":"ok"},"done":true,"done_reason":"stop"}`)
 
-	p := producerForTest(t, "ollama:chat?model=m&host="+stub.URL)
+	p := producerForTest(t, "ollama:chat?model=m&allowHeaderOverride=true&host="+stub.URL)
 	require.NoError(t, p.Start(context.Background()))
 
 	ex := gocamel.NewExchange(context.Background())
@@ -132,7 +132,7 @@ func TestOllamaProducer_Chat_SystemFromHeader(t *testing.T) {
 func TestOllamaProducer_Chat_ModelOverrideHeader(t *testing.T) {
 	stub := newStubServer(t, http.StatusOK, `{"model":"phi3","created_at":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":"ok"},"done":true,"done_reason":"stop"}`)
 
-	p := producerForTest(t, "ollama:chat?model=llama3.1&host="+stub.URL)
+	p := producerForTest(t, "ollama:chat?model=llama3.1&allowHeaderOverride=true&host="+stub.URL)
 	require.NoError(t, p.Start(context.Background()))
 
 	ex := gocamel.NewExchange(context.Background())
@@ -172,7 +172,7 @@ func TestOllamaProducer_Generate(t *testing.T) {
 func TestOllamaProducer_Generate_SystemHeaderOverride(t *testing.T) {
 	stub := newStubServer(t, http.StatusOK, `{"model":"m","created_at":"2026-01-01T00:00:00Z","response":"ok","done":true,"done_reason":"stop"}`)
 
-	p := producerForTest(t, "ollama:generate?model=m&system=uri-system&host="+stub.URL)
+	p := producerForTest(t, "ollama:generate?model=m&system=uri-system&allowHeaderOverride=true&host="+stub.URL)
 	require.NoError(t, p.Start(context.Background()))
 
 	ex := gocamel.NewExchange(context.Background())
@@ -183,6 +183,43 @@ func TestOllamaProducer_Generate_SystemHeaderOverride(t *testing.T) {
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
 	assert.Equal(t, "header-system", got["system"])
+}
+
+func TestOllamaProducer_Chat_HeaderOverridesIgnoredByDefault(t *testing.T) {
+	stub := newStubServer(t, http.StatusOK, `{"model":"llama3.1","created_at":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":"ok"},"done":true,"done_reason":"stop"}`)
+
+	p := producerForTest(t, "ollama:chat?model=llama3.1&host="+stub.URL)
+	require.NoError(t, p.Start(context.Background()))
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.SetBody("hi")
+	ex.GetIn().SetHeader("OllamaModel", "phi3")
+	ex.GetIn().SetHeader("OllamaSystem", "header-system")
+	require.NoError(t, p.Send(ex))
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	assert.Equal(t, "llama3.1", got["model"])
+	msgs, _ := got["messages"].([]any)
+	require.Len(t, msgs, 1, "the system header must not add a system message")
+}
+
+func TestOllamaProducer_Generate_SystemHeaderIgnoredByDefault(t *testing.T) {
+	stub := newStubServer(t, http.StatusOK, `{"model":"m","created_at":"2026-01-01T00:00:00Z","response":"ok","done":true,"done_reason":"stop"}`)
+
+	p := producerForTest(t, "ollama:generate?model=m&system=uri-system&host="+stub.URL)
+	require.NoError(t, p.Start(context.Background()))
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.SetBody("hi")
+	ex.GetIn().SetHeader("OllamaSystem", "header-system")
+	ex.GetIn().SetHeader("OllamaModel", "phi3")
+	require.NoError(t, p.Send(ex))
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	assert.Equal(t, "uri-system", got["system"])
+	assert.Equal(t, "m", got["model"])
 }
 
 func TestOllamaProducer_Embed(t *testing.T) {

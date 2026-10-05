@@ -372,3 +372,45 @@ func TestExecProducer_RejectsTraversingOutFile(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "outFile")
 }
+
+func TestExecProducer_Send_BoundsOutputSize(t *testing.T) {
+	endpoint, err := NewExecComponent().CreateEndpoint("exec:cat?maxOutputSize=1024")
+	require.NoError(t, err)
+	producer, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	exchange := NewExchange(context.Background())
+	exchange.GetIn().SetBody(strings.Repeat("a", 100_000))
+	require.NoError(t, producer.Send(exchange))
+
+	stdout, _ := exchange.GetOut().GetHeader(CamelExecStdout)
+	assert.Len(t, stdout, 1024)
+	assert.Len(t, exchange.GetOut().GetBody(), 1024)
+	truncated, _ := exchange.GetOut().GetHeader(CamelExecOutputTruncated)
+	assert.Equal(t, true, truncated)
+}
+
+func TestExecProducer_Send_OutputUnderLimitNotTruncated(t *testing.T) {
+	endpoint, err := NewExecComponent().CreateEndpoint("exec:cat?maxOutputSize=1024")
+	require.NoError(t, err)
+	producer, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	exchange := NewExchange(context.Background())
+	exchange.GetIn().SetBody("hello")
+	require.NoError(t, producer.Send(exchange))
+
+	assert.Equal(t, "hello", exchange.GetOut().GetBody())
+	truncated, _ := exchange.GetOut().GetHeader(CamelExecOutputTruncated)
+	assert.Equal(t, false, truncated)
+}
+
+func TestExecComponent_MaxOutputSizeOption(t *testing.T) {
+	endpoint, err := NewExecComponent().CreateEndpoint("exec:cat")
+	require.NoError(t, err)
+	assert.Equal(t, int64(DefaultMaxBodySize), endpoint.(*ExecEndpoint).maxOutputSize)
+
+	endpoint, err = NewExecComponent().CreateEndpoint("exec:cat?maxOutputSize=0")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), endpoint.(*ExecEndpoint).maxOutputSize)
+}

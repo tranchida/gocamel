@@ -10,10 +10,13 @@ type ChoiceProcessor struct {
 	otherwise Processor
 }
 
-// WhenClause represents a single when condition with its associated processor
+// WhenClause represents a single when condition with its associated processor.
+// The expression is parsed once in When(); template and parseErr are
+// immutable afterwards, so Process can run concurrently without locking.
 type WhenClause struct {
 	Expression string
 	template   *SimpleTemplate
+	parseErr   error // set when the expression failed to parse; template is nil
 	processor  Processor
 }
 
@@ -27,16 +30,10 @@ func NewChoiceProcessor() *ChoiceProcessor {
 // When adds a new condition with a processor
 func (cp *ChoiceProcessor) When(expression string, processor Processor) *ChoiceProcessor {
 	template, err := ParseSimpleTemplate(expression)
-	if err != nil {
-		cp.whens = append(cp.whens, &WhenClause{
-			Expression: expression,
-			processor:  processor,
-		})
-		return cp
-	}
 	cp.whens = append(cp.whens, &WhenClause{
 		Expression: expression,
 		template:   template,
+		parseErr:   err,
 		processor:  processor,
 	})
 	return cp
@@ -74,19 +71,15 @@ func (cp *ChoiceProcessor) childProcessors() []Processor {
 	return out
 }
 
-// Validate pre-parses every When-clause expression so a malformed Simple
-// template is reported at build time (typically from Route.Validate) instead
-// of at the first matching message. Returns the first parse failure.
+// Validate reports the parse failure recorded by When() for any When-clause
+// expression, so a malformed Simple template is reported at build time
+// (typically from Route.Validate) instead of at the first matching message.
+// Returns the first parse failure.
 func (cp *ChoiceProcessor) Validate() error {
 	for i, when := range cp.whens {
-		if when.template != nil {
-			continue
+		if when.parseErr != nil {
+			return fmt.Errorf("choice when[%d] %q: %w", i, when.Expression, when.parseErr)
 		}
-		template, err := ParseSimpleTemplate(when.Expression)
-		if err != nil {
-			return fmt.Errorf("choice when[%d] %q: %w", i, when.Expression, err)
-		}
-		when.template = template
 	}
 	return nil
 }
@@ -94,13 +87,9 @@ func (cp *ChoiceProcessor) Validate() error {
 // Process implements the Processor interface
 func (cp *ChoiceProcessor) Process(exchange *Exchange) error { // Evaluate When clauses in order
 	for _, when := range cp.whens {
-		// Parse template if not already done
-		if when.template == nil {
-			template, err := ParseSimpleTemplate(when.Expression)
-			if err != nil {
-				return fmt.Errorf("failed to parse when expression '%s': %w", when.Expression, err)
-			}
-			when.template = template
+		// Never re-parse here: Process runs on concurrent consumer goroutines.
+		if when.parseErr != nil {
+			return fmt.Errorf("failed to parse when expression '%s': %w", when.Expression, when.parseErr)
 		}
 
 		// Evaluate condition

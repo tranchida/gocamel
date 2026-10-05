@@ -68,6 +68,7 @@ builder.To("file://output")
 | `readLockCheckInterval` | Duration | `100ms`    | Intervalle entre les vérifications du verrou                                          |
 | `readLockMinLength`     | int64    | `0`        | Taille minimale du fichier en octets                                                  |
 | `readLockMinAge`        | Duration | `0`        | Âge minimal du fichier                                                                |
+| `maxSeenEntries`        | int      | `100000`   | Fichiers mémorisés pour ignorer les événements en double ; les plus anciens sont évincés en premier (`0` = illimité) |
 | `fileExist`             | string   | `Override` | Comportement si le fichier destination existe (`Override`, `Append`, `Fail`, `Ignore`) |
 
 #### En-têtes
@@ -911,10 +912,11 @@ fmt.Println(exchange.GetOut().GetBody()) // Réponse de Claude
 | `system`             | string | `""`        | Prompt système                                                |
 | `temperature`         | float  | non défini  | Température d'échantillonnage (0.0-1.0)                       |
 | `baseURL`            | string | API Anthropic | URL de base personnalisée (proxies, passerelles). Doit être `http(s)`. |
+| `allowHeaderOverride` | bool  | `false`     | Autorise les en-têtes de surcharge `Anthropic*` ci-dessous à remplacer la configuration de l'URI |
 
 Le timeout HTTP du SDK est de **60 secondes**.
 
-**En-têtes de surcharge par message** (message In) :
+**En-têtes de surcharge par message** (message In, pris en compte uniquement avec `allowHeaderOverride=true`) :
 
 | En-tête                   | Type   | Description                                |
 |---------------------------|--------|--------------------------------------------|
@@ -922,6 +924,14 @@ Le timeout HTTP du SDK est de **60 secondes**.
 | `AnthropicModel`          | string | Surcharge le `model` de l'URI               |
 | `AnthropicMaxTokens`     | string | Surcharge le `maxTokens` de l'URI           |
 | `AnthropicTemperature`    | string | Surcharge le `temperature` de l'URI         |
+
+> ⚠️ Sécurité : le prompt système, le modèle, le budget de tokens et la
+> température configurés dans l'URI sont de la configuration de confiance. Les
+> en-têtes de surcharge sont ignorés sauf si l'endpoint l'autorise avec
+> `allowHeaderOverride=true`. Ne l'activez que lorsque les en-têtes ne peuvent
+> pas être influencés par une entrée non fiable : un émetteur pourrait sinon
+> remplacer le prompt système (injection de prompt) ou choisir un modèle et un
+> budget de tokens plus coûteux.
 
 **En-têtes Out** (définis sur la réponse) :
 
@@ -977,13 +987,21 @@ endpoint, _ := ctx.CreateEndpoint(
 | `keepAlive`  | durée   | non défini                | Rétention du modèle en mémoire (ex. `5m`, `30s`)             |
 | `think`      | string  | non défini                | Effort de raisonnement : `true`/`false`/`low`/`medium`/`high`/`max` |
 | `format`     | string  | non défini                | Format de sortie structuré (ex. `json`)                      |
+| `allowHeaderOverride` | bool | `false`                | Autorise les en-têtes `OllamaModel` et `OllamaSystem` à remplacer la configuration de l'URI |
 
-**En-têtes de surcharge par message** (message In) :
+**En-têtes de surcharge par message** (message In, pris en compte uniquement avec `allowHeaderOverride=true`) :
 
 | En-tête         | Type   | Description                                  |
 |-----------------|--------|----------------------------------------------|
 | `OllamaModel`   | string | Surcharge le `model` de l'URI                  |
 | `OllamaSystem`  | string | Surcharge le `system` de l'URI (chat/generate) |
+
+> ⚠️ Sécurité : le modèle et le prompt système configurés dans l'URI sont de la
+> configuration de confiance. Les en-têtes de surcharge sont ignorés sauf si
+> l'endpoint l'autorise avec `allowHeaderOverride=true`. Ne l'activez que
+> lorsque les en-têtes ne peuvent pas être influencés par une entrée non
+> fiable : un émetteur pourrait sinon remplacer le prompt système (injection de
+> prompt) ou choisir un autre modèle.
 
 **En-têtes Out** (définis sur la réponse) :
 
@@ -1310,6 +1328,7 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 | `allowDeleteAll` | bool   | Non    | Autorise `remove` avec un filtre vide (défaut : `false`)                 |
 | `allowUpdateAll` | bool   | Non    | Autorise `update` avec un filtre vide, c'est-à-dire une mise à jour massive de toute la collection (défaut : `false`) |
 | `allowHeaderOverride` | bool | Non | Autorise `CamelMongoDbDatabase`, `CamelMongoDbCollection`, `CamelMongoDbOperation` et `CamelMongoDbCriteria` à remplacer la configuration de l'URI (défaut : `false`) |
+| `maxResults` | int | Non | Nombre maximal de documents renvoyés par un `find` (défaut : `10000`, `0` = illimité). Au-delà, le résultat est tronqué, un avertissement est journalisé et `CamelMongoDbResultsTruncated` vaut `true` |
 
 Par sécurité, `remove` refuse les filtres nuls ou vides. Définissez
 `allowDeleteAll=true` explicitement uniquement si la suppression de toute la
@@ -1343,6 +1362,7 @@ explicitement uniquement si c'est intentionnel.
 |---------------------------|-----------------------------------|
 | `CamelMongoDbResultTotal` | Total des documents trouvés/affectés |
 | `CamelMongoDbOid`         | ObjectID du document inséré       |
+| `CamelMongoDbResultsTruncated` | `true` quand un `find` s'est arrêté à `maxResults` |
 
 #### Exemple
 
@@ -1477,6 +1497,7 @@ builder.To("exec:ls -la")
 | `useStderrOnEmpty`    | bool   | `false` | Utiliser stderr comme corps quand stdout est vide    |
 | `allowHeaderOverride` | bool   | `false` | Autoriser les headers `CamelExecCommand*` à surcharger l'URI |
 | `allowedExecutables`  | string | `""`    | Noms de commandes simples, séparés par des virgules, qu'un header `CamelExecCommandExecutable` peut choisir en plus de l'exécutable de l'URI |
+| `maxOutputSize`       | int    | `33554432` | Octets conservés de stdout et de stderr (32 Mio, `0` = illimité) ; le reste est ignoré |
 
 **Surcharges par message (opt-in) :**
 
@@ -1516,6 +1537,8 @@ Quand `allowHeaderOverride=true`, ces headers surchargent les paramètres URI po
   rétrocompatibilité, afin qu'une route InOut voie la sortie de la commande)
 - Header `CamelExecExitValue` = code de sortie
 - Headers `CamelExecStdout` / `CamelExecStderr` = sortie brute de la commande
+- Header `CamelExecOutputTruncated` = `true` quand stdout ou stderr a dépassé
+  `maxOutputSize` et a été tronqué (la commande s'exécute tout de même jusqu'au bout)
 
 ---
 
