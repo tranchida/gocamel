@@ -68,6 +68,7 @@ builder.To("file://output")
 | `readLockCheckInterval` | Duration | `100ms`    | Intervalle entre les vérifications du verrou                                          |
 | `readLockMinLength`     | int64    | `0`        | Taille minimale du fichier en octets                                                  |
 | `readLockMinAge`        | Duration | `0`        | Âge minimal du fichier                                                                |
+| `maxSeenEntries`        | int      | `100000`   | Fichiers mémorisés pour ignorer les événements en double ; les plus anciens sont évincés en premier (`0` = illimité) |
 | `fileExist`             | string   | `Override` | Comportement si le fichier destination existe (`Override`, `Append`, `Fail`, `Ignore`) |
 
 #### En-têtes

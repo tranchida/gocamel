@@ -68,6 +68,7 @@ builder.To("file://output")
 | `readLockCheckInterval` | Duration | `100ms`    | Interval between read lock checks                                             |
 | `readLockMinLength`     | int64    | `0`        | Minimum file size in bytes                                                    |
 | `readLockMinAge`        | Duration | `0`        | Minimum file age                                                              |
+| `maxSeenEntries`        | int      | `100000`   | Files remembered to skip duplicate events; oldest evicted first (`0` = unlimited) |
 | `fileExist`             | string   | `Override` | Behavior if destination file exists (`Override`, `Append`, `Fail`, `Ignore`) |
 
 #### Headers

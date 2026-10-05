@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **File consumer memory**: the map of ingested files used to skip duplicate events grew for the consumer's lifetime. It is now capped by the new `maxSeenEntries` option (default 100000, `0` = unlimited); the oldest entries are evicted first, so a long-evicted file that is touched again may be re-ingested.
+
 ## [v0.14.2] - 2026-10-03
 
 Release fix for the v0.14.0 and v0.14.1 module tags. No code change in the core.
