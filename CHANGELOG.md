@@ -19,6 +19,22 @@ All notable changes to this project are documented in this file.
   if err := mock.Wait(time.Second); err != nil { t.Fatal(err) }
   ```
 
+- **OnException**: `RouteBuilder.OnException(targets...)` declares route-scoped error handlers selected by error type, like Apache Camel's `onException`. Error values match with `errors.Is`; non-nil pointers to error or interface types (`ErrorType[*MyError]()`, `new(*MyError)`) match with `errors.As`. The first matching clause in declaration order wins and replaces the route's `ErrorHandler` for that error: the failed step is redelivered (`MaximumRedeliveries`, `RedeliveryDelay`, exponential `BackOffMultiplier` capped by `MaximumRedeliveryDelay`), then the clause's processors run (`Process`, `ProcessFunc`, `To`, `SetBody`, `SetHeader`, `Log`). `Handled(true)` stops routing without returning an error to the sender; `Continued(true)` resumes with the next step. Unmatched errors and already dead-lettered exchanges keep the existing `ErrorHandler`/`DeadLetterChannel` behaviour. A missing or invalid target fails `Build()`. Context-scoped clauses and `OnWhen` are not supported yet.
+
+  ```go
+  ctx.CreateRouteBuilder().
+      OnException(gocamel.ErrorType[*ValidationError]()).
+          Handled(true).
+          To("direct:invalid").
+      End().
+      OnException(io.ErrUnexpectedEOF).
+          MaximumRedeliveries(3).
+          RedeliveryDelay(100 * time.Millisecond).
+      End().
+      From("direct:in").
+      To("http://backend/api")
+  ```
+
 ## [v0.15.0] - 2026-10-05
 
 Security and resilience release with the fixes from a dual-model code review: NATS and STOMP consumers survive broker errors, mail and STOMP enforce network timeouts, the file consumer, `exec` and MongoDB `find` bound their memory, the Anthropic and Ollama header overrides now require `allowHeaderOverride=true` (**breaking**, see Security), and a Choice data race, Kafka commit retries, SMTP retry classification and the SFTP move are fixed. New options: STOMP `connectTimeout`, file `maxSeenEntries`, exec `maxOutputSize` and MongoDB `maxResults`.

@@ -88,11 +88,12 @@ type Route struct {
 	processors     []Processor
 	lazyProducers  []*lazyProducer // static To() producers; stopped at Route.Stop().
 	started        bool
-	starting       bool         // guarded by startLock
-	stopping       bool         // guarded by startLock
-	startLock      sync.RWMutex // Protects started, starting and stopping.
-	err            error        // Accumulated during construction, surfaced at Start().
-	errorHandler   ErrorHandler // Error handler for this route (nil means propagate).
+	starting       bool                 // guarded by startLock
+	stopping       bool                 // guarded by startLock
+	startLock      sync.RWMutex         // Protects started, starting and stopping.
+	err            error                // Accumulated during construction, surfaced at Start().
+	errorHandler   ErrorHandler         // Error handler for this route (nil means propagate).
+	onExceptions   []*onExceptionClause // OnException clauses in declaration order; read-only once started.
 	interceptors   []RouteInterceptor
 	process        func(*Exchange) error // doProcess wrapped by the interceptor chain.
 	messageHistory bool                  // Whether Message History is enabled for this route.
@@ -248,7 +249,8 @@ func (r *Route) doProcess(exchange *Exchange) error {
 // to resume routing after a completion timeout without re-running processors
 // that already handled the exchange.
 func (r *Route) processFrom(exchange *Exchange, start int) error {
-	retries := 0 // consecutive retries of processor i requested by the error handler
+	retries := 0      // consecutive retries of processor i requested by the error handler
+	redeliveries := 0 // redeliveries of processor i requested by an OnException clause
 	for i := start; i < len(r.processors); {
 		processor := r.processors[i]
 		propagateOutToInAndReset(exchange)
@@ -282,6 +284,23 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 			if errors.Is(err, ErrStopRouting) {
 				return err // StopRouting is a control signal, not a failure
 			}
+			// A matching OnException clause takes precedence over the
+			// route's ErrorHandler for this error.
+			if clause := r.matchOnException(exchange, err); clause != nil {
+				outcome, outcomeErr := clause.handle(r, exchange, err, redeliveries)
+				switch outcome {
+				case onExceptionRedeliver:
+					redeliveries++
+					continue
+				case onExceptionContinue:
+					r.resetErrorHandlerState(exchange)
+					retries, redeliveries = 0, 0
+					i++
+					continue
+				default:
+					return outcomeErr
+				}
+			}
 			// Delegate to error handler if configured
 			if r.errorHandler != nil {
 				if handleErr := r.errorHandler.HandleError(exchange, err); handleErr != nil {
@@ -299,7 +318,7 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 			return err
 		}
 		r.resetErrorHandlerState(exchange)
-		retries = 0
+		retries, redeliveries = 0, 0
 		i++
 	}
 	return nil
@@ -537,10 +556,13 @@ func (r *Route) forEachAggregator(visit func(*Aggregator)) {
 }
 
 // forEachProcessor visits every processor of the route depth-first, a
-// container before its children.
+// container before its children, then the OnException handlers.
 func (r *Route) forEachProcessor(visit func(Processor)) {
 	for _, processor := range r.processors {
 		walkProcessors(processor, visit)
+	}
+	for _, clause := range r.onExceptions {
+		walkProcessors(clause.handler, visit)
 	}
 }
 

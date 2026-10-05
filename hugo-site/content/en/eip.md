@@ -970,6 +970,70 @@ builder.From("http://0.0.0.0:8080/orders").
     To("direct:process")
 ```
 
+### OnException
+
+`OnException` declares route-scoped handlers selected **by error type**, like
+Apache Camel's `onException`. Each clause lists one or more targets:
+
+- an **error value** (a sentinel such as `io.EOF`) matches with `errors.Is`;
+- a **non-nil pointer to an error or interface type** matches with
+  `errors.As`: `gocamel.ErrorType[*MyError]()` (same as `new(*MyError)`),
+  `&MyValueError{}` for a value-receiver error, `gocamel.ErrorType[net.Error]()`.
+  A `&MyError{}` whose `Error` method has a pointer receiver is an error value
+  and only matches itself.
+
+A missing, `nil` or unsupported target fails `Build()`.
+
+```go
+builder.
+    OnException(gocamel.ErrorType[*ValidationError]()).
+        Handled(true).
+        SetBody("invalid order").
+    End().
+    OnException(io.ErrUnexpectedEOF, syscall.ECONNRESET).
+        MaximumRedeliveries(3).
+        RedeliveryDelay(100 * time.Millisecond).
+        To("direct:recovery").
+    End().
+    From("direct:orders").
+    To("http://backend/orders")
+```
+
+**How it works:**
+
+1. When a top-level route step fails, the clauses are tried in **declaration
+   order** and the **first** matching one wins: declare specific clauses first.
+2. A matched clause **replaces** the route's `ErrorHandler` for that error. The
+   failed step is redelivered up to `MaximumRedeliveries` times (default 0),
+   waiting `RedeliveryDelay` (default 1 s) multiplied by `BackOffMultiplier`
+   (default 2, use 1 for a fixed delay) at each attempt, capped by
+   `MaximumRedeliveryDelay` (default 60 s). The wait aborts when the exchange's
+   context is cancelled.
+3. If the step still fails, the clause's processors (`Process`, `ProcessFunc`,
+   `To`, `SetBody`, `SetHeader`, `Log`) run on the message the step received,
+   with the `CamelExceptionCaught`, `CamelRedeliveryCounter` and
+   `CamelFailureRouteId` properties set.
+4. Then:
+   - `Handled(true)`: routing **stops** (no further route step runs) and **no
+     error reaches the consumer or sender**, which receives the exchange as
+     left by the handler. The route returns an error wrapping
+     `ErrStopRouting` and the original error.
+   - `Continued(true)`: routing **continues with the next step** as if the
+     error had not occurred; that step receives the handler's output.
+     `Continued` takes precedence over `Handled`.
+   - neither (default): the original error propagates.
+5. If a handler processor fails, its error (wrapping the original one) is
+   returned instead.
+
+Unmatched errors keep the `ErrorHandler`/`DeadLetterChannel` behaviour. An
+exchange already dead-lettered (`IsDeadLettered`), e.g. by a route called via
+`direct:` that propagates the original error, never triggers a clause: its
+failure has already been taken care of.
+
+**Limitations:** clauses are route-scoped (no context-wide `OnException` yet),
+match errors returned by top-level steps only — a redelivery re-runs the whole
+top-level step, e.g. a whole `Split` block — and have no `OnWhen` predicate.
+
 ---
 
 ## Transactions & Sagas
