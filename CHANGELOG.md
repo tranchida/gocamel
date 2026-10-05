@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **Anthropic and Ollama header overrides (breaking)**: the `AnthropicSystem`, `AnthropicModel`, `AnthropicMaxTokens` and `AnthropicTemperature` headers, and the `OllamaModel` and `OllamaSystem` headers, are now ignored unless the endpoint sets the new `allowHeaderOverride=true` option, like every other component. On a route fed by untrusted input they let a sender replace the system prompt (prompt injection) or pick the model and token budget (cost). **Migration**: add `allowHeaderOverride=true` to the endpoint URI to restore the old behaviour, only where headers cannot be influenced by untrusted input.
+
 ### Fixed
 
 - **File consumer memory**: the map of ingested files used to skip duplicate events grew for the consumer's lifetime. It is now capped by the new `maxSeenEntries` option (default 100000, `0` = unlimited); the oldest entries are evicted first, so a long-evicted file that is touched again may be re-ingested.

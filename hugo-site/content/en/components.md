@@ -895,10 +895,11 @@ fmt.Println(exchange.GetOut().GetBody()) // Claude response
 | `system`             | string | `""`     | System prompt                                            |
 | `temperature`         | float  | unset    | Sampling temperature (0.0-1.0)                           |
 | `baseURL`            | string | Anthropic API | Override API base URL (proxies, gateways). Must be `http(s)`. |
+| `allowHeaderOverride` | bool  | `false`  | Allow the `Anthropic*` override headers below to replace the URI settings |
 
 The SDK HTTP client timeout is **60 seconds**.
 
-**Per-message override headers** (In message):
+**Per-message override headers** (In message, honored only with `allowHeaderOverride=true`):
 
 | Header                  | Type   | Description                              |
 |-------------------------|--------|------------------------------------------|
@@ -906,6 +907,13 @@ The SDK HTTP client timeout is **60 seconds**.
 | `AnthropicModel`        | string | Overrides the URI `model`                |
 | `AnthropicMaxTokens`   | string | Overrides the URI `maxTokens`            |
 | `AnthropicTemperature`  | string | Overrides the URI `temperature`         |
+
+> ⚠️ Security: the system prompt, model, token budget and temperature
+> configured in the URI are trusted configuration. The override headers are
+> ignored unless the endpoint opts in with `allowHeaderOverride=true`. Enable it
+> only where headers cannot be influenced by untrusted input: a sender could
+> otherwise replace the system prompt (prompt injection) or pick a costlier
+> model and token budget.
 
 **Out headers** (set on the response):
 
@@ -961,13 +969,20 @@ endpoint, _ := ctx.CreateEndpoint(
 | `keepAlive`  | duration | unset                     | Model retention in memory (e.g. `5m`, `30s`)            |
 | `think`      | string   | unset                     | Reasoning effort: `true`/`false`/`low`/`medium`/`high`/`max` |
 | `format`     | string   | unset                     | Structured output format (e.g. `json`)                   |
+| `allowHeaderOverride` | bool | `false`                | Allow the `OllamaModel` and `OllamaSystem` headers to replace the URI settings |
 
-**Per-message override headers** (In message):
+**Per-message override headers** (In message, honored only with `allowHeaderOverride=true`):
 
 | Header          | Type   | Description                          |
 |-----------------|--------|--------------------------------------|
 | `OllamaModel`   | string | Overrides the URI `model`            |
 | `OllamaSystem`  | string | Overrides the URI `system` (chat/generate) |
+
+> ⚠️ Security: the model and system prompt configured in the URI are trusted
+> configuration. The override headers are ignored unless the endpoint opts in
+> with `allowHeaderOverride=true`. Enable it only where headers cannot be
+> influenced by untrusted input: a sender could otherwise replace the system
+> prompt (prompt injection) or pick another model.
 
 **Out headers** (set on the response):
 

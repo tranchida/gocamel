@@ -163,7 +163,7 @@ func TestAnthropicProducer_Send_TextResponse(t *testing.T) {
 func TestAnthropicProducer_Send_SystemFromHeader(t *testing.T) {
 	stub := newStubServer(t, http.StatusOK, validResponseJSON("ok"))
 
-	p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&system=default-system&baseURL="+stub.URL)
+	p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&system=default-system&allowHeaderOverride=true&baseURL="+stub.URL)
 	require.NoError(t, p.Start(context.Background()))
 
 	ex := gocamel.NewExchange(context.Background())
@@ -181,7 +181,7 @@ func TestAnthropicProducer_Send_SystemFromHeader(t *testing.T) {
 
 func TestAnthropicProducer_Send_TemperatureFromHeader(t *testing.T) {
 	stub := newStubServer(t, http.StatusOK, validResponseJSON("ok"))
-	p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&baseURL="+stub.URL)
+	p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&allowHeaderOverride=true&baseURL="+stub.URL)
 	require.NoError(t, p.Start(context.Background()))
 
 	ex := gocamel.NewExchange(context.Background())
@@ -192,6 +192,47 @@ func TestAnthropicProducer_Send_TemperatureFromHeader(t *testing.T) {
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
 	assert.EqualValues(t, 0.42, got["temperature"])
+}
+
+func TestAnthropicProducer_Send_HeaderOverridesIgnoredByDefault(t *testing.T) {
+	stub := newStubServer(t, http.StatusOK, validResponseJSON("ok"))
+	p := producerForTest(t, "anthropic:messages?apiKey=k&model=uri-model&maxTokens=50&system=uri-system&baseURL="+stub.URL)
+	require.NoError(t, p.Start(context.Background()))
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.SetBody("hi")
+	ex.GetIn().SetHeader("AnthropicSystem", "header-system")
+	ex.GetIn().SetHeader("AnthropicModel", "header-model")
+	ex.GetIn().SetHeader("AnthropicMaxTokens", "4096")
+	ex.GetIn().SetHeader("AnthropicTemperature", "0.42")
+	require.NoError(t, p.Send(ex))
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	assert.Equal(t, "uri-model", got["model"])
+	assert.EqualValues(t, 50, got["max_tokens"])
+	assert.NotContains(t, got, "temperature")
+	sys, _ := got["system"].([]any)
+	require.Len(t, sys, 1)
+	first, _ := sys[0].(map[string]any)
+	assert.Equal(t, "uri-system", first["text"])
+}
+
+func TestAnthropicProducer_Send_HeaderOverridesWithOptIn(t *testing.T) {
+	stub := newStubServer(t, http.StatusOK, validResponseJSON("ok"))
+	p := producerForTest(t, "anthropic:messages?apiKey=k&model=uri-model&maxTokens=50&allowHeaderOverride=true&baseURL="+stub.URL)
+	require.NoError(t, p.Start(context.Background()))
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.SetBody("hi")
+	ex.GetIn().SetHeader("AnthropicModel", "header-model")
+	ex.GetIn().SetHeader("AnthropicMaxTokens", "4096")
+	require.NoError(t, p.Send(ex))
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	assert.Equal(t, "header-model", got["model"])
+	assert.EqualValues(t, 4096, got["max_tokens"])
 }
 
 func TestAnthropicProducer_Send_UsesExchangeContext(t *testing.T) {

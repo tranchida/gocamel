@@ -911,10 +911,11 @@ fmt.Println(exchange.GetOut().GetBody()) // Réponse de Claude
 | `system`             | string | `""`        | Prompt système                                                |
 | `temperature`         | float  | non défini  | Température d'échantillonnage (0.0-1.0)                       |
 | `baseURL`            | string | API Anthropic | URL de base personnalisée (proxies, passerelles). Doit être `http(s)`. |
+| `allowHeaderOverride` | bool  | `false`     | Autorise les en-têtes de surcharge `Anthropic*` ci-dessous à remplacer la configuration de l'URI |
 
 Le timeout HTTP du SDK est de **60 secondes**.
 
-**En-têtes de surcharge par message** (message In) :
+**En-têtes de surcharge par message** (message In, pris en compte uniquement avec `allowHeaderOverride=true`) :
 
 | En-tête                   | Type   | Description                                |
 |---------------------------|--------|--------------------------------------------|
@@ -922,6 +923,14 @@ Le timeout HTTP du SDK est de **60 secondes**.
 | `AnthropicModel`          | string | Surcharge le `model` de l'URI               |
 | `AnthropicMaxTokens`     | string | Surcharge le `maxTokens` de l'URI           |
 | `AnthropicTemperature`    | string | Surcharge le `temperature` de l'URI         |
+
+> ⚠️ Sécurité : le prompt système, le modèle, le budget de tokens et la
+> température configurés dans l'URI sont de la configuration de confiance. Les
+> en-têtes de surcharge sont ignorés sauf si l'endpoint l'autorise avec
+> `allowHeaderOverride=true`. Ne l'activez que lorsque les en-têtes ne peuvent
+> pas être influencés par une entrée non fiable : un émetteur pourrait sinon
+> remplacer le prompt système (injection de prompt) ou choisir un modèle et un
+> budget de tokens plus coûteux.
 
 **En-têtes Out** (définis sur la réponse) :
 
@@ -977,13 +986,21 @@ endpoint, _ := ctx.CreateEndpoint(
 | `keepAlive`  | durée   | non défini                | Rétention du modèle en mémoire (ex. `5m`, `30s`)             |
 | `think`      | string  | non défini                | Effort de raisonnement : `true`/`false`/`low`/`medium`/`high`/`max` |
 | `format`     | string  | non défini                | Format de sortie structuré (ex. `json`)                      |
+| `allowHeaderOverride` | bool | `false`                | Autorise les en-têtes `OllamaModel` et `OllamaSystem` à remplacer la configuration de l'URI |
 
-**En-têtes de surcharge par message** (message In) :
+**En-têtes de surcharge par message** (message In, pris en compte uniquement avec `allowHeaderOverride=true`) :
 
 | En-tête         | Type   | Description                                  |
 |-----------------|--------|----------------------------------------------|
 | `OllamaModel`   | string | Surcharge le `model` de l'URI                  |
 | `OllamaSystem`  | string | Surcharge le `system` de l'URI (chat/generate) |
+
+> ⚠️ Sécurité : le modèle et le prompt système configurés dans l'URI sont de la
+> configuration de confiance. Les en-têtes de surcharge sont ignorés sauf si
+> l'endpoint l'autorise avec `allowHeaderOverride=true`. Ne l'activez que
+> lorsque les en-têtes ne peuvent pas être influencés par une entrée non
+> fiable : un émetteur pourrait sinon remplacer le prompt système (injection de
+> prompt) ou choisir un autre modèle.
 
 **En-têtes Out** (définis sur la réponse) :
 

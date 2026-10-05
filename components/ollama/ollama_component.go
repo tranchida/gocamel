@@ -40,6 +40,8 @@ func NewOllamaComponent() *OllamaComponent {
 //   - keepAlive  (optional duration, e.g. "5m") Model retention in memory.
 //   - think      (optional bool / "low"|"medium"|"high"|"max") Reasoning effort.
 //   - format     (optional, e.g. "json") Structured output format.
+//   - allowHeaderOverride (default false) true to let the OllamaModel and
+//     OllamaSystem headers replace the configured model and system prompt.
 func (c *OllamaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -64,14 +66,23 @@ func (c *OllamaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 			return nil, fmt.Errorf("invalid keepAlive %q: %w", ka, err)
 		}
 	}
-	return &OllamaEndpoint{uri: uri, url: u, comp: c}, nil
+
+	allowHeaderOverride := false
+	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			allowHeaderOverride = b
+		}
+	}
+
+	return &OllamaEndpoint{uri: uri, url: u, comp: c, allowHeaderOverride: allowHeaderOverride}, nil
 }
 
 // OllamaEndpoint represents an Ollama endpoint.
 type OllamaEndpoint struct {
-	uri  string
-	url  *url.URL
-	comp *OllamaComponent
+	uri                 string
+	url                 *url.URL
+	comp                *OllamaComponent
+	allowHeaderOverride bool // opt-in: OllamaModel/OllamaSystem headers may override URI settings
 }
 
 // URI returns the endpoint URI. Ollama URIs carry no credentials, so no
@@ -177,7 +188,7 @@ func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange) error {
 		Stream:   boolPtr(false),
 	}
 	p.applyOptions(req)
-	if v, ok := getStringHeader(exchange, "OllamaSystem"); ok {
+	if v, ok := p.overrideHeader(exchange, "OllamaSystem"); ok {
 		req.Messages = append([]api.Message{{Role: "system", Content: v}}, req.Messages...)
 	}
 
@@ -210,7 +221,7 @@ func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange) error {
 	prompt := bodyAsString(exchange.GetIn().GetBody())
 	model := p.resolveModel(exchange)
 	system := p.system
-	if v, ok := getStringHeader(exchange, "OllamaSystem"); ok {
+	if v, ok := p.overrideHeader(exchange, "OllamaSystem"); ok {
 		system = v
 	}
 
@@ -276,12 +287,25 @@ func (p *OllamaProducer) sendEmbed(exchange *gocamel.Exchange) error {
 }
 
 // resolveModel returns the effective model, allowing per-message override
-// via the OllamaModel header.
+// via the OllamaModel header when allowHeaderOverride is set.
 func (p *OllamaProducer) resolveModel(exchange *gocamel.Exchange) string {
-	if v, ok := getStringHeader(exchange, "OllamaModel"); ok && v != "" {
+	if v, ok := p.overrideHeader(exchange, "OllamaModel"); ok && v != "" {
 		return v
 	}
 	return p.model
+}
+
+// overrideHeader returns a per-message override header.
+//
+// SECURITY: the OllamaModel and OllamaSystem headers are honoured only when
+// the endpoint opts in with allowHeaderOverride=true. Enable it only where
+// headers cannot be influenced by untrusted input: they would let a sender
+// replace the system prompt (prompt injection) and pick the model.
+func (p *OllamaProducer) overrideHeader(exchange *gocamel.Exchange, key string) (string, bool) {
+	if !p.endpoint.allowHeaderOverride {
+		return "", false
+	}
+	return getStringHeader(exchange, key)
 }
 
 // applyOptions mutates the request to carry keepAlive/think/format when set.
