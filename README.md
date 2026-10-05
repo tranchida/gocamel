@@ -4,7 +4,7 @@
 
 **Enterprise Integration Framework for Go**
 
-[![Release](https://img.shields.io/badge/version-v0.15.0-blue)](https://gitlab.com/tranchida/gocamel/-/tags/v0.15.0)
+[![Release](https://img.shields.io/badge/version-v0.16.0-blue)](https://gitlab.com/tranchida/gocamel/-/tags/v0.16.0)
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -37,7 +37,7 @@ provides a powerful DSL for creating integration routes to connect different sys
 
 ## 📦 Installation
 
-Release **v0.15.0** is a security and resilience release: NATS and STOMP consumers recover from broker errors, mail and STOMP enforce network timeouts, the file consumer, `exec` and MongoDB `find` bound their memory, and a Choice data race is fixed. **Breaking**: the Anthropic and Ollama header overrides now require `allowHeaderOverride=true`; read the [CHANGELOG](CHANGELOG.md) and the [v0.15.0 release notes](hugo-site/content/en/releases/v0.15.0.md) before upgrading. For the changed defaults of v0.14.0, see the [v0.14.0 release notes](hugo-site/content/en/releases/v0.14.0.md).
+Release **v0.16.0** is a feature release with no breaking change: the `mock` component and `Route.AdviceWith` for testing routes, `OnException` per-error-type handlers, and a persistent Saga with per-step timeout and opt-in crash recovery. See the [CHANGELOG](CHANGELOG.md) and the [v0.16.0 release notes](hugo-site/content/en/releases/v0.16.0.md). Upgrading from v0.14.x? v0.15.0 made the Anthropic and Ollama header overrides require `allowHeaderOverride=true` (**breaking**): read the [v0.15.0 release notes](hugo-site/content/en/releases/v0.15.0.md) first.
 
 Go **1.27.0 or later** is required for the core, components and examples. The workspace, CI and `.go-version` default to Go 1.27.0.
 
@@ -47,31 +47,31 @@ external runtime dependencies** and builds without CGO (tests use the pure-Go
 `modernc.org/sqlite` driver):
 
 ```bash
-go get gitlab.com/tranchida/gocamel@v0.15.0
+go get gitlab.com/tranchida/gocamel@v0.16.0
 ```
 
 Components that rely on third-party libraries live in their own Go modules —
 you only pull the dependencies of what you actually use:
 
 ```bash
-go get gitlab.com/tranchida/gocamel/components/kafka@v0.15.0     # segmentio/kafka-go
-go get gitlab.com/tranchida/gocamel/components/grpc@v0.15.0      # google.golang.org/grpc
-go get gitlab.com/tranchida/gocamel/components/redis@v0.15.0    # go-redis
-go get gitlab.com/tranchida/gocamel/components/nats@v0.15.0     # nats.go
-go get gitlab.com/tranchida/gocamel/components/mongodb@v0.15.0  # mongo-driver
-go get gitlab.com/tranchida/gocamel/components/mail@v0.15.0     # SMTP/IMAP/POP3
-go get gitlab.com/tranchida/gocamel/components/ftp@v0.15.0
-go get gitlab.com/tranchida/gocamel/components/sftp@v0.15.0
-go get gitlab.com/tranchida/gocamel/components/smb@v0.15.0
-go get gitlab.com/tranchida/gocamel/components/telegram@v0.15.0
-go get gitlab.com/tranchida/gocamel/components/openai@v0.15.0
-go get gitlab.com/tranchida/gocamel/components/anthropic@v0.15.0
-go get gitlab.com/tranchida/gocamel/components/ollama@v0.15.0
-go get gitlab.com/tranchida/gocamel/components/cron@v0.15.0     # robfig/cron
-go get gitlab.com/tranchida/gocamel/components/file@v0.15.0     # fsnotify watcher
-go get gitlab.com/tranchida/gocamel/components/stomp@v0.15.0    # go-stomp (ActiveMQ/JMS)
-go get gitlab.com/tranchida/gocamel/observability/prometheus@v0.15.0
-go get gitlab.com/tranchida/gocamel/observability/otel@v0.15.0
+go get gitlab.com/tranchida/gocamel/components/kafka@v0.16.0     # segmentio/kafka-go
+go get gitlab.com/tranchida/gocamel/components/grpc@v0.16.0      # google.golang.org/grpc
+go get gitlab.com/tranchida/gocamel/components/redis@v0.16.0    # go-redis
+go get gitlab.com/tranchida/gocamel/components/nats@v0.16.0     # nats.go
+go get gitlab.com/tranchida/gocamel/components/mongodb@v0.16.0  # mongo-driver
+go get gitlab.com/tranchida/gocamel/components/mail@v0.16.0     # SMTP/IMAP/POP3
+go get gitlab.com/tranchida/gocamel/components/ftp@v0.16.0
+go get gitlab.com/tranchida/gocamel/components/sftp@v0.16.0
+go get gitlab.com/tranchida/gocamel/components/smb@v0.16.0
+go get gitlab.com/tranchida/gocamel/components/telegram@v0.16.0
+go get gitlab.com/tranchida/gocamel/components/openai@v0.16.0
+go get gitlab.com/tranchida/gocamel/components/anthropic@v0.16.0
+go get gitlab.com/tranchida/gocamel/components/ollama@v0.16.0
+go get gitlab.com/tranchida/gocamel/components/cron@v0.16.0     # robfig/cron
+go get gitlab.com/tranchida/gocamel/components/file@v0.16.0     # fsnotify watcher
+go get gitlab.com/tranchida/gocamel/components/stomp@v0.16.0    # go-stomp (ActiveMQ/JMS)
+go get gitlab.com/tranchida/gocamel/observability/prometheus@v0.16.0
+go get gitlab.com/tranchida/gocamel/observability/otel@v0.16.0
 ```
 
 ```go

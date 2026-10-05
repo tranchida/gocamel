@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [v0.16.0] - 2026-10-05
+
+Feature release adding the `mock` component and route advice (`Route.AdviceWith`) for testing routes, `OnException` route-level per-error-type handlers, and the persistent Saga (`SagaRepository`, per-step timeout, opt-in crash recovery). No breaking change.
+
 ### Added
 
 - **Mock component** (`mock:name`, stdlib, registered by default): a producer-only endpoint that records a deep-copied snapshot of every exchange sent to it, for asserting route output in tests. `CamelContext.GetMockEndpoint("mock:out")` returns the `*MockEndpoint` (`MessageCount`, `Message(i)`, `Body(i)`, `Header(i, name)`, `ExpectedMessageCount(n)` — at least `n` —, `Wait(timeout)`, `Reset`).
@@ -41,6 +45,10 @@ All notable changes to this project are documented in this file.
 ### Fixed
 
 - **Saga**: `ActionFunc(action, nil)` no longer registers a nil function as a compensation (which panicked, recovered, when the step had to be compensated); a nil compensation now means the step has nothing to undo.
+
+### Notes
+
+- Published components and observability modules now require core v0.16.0.
 
 ## [v0.15.0] - 2026-10-05
 
