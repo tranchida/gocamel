@@ -69,6 +69,8 @@ func TestCircuitBreaker_Basic(t *testing.T) {
 	assert.Equal(t, 3, fallbackCalled)
 
 	// 4. Wait for timeout to move to Half-Open
+	// time.Sleep is intentional: Half-Open is evaluated lazily on the next call,
+	// so the open timeout must elapse before sending (no observable state to poll).
 	time.Sleep(150 * time.Millisecond)
 	shouldFail = false
 	send() // success -> closes
@@ -112,6 +114,7 @@ func TestCircuitBreaker_HalfOpenFailure(t *testing.T) {
 	assert.Equal(t, 1, mainCalled)
 
 	// 2. Wait for Half-Open
+	// time.Sleep is intentional: the open timeout must elapse before the next call.
 	time.Sleep(60 * time.Millisecond)
 
 	// 3. Fail in Half-Open -> should open again immediately
@@ -143,6 +146,7 @@ func TestCircuitBreaker_IdleFailuresDoNotOpen(t *testing.T) {
 	cb.SetProcessor(ProcessorFunc(func(*Exchange) error { return errors.New("x") }))
 
 	require.Error(t, cb.Process(NewExchange(context.Background())))
+	// time.Sleep is intentional: the test needs an idle gap longer than the timeout.
 	time.Sleep(60 * time.Millisecond)
 	require.Error(t, cb.Process(NewExchange(context.Background())))
 	// Count reset after idle gap, so the circuit is still closed.

@@ -155,6 +155,7 @@ func TestRecipientList_ParallelProcessing(t *testing.T) {
 		builder := NewRouteBuilder(camel)
 		builder.From("direct:" + targetName).ProcessFunc(func(e *Exchange) error {
 			if targetName == "slow" {
+				// time.Sleep is intentional: simulates a slow recipient to test ordering.
 				time.Sleep(50 * time.Millisecond)
 			}
 			mu.Lock()

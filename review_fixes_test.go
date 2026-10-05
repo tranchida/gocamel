@@ -356,15 +356,14 @@ func TestChildProcessorContainers_ImplementInterface(t *testing.T) {
 
 func waitForHTTP(t *testing.T, url string) {
 	t.Helper()
-	for i := 0; i < 100; i++ {
+	require.Eventually(t, func() bool {
 		resp, err := http.Post(url, "text/plain", nil)
-		if err == nil {
-			resp.Body.Close()
-			return
+		if err != nil {
+			return false
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("server at %s never became ready", url)
+		resp.Body.Close()
+		return true
+	}, 2*time.Second, 20*time.Millisecond, "server at %s never became ready", url)
 }
 
 func TestCamelContext_StartAfterStop(t *testing.T) {

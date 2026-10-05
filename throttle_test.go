@@ -78,6 +78,7 @@ func TestThrottler_ContextCancelledWhileWaiting(t *testing.T) {
 	ex := NewExchange(ctx)
 
 	go func() {
+		// time.Sleep is intentional: cancel while the throttler is waiting.
 		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()

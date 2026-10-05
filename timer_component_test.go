@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTimerComponent_CreateEndpoint(t *testing.T) {
@@ -146,8 +148,9 @@ func TestTimerConsumer_Stop(t *testing.T) {
 		t.Fatalf("Failed to start consumer: %v", err)
 	}
 
-	// Wait a bit, then stop
-	time.Sleep(50 * time.Millisecond)
+	// Wait for at least one tick, then stop
+	assert.Eventually(t, func() bool { return processor.count.Load() > 0 },
+		500*time.Millisecond, 10*time.Millisecond)
 	err = consumer.Stop()
 	if err != nil {
 		t.Fatalf("Failed to stop consumer: %v", err)
@@ -155,6 +158,7 @@ func TestTimerConsumer_Stop(t *testing.T) {
 
 	// Record count and wait a bit more to ensure it stopped
 	countAfterStop := processor.count.Load()
+	// time.Sleep is intentional: asserting absence within a window
 	time.Sleep(50 * time.Millisecond)
 
 	if processor.count.Load() != countAfterStop {

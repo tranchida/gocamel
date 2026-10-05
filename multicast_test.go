@@ -60,6 +60,7 @@ func TestMulticast_Parallel(t *testing.T) {
 		Multicast().
 		ParallelProcessing().
 		ProcessFunc(func(e *Exchange) error {
+			// time.Sleep is intentional: simulates a slow branch to test ordering.
 			time.Sleep(50 * time.Millisecond)
 			mu.Lock()
 			order = append(order, "A")

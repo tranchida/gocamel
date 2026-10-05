@@ -14,7 +14,8 @@ func TestMessageHistory_Enabled(t *testing.T) {
 		From("direct:start").
 		EnableMessageHistory().
 		ProcessFunc(func(e *Exchange) error {
-			time.Sleep(10 * time.Millisecond) // Ensure non-zero execution time
+			// time.Sleep is intentional: ensures a non-zero execution time.
+			time.Sleep(10 * time.Millisecond)
 			return nil
 		}).
 		TransformSimple("Modified: ${body}").
