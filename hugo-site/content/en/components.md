@@ -1453,6 +1453,7 @@ builder.To("exec:ls -la")
 | `useStderrOnEmpty`    | bool   | `false` | Use stderr as body when stdout is empty              |
 | `allowHeaderOverride` | bool   | `false` | Allow `CamelExecCommand*` headers to override the URI |
 | `allowedExecutables`  | string | `""`    | Comma-separated bare command names a `CamelExecCommandExecutable` header may select, besides the URI executable |
+| `maxOutputSize`       | int    | `33554432` | Bytes kept from stdout and from stderr (32 MiB, `0` = unlimited); the rest is discarded |
 
 **Per-message overrides (opt-in):**
 
@@ -1491,6 +1492,8 @@ When `allowHeaderOverride=true`, these headers override the URI settings for a s
   compatibility, so an InOut route sees the command output)
 - Header `CamelExecExitValue` = exit code
 - Headers `CamelExecStdout` / `CamelExecStderr` = raw command output
+- Header `CamelExecOutputTruncated` = `true` when stdout or stderr exceeded
+  `maxOutputSize` and was truncated (the command still runs to completion)
 
 ---
 

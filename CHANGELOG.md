@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file.
 ### Fixed
 
 - **File consumer memory**: the map of ingested files used to skip duplicate events grew for the consumer's lifetime. It is now capped by the new `maxSeenEntries` option (default 100000, `0` = unlimited); the oldest entries are evicted first, so a long-evicted file that is touched again may be re-ingested.
+- **Exec output memory**: stdout and stderr were buffered without limit, so a command printing gigabytes exhausted memory. Each is now capped by the new `maxOutputSize` option (default 32 MiB like HTTP bodies, `0` = unlimited); the excess is discarded and the new `CamelExecOutputTruncated` header is `true`.
 
 ## [v0.14.2] - 2026-10-03
 
