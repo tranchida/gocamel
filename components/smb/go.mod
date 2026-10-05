@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/hirochachacha/go-smb2 v1.1.0
-	gitlab.com/tranchida/gocamel v0.15.0
+	gitlab.com/tranchida/gocamel v0.16.0
 )
 
 require (

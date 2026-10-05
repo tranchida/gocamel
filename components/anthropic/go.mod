@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/anthropics/anthropic-sdk-go v1.57.0
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.15.0
+	gitlab.com/tranchida/gocamel v0.16.0
 )
 
 require (
