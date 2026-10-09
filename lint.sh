@@ -8,6 +8,14 @@ export PATH="$GOPATH/bin:$PATH"
 STATICCHECK_VERSION="2026.2.1"
 GOSEC_VERSION="v2.29.0"
 
+# A linter can only read export data written by a Go no newer than the one it
+# was built with, so rebuild the binaries installed here when Go changes.
+GO_VERSION="$(go env GOVERSION)"
+STAMP="$GOPATH/bin/.built-with-go"
+if [ "$(cat "$STAMP" 2>/dev/null)" != "$GO_VERSION" ]; then
+  rm -f "$GOPATH/bin/staticcheck" "$GOPATH/bin/gosec"
+fi
+
 if ! command -v staticcheck >/dev/null 2>&1; then
   echo "Installing staticcheck ${STATICCHECK_VERSION}..."
   go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
@@ -17,6 +25,9 @@ if ! command -v gosec >/dev/null 2>&1; then
   echo "Installing gosec ${GOSEC_VERSION}..."
   go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
 fi
+
+mkdir -p "$GOPATH/bin"
+echo "$GO_VERSION" > "$STAMP"
 
 has_errors=0
 

@@ -102,13 +102,24 @@ lint:
     - |
       set -e
       export PATH="$GOPATH/bin:$PATH"
-      # Install the linters once (cached across runs via .cache/go/bin).
+      # Install the linters once (cached across runs via .cache/go/bin). The
+      # golang:1.27 image floats across patch releases, and a linter can only
+      # read export data written by a Go no newer than the one it was built
+      # with ("export data version 5 is greater than maximum supported
+      # version 4"). Rebuild the cached binaries when the Go version changes.
+      go_version=$(go env GOVERSION)
+      stamp="$GOPATH/bin/.built-with-go"
+      if [ "$(cat "$stamp" 2>/dev/null)" != "$go_version" ]; then
+        rm -f "$GOPATH/bin/staticcheck" "$GOPATH/bin/gosec"
+      fi
       if ! command -v staticcheck >/dev/null 2>&1; then
         go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
       fi
       if ! command -v gosec >/dev/null 2>&1; then
         go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
       fi
+      mkdir -p "$GOPATH/bin"
+      echo "$go_version" > "$stamp"
       # Lint every module before failing: with set -e the job stopped at the
       # first module with a finding, so the modules after it (including the
       # root module) were never linted in CI.
