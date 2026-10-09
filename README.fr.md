@@ -40,7 +40,7 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 
 La version **v0.16.0** est une version de fonctionnalités sans changement incompatible : le composant `mock` et `Route.AdviceWith` pour tester les routes, les gestionnaires `OnException` par type d'erreur, et une Saga persistante avec timeout par étape et reprise après crash optionnelle. Voir le [CHANGELOG](CHANGELOG.md) et les [notes de version v0.16.0](hugo-site/content/fr/releases/v0.16.0.md). Vous venez de la v0.14.x ? La v0.15.0 a rendu `allowHeaderOverride=true` obligatoire pour les surcharges par en-têtes d'Anthropic et d'Ollama (**changement incompatible**) : lisez d'abord les [notes de version v0.15.0](hugo-site/content/fr/releases/v0.15.0.md).
 
-Go **1.27.0 ou ultérieur** est requis pour le cœur, les composants et les exemples. Le workspace, la CI et `.go-version` utilisent Go 1.27.0 par défaut.
+Go **1.27.0 ou ultérieur** est requis pour le cœur, les composants et les exemples. Le workspace et `.go-version` utilisent Go 1.27.0 par défaut.
 
 Le module core (moteur de routage, EIPs, Simple Language et tous les
 composants sans dépendance externe : direct, seda, chan, timer, http, exec,

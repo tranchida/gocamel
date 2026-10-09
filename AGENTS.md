@@ -314,14 +314,14 @@ go build ./...
 go vet ./...
 go test -race ./...
 
-# CI Parity: build, vet, and test every module in the workspace
+# Full check: build, vet, and test every module in the workspace (there is no CI pipeline)
 for mod in $(find . -name go.mod -not -path '*/.*'); do
   dir=$(dirname "$mod")
   echo "==> Testing module in $dir"
   (cd "$dir" && go build ./... && go vet ./... && go test -race ./...)
 done
 
-# Linting (matches the blocking GitLab CI lint job; ./lint.sh runs it locally)
+# Linting (./lint.sh installs the pinned tools from .tools/lint and lints every module)
 staticcheck ./...
 gosec -exclude-dir=hugo-site ./...
 ```
