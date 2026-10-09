@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- **GitLab CI pipeline** (`.gitlab-ci.yml`): the `go`, `coverage` and `lint` jobs are gone. Run the checks locally before merging: `go build ./... && go vet ./... && go test -race ./...` in each module, and `./lint.sh` for `staticcheck` and `gosec` (installed from the pinned `.tools/lint` module).
+
 ### Added
 
 - **Sample EIP** (`Sample(period)`, `SampleEvery(n)`): lets only a sample of the exchanges through and drops the others silently with `ErrStopRouting`, regardless of their content. `Sample` keeps the first exchange of each period, `SampleEvery` one exchange out of `n` (the first one passes). Unlike `Throttle`, which delays exchanges, `Sample` discards them. No background goroutine: a mutex guards the timestamp or counter. A non-positive period or count is reported by `Route.Validate()`, and `Process` returns an error rather than passing everything.

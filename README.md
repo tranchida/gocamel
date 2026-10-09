@@ -39,7 +39,7 @@ provides a powerful DSL for creating integration routes to connect different sys
 
 Release **v0.16.0** is a feature release with no breaking change: the `mock` component and `Route.AdviceWith` for testing routes, `OnException` per-error-type handlers, and a persistent Saga with per-step timeout and opt-in crash recovery. See the [CHANGELOG](CHANGELOG.md) and the [v0.16.0 release notes](hugo-site/content/en/releases/v0.16.0.md). Upgrading from v0.14.x? v0.15.0 made the Anthropic and Ollama header overrides require `allowHeaderOverride=true` (**breaking**): read the [v0.15.0 release notes](hugo-site/content/en/releases/v0.15.0.md) first.
 
-Go **1.27.0 or later** is required for the core, components and examples. The workspace, CI and `.go-version` default to Go 1.27.0.
+Go **1.27.0 or later** is required for the core, components and examples. The workspace and `.go-version` default to Go 1.27.0.
 
 The core module (routing engine, EIPs, Simple Language and all stdlib-only
 components: direct, seda, chan, timer, http, exec, template, sql, mock) has **zero
