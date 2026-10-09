@@ -337,6 +337,35 @@ builder.From("direct:start").
 
 ---
 
+## Sample
+
+Ne laisse passer qu'un échantillon des exchanges. Contrairement à Throttle, qui retarde les exchanges, Sample **écarte**
+silencieusement les autres, quel que soit leur contenu.
+
+```go
+// Au plus un message par seconde (le premier de chaque période passe)
+builder.From("direct:capteur").
+    Sample(time.Second).
+    To("direct:tableauDeBord").
+    Build()
+
+// Un message sur 100 (le premier passe)
+builder.From("direct:capteur").
+    SampleEvery(100).
+    To("direct:tableauDeBord").
+    Build()
+```
+
+**Notes :**
+
+- Les exchanges écartés s'arrêtent avec `ErrStopRouting` : ils ne sont pas traités comme des échecs
+- Aucune goroutine en arrière-plan : seul un mutex protège l'horodatage ou le compteur
+- `Sample` conserve le premier exchange de chaque période, pas le dernier
+- Une période ou un compteur non positif est signalé par `Route.Validate()` ; `Process` retourne une erreur au lieu de
+  tout laisser passer
+
+---
+
 ## Delay
 
 Met le traitement de l'exchange en pause pour une durée fixe ou calculée dynamiquement. Le sleep respecte l'annulation
@@ -1168,6 +1197,7 @@ builder.From("direct:output").
 | Claim Check         | Routage        | Stocker le payload et passer une référence   |
 | Throttle            | Routage        | Limitation de débit                          |
 | Delay               | Routage        | Pause avant la prochaine étape               |
+| Sample              | Routage        | Garder un échantillon, écarter le reste      |
 | Multicast           | Routage        | Destinations multiples                       |
 | Recipient List      | Routage        | Routage dynamique vers plusieurs destinataires|
 | Routing Slip        | Routage        | Routage séquentiel dynamique                 |

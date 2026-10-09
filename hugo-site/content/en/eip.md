@@ -107,6 +107,35 @@ builder.From("direct:start").
 
 ---
 
+### Sample
+
+Let only a sample of the exchanges through. Unlike Throttle, which delays exchanges, Sample **drops** the others
+silently, regardless of their content.
+
+```go
+// At most one message per second (the first of each period passes)
+builder.From("direct:sensor").
+    Sample(time.Second).
+    To("direct:dashboard").
+    Build()
+
+// One message out of every 100 (the first one passes)
+builder.From("direct:sensor").
+    SampleEvery(100).
+    To("direct:dashboard").
+    Build()
+```
+
+**Notes:**
+
+- Dropped exchanges stop with `ErrStopRouting`: they are not treated as failures
+- No background goroutine: only a mutex guards the timestamp or counter
+- `Sample` keeps the first exchange of each period, not the latest one
+- A non-positive period or count is reported by `Route.Validate()`; `Process` returns an error instead of passing
+  everything
+
+---
+
 ### Delay
 
 Pause exchange processing for a fixed or dynamically computed duration. The sleep respects context cancellation.
@@ -1158,6 +1187,7 @@ builder.From("direct:output").
 | Claim Check         | Routing        | Store payload and pass reference   |
 | Throttle            | Routing        | Rate limiting                      |
 | Delay               | Routing        | Pause before next step             |
+| Sample              | Routing        | Keep a sample, drop the rest       |
 | Multicast           | Routing        | Multiple destinations              |
 | Recipient List      | Routing        | Dynamic recipient routing          |
 | Routing Slip        | Routing        | Dynamic sequential routing         |
