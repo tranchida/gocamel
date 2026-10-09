@@ -1,9 +1,6 @@
 # Variables for Go CI pipeline.
 variables:
   GOPATH: "$CI_PROJECT_DIR/.cache/go"
-  # Pinned linter versions (kept in lockstep across modules).
-  STATICCHECK_VERSION: "2026.2.1"
-  GOSEC_VERSION: "v2.29.0"
 
 stages:
   - test
@@ -94,7 +91,8 @@ lint:
     key:
       files:
         - .gitlab-ci.yml
-      prefix: "lint-tools-${STATICCHECK_VERSION}-${GOSEC_VERSION}-go1.27"
+        - .tools/lint/go.sum
+      prefix: "lint-tools-go1.27"
     paths:
       - .cache/go/bin
       - .cache/go/pkg/mod
@@ -102,12 +100,20 @@ lint:
     - |
       set -e
       export PATH="$GOPATH/bin:$PATH"
-      # Install the linters once (cached across runs via .cache/go/bin).
-      if ! command -v staticcheck >/dev/null 2>&1; then
-        go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
-      fi
-      if ! command -v gosec >/dev/null 2>&1; then
-        go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
+      # Install the linters once (cached across runs via .cache/go/bin). They
+      # are built from .tools/lint/go.mod, which pins the golang.org/x/tools
+      # they use to read the compiler's export data. A linter can only read
+      # export data written by a Go no newer than its x/tools supports
+      # ("export data version 5 is greater than maximum supported version 4"),
+      # and the golang:1.27 image floats across patch releases: bump x/tools in
+      # .tools/lint when a new Go breaks the linters, and rebuild the cached
+      # binaries whenever the Go version changes.
+      go_version=$(go env GOVERSION)
+      stamp="$GOPATH/bin/.built-with-go"
+      if [ "$(cat "$stamp" 2>/dev/null)" != "$go_version" ] ||
+        [ ! -x "$GOPATH/bin/staticcheck" ] || [ ! -x "$GOPATH/bin/gosec" ]; then
+        (cd .tools/lint && GOWORK=off GOBIN="$GOPATH/bin" go install tool)
+        echo "$go_version" > "$stamp"
       fi
       # Lint every module before failing: with set -e the job stopped at the
       # first module with a finding, so the modules after it (including the
@@ -128,7 +134,7 @@ lint:
         # of which are root-module code. Exclude them from the root pass only;
         # the per-module passes below must keep scanning their own files.
         if [ "$dir" = "." ]; then
-          gosec_opts="$gosec_opts -exclude-dir=components -exclude-dir=examples -exclude-dir=observability -exclude-dir=.cache -exclude-dir=.claude"
+          gosec_opts="$gosec_opts -exclude-dir=components -exclude-dir=examples -exclude-dir=observability -exclude-dir=.cache -exclude-dir=.claude -exclude-dir=.tools"
         fi
         (cd "$dir" && gosec $gosec_opts -severity medium ./...) || has_errors=1
       done
