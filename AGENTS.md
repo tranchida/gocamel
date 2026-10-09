@@ -314,7 +314,15 @@ go build ./...
 go vet ./...
 go test -race ./...
 
-# Full check: build, vet, and test every module in the workspace (there is no CI pipeline)
+# Full check: build, vet, and test every module in the workspace, in parallel
+# (there is no CI pipeline). Add --lint to also run ./lint.sh, or pass module
+# directories to check only those.
+./check.sh
+
+# Run it automatically before every push (once per clone); skip with --no-verify:
+git config core.hooksPath .githooks
+
+# Equivalent sequential loop:
 for mod in $(find . -name go.mod -not -path '*/.*'); do
   dir=$(dirname "$mod")
   echo "==> Testing module in $dir"

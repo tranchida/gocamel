@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Runs ./check.sh before every push, since the repository has no CI pipeline.
+#
+# Enable it once per clone:   git config core.hooksPath .githooks
+# Skip it for a single push:  git push --no-verify   (or SKIP_CHECKS=1 git push)
+#
+# Note: the checks run on the working tree, so commit or stash your changes
+# first if you want them to match what is pushed.
+set -u
+
+[ "${SKIP_CHECKS:-0}" = "1" ] && exit 0
+
+# Deleting a remote branch pushes no code: nothing to check.
+only_deletes=1
+zero=0000000000000000000000000000000000000000
+while read -r _ local_sha _ _; do
+  [ "$local_sha" != "$zero" ] && only_deletes=0
+done
+[ "$only_deletes" -eq 1 ] && exit 0
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+echo "pre-push: running ./check.sh (git push --no-verify to skip)"
+if ! ./check.sh; then
+  echo "pre-push: checks failed, push aborted." >&2
+  exit 1
+fi
