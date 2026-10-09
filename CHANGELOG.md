@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Sample EIP** (`Sample(period)`, `SampleEvery(n)`): lets only a sample of the exchanges through and drops the others silently with `ErrStopRouting`, regardless of their content. `Sample` keeps the first exchange of each period, `SampleEvery` one exchange out of `n` (the first one passes). Unlike `Throttle`, which delays exchanges, `Sample` discards them. No background goroutine: a mutex guards the timestamp or counter. A non-positive period or count is reported by `Route.Validate()`, and `Process` returns an error rather than passing everything.
+
 ## [v0.16.0] - 2026-10-05
 
 Feature release adding the `mock` component and route advice (`Route.AdviceWith`) for testing routes, `OnException` route-level per-error-type handlers, and the persistent Saga (`SagaRepository`, per-step timeout, opt-in crash recovery). No breaking change.

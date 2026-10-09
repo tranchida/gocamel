@@ -576,6 +576,40 @@ func (b *RouteBuilder) Throttle(maxRequests int64, timePeriod time.Duration) *Ro
 	return b
 }
 
+// Sample adds a Sampling EIP step that lets only the first exchange of every
+// period through. The other exchanges are dropped silently (never delayed).
+// A non-positive period is reported by Route.Validate().
+//
+// Example:
+//
+//	// At most one message per second
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:sensor").
+//	    Sample(time.Second).
+//	    To("direct:dashboard").
+//	    Build()
+func (b *RouteBuilder) Sample(period time.Duration) *RouteBuilder {
+	b.container.AddProcessor(NewSamplerPeriod(period))
+	return b
+}
+
+// SampleEvery adds a Sampling EIP step that lets one exchange out of every n
+// through (the first one passes). The other exchanges are dropped silently.
+// A non-positive n is reported by Route.Validate().
+//
+// Example:
+//
+//	// One message out of every 100
+//	route, _ := ctx.CreateRouteBuilder().
+//	    From("direct:sensor").
+//	    SampleEvery(100).
+//	    To("direct:dashboard").
+//	    Build()
+func (b *RouteBuilder) SampleEvery(n int64) *RouteBuilder {
+	b.container.AddProcessor(NewSamplerEvery(n))
+	return b
+}
+
 // WireTap adds a WireTap processor that asynchronously sends a copy of the exchange
 // to the specified endpoint without blocking the main route.
 // The copy is independent: changes to the tapped exchange do not affect
