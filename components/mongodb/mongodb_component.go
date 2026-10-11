@@ -11,7 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // Header constants for MongoDB

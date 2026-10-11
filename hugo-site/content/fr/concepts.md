@@ -221,7 +221,7 @@ en production.
 ### Prometheus (Métriques)
 
 Vous pouvez exposer des métriques pour chaque route avec l'intercepteur du module
-`gitlab.com/tranchida/gocamel/observability/prometheus` :
+`github.com/tranchida/gocamel/observability/prometheus` :
 `.Intercept(gocamelprom.Metrics())`. Les métriques suivantes
 sont collectées automatiquement :
 
@@ -242,7 +242,7 @@ avec la sémantique du routeur principal.
 ### OpenTelemetry (Tracing)
 
 Activez le traçage distribué avec l'intercepteur du module
-`gitlab.com/tranchida/gocamel/observability/otel` :
+`github.com/tranchida/gocamel/observability/otel` :
 `.Intercept(gocamelotel.Tracing())`. GoCamel créera un **Span** pour chaque exécution de route,
 incluant :
 

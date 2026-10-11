@@ -2,12 +2,12 @@ package main
 
 import (
 	"fmt"
-	file "gitlab.com/tranchida/gocamel/components/file"
+	file "github.com/tranchida/gocamel/components/file"
 	"os"
 	"path/filepath"
 	"time"
 
-	"gitlab.com/tranchida/gocamel"
+	"github.com/tranchida/gocamel"
 )
 
 func main() {

@@ -1,10 +1,10 @@
-module gitlab.com/tranchida/gocamel/observability/otel
+module github.com/tranchida/gocamel/observability/otel
 
 go 1.27.0
 
 require (
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.16.0
+	github.com/tranchida/gocamel v0.16.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/sdk v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0

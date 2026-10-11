@@ -1,4 +1,4 @@
-module gitlab.com/tranchida/gocamel
+module github.com/tranchida/gocamel
 
 go 1.27.0
 

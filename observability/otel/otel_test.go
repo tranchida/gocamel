@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestTracingInterceptor(t *testing.T) {

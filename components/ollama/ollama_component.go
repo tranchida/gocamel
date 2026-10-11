@@ -11,7 +11,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // OllamaComponent represents the Ollama component (local LLM server).

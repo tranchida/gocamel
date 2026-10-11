@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.com/tranchida/gocamel"
+	"github.com/tranchida/gocamel"
 )
 
 func main() {

@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	mail "gitlab.com/tranchida/gocamel/components/mail"
+	mail "github.com/tranchida/gocamel/components/mail"
 	"log"
 	"time"
 
-	"gitlab.com/tranchida/gocamel"
+	"github.com/tranchida/gocamel"
 )
 
 // ExampleMailProducer shows how to send an email via SMTP.

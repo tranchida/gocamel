@@ -17,7 +17,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // SFTPComponent represents the SFTP component

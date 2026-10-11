@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestCreateEndpoint_RejectsTraversal(t *testing.T) {

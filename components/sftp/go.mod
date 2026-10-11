@@ -1,11 +1,11 @@
-module gitlab.com/tranchida/gocamel/components/sftp
+module github.com/tranchida/gocamel/components/sftp
 
 go 1.27.0
 
 require (
 	github.com/pkg/sftp v1.13.6
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.16.0
+	github.com/tranchida/gocamel v0.16.0
 	golang.org/x/crypto v0.53.0
 )
 

@@ -12,7 +12,7 @@ import (
 
 	sdkopenai "github.com/sashabaranov/go-openai"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestOpenAIProducer_Start(t *testing.T) {

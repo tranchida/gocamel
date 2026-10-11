@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // MailProducer implements email sending via SMTP/SMTPS.

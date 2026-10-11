@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"gitlab.com/tranchida/gocamel"
-	gocamelotel "gitlab.com/tranchida/gocamel/observability/otel"
-	gocamelprom "gitlab.com/tranchida/gocamel/observability/prometheus"
+	"github.com/tranchida/gocamel"
+	gocamelotel "github.com/tranchida/gocamel/observability/otel"
+	gocamelprom "github.com/tranchida/gocamel/observability/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"

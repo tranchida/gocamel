@@ -9,7 +9,7 @@ import (
 
 	"github.com/sashabaranov/go-openai"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // OpenAIComponent represents the OpenAI component

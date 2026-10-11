@@ -1,11 +1,11 @@
-module gitlab.com/tranchida/gocamel/components/ftp
+module github.com/tranchida/gocamel/components/ftp
 
 go 1.27.0
 
 require (
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.16.0
+	github.com/tranchida/gocamel v0.16.0
 )
 
 require (

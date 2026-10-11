@@ -580,7 +580,7 @@ exchange.In.SetHeader(gocamel.CamelNATSSubject, "urgent-orders")
 High-throughput distributed event streaming with Apache Kafka via `segmentio/kafka-go` (pure Go).
 
 ```go
-import "gitlab.com/tranchida/gocamel/components/kafka"
+import "github.com/tranchida/gocamel/components/kafka"
 
 ctx.AddComponent("kafka", kafka.NewKafkaComponent())
 
@@ -642,7 +642,7 @@ of that duplicated processing.
 Produce and consume messages with any STOMP 1.0/1.1/1.2 compliant broker — ActiveMQ, ActiveMQ Artemis, RabbitMQ, Apollo — via the `go-stomp` client. Ideal for JMS-style queue (`/queue/...`) and topic (`/topic/...`) destinations.
 
 ```go
-import "gitlab.com/tranchida/gocamel/components/stomp"
+import "github.com/tranchida/gocamel/components/stomp"
 
 ctx.AddComponent("stomp", stomp.NewStompComponent())
 
@@ -734,7 +734,7 @@ builder.To("stomp://queue/orders?host=activemq:61614&ssl=true&sslCAFile=/etc/goc
 High-performance RPC client and server integration powered by `google.golang.org/grpc`.
 
 ```go
-import "gitlab.com/tranchida/gocamel/components/grpc"
+import "github.com/tranchida/gocamel/components/grpc"
 
 ctx.AddComponent("grpc", grpc.NewGRPCComponent())
 

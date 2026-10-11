@@ -23,7 +23,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestGRPCComponent_CreateEndpoint(t *testing.T) {

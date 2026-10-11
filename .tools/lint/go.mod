@@ -1,4 +1,4 @@
-module gitlab.com/tranchida/gocamel/lint-tools
+module github.com/tranchida/gocamel/lint-tools
 
 go 1.27.0
 

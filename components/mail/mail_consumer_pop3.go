@@ -11,7 +11,7 @@ import (
 	"github.com/emersion/go-message"
 	pop3 "github.com/knadh/go-pop3"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // Pop3Consumer implements email reception via POP3/POP3S.

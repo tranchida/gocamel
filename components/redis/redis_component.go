@@ -9,7 +9,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // Redis Component constants

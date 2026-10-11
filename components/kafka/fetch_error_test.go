@@ -8,7 +8,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // failingFetchReader returns the scripted fetch errors first, then behaves

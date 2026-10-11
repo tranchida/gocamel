@@ -97,7 +97,7 @@ import (
     "log"
     "time"
 
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {

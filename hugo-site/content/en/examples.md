@@ -12,7 +12,7 @@ Collection of practical examples demonstrating GoCamel features.
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -37,7 +37,7 @@ package main
 
 import (
     "fmt"
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -66,7 +66,7 @@ func main() {
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -111,7 +111,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -163,7 +163,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -203,7 +203,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -244,7 +244,7 @@ func main() {
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -271,7 +271,7 @@ func main() {
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -308,7 +308,7 @@ func main() {
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -367,7 +367,7 @@ package main
 
 import (
     "strings"
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 type StringConcatStrategy struct{}
@@ -478,7 +478,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -518,7 +518,7 @@ route := ctx.CreateRouteBuilder().
 import (
     "database/sql"
     _ "modernc.org/sqlite"
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -568,7 +568,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {
@@ -599,7 +599,7 @@ Generating formatted messages with native Go templates (inspired by Apache Camel
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 // templates/email.tmpl:
@@ -676,7 +676,7 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {

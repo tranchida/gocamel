@@ -1,4 +1,4 @@
-module gitlab.com/tranchida/gocamel/components/mail
+module github.com/tranchida/gocamel/components/mail
 
 go 1.27.0
 
@@ -7,7 +7,7 @@ require (
 	github.com/emersion/go-message v0.18.2
 	github.com/knadh/go-pop3 v1.0.2
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.16.0
+	github.com/tranchida/gocamel v0.16.0
 )
 
 require (

@@ -11,7 +11,7 @@ import (
 
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/require"
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestIdleSearchesAfterMailboxNotification(t *testing.T) {

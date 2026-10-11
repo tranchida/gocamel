@@ -13,7 +13,7 @@ import (
 	"github.com/go-stomp/stomp/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestStompEndpoint_ConnectTimeoutOption(t *testing.T) {

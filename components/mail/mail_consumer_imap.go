@@ -13,7 +13,7 @@ import (
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // MailConsumer implements email reception via IMAP (using go-imap v2).

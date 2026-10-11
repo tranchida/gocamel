@@ -12,7 +12,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // Well-known Camel Kafka headers

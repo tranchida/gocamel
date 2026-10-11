@@ -15,7 +15,7 @@ import (
 
 	"github.com/hirochachacha/go-smb2"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // SMBComponent represents the SMB component

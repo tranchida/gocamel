@@ -8,7 +8,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestConsumerRouteRestarts(t *testing.T) {

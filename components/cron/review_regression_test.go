@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestReviewStopJoinsActiveCron(t *testing.T) {

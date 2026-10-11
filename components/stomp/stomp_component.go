@@ -20,7 +20,7 @@ import (
 	"github.com/go-stomp/stomp"
 	"github.com/go-stomp/stomp/frame"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // Well-known Camel STOMP headers

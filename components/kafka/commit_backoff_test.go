@@ -9,7 +9,7 @@ import (
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // failingCommitReader serves one record and fails every commit, cancelling

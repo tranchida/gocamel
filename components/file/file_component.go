@@ -14,7 +14,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // FileComponent represents the File component

@@ -1,11 +1,11 @@
-module gitlab.com/tranchida/gocamel/components/cron
+module github.com/tranchida/gocamel/components/cron
 
 go 1.27.0
 
 require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.16.0
+	github.com/tranchida/gocamel v0.16.0
 )
 
 require (

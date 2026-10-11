@@ -9,7 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestRedisComponent_Producer(t *testing.T) {

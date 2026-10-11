@@ -11,7 +11,7 @@ import (
 	"github.com/segmentio/kafka-go/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // oneRecordReader serves a single record, then cancels the consumer on the

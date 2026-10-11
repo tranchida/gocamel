@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Repository moved from GitLab to GitHub**: the Go module path is now `github.com/tranchida/gocamel` (and `github.com/tranchida/gocamel/components/<name>`, `.../observability/<name>`). Update your imports and `go.mod`. Releases up to v0.16.0 were published under `gitlab.com/tranchida/gocamel` and keep that path; the first release under the new path will be the next tag.
+
 ### Removed
 
 - **GitLab CI pipeline** (`.gitlab-ci.yml`): the `go`, `coverage` and `lint` jobs are gone. Run the checks locally before merging with the new `./check.sh` (`go build`, `go vet` and `go test -race` on every module in parallel, around 30 s; `--lint` adds `./lint.sh`, which runs `staticcheck` and `gosec` installed from the pinned `.tools/lint` module). A versioned `pre-push` hook (`.githooks/pre-push`) runs `./check.sh` before every push; enable it once per clone with `git config core.hooksPath .githooks`, skip it with `git push --no-verify`.

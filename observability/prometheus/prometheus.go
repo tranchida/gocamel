@@ -7,7 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // metricFamilies groups the three metric families exposed by this package.

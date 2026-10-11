@@ -9,11 +9,11 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 const (
-	instrumentationName = "gitlab.com/tranchida/gocamel/observability/otel"
+	instrumentationName = "github.com/tranchida/gocamel/observability/otel"
 )
 
 // Tracing returns a RouteInterceptor that wraps every exchange in an

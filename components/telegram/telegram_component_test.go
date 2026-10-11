@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func newEndpoint(t *testing.T, uri string) *TelegramEndpoint {

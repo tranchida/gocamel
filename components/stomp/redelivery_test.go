@@ -10,7 +10,7 @@ import (
 	"github.com/go-stomp/stomp/frame"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // sendRaw publishes a frame straight to the broker, bypassing the GoCamel

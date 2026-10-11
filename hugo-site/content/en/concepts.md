@@ -214,7 +214,7 @@ integration pipelines.
 ### Prometheus (Metrics)
 
 Expose metrics for any route with the interceptor from the
-`gitlab.com/tranchida/gocamel/observability/prometheus` module:
+`github.com/tranchida/gocamel/observability/prometheus` module:
 `.Intercept(gocamelprom.Metrics())`. The following metrics are collected
 automatically:
 
@@ -234,7 +234,7 @@ semantics.
 ### OpenTelemetry (Tracing)
 
 Enable distributed tracing with the interceptor from the
-`gitlab.com/tranchida/gocamel/observability/otel` module:
+`github.com/tranchida/gocamel/observability/otel` module:
 `.Intercept(gocamelotel.Tracing())`. GoCamel creates an OTel **Span** for each route execution,
 providing:
 

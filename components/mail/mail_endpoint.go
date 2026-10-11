@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // MailEndpoint represents a configured mail endpoint.

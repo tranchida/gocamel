@@ -8,7 +8,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestMongoDBProducer_RemoveRejectsEmptyFilter(t *testing.T) {

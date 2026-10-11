@@ -2,13 +2,13 @@ package main
 
 import (
 	"fmt"
-	file "gitlab.com/tranchida/gocamel/components/file"
+	file "github.com/tranchida/gocamel/components/file"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"gitlab.com/tranchida/gocamel"
+	"github.com/tranchida/gocamel"
 )
 
 // headerFileName is the header key set by the File component.

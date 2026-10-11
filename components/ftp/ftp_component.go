@@ -14,7 +14,7 @@ import (
 
 	"github.com/jlaffaye/ftp"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // FTPComponent represents the FTP component

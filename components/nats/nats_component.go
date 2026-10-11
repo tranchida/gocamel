@@ -11,7 +11,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // NATS Component constants

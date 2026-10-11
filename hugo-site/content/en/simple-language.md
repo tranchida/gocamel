@@ -242,7 +242,7 @@ If your routes legitimately interpolate large templates, raise the value
 deliberately at startup:
 
 ```go
-import "gitlab.com/tranchida/gocamel"
+import "github.com/tranchida/gocamel"
 
 func init() {
     gocamel.MaxSimpleInputBytes = 8 << 20 // 8 MiB

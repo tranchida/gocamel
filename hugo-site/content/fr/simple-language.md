@@ -240,7 +240,7 @@ bodies ou headers contrôlés par un attaquant :
 Si vos routes interpolent légitimement de gros templates, augmentez la valeur explicitement au démarrage :
 
 ```go
-import "gitlab.com/tranchida/gocamel"
+import "github.com/tranchida/gocamel"
 
 func init() {
     gocamel.MaxSimpleInputBytes = 8 << 20 // 8 MiB

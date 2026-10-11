@@ -1,11 +1,11 @@
-module gitlab.com/tranchida/gocamel/observability/prometheus
+module github.com/tranchida/gocamel/observability/prometheus
 
 go 1.27.0
 
 require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/tranchida/gocamel v0.16.0
+	github.com/tranchida/gocamel v0.16.0
 )
 
 require (

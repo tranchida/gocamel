@@ -10,22 +10,22 @@ weight = 20
 ## Install
 
 ```bash
-go get gitlab.com/tranchida/gocamel@v0.16.0
+go get github.com/tranchida/gocamel@v0.16.0
 ```
 
 Or add to `go.mod`:
 
 ```go
-require gitlab.com/tranchida/gocamel v0.16.0
+require github.com/tranchida/gocamel v0.16.0
 ```
 
 To use optional components, install the individual modules:
 
 ```bash
-go get gitlab.com/tranchida/gocamel/components/kafka@v0.16.0
-go get gitlab.com/tranchida/gocamel/components/grpc@v0.16.0
-go get gitlab.com/tranchida/gocamel/components/redis@v0.16.0
-go get gitlab.com/tranchida/gocamel/components/nats@v0.16.0
+go get github.com/tranchida/gocamel/components/kafka@v0.16.0
+go get github.com/tranchida/gocamel/components/grpc@v0.16.0
+go get github.com/tranchida/gocamel/components/redis@v0.16.0
+go get github.com/tranchida/gocamel/components/nats@v0.16.0
 ```
 
 Then:
@@ -41,7 +41,7 @@ package main
 
 import (
     "fmt"
-    "gitlab.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel"
 )
 
 func main() {

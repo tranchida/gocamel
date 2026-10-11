@@ -32,7 +32,7 @@ defaultContentLanguageInSubdir = true
   collapsibleMenu = true
 
   # Edit URL for "Edit this page" links
-  editURL = 'https://gitlab.com/tranchida/gocamel/-/edit/docs/migrate-to-hugo/hugo-site/content/${FilePath}'
+  editURL = 'https://github.com/tranchida/gocamel/edit/main/hugo-site/content/${FilePath}'
 
   # Link checking (expensive; enable occasionally)
   urlExternalCheck = false

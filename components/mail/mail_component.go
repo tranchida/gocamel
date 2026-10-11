@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	gocamel "gitlab.com/tranchida/gocamel"
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // The Mail component is split across multiple files in this package:
