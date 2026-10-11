@@ -5,11 +5,11 @@ go 1.27.0
 // Examples always build against the in-repo modules.
 require (
 	github.com/prometheus/client_golang v1.23.2
-	github.com/tranchida/gocamel v0.16.0
-	github.com/tranchida/gocamel/components/file v0.16.0
-	github.com/tranchida/gocamel/components/mail v0.16.0
-	github.com/tranchida/gocamel/observability/otel v0.16.0
-	github.com/tranchida/gocamel/observability/prometheus v0.16.0
+	github.com/tranchida/gocamel v0.17.0
+	github.com/tranchida/gocamel/components/file v0.17.0
+	github.com/tranchida/gocamel/components/mail v0.17.0
+	github.com/tranchida/gocamel/observability/otel v0.17.0
+	github.com/tranchida/gocamel/observability/prometheus v0.17.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.43.0
 	go.opentelemetry.io/otel/sdk v1.43.0

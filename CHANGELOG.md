@@ -4,9 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [v0.17.0] - 2026-10-11
+
+Release that moves the repository from GitLab to GitHub and changes the Go module path (**breaking** for importers), and adds the `Sample` EIP. Every component and observability module at v0.17.0 requires core v0.17.0.
+
 ### Changed
 
-- **Repository moved from GitLab to GitHub**: the Go module path is now `github.com/tranchida/gocamel` (and `github.com/tranchida/gocamel/components/<name>`, `.../observability/<name>`). Update your imports and `go.mod`. Releases up to v0.16.0 were published under `gitlab.com/tranchida/gocamel` and keep that path; the first release under the new path will be the next tag.
+- **Repository moved from GitLab to GitHub**: the Go module path is now `github.com/tranchida/gocamel` (and `github.com/tranchida/gocamel/components/<name>`, `.../observability/<name>`). Update your imports and `go.mod`. Releases up to v0.16.0 were published under `gitlab.com/tranchida/gocamel` and keep that path; v0.17.0 is the first release under the new path.
 
 ### Removed
 
@@ -649,16 +653,16 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
-[v0.12.2]: https://gitlab.com/tranchida/gocamel/-/tags/v0.12.2
-[v0.12.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.12.0
-[v0.11.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.11.0
-[v0.10.1]: https://gitlab.com/tranchida/gocamel/-/tags/v0.10.1
-[v0.10.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.10.0
-[v0.9.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.9.0
-[v0.8.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.8.0
-[v0.7.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.7.0
-[v0.6.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.6.0
-[v0.5.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.5.0
-[v0.4.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.4.0
-[v0.3.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.3.0
-[v0.2.0]: https://gitlab.com/tranchida/gocamel/-/tags/v0.2.0
+[v0.12.2]: https://github.com/tranchida/gocamel/releases/tag/v0.12.2
+[v0.12.0]: https://github.com/tranchida/gocamel/releases/tag/v0.12.0
+[v0.11.0]: https://github.com/tranchida/gocamel/releases/tag/v0.11.0
+[v0.10.1]: https://github.com/tranchida/gocamel/releases/tag/v0.10.1
+[v0.10.0]: https://github.com/tranchida/gocamel/releases/tag/v0.10.0
+[v0.9.0]: https://github.com/tranchida/gocamel/releases/tag/v0.9.0
+[v0.8.0]: https://github.com/tranchida/gocamel/releases/tag/v0.8.0
+[v0.7.0]: https://github.com/tranchida/gocamel/releases/tag/v0.7.0
+[v0.6.0]: https://github.com/tranchida/gocamel/releases/tag/v0.6.0
+[v0.5.0]: https://github.com/tranchida/gocamel/releases/tag/v0.5.0
+[v0.4.0]: https://github.com/tranchida/gocamel/releases/tag/v0.4.0
+[v0.3.0]: https://github.com/tranchida/gocamel/releases/tag/v0.3.0
+[v0.2.0]: https://github.com/tranchida/gocamel/releases/tag/v0.2.0

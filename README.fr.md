@@ -4,7 +4,7 @@
 
 **Framework d'Intégration d'Entreprise pour Go**
 
-[![Release](https://img.shields.io/badge/version-v0.16.0-blue)](https://github.com/tranchida/gocamel/-/tags/v0.16.0)
+[![Release](https://img.shields.io/badge/version-v0.17.0-blue)](https://github.com/tranchida/gocamel/releases/tag/v0.17.0)
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -38,7 +38,7 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 
 ## 📦 Installation
 
-La version **v0.16.0** est une version de fonctionnalités sans changement incompatible : le composant `mock` et `Route.AdviceWith` pour tester les routes, les gestionnaires `OnException` par type d'erreur, et une Saga persistante avec timeout par étape et reprise après crash optionnelle. Voir le [CHANGELOG](CHANGELOG.md) et les [notes de version v0.16.0](hugo-site/content/fr/releases/v0.16.0.md). Vous venez de la v0.14.x ? La v0.15.0 a rendu `allowHeaderOverride=true` obligatoire pour les surcharges par en-têtes d'Anthropic et d'Ollama (**changement incompatible**) : lisez d'abord les [notes de version v0.15.0](hugo-site/content/fr/releases/v0.15.0.md).
+La version **v0.17.0** déplace le dépôt de GitLab vers GitHub et **change le chemin du module Go** en `github.com/tranchida/gocamel` (**incompatible** : mettez à jour vos imports et votre `go.mod`), et ajoute les EIP `Sample` et `SampleEvery`. Voir le [CHANGELOG](CHANGELOG.md) et les [notes de version v0.17.0](hugo-site/content/fr/releases/v0.17.0.md). Les versions jusqu'à v0.16.0 restent disponibles sous l'ancien chemin `gitlab.com/tranchida/gocamel`.
 
 Go **1.27.0 ou ultérieur** est requis pour le cœur, les composants et les exemples. Le workspace et `.go-version` utilisent Go 1.27.0 par défaut.
 
@@ -48,7 +48,7 @@ template, sql, mock) n'a **aucune dépendance externe à l'exécution** et se co
 CGO (les tests utilisent le driver pure-Go `modernc.org/sqlite`) :
 
 ```bash
-go get github.com/tranchida/gocamel@v0.16.0
+go get github.com/tranchida/gocamel@v0.17.0
 ```
 
 Les composants qui s'appuient sur des bibliothèques tierces vivent dans leurs
@@ -56,24 +56,24 @@ propres modules Go — vous ne récupérez que les dépendances de ce que vous
 utilisez réellement :
 
 ```bash
-go get github.com/tranchida/gocamel/components/kafka@v0.16.0     # segmentio/kafka-go
-go get github.com/tranchida/gocamel/components/grpc@v0.16.0      # google.golang.org/grpc
-go get github.com/tranchida/gocamel/components/redis@v0.16.0    # go-redis
-go get github.com/tranchida/gocamel/components/nats@v0.16.0     # nats.go
-go get github.com/tranchida/gocamel/components/mongodb@v0.16.0  # mongo-driver
-go get github.com/tranchida/gocamel/components/mail@v0.16.0     # SMTP/IMAP/POP3
-go get github.com/tranchida/gocamel/components/ftp@v0.16.0
-go get github.com/tranchida/gocamel/components/sftp@v0.16.0
-go get github.com/tranchida/gocamel/components/smb@v0.16.0
-go get github.com/tranchida/gocamel/components/telegram@v0.16.0
-go get github.com/tranchida/gocamel/components/openai@v0.16.0
-go get github.com/tranchida/gocamel/components/anthropic@v0.16.0
-go get github.com/tranchida/gocamel/components/ollama@v0.16.0
-go get github.com/tranchida/gocamel/components/cron@v0.16.0     # robfig/cron
-go get github.com/tranchida/gocamel/components/file@v0.16.0     # watcher fsnotify
-go get github.com/tranchida/gocamel/components/stomp@v0.16.0    # go-stomp (ActiveMQ/JMS)
-go get github.com/tranchida/gocamel/observability/prometheus@v0.16.0
-go get github.com/tranchida/gocamel/observability/otel@v0.16.0
+go get github.com/tranchida/gocamel/components/kafka@v0.17.0     # segmentio/kafka-go
+go get github.com/tranchida/gocamel/components/grpc@v0.17.0      # google.golang.org/grpc
+go get github.com/tranchida/gocamel/components/redis@v0.17.0    # go-redis
+go get github.com/tranchida/gocamel/components/nats@v0.17.0     # nats.go
+go get github.com/tranchida/gocamel/components/mongodb@v0.17.0  # mongo-driver
+go get github.com/tranchida/gocamel/components/mail@v0.17.0     # SMTP/IMAP/POP3
+go get github.com/tranchida/gocamel/components/ftp@v0.17.0
+go get github.com/tranchida/gocamel/components/sftp@v0.17.0
+go get github.com/tranchida/gocamel/components/smb@v0.17.0
+go get github.com/tranchida/gocamel/components/telegram@v0.17.0
+go get github.com/tranchida/gocamel/components/openai@v0.17.0
+go get github.com/tranchida/gocamel/components/anthropic@v0.17.0
+go get github.com/tranchida/gocamel/components/ollama@v0.17.0
+go get github.com/tranchida/gocamel/components/cron@v0.17.0     # robfig/cron
+go get github.com/tranchida/gocamel/components/file@v0.17.0     # watcher fsnotify
+go get github.com/tranchida/gocamel/components/stomp@v0.17.0    # go-stomp (ActiveMQ/JMS)
+go get github.com/tranchida/gocamel/observability/prometheus@v0.17.0
+go get github.com/tranchida/gocamel/observability/otel@v0.17.0
 ```
 
 ```go
@@ -324,7 +324,7 @@ affecter des routes existantes :
 
 ## 🤝 Contribution
 
-Les contributions sont les bienvenues ! Voir les [GitLab Issues](https://github.com/tranchida/gocamel/-/issues).
+Les contributions sont les bienvenues ! Voir les [GitHub Issues](https://github.com/tranchida/gocamel/issues).
 
 ## ✍️ Auteur
 
