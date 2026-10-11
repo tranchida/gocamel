@@ -972,6 +972,60 @@ The SDK HTTP client timeout is **60 seconds**.
 | `AnthropicStopReason`       | string | `end_turn`, `max_tokens`, ... |
 | `AnthropicModel`            | string | Model that produced the response |
 
+### Jev (OpenRouter Decisions API)
+
+Producer for the [TypeSafe Jev](https://openrouter.ai/typesafe) decision model
+through the OpenRouter Decisions API. Jev reads natural language like an LLM
+but returns **typed judgments** (probabilities, choices, scores) instead of
+generated text; the thresholds stay in your route. The module has no
+third-party dependency.
+
+```go
+ctx.AddComponent("jev", jev.NewJevComponent())
+
+questions := `{"is_ironic":{"type":"noul","instructions":"Is this text ironic?",
+  "criteria":{"true":"ironic","false":"sincere"}}}`
+
+route := ctx.CreateRouteBuilder().
+    From("direct:in").
+    To("jev:decisions?questions=" + url.QueryEscape(questions)).
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        answers := e.GetIn().GetBody().(map[string]jev.Answer)
+        fmt.Printf("ironic: %.0f%%\n", answers["is_ironic"].Noul*100)
+        return nil
+    }).
+    Build()
+ctx.AddRoute(route)
+```
+
+The exchange body is the *state* to judge (string, `[]byte`, or any
+JSON-serializable value). The Out body is a `map[string]jev.Answer` keyed by
+question id. `Answer.Type` is `noul` (fills `Noul`), `choice` (`Choice`,
+`Probabilities`, `Confidence`) or `score` (`Value`, `Legend`, `Confidence`).
+
+**Environment Variables:**
+
+- `OPENROUTER_API_KEY` - API key (recommended over embedding it in the URI)
+
+| Option               | Type     | Default              | Description |
+|----------------------|----------|----------------------|-------------|
+| `apiKey`             | string   | env var              | API key (alias: `authorizationToken`). Masked by `RedactURI`. |
+| `questions`          | JSON     | required*            | Object mapping question ids to Jev questions, sent as-is |
+| `model`              | string   | `typesafe/jev-1.13`  | Jev model |
+| `baseURL`            | string   | `https://openrouter.ai/api/alpha` | API root (proxies, tests). Must be `http(s)`. |
+| `timeout`            | duration | `30s`                | Per-request timeout |
+| `allowHeaderOverride` | bool    | `false`              | Allow the `Jev*` override headers to replace the URI settings |
+
+\* Optional when `allowHeaderOverride=true` and the `JevQuestions` header is sent.
+
+**Override headers** (In message, honored only with `allowHeaderOverride=true`):
+`JevQuestions` (JSON string or map) and `JevModel`.
+
+> ⚠️ Security: questions and model are trusted configuration. Enable the
+> override only where headers cannot be influenced by untrusted input.
+
+**Out headers:** `JevModel` (model used), `JevElapsed` (`time.Duration`, API round-trip).
+
 ### Ollama
 
 Native integration with a local [Ollama](https://ollama.com) server via its
@@ -1614,6 +1668,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | OpenAI     | AI         | ❌        | ✅        | `openai:chat`             |
 | Anthropic  | AI         | ❌        | ✅        | `anthropic:messages`       |
 | Ollama     | AI         | ❌        | ✅        | `ollama:chat`/`generate`/`embed` |
+| Jev        | AI         | ❌        | ✅        | `jev:decisions`           |
 | Cron       | Scheduling | ✅        | ❌        | `cron://group/job`        |
 | SMTP       | Mail       | ❌        | ✅        | `smtp://host:port`        |
 | IMAP       | Mail       | ✅        | ❌        | `imap://host:port`        |

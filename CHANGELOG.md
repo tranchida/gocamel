@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Jev component** (`components/jev`, `jev:decisions`, producer only, no third-party dependency): calls the TypeSafe Jev decision model through the OpenRouter Decisions API (`/api/alpha/decisions`). The exchange body is the state to judge, the `questions` URI option (JSON, `noul`/`choice`/`score`) is passed to the API as-is, and the typed answers come back as a `map[string]jev.Answer` in the Out body. Options: `apiKey` (falls back to `OPENROUTER_API_KEY`, masked by `RedactURI`), `model` (default `typesafe/jev-1.13`), `baseURL`, `timeout`, `allowHeaderOverride` (gates the `JevQuestions` and `JevModel` headers). Responses are size-bounded and API errors carry a truncated body.
+
 ## [v0.17.0] - 2026-10-11
 
 Release that moves the repository from GitLab to GitHub and changes the Go module path (**breaking** for importers), and adds the `Sample` EIP. Every component and observability module at v0.17.0 requires core v0.17.0.

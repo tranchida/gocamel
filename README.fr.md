@@ -69,6 +69,7 @@ go get github.com/tranchida/gocamel/components/telegram@v0.17.0
 go get github.com/tranchida/gocamel/components/openai@v0.17.0
 go get github.com/tranchida/gocamel/components/anthropic@v0.17.0
 go get github.com/tranchida/gocamel/components/ollama@v0.17.0
+go get github.com/tranchida/gocamel/components/jev@v0.17.0       # Jev (OpenRouter Decisions API)
 go get github.com/tranchida/gocamel/components/cron@v0.17.0     # robfig/cron
 go get github.com/tranchida/gocamel/components/file@v0.17.0     # watcher fsnotify
 go get github.com/tranchida/gocamel/components/stomp@v0.17.0    # go-stomp (ActiveMQ/JMS)
@@ -168,6 +169,7 @@ builder.From("direct:start").
 | **Telegram**   | Intégration Bot                |
 | **OpenAI**     | ChatGPT/GPT-4 & fournisseurs compatibles OpenAI (OpenRouter, Groq, ...) |
 | **Anthropic**  | API Messages Claude (native)  |
+| **Jev**        | Décisions typées (oui/non, choix, score) via OpenRouter |
 | **Ollama**     | LLMs locaux (chat/generate/embed, API native) |
 | **Mail**       | Email SMTP/IMAP/POP3           |
 | **SQL**        | Requêtes base de données       |
