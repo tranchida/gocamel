@@ -1004,7 +1004,7 @@ ctx.AddComponent("jev", jev.NewJevComponent())
 questions := `{"is_ironic":{"type":"noul","instructions":"Ce texte est-il ironique ?",
   "criteria":{"true":"ironique","false":"sincère"}}}`
 
-route := ctx.CreateRouteBuilder().
+route, _ := ctx.CreateRouteBuilder().
     From("direct:in").
     To("jev:decisions?questions=" + url.QueryEscape(questions)).
     ProcessFunc(func(e *gocamel.Exchange) error {
