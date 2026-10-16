@@ -4,9 +4,36 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [v0.18.0] - 2026-10-16
+
+Release introducing the TypeSafe Jev decision component and global security, concurrency, and reliability remediations across the core engine, components, and observability modules. Every component and observability module at v0.18.0 requires core v0.18.0.
+
 ### Added
 
 - **Jev component** (`components/jev`, `jev:decisions`, producer only, no third-party dependency): calls the TypeSafe Jev decision model through the OpenRouter Decisions API (`/api/alpha/decisions`). The exchange body is the state to judge, the `questions` URI option (JSON, `noul`/`choice`/`score`) is passed to the API as-is, and the typed answers come back as a `map[string]jev.Answer` in the Out body. Options: `apiKey` (falls back to `OPENROUTER_API_KEY`, masked by `RedactURI`), `model` (default `typesafe/jev-1.13`), `baseURL`, `timeout`, `allowHeaderOverride` (gates the `JevQuestions` and `JevModel` headers). Responses are size-bounded and API errors carry a truncated body.
+
+### Changed
+
+- **Security & Cryptography**:
+  - `ZipDataFormat` / WinZip AES: enforced strict HMAC-SHA1 verification and premature EOF checks on Deflate and Store streams (`aesDeflateReadCloser` / `aesStoreReadCloser`), closing authentication bypass vulnerabilities on truncated archives.
+  - Remote File & Storage (`file`, `ftp`, `sftp`, `smb`): path traversal validation on `move` and `moveFailed` parameters using `ValidatePath` and `ValidateRemotePath`; symlinks are now skipped during SFTP recursive directory polling; `URI()` redacts sensitive credentials.
+  - Dynamic Routing (`RecipientList`, `RoutingSlip`, `DynamicRouter`): removed vulnerable double interpolation after Simple Language evaluation to prevent URI parameter injection.
+  - Resource Protection & Bounded Streams: enforced `DefaultMaxBodySize` on `bodyToBytes`, `normalizeJSONSource`, `CSVDataFormat`, and remote file producers (`FTPProducer`, `SFTPProducer`, `SMBProducer`), preventing DoS memory exhaustion on unbounded readers.
+  - Simple Language: precompiled package-level regular expressions, bounded `padstart` / `padend` and regex evaluation lengths against `MaxSimpleInputBytes`.
+  - Component Secrets: added `passcode` to default sensitive URI keys for automatic redaction in STOMP endpoints.
+
+- **Concurrency & Lifecycle**:
+  - Remote File: implemented exclusive connection leasing (`connCh`) in `SFTPProducer` and `SMBProducer` to prevent data races and premature disconnects during concurrent sends and stops.
+  - Messaging (`grpc`, `nats`, `stomp`): added reference counting (`connUsers`) to shared endpoint connections, ensuring connections stay open while active producers or consumers use them.
+  - Redis: cleaned up subscriptions and released connections on `RedisConsumer.Start` subscription errors.
+  - Mail: encoded quoted-printable bodies safely via `mime/quotedprintable.Writer`, bounded MIME body part sizes, and enforced connection dial timeouts for IMAP and POP3 consumers.
+  - EIPs: implemented deep copying in `MemoryAggregationRepository` and `Resequencer` to prevent data races on concurrent aggregation branches; synchronized `ValidateProcessor.Process` predicate template access.
+  - DSL Error Handling: preserved the first build error in `RouteBuilder` and `ChoiceBuilder`.
+  - Net: validated `bufferSize` bounds in `NetComponent.CreateEndpoint`.
+  - SQL: added typed slice unpacking for positional query parameters (`CamelSqlParameters`).
+
+- **Observability**:
+  - OpenTelemetry (`observability/otel`): added `TracingWith(tp)` for custom `TracerProvider`, restored previous `Exchange.Context` on route exit, and set span error status `codes.Error` on route failure.
 
 ## [v0.17.0] - 2026-10-11
 
@@ -657,6 +684,14 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.18.0]: https://github.com/tranchida/gocamel/releases/tag/v0.18.0
+[v0.17.0]: https://github.com/tranchida/gocamel/releases/tag/v0.17.0
+[v0.16.0]: https://github.com/tranchida/gocamel/releases/tag/v0.16.0
+[v0.15.0]: https://github.com/tranchida/gocamel/releases/tag/v0.15.0
+[v0.14.2]: https://github.com/tranchida/gocamel/releases/tag/v0.14.2
+[v0.14.0]: https://github.com/tranchida/gocamel/releases/tag/v0.14.0
+[v0.13.1]: https://github.com/tranchida/gocamel/releases/tag/v0.13.1
+[v0.13.0]: https://github.com/tranchida/gocamel/releases/tag/v0.13.0
 [v0.12.2]: https://github.com/tranchida/gocamel/releases/tag/v0.12.2
 [v0.12.0]: https://github.com/tranchida/gocamel/releases/tag/v0.12.0
 [v0.11.0]: https://github.com/tranchida/gocamel/releases/tag/v0.11.0

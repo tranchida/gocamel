@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/go-stomp/stomp v2.1.4+incompatible
 	github.com/stretchr/testify v1.11.1
-	github.com/tranchida/gocamel v0.17.0
+	github.com/tranchida/gocamel v0.18.0
 )
 
 require (

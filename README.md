@@ -4,7 +4,7 @@
 
 **Enterprise Integration Framework for Go**
 
-[![Release](https://img.shields.io/badge/version-v0.17.0-blue)](https://github.com/tranchida/gocamel/releases/tag/v0.17.0)
+[![Release](https://img.shields.io/badge/version-v0.18.0-blue)](https://github.com/tranchida/gocamel/releases/tag/v0.18.0)
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -37,7 +37,7 @@ provides a powerful DSL for creating integration routes to connect different sys
 
 ## 📦 Installation
 
-Release **v0.17.0** moves the repository from GitLab to GitHub and **changes the Go module path** to `github.com/tranchida/gocamel` (**breaking**: update your imports and `go.mod`), and adds the `Sample` and `SampleEvery` EIPs. See the [CHANGELOG](CHANGELOG.md) and the [v0.17.0 release notes](hugo-site/content/en/releases/v0.17.0.md). Releases up to v0.16.0 remain available under the old `gitlab.com/tranchida/gocamel` path.
+Release **v0.18.0** introduces the TypeSafe Jev decision component and global security, concurrency, and reliability remediations across the core engine, components, and observability modules. See the [CHANGELOG](CHANGELOG.md) and the [v0.18.0 release notes](hugo-site/content/en/releases/v0.18.0.md). Releases up to v0.16.0 remain available under the old `gitlab.com/tranchida/gocamel` path.
 
 Go **1.27.0 or later** is required for the core, components and examples. The workspace and `.go-version` default to Go 1.27.0.
 
@@ -47,32 +47,32 @@ external runtime dependencies** and builds without CGO (tests use the pure-Go
 `modernc.org/sqlite` driver):
 
 ```bash
-go get github.com/tranchida/gocamel@v0.17.0
+go get github.com/tranchida/gocamel@v0.18.0
 ```
 
 Components that rely on third-party libraries live in their own Go modules —
 you only pull the dependencies of what you actually use:
 
 ```bash
-go get github.com/tranchida/gocamel/components/kafka@v0.17.0     # segmentio/kafka-go
-go get github.com/tranchida/gocamel/components/grpc@v0.17.0      # google.golang.org/grpc
-go get github.com/tranchida/gocamel/components/redis@v0.17.0    # go-redis
-go get github.com/tranchida/gocamel/components/nats@v0.17.0     # nats.go
-go get github.com/tranchida/gocamel/components/mongodb@v0.17.0  # mongo-driver
-go get github.com/tranchida/gocamel/components/mail@v0.17.0     # SMTP/IMAP/POP3
-go get github.com/tranchida/gocamel/components/ftp@v0.17.0
-go get github.com/tranchida/gocamel/components/sftp@v0.17.0
-go get github.com/tranchida/gocamel/components/smb@v0.17.0
-go get github.com/tranchida/gocamel/components/telegram@v0.17.0
-go get github.com/tranchida/gocamel/components/openai@v0.17.0
-go get github.com/tranchida/gocamel/components/anthropic@v0.17.0
-go get github.com/tranchida/gocamel/components/ollama@v0.17.0
-go get github.com/tranchida/gocamel/components/jev@v0.17.0       # Jev (OpenRouter Decisions API)
-go get github.com/tranchida/gocamel/components/cron@v0.17.0     # robfig/cron
-go get github.com/tranchida/gocamel/components/file@v0.17.0     # fsnotify watcher
-go get github.com/tranchida/gocamel/components/stomp@v0.17.0    # go-stomp (ActiveMQ/JMS)
-go get github.com/tranchida/gocamel/observability/prometheus@v0.17.0
-go get github.com/tranchida/gocamel/observability/otel@v0.17.0
+go get github.com/tranchida/gocamel/components/kafka@v0.18.0     # segmentio/kafka-go
+go get github.com/tranchida/gocamel/components/grpc@v0.18.0      # google.golang.org/grpc
+go get github.com/tranchida/gocamel/components/redis@v0.18.0    # go-redis
+go get github.com/tranchida/gocamel/components/nats@v0.18.0     # nats.go
+go get github.com/tranchida/gocamel/components/mongodb@v0.18.0  # mongo-driver
+go get github.com/tranchida/gocamel/components/mail@v0.18.0     # SMTP/IMAP/POP3
+go get github.com/tranchida/gocamel/components/ftp@v0.18.0
+go get github.com/tranchida/gocamel/components/sftp@v0.18.0
+go get github.com/tranchida/gocamel/components/smb@v0.18.0
+go get github.com/tranchida/gocamel/components/telegram@v0.18.0
+go get github.com/tranchida/gocamel/components/openai@v0.18.0
+go get github.com/tranchida/gocamel/components/anthropic@v0.18.0
+go get github.com/tranchida/gocamel/components/ollama@v0.18.0
+go get github.com/tranchida/gocamel/components/jev@v0.18.0       # Jev (OpenRouter Decisions API)
+go get github.com/tranchida/gocamel/components/cron@v0.18.0     # robfig/cron
+go get github.com/tranchida/gocamel/components/file@v0.18.0     # fsnotify watcher
+go get github.com/tranchida/gocamel/components/stomp@v0.18.0    # go-stomp (ActiveMQ/JMS)
+go get github.com/tranchida/gocamel/observability/prometheus@v0.18.0
+go get github.com/tranchida/gocamel/observability/otel@v0.18.0
 ```
 
 ```go

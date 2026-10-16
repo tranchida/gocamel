@@ -4,5 +4,5 @@ go 1.27.0
 
 require (
 	github.com/sashabaranov/go-openai v1.41.2
-	github.com/tranchida/gocamel v0.17.0
+	github.com/tranchida/gocamel v0.18.0
 )
