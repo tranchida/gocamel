@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,16 +25,37 @@ const okResponse = `{"answers":{
 
 type stub struct {
 	*httptest.Server
+	mu   sync.Mutex
 	req  *http.Request
 	body []byte
+}
+
+func (s *stub) getReq() *http.Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.req
+}
+
+func (s *stub) getBody() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.body
 }
 
 func newStub(t *testing.T, status int, resp string) *stub {
 	t.Helper()
 	s := &stub{}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.mu.Lock()
 		s.req = r
-		s.body, _ = io.ReadAll(r.Body)
+		s.body = body
+		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(resp))
@@ -64,11 +86,13 @@ func TestSend_Success(t *testing.T) {
 	ex.SetBody("Bravo, vraiment.")
 	require.NoError(t, p.Send(ex))
 
-	assert.Equal(t, "/decisions", s.req.URL.Path)
-	assert.Equal(t, "Bearer k", s.req.Header.Get("Authorization"))
+	req := s.getReq()
+	require.NotNil(t, req)
+	assert.Equal(t, "/decisions", req.URL.Path)
+	assert.Equal(t, "Bearer k", req.Header.Get("Authorization"))
 
 	var sent map[string]any
-	require.NoError(t, json.Unmarshal(s.body, &sent))
+	require.NoError(t, json.Unmarshal(s.getBody(), &sent))
 	assert.Equal(t, DefaultModel, sent["model"])
 	assert.Equal(t, "Bravo, vraiment.", sent["state"])
 	assert.Contains(t, sent["questions"], "is_ironic")
@@ -98,7 +122,7 @@ func TestSend_StructuredStateIsJSON(t *testing.T) {
 	var sent struct {
 		State map[string]string `json:"state"`
 	}
-	require.NoError(t, json.Unmarshal(s.body, &sent))
+	require.NoError(t, json.Unmarshal(s.getBody(), &sent))
 	assert.Equal(t, "hi", sent.State["user_message"])
 }
 
@@ -120,7 +144,7 @@ func TestSend_EmptyBodyRejected(t *testing.T) {
 	p := producer(t, uriFor(s.URL, ""))
 	require.NoError(t, p.Start(context.Background()))
 	require.Error(t, p.Send(gocamel.NewExchange(context.Background())))
-	assert.Nil(t, s.req)
+	assert.Nil(t, s.getReq())
 }
 
 func TestSend_HeaderOverrideIgnoredByDefault(t *testing.T) {
@@ -135,7 +159,7 @@ func TestSend_HeaderOverrideIgnoredByDefault(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var sent map[string]any
-	require.NoError(t, json.Unmarshal(s.body, &sent))
+	require.NoError(t, json.Unmarshal(s.getBody(), &sent))
 	assert.Equal(t, DefaultModel, sent["model"])
 	assert.Contains(t, sent["questions"], "is_ironic")
 }
@@ -152,7 +176,7 @@ func TestSend_HeaderOverrideWhenAllowed(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var sent map[string]any
-	require.NoError(t, json.Unmarshal(s.body, &sent))
+	require.NoError(t, json.Unmarshal(s.getBody(), &sent))
 	assert.Equal(t, "typesafe/jev-other", sent["model"])
 	assert.Contains(t, sent["questions"], "q")
 	assert.NotContains(t, sent["questions"], "is_ironic")

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -365,6 +366,9 @@ func (f *ZipDataFormat) readFile(file *zip.File) ([]byte, error) {
 	if int64(len(data)) > limit {
 		return nil, fmt.Errorf("zip unmarshal: entry %q exceeds the maximum size of %d bytes (possible zip bomb)", file.Name, limit)
 	}
+	if closeErr := rc.Close(); closeErr != nil {
+		return nil, fmt.Errorf("zip unmarshal: authenticating entry %q: %w", file.Name, closeErr)
+	}
 	return data, nil
 }
 
@@ -435,12 +439,56 @@ func (f *ZipDataFormat) openAESEntry(file *zip.File, extra *zipAESExtra) (io.Rea
 	}
 	switch extra.realMethod {
 	case zip.Store:
-		return io.NopCloser(ae), nil
+		return &aesStoreReadCloser{ae: ae}, nil
 	case zip.Deflate:
-		return flate.NewReader(ae), nil
+		return &aesDeflateReadCloser{r: flate.NewReader(ae), ae: ae}, nil
 	default:
 		return nil, fmt.Errorf("zip unmarshal: entry %q uses unsupported inner compression method %d", file.Name, extra.realMethod)
 	}
+}
+
+type aesDeflateReadCloser struct {
+	r  io.ReadCloser
+	ae *zipAESReader
+}
+
+func (d *aesDeflateReadCloser) Read(p []byte) (int, error) {
+	n, err := d.r.Read(p)
+	if err == io.EOF {
+		if d.ae.remaining != 0 {
+			return n, errors.New("zip aes: compressed stream ended before consuming full payload")
+		}
+		if macErr := d.ae.finishMAC(); macErr != nil {
+			return n, macErr
+		}
+	}
+	return n, err
+}
+
+func (d *aesDeflateReadCloser) Close() error {
+	flateErr := d.r.Close()
+	if d.ae.remaining != 0 {
+		return errors.New("zip aes: stream closed before consuming full payload")
+	}
+	if macErr := d.ae.finishMAC(); macErr != nil {
+		return macErr
+	}
+	return flateErr
+}
+
+type aesStoreReadCloser struct {
+	ae *zipAESReader
+}
+
+func (s *aesStoreReadCloser) Read(p []byte) (int, error) {
+	return s.ae.Read(p)
+}
+
+func (s *aesStoreReadCloser) Close() error {
+	if s.ae.remaining != 0 {
+		return errors.New("zip aes: stream closed before consuming full payload")
+	}
+	return s.ae.finishMAC()
 }
 
 // findAESExtra locates and parses the 0x9901 extra field of an entry.

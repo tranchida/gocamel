@@ -22,7 +22,11 @@ func NewMemoryAggregationRepository() *MemoryAggregationRepository {
 func (r *MemoryAggregationRepository) Add(ctx context.Context, key string, exchange *Exchange) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.store[key] = exchange
+	if exchange != nil {
+		r.store[key] = exchange.DeepCopy()
+	} else {
+		r.store[key] = nil
+	}
 	return nil
 }
 
@@ -31,10 +35,10 @@ func (r *MemoryAggregationRepository) Get(ctx context.Context, key string) (*Exc
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	exchange, exists := r.store[key]
-	if !exists {
+	if !exists || exchange == nil {
 		return nil, nil
 	}
-	return exchange, nil
+	return exchange.DeepCopy(), nil
 }
 
 // Keys returns the correlation keys of the stored groups.

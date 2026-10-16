@@ -32,15 +32,29 @@ func (c *SMBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	if err != nil {
 		return nil, err
 	}
+	if move := gocamel.GetConfigValue(u, "move"); move != "" {
+		if err := gocamel.ValidateRemotePath(move); err != nil {
+			return nil, fmt.Errorf("invalid move path: %w", err)
+		}
+	}
+	if moveFailed := gocamel.GetConfigValue(u, "moveFailed"); moveFailed != "" {
+		if err := gocamel.ValidateRemotePath(moveFailed); err != nil {
+			return nil, fmt.Errorf("invalid moveFailed path: %w", err)
+		}
+	}
+	maxMessageSize := gocamel.ParseInt64Option(gocamel.GetConfigValue(u, "maxMessageSize"))
+	if maxMessageSize <= 0 {
+		maxMessageSize = gocamel.DefaultMaxBodySize
+	}
 	return &SMBEndpoint{
 		uri:            uri,
 		url:            u,
 		comp:           c,
 		connectTimeout: gocamel.ParseConnectTimeout(u),
 		disconnect:     strings.EqualFold(gocamel.GetConfigValue(u, "disconnect"), "true"),
-		// maxMessageSize bounds how many bytes a single polled file may hold
-		// (0 = unlimited).
-		maxMessageSize: gocamel.ParseInt64Option(gocamel.GetConfigValue(u, "maxMessageSize")),
+		// maxMessageSize bounds how many bytes a single polled or produced file
+		// may hold (defaults to DefaultMaxBodySize = 32 MiB).
+		maxMessageSize: maxMessageSize,
 	}, nil
 }
 
@@ -56,7 +70,7 @@ type SMBEndpoint struct {
 
 // URI returns the endpoint URI
 func (e *SMBEndpoint) URI() string {
-	return e.uri
+	return gocamel.RedactURI(e.uri)
 }
 
 type smbConn struct {
@@ -145,10 +159,17 @@ func (e *SMBEndpoint) CreateProducer() (gocamel.Producer, error) {
 
 // CreateConsumer creates an SMB consumer
 func (e *SMBEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consumer, error) {
+	opts := gocamel.ParsePollingOptions(e.url)
+	if err := gocamel.ValidateRemotePath(opts.Move); err != nil {
+		return nil, fmt.Errorf("invalid move path: %w", err)
+	}
+	if err := gocamel.ValidateRemotePath(opts.MoveFailed); err != nil {
+		return nil, fmt.Errorf("invalid moveFailed path: %w", err)
+	}
 	return &SMBConsumer{
 		endpoint:  e,
 		processor: processor,
-		opts:      gocamel.ParsePollingOptions(e.url),
+		opts:      opts,
 	}, nil
 }
 
@@ -160,15 +181,40 @@ func (e *SMBEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consu
 type SMBProducer struct {
 	endpoint  *SMBEndpoint
 	fileExist gocamel.FileExistBehavior
-	mu        sync.Mutex
-	sc        *smbConn // persistent connection (disconnect=false)
+	mu        sync.Mutex    // protects operation initialization
+	operation chan struct{} // exclusive connection lease for the entire transfer
+	sc        *smbConn      // persistent connection (disconnect=false)
 }
 
 func (p *SMBProducer) Start(ctx context.Context) error { return nil }
 
-func (p *SMBProducer) Stop() error {
+// acquire leases the connection for one operation without holding a mutex
+// across network I/O. A blocked sender can still cancel while waiting.
+func (p *SMBProducer) acquire(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	if p.operation == nil {
+		p.operation = make(chan struct{}, 1)
+	}
+	operation := p.operation
+	p.mu.Unlock()
+	select {
+	case operation <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *SMBProducer) release() { <-p.operation }
+
+func (p *SMBProducer) Stop() error {
+	if err := p.acquire(context.Background()); err != nil {
+		return err
+	}
+	defer p.release()
 	if p.sc != nil {
 		p.sc.close()
 		p.sc = nil
@@ -180,8 +226,6 @@ func (p *SMBProducer) getConn() (*smbConn, error) {
 	if p.endpoint.disconnect {
 		return p.endpoint.connect()
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.sc != nil {
 		if _, err := p.sc.share.Stat("."); err == nil {
 			return p.sc, nil
@@ -205,6 +249,10 @@ func (p *SMBProducer) releaseConn(sc *smbConn) {
 
 // Send sends the exchange content to the SMB share.
 func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
+	if err := p.acquire(exchange.Context); err != nil {
+		return err
+	}
+	defer p.release()
 	sc, err := p.getConn()
 	if err != nil {
 		return err
@@ -247,7 +295,7 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 	case string:
 		body = []byte(b)
 	case io.Reader:
-		if body, err = io.ReadAll(b); err != nil {
+		if body, err = gocamel.ReadLimited(b, p.endpoint.maxMessageSize); err != nil {
 			return fmt.Errorf("error reading body: %w", err)
 		}
 	default:
@@ -260,7 +308,7 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 		// concatenating a truncated copy of the existing content would
 		// silently corrupt the stored file.
 		if f, err := sc.share.Open(path); err == nil {
-			existing, readErr := io.ReadAll(f)
+			existing, readErr := gocamel.ReadLimited(f, p.endpoint.maxMessageSize)
 			f.Close()
 			if readErr != nil {
 				return fmt.Errorf("smb: failed to read existing file %s for append: %w", path, readErr)

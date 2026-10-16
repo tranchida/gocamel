@@ -54,6 +54,16 @@ func (c *FileComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	if err := gocamel.ValidatePath(path); err != nil {
 		return nil, err
 	}
+	if move := gocamel.GetConfigValue(u, "move"); move != "" {
+		if err := gocamel.ValidatePath(move); err != nil {
+			return nil, fmt.Errorf("invalid move path: %w", err)
+		}
+	}
+	if moveFailed := gocamel.GetConfigValue(u, "moveFailed"); moveFailed != "" {
+		if err := gocamel.ValidatePath(moveFailed); err != nil {
+			return nil, fmt.Errorf("invalid moveFailed path: %w", err)
+		}
+	}
 
 	return &FileEndpoint{
 		uri:       uri,
@@ -87,6 +97,16 @@ func (e *FileEndpoint) CreateProducer() (gocamel.Producer, error) {
 
 // CreateConsumer creates a File consumer
 func (e *FileEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consumer, error) {
+	if move := gocamel.GetConfigValue(e.url, "move"); move != "" {
+		if err := gocamel.ValidatePath(move); err != nil {
+			return nil, fmt.Errorf("invalid move path: %w", err)
+		}
+	}
+	if moveFailed := gocamel.GetConfigValue(e.url, "moveFailed"); moveFailed != "" {
+		if err := gocamel.ValidatePath(moveFailed); err != nil {
+			return nil, fmt.Errorf("invalid moveFailed path: %w", err)
+		}
+	}
 	maxSeen := DefaultMaxSeenEntries
 	if v := gocamel.GetConfigValue(e.url, "maxSeenEntries"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -157,7 +177,7 @@ func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 	// 0644 file mode below) and the effective mode still respects the umask.
 	// #nosec G301
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-		return fmt.Errorf("error creating directory: %v", err)
+		return fmt.Errorf("error creating directory: %w", err)
 	}
 
 	var content []byte
@@ -288,6 +308,7 @@ type FileConsumer struct {
 	processor gocamel.Processor
 	watcher   *fsnotify.Watcher
 	stopChan  chan struct{}
+	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	mu        sync.Mutex
 	ignored   map[string]struct{}
@@ -322,7 +343,7 @@ func (c *FileConsumer) checkAndClearIgnored(path string) bool {
 func (c *FileConsumer) Start(ctx context.Context) error {
 	info, err := os.Stat(c.path)
 	if err != nil {
-		return fmt.Errorf("error accessing path: %v", err)
+		return fmt.Errorf("error accessing path: %w", err)
 	}
 	if info.IsDir() {
 		return c.watchDirectory(ctx)
@@ -401,7 +422,7 @@ func (s *fileSynchronization) OnFailure(exchange *gocamel.Exchange) {
 func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return fmt.Errorf("error creating watcher: %v", err)
+		return fmt.Errorf("error creating watcher: %w", err)
 	}
 	c.watcher = watcher
 	c.stopChan = make(chan struct{})
@@ -418,7 +439,8 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	}
 
 	if err := watcher.Add(c.path); err != nil {
-		return fmt.Errorf("error adding path to watcher: %v", err)
+		_ = watcher.Close()
+		return fmt.Errorf("error adding path to watcher: %w", err)
 	}
 
 	// If recursive, also add all existing subdirectories
@@ -466,6 +488,8 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				}
 				gocamel.LogError("watcher error", "error", err)
 			case <-c.stopChan:
+				return
+			case <-ctx.Done():
 				return
 			}
 		}
@@ -634,7 +658,7 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 	}
 	content, err := os.ReadFile(c.path)
 	if err != nil {
-		return fmt.Errorf("error reading file: %v", err)
+		return fmt.Errorf("error reading file: %w", err)
 	}
 
 	exchange := gocamel.NewExchange(ctx)
@@ -663,26 +687,17 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 
 // Stop stops the File consumer and waits for the watcher goroutine to exit.
 func (c *FileConsumer) Stop() error {
-	if c.watcher != nil {
-		close(c.stopChan)
-		err := c.watcher.Close()
-		c.wg.Wait()
-		return err
-	}
-	return nil
-}
-
-// waitForStableFile blocks until path's size and modification time stop
-// changing between two consecutive samples, and reports whether the file
-// settled before timeout elapsed (or the context was cancelled).
-func waitForStableFile(ctx context.Context, path string, timeout, interval time.Duration) bool {
-	return gocamel.WaitForStable(ctx, func() (int64, time.Time, error) {
-		info, err := os.Stat(path)
-		if err != nil {
-			return 0, time.Time{}, err
+	var err error
+	c.stopOnce.Do(func() {
+		if c.stopChan != nil {
+			close(c.stopChan)
 		}
-		return info.Size(), info.ModTime(), nil
-	}, timeout, interval, 0, 0)
+		if c.watcher != nil {
+			err = c.watcher.Close()
+		}
+	})
+	c.wg.Wait()
+	return err
 }
 
 // moveFilelocal moves src to destDir, creating the directory if needed.

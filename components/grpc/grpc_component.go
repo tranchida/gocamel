@@ -255,13 +255,32 @@ type GRPCEndpoint struct {
 	forwardHeaders map[string]bool
 
 	clientConn *grpc.ClientConn
+	connUsers  int
 	consumer   *GRPCConsumer
 	mu         sync.Mutex
 }
 
-// URI returns the endpoint URI.
+// closeConn decrements the active connection user count and closes the shared
+// gRPC client connection when the last user releases it.
+func (e *GRPCEndpoint) closeConn() error {
+	e.mu.Lock()
+	if e.connUsers > 0 {
+		e.connUsers--
+	}
+	if e.connUsers > 0 || e.clientConn == nil {
+		e.mu.Unlock()
+		return nil
+	}
+	conn := e.clientConn
+	e.clientConn = nil
+	e.mu.Unlock()
+
+	return conn.Close()
+}
+
+// URI returns the endpoint URI with sensitive parameters masked.
 func (e *GRPCEndpoint) URI() string {
-	return e.uri
+	return gocamel.RedactURI(e.uri)
 }
 
 // FullMethod returns the full method path "/Service/Method" or "/Method".
@@ -289,7 +308,7 @@ func (e *GRPCEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Cons
 	defer e.mu.Unlock()
 
 	if e.consumer != nil {
-		return nil, fmt.Errorf("multiple consumers for the same gRPC endpoint are not allowed: %s", e.uri)
+		return nil, fmt.Errorf("multiple consumers for the same gRPC endpoint are not allowed: %s", e.URI())
 	}
 
 	e.consumer = &GRPCConsumer{
@@ -302,48 +321,57 @@ func (e *GRPCEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Cons
 // GRPCProducer invokes remote gRPC services.
 type GRPCProducer struct {
 	endpoint *GRPCEndpoint
+	mu       sync.Mutex
+	started  bool
 }
 
 // Start establishes the gRPC client connection.
 func (p *GRPCProducer) Start(ctx context.Context) error {
-	p.endpoint.mu.Lock()
-	defer p.endpoint.mu.Unlock()
-
-	if p.endpoint.clientConn != nil {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.started {
 		return nil
 	}
 
-	var opts []grpc.DialOption
-	if p.endpoint.insecure {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	} else {
-		creds, err := transportCredentials(p.endpoint.target, p.endpoint.caCert)
-		if err != nil {
-			return err
-		}
-		opts = append(opts, grpc.WithTransportCredentials(creds))
-	}
-
-	conn, err := grpc.NewClient(p.endpoint.target, opts...)
-	if err != nil {
-		return fmt.Errorf("grpc client connection error: %w", err)
-	}
-
-	p.endpoint.clientConn = conn
-	return nil
-}
-
-// Stop closes the client connection.
-func (p *GRPCProducer) Stop() error {
 	p.endpoint.mu.Lock()
 	defer p.endpoint.mu.Unlock()
 
-	if p.endpoint.clientConn != nil {
-		err := p.endpoint.clientConn.Close()
-		p.endpoint.clientConn = nil
-		return err
+	if p.endpoint.clientConn == nil {
+		var opts []grpc.DialOption
+		if p.endpoint.insecure {
+			opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		} else {
+			creds, err := transportCredentials(p.endpoint.target, p.endpoint.caCert)
+			if err != nil {
+				return err
+			}
+			opts = append(opts, grpc.WithTransportCredentials(creds))
+		}
+
+		conn, err := grpc.NewClient(p.endpoint.target, opts...)
+		if err != nil {
+			return fmt.Errorf("grpc client connection error: %w", err)
+		}
+
+		p.endpoint.clientConn = conn
 	}
+
+	p.endpoint.connUsers++
+	p.started = true
 	return nil
+}
+
+// Stop releases this producer's reference to the shared client connection.
+func (p *GRPCProducer) Stop() error {
+	p.mu.Lock()
+	if !p.started {
+		p.mu.Unlock()
+		return nil
+	}
+	p.started = false
+	p.mu.Unlock()
+
+	return p.endpoint.closeConn()
 }
 
 // Send executes the RPC call and puts response in the Exchange.
@@ -546,7 +574,7 @@ func (c *GRPCConsumer) handler(srv any, stream grpc.ServerStream) error {
 	err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
 	if err != nil {
 		gocamel.LogError("grpc consumer processing error",
-			"uri", c.endpoint.uri,
+			"uri", c.endpoint.URI(),
 			"method", fullMethod,
 			"error", err,
 			"exchange_id", exchange.ID,

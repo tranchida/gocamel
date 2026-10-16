@@ -110,7 +110,7 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 
 	r.buffer = append(r.buffer, &resequencerEntry{
 		seq:      seq,
-		exchange: exchange.Copy(),
+		exchange: exchange.DeepCopy(),
 	})
 	sort.Slice(r.buffer, func(i, j int) bool {
 		return r.buffer[i].seq < r.buffer[j].seq
@@ -269,7 +269,7 @@ func (b *RouteBuilder) Resequence(expression any, startSeq int64) *ResequencerDe
 	case string:
 		template, err := ParseSimpleTemplate(expr)
 		if err != nil {
-			b.err = fmt.Errorf("resequencer: failed to parse simple expression: %w", err)
+			b.recordErr(fmt.Errorf("resequencer: failed to parse simple expression: %w", err))
 			return &ResequencerDefinition{parent: b, resequencer: NewResequencer(nil, startSeq, time.Second), mainBuilder: &RouteBuilder{context: b.context, route: b.route, container: NewPipeline()}}
 		}
 		exprFn = func(e *Exchange) (int64, error) {
@@ -289,7 +289,7 @@ func (b *RouteBuilder) Resequence(expression any, startSeq int64) *ResequencerDe
 			return int64(val), nil
 		}
 	default:
-		b.err = fmt.Errorf("resequencer: unsupported expression type %T", expression)
+		b.recordErr(fmt.Errorf("resequencer: unsupported expression type %T", expression))
 		return &ResequencerDefinition{parent: b, resequencer: NewResequencer(nil, startSeq, time.Second), mainBuilder: &RouteBuilder{context: b.context, route: b.route, container: NewPipeline()}}
 	}
 

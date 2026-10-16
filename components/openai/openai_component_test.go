@@ -5,8 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 
@@ -17,8 +17,7 @@ import (
 
 func TestOpenAIProducer_Start(t *testing.T) {
 	// Set environment variable for test
-	os.Setenv("OPENAI_API_KEY", "test-token")
-	defer os.Unsetenv("OPENAI_API_KEY")
+	t.Setenv("OPENAI_API_KEY", "test-token")
 
 	u, _ := url.Parse("openai:chat?model=gpt-4&apiKey=test-token")
 	endpoint := &OpenAIEndpoint{
@@ -176,7 +175,18 @@ func TestOpenAIProducer_Start_DefaultBaseURL(t *testing.T) {
 }
 
 func TestOpenAIProducer_Start_CustomBaseURL(t *testing.T) {
-	u, _ := url.Parse("openai:chat?model=gpt-4&apiKey=test-token&baseURL=https://openrouter.ai/api/v1")
+	var gotPath string
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","choices":[{"message":{"content":"hi"}}]}`))
+	}))
+	defer server.Close()
+
+	u, _ := url.Parse("openai:chat?model=gpt-4&apiKey=test-token&baseURL=" + url.QueryEscape(server.URL+"/v1"))
 	endpoint := &OpenAIEndpoint{uri: "openai:chat?model=gpt-4", url: u}
 	producer := &OpenAIProducer{endpoint: endpoint}
 
@@ -184,24 +194,16 @@ func TestOpenAIProducer_Start_CustomBaseURL(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	// Replace the HTTP client with a recorder while preserving the custom
-	// baseURL that Start() applied to the producer's client config.
-	recorder := &urlRecordingDoer{}
-	cfg := sdkopenai.DefaultConfig("test-token")
-	cfg.BaseURL = "https://openrouter.ai/api/v1"
-	cfg.HTTPClient = recorder
-	producer.client = sdkopenai.NewClientWithConfig(cfg)
-
 	exchange := gocamel.NewExchange(context.Background())
 	exchange.SetBody("hello")
 	if err := producer.Send(exchange); err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
-	if recorder.gotURL == nil {
-		t.Fatal("no request was captured")
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("custom baseURL: got path %q, want /v1/chat/completions", gotPath)
 	}
-	if recorder.gotURL.String() != "https://openrouter.ai/api/v1/chat/completions" {
-		t.Errorf("custom baseURL: got %q, want https://openrouter.ai/api/v1/chat/completions", recorder.gotURL.String())
+	if gotAuth != "Bearer test-token" {
+		t.Errorf("custom baseURL: got auth %q, want Bearer test-token", gotAuth)
 	}
 }
 

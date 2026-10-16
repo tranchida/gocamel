@@ -24,14 +24,14 @@ func main() {
 	context.AddComponent("file", file.NewFileComponent())
 
 	// Create a route that watches the directory.
-	route, err := context.CreateRouteBuilder().
+	_, err = context.CreateRouteBuilder().
 		From("file://" + tempDir).
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
 			fmt.Printf("New file detected:\n")
-			if fileName, ok := exchange.GetIn().GetHeader("CamelFileName"); ok {
+			if fileName, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
 				fmt.Printf("  Name: %s\n", fileName)
 			}
-			if filePath, ok := exchange.GetIn().GetHeader("CamelFileAbsolutePath"); ok {
+			if filePath, ok := exchange.GetIn().GetHeader(gocamel.CamelFilePath); ok {
 				fmt.Printf("  Path: %s\n", filePath)
 			}
 			fmt.Printf("  Content: %s\n", exchange.GetIn().GetBody())
@@ -44,11 +44,11 @@ func main() {
 	}
 
 	// Start the route.
-	context.AddRoute(route)
 	if err := context.Start(); err != nil {
 		fmt.Printf("Error starting context: %v\n", err)
 		return
 	}
+	defer context.Stop()
 
 	fmt.Printf("Watching directory: %s\n", tempDir)
 

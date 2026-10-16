@@ -86,11 +86,11 @@ func (c *NetComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		}
 	}
 	if val := GetConfigValue(u, "bufferSize"); val != "" {
-		if v, err := strconv.Atoi(val); err == nil && v > 0 {
-			endpoint.bufferSize = v
-		} else {
-			LogWarn("net: invalid bufferSize; using default", "value", val, "default", endpoint.bufferSize)
+		v, err := strconv.Atoi(val)
+		if err != nil || v <= 0 || int64(v) > DefaultMaxBodySize {
+			return nil, fmt.Errorf("net: invalid bufferSize %q: must be between 1 and %d bytes", val, DefaultMaxBodySize)
 		}
+		endpoint.bufferSize = v
 	}
 	if val := GetConfigValue(u, "timeout"); val != "" {
 		if v, err := strconv.ParseInt(val, 10, 64); err == nil && v >= 0 {

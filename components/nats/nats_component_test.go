@@ -318,3 +318,46 @@ func TestNATSConsumer_StopReleasesEndpointRegistration(t *testing.T) {
 	_, err = endpoint.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
 	assert.NoError(t, err)
 }
+
+func TestNATSEndpoint_SharedConnectionReferenceCounting(t *testing.T) {
+	ns := runEmbeddedNatsServer(t)
+	defer ns.Shutdown()
+
+	comp := NewNATSComponent()
+	ep, err := comp.CreateEndpoint("nats://shared?servers=" + ns.ClientURL())
+	require.NoError(t, err)
+	ne := ep.(*NATSEndpoint)
+
+	p1, err := ep.CreateProducer()
+	require.NoError(t, err)
+	p2, err := ep.CreateProducer()
+	require.NoError(t, err)
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, p1.Start(ctx))
+	require.NoError(t, p2.Start(ctx))
+	require.NoError(t, consumer.Start(ctx))
+	assert.Equal(t, 3, ne.connUsers)
+
+	// Stopping p1 and consumer (including duplicate Stop calls) keeps p2's connection alive.
+	require.NoError(t, p1.Stop())
+	require.NoError(t, p1.Stop())
+	assert.Equal(t, 2, ne.connUsers)
+
+	require.NoError(t, consumer.Stop())
+	require.NoError(t, consumer.Stop())
+	assert.Equal(t, 1, ne.connUsers)
+	require.NotNil(t, ne.conn)
+	assert.False(t, ne.conn.IsClosed())
+
+	ex := gocamel.NewExchange(ctx)
+	ex.In.SetBody("still open")
+	require.NoError(t, p2.Send(ex))
+
+	require.NoError(t, p2.Stop())
+	assert.Equal(t, 0, ne.connUsers)
+	assert.Nil(t, ne.conn)
+}
+

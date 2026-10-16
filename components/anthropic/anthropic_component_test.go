@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,8 +21,21 @@ import (
 // Messages response, recording the last request it received.
 type stubServer struct {
 	*httptest.Server
+	mu       sync.Mutex
 	lastReq  *http.Request
 	lastBody []byte
+}
+
+func (s *stubServer) req() *http.Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastReq
+}
+
+func (s *stubServer) body() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastBody
 }
 
 func newStubServer(t *testing.T, status int, respBody string) *stubServer {
@@ -30,10 +44,14 @@ func newStubServer(t *testing.T, status int, respBody string) *stubServer {
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			t.Fatalf("read body: %v", err)
+			t.Errorf("read body: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
+		s.mu.Lock()
 		s.lastReq = r
 		s.lastBody = body
+		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(respBody))
@@ -140,13 +158,14 @@ func TestAnthropicProducer_Send_TextResponse(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-4-5", v)
 
 	// Verify the request hit the expected path and carried the API key.
-	require.NotNil(t, stub.lastReq)
-	assert.Equal(t, "/v1/messages", stub.lastReq.URL.Path)
-	assert.Equal(t, "k", stub.lastReq.Header.Get("x-api-key"))
+	req := stub.req()
+	require.NotNil(t, req)
+	assert.Equal(t, "/v1/messages", req.URL.Path)
+	assert.Equal(t, "k", req.Header.Get("x-api-key"))
 
 	// Verify the request body carries model, maxTokens and the user prompt.
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "claude-sonnet-4-5", got["model"])
 	assert.EqualValues(t, 50, got["max_tokens"])
 	msgs, _ := got["messages"].([]any)
@@ -172,7 +191,7 @@ func TestAnthropicProducer_Send_SystemFromHeader(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	sys, _ := got["system"].([]any)
 	require.Len(t, sys, 1)
 	first, _ := sys[0].(map[string]any)
@@ -190,7 +209,7 @@ func TestAnthropicProducer_Send_TemperatureFromHeader(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.EqualValues(t, 0.42, got["temperature"])
 }
 
@@ -208,7 +227,7 @@ func TestAnthropicProducer_Send_HeaderOverridesIgnoredByDefault(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "uri-model", got["model"])
 	assert.EqualValues(t, 50, got["max_tokens"])
 	assert.NotContains(t, got, "temperature")
@@ -230,7 +249,7 @@ func TestAnthropicProducer_Send_HeaderOverridesWithOptIn(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "header-model", got["model"])
 	assert.EqualValues(t, 4096, got["max_tokens"])
 }

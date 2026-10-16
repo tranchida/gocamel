@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/emersion/go-message/mail"
+
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // parseMimeMessageResult holds the result of MIME parsing — body (plain and
@@ -175,7 +177,7 @@ func handleAttachmentEntityCommon(entity *mail.Reader, result *parseMimeMessageR
 // decodePartCommon reads a part's body. go-message handles transfer encoding
 // (base64, quoted-printable) internally.
 func decodePartCommon(part *mail.Part) ([]byte, error) {
-	return io.ReadAll(part.Body)
+	return gocamel.ReadLimited(part.Body, gocamel.DefaultMaxBodySize)
 }
 
 // extractFilenameFromDispositionCommon returns the filename advertised by

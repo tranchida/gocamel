@@ -67,7 +67,6 @@ func (vp *ValidateProcessor) Process(exchange *Exchange) error {
 			if err != nil {
 				return fmt.Errorf("validate: failed to parse expression %q: %w", p, err)
 			}
-			vp.template = template
 		}
 		res, err := template.EvaluateAsBool(exchange)
 		if err != nil {
@@ -95,7 +94,7 @@ func (vp *ValidateProcessor) Process(exchange *Exchange) error {
 func (b *RouteBuilder) Validate(predicate any) *RouteBuilder {
 	vp := NewValidateProcessor(predicate)
 	if err := vp.Validate(); err != nil {
-		b.err = err
+		b.recordErr(err)
 		return b
 	}
 	b.container.AddProcessor(vp)

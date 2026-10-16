@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -343,18 +344,18 @@ func (c *MailConsumer) connect(ctx context.Context) error {
 	var client *imapclient.Client
 	var err error
 
+	opts := &imapclient.Options{
+		TLSConfig:             tlsConfig,
+		UnilateralDataHandler: &imapclient.UnilateralDataHandler{Mailbox: c.mailboxChanged},
+		Dialer:                &net.Dialer{Timeout: ep.connectionTimeout},
+	}
+
 	if ep.isSecure() {
 		// IMAPS native TLS (port 993)
-		client, err = imapclient.DialTLS(ep.address(), &imapclient.Options{
-			TLSConfig:             tlsConfig,
-			UnilateralDataHandler: &imapclient.UnilateralDataHandler{Mailbox: c.mailboxChanged},
-		})
+		client, err = imapclient.DialTLS(ep.address(), opts)
 	} else {
 		// IMAP with optional STARTTLS (port 143)
-		client, err = imapclient.DialStartTLS(ep.address(), &imapclient.Options{
-			TLSConfig:             tlsConfig,
-			UnilateralDataHandler: &imapclient.UnilateralDataHandler{Mailbox: c.mailboxChanged},
-		})
+		client, err = imapclient.DialStartTLS(ep.address(), opts)
 	}
 
 	if err != nil {

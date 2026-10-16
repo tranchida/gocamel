@@ -165,6 +165,9 @@ type TemplateProducer struct {
 func (p *TemplateProducer) Start(ctx context.Context) error {
 	// If contentCache is enabled, load the template into memory.
 	if p.endpoint.contentCache {
+		if err := ValidatePath(p.endpoint.path); err != nil {
+			return fmt.Errorf("invalid template path: %w", err)
+		}
 		content, err := os.ReadFile(p.endpoint.path)
 		if err != nil {
 			return fmt.Errorf("error reading template %s: %w", p.endpoint.path, err)
@@ -201,7 +204,7 @@ func (p *TemplateProducer) Send(exchange *Exchange) error {
 	var templateContent string
 	var err error
 
-	if p.endpoint.contentCache && !p.endpoint.allowTemplateFromHeader {
+	if p.endpoint.contentCache && templatePath == p.endpoint.path && p.templateText != "" {
 		// Use the cached template.
 		templateContent = p.templateText
 	} else {
@@ -316,7 +319,10 @@ func prepareTemplateData(exchange *Exchange) *TemplateData {
 	// Exchange information.
 	data.Exchange.ID = exchange.ID
 	data.Exchange.Created = exchange.Created
-	data.Exchange.Properties = exchange.Properties
+	data.Exchange.Properties = make(map[string]any)
+	for k, v := range exchange.Properties {
+		data.Exchange.Properties[k] = v
+	}
 
 	// Message body — convert []byte to string if necessary.
 	body := exchange.GetIn().GetBody()

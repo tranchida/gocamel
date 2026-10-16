@@ -213,7 +213,7 @@ func messageText(body any) string {
 	}
 }
 
-// TelegramConsumer represents a consommateur Telegram
+// TelegramConsumer represents a Telegram consumer
 type TelegramConsumer struct {
 	endpoint  *TelegramEndpoint
 	processor gocamel.Processor

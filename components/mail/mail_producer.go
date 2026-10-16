@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"mime/quotedprintable"
 	"net"
 	"net/smtp"
 	"net/textproto"
@@ -110,7 +111,13 @@ func (p *MailProducer) buildMessage(from, to, cc, subject, contentType string, b
 		fmt.Fprintf(&buf, "--%s\r\n", boundary)
 		fmt.Fprintf(&buf, "Content-Type: %s; charset=UTF-8\r\n", contentType)
 		fmt.Fprintf(&buf, "Content-Transfer-Encoding: quoted-printable\r\n\r\n")
-		buf.Write(body)
+		qp := quotedprintable.NewWriter(&buf)
+		if _, err := qp.Write(body); err != nil {
+			return nil, err
+		}
+		if err := qp.Close(); err != nil {
+			return nil, err
+		}
 		buf.WriteString("\r\n")
 
 		// Attachments
@@ -137,7 +144,13 @@ func (p *MailProducer) buildMessage(from, to, cc, subject, contentType string, b
 		// Simple message without attachments
 		fmt.Fprintf(&buf, "Content-Type: %s; charset=UTF-8\r\n", contentType)
 		fmt.Fprintf(&buf, "Content-Transfer-Encoding: quoted-printable\r\n\r\n")
-		buf.Write(body)
+		qp := quotedprintable.NewWriter(&buf)
+		if _, err := qp.Write(body); err != nil {
+			return nil, err
+		}
+		if err := qp.Close(); err != nil {
+			return nil, err
+		}
 	}
 
 	return buf.Bytes(), nil

@@ -449,3 +449,39 @@ func TestGRPCConsumer_StopReleasesEndpointRegistration(t *testing.T) {
 	_, err = endpoint.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
 	assert.NoError(t, err)
 }
+
+func TestGRPCProducer_SharedEndpointReferenceCounting(t *testing.T) {
+	component := NewGRPCComponent()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	addr, _ := startEchoServer(t, component, ctx)
+	endpoint, err := component.CreateEndpoint("grpc://" + addr + "/test.EchoService/Echo?insecure=true")
+	require.NoError(t, err)
+	ge := endpoint.(*GRPCEndpoint)
+
+	p1, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+	p2, err := endpoint.CreateProducer()
+	require.NoError(t, err)
+
+	require.NoError(t, p1.Start(ctx))
+	require.NoError(t, p2.Start(ctx))
+	assert.Equal(t, 2, ge.connUsers)
+
+	// Stopping p1 (even twice) must leave the connection open for p2.
+	require.NoError(t, p1.Stop())
+	require.NoError(t, p1.Stop())
+	assert.Equal(t, 1, ge.connUsers)
+	assert.NotNil(t, ge.clientConn)
+
+	method, err := sendAndGetMethod(t, p2, ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, "/test.EchoService/Echo", method)
+
+	// Stopping p2 releases the last reference and closes the connection.
+	require.NoError(t, p2.Stop())
+	assert.Equal(t, 0, ge.connUsers)
+	assert.Nil(t, ge.clientConn)
+}
+

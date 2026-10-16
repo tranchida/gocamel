@@ -31,6 +31,20 @@ func (c *FTPComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	if err != nil {
 		return nil, err
 	}
+	if move := gocamel.GetConfigValue(u, "move"); move != "" {
+		if err := gocamel.ValidateRemotePath(move); err != nil {
+			return nil, fmt.Errorf("invalid move path: %w", err)
+		}
+	}
+	if moveFailed := gocamel.GetConfigValue(u, "moveFailed"); moveFailed != "" {
+		if err := gocamel.ValidateRemotePath(moveFailed); err != nil {
+			return nil, fmt.Errorf("invalid moveFailed path: %w", err)
+		}
+	}
+	maxMessageSize := gocamel.ParseInt64Option(gocamel.GetConfigValue(u, "maxMessageSize"))
+	if maxMessageSize <= 0 {
+		maxMessageSize = gocamel.DefaultMaxBodySize
+	}
 	return &FTPEndpoint{
 		uri:            uri,
 		url:            u,
@@ -42,10 +56,9 @@ func (c *FTPComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		// disconnect=true: disconnect after each operation.
 		// disconnect=false (default): maintain the connection between polls.
 		disconnect: strings.EqualFold(gocamel.GetConfigValue(u, "disconnect"), "true"),
-		// maxMessageSize bounds how many bytes a single polled file may hold
-		// (0 = unlimited). Overriding the default lets a consumer read an
-		// oversized remote file without exhausting process memory.
-		maxMessageSize: gocamel.ParseInt64Option(gocamel.GetConfigValue(u, "maxMessageSize")),
+		// maxMessageSize bounds how many bytes a single polled or produced file
+		// may hold (defaults to DefaultMaxBodySize = 32 MiB).
+		maxMessageSize: maxMessageSize,
 	}, nil
 }
 
@@ -62,7 +75,7 @@ type FTPEndpoint struct {
 
 // URI returns the endpoint URI
 func (e *FTPEndpoint) URI() string {
-	return e.uri
+	return gocamel.RedactURI(e.uri)
 }
 
 // connect establishes an FTP connection
@@ -100,10 +113,17 @@ func (e *FTPEndpoint) CreateProducer() (gocamel.Producer, error) {
 
 // CreateConsumer creates an FTP consumer
 func (e *FTPEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consumer, error) {
+	opts := gocamel.ParsePollingOptions(e.url)
+	if err := gocamel.ValidateRemotePath(opts.Move); err != nil {
+		return nil, fmt.Errorf("invalid move path: %w", err)
+	}
+	if err := gocamel.ValidateRemotePath(opts.MoveFailed); err != nil {
+		return nil, fmt.Errorf("invalid moveFailed path: %w", err)
+	}
 	return &FTPConsumer{
 		endpoint:  e,
 		processor: processor,
-		opts:      gocamel.ParsePollingOptions(e.url),
+		opts:      opts,
 	}, nil
 }
 
@@ -230,7 +250,7 @@ func (p *FTPProducer) Send(exchange *gocamel.Exchange) error {
 	case string:
 		body = []byte(b)
 	case io.Reader:
-		body, err = io.ReadAll(b)
+		body, err = gocamel.ReadLimited(b, p.endpoint.maxMessageSize)
 		if err != nil {
 			return fmt.Errorf("error reading body: %w", err)
 		}
@@ -253,7 +273,7 @@ func (p *FTPProducer) Send(exchange *gocamel.Exchange) error {
 		// read, however, must abort the send: concatenating a truncated copy
 		// of the existing content would silently corrupt the stored file.
 		if resp, err := conn.Retr(path); err == nil {
-			existing, readErr := io.ReadAll(resp)
+			existing, readErr := gocamel.ReadLimited(resp, p.endpoint.maxMessageSize)
 			resp.Close()
 			if readErr != nil {
 				return fmt.Errorf("ftp: failed to read existing file %s for append: %w", path, readErr)

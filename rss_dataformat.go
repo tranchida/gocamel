@@ -133,11 +133,7 @@ func bodyToBytes(body any) ([]byte, error) {
 	case []byte:
 		return v, nil
 	case io.Reader:
-		var buf bytes.Buffer
-		if _, err := buf.ReadFrom(v); err != nil {
-			return nil, err
-		}
-		return buf.Bytes(), nil
+		return ReadLimited(v, DefaultMaxBodySize)
 	default:
 		return nil, fmt.Errorf("got %T", body)
 	}

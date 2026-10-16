@@ -221,7 +221,11 @@ func (f *CSVDataFormat) readerForBody(body any) (io.Reader, error) {
 	case []byte:
 		return bytes.NewReader(v), nil
 	case io.Reader:
-		return v, nil
+		b, err := ReadLimited(v, DefaultMaxBodySize)
+		if err != nil {
+			return nil, fmt.Errorf("csv unmarshal: %w", err)
+		}
+		return bytes.NewReader(b), nil
 	default:
 		return nil, fmt.Errorf("csv unmarshal: unsupported body type %T", body)
 	}

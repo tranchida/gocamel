@@ -185,10 +185,12 @@ func TestCronConsumer_RepeatCount(t *testing.T) {
 	defer consumer.Stop()
 
 	// Wait for the 3 triggers to be completed
-	time.Sleep(500 * time.Millisecond)
+	assert.Eventually(t, func() bool {
+		return count.Load() == int64(3)
+	}, 2*time.Second, 20*time.Millisecond)
 
-	// Must not exceed repeatCount=3
-	assert.LessOrEqual(t, count.Load(), int64(3))
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, int64(3), count.Load())
 }
 
 func TestCronConsumer_PauseJob(t *testing.T) {

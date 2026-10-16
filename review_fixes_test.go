@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,20 +16,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func getFreePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+	return addr
+}
+
 // The HTTP consumer must not echo inbound request headers back in the
 // response. Doing so leaked Cookie/Authorization to the client and reinjected
 // the request's Content-Length, corrupting the response framing.
 func TestHTTPConsumer_DoesNotEchoRequestHeaders(t *testing.T) {
 	c := NewCamelContext()
 	c.AddComponent("http", NewHTTPComponent())
+	addr := getFreePort(t)
 	c.CreateRouteBuilder().
-		From("http://127.0.0.1:18191/noout").
+		From("http://" + addr + "/noout").
 		ProcessFunc(func(e *Exchange) error { return nil })
 	require.NoError(t, c.Start())
 	defer c.Stop()
-	waitForHTTP(t, "http://127.0.0.1:18191/noout")
+	waitForHTTP(t, "http://"+addr+"/noout")
 
-	req, _ := http.NewRequest("POST", "http://127.0.0.1:18191/noout", strings.NewReader("hello-body"))
+	req, _ := http.NewRequest("POST", "http://"+addr+"/noout", strings.NewReader("hello-body"))
 	req.Header.Set("Cookie", "session=supersecret")
 	req.Header.Set("Authorization", "Bearer token123")
 	resp, err := http.DefaultClient.Do(req)
@@ -46,8 +58,9 @@ func TestHTTPConsumer_DoesNotEchoRequestHeaders(t *testing.T) {
 func TestHTTPConsumer_PropagatesRouteHeaders(t *testing.T) {
 	c := NewCamelContext()
 	c.AddComponent("http", NewHTTPComponent())
+	addr := getFreePort(t)
 	c.CreateRouteBuilder().
-		From("http://127.0.0.1:18192/json").
+		From("http://" + addr + "/json").
 		ProcessFunc(func(e *Exchange) error {
 			e.GetOut().SetHeader("Content-Type", "application/json")
 			e.GetOut().SetHeader(CamelHttpResponseCode, 201)
@@ -56,9 +69,9 @@ func TestHTTPConsumer_PropagatesRouteHeaders(t *testing.T) {
 		})
 	require.NoError(t, c.Start())
 	defer c.Stop()
-	waitForHTTP(t, "http://127.0.0.1:18192/json")
+	waitForHTTP(t, "http://"+addr+"/json")
 
-	resp, err := http.Post("http://127.0.0.1:18192/json", "text/plain", nil)
+	resp, err := http.Post("http://"+addr+"/json", "text/plain", nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -72,8 +85,9 @@ func TestHTTPConsumer_PropagatesRouteHeaders(t *testing.T) {
 func TestHTTPConsumer_URIWithoutPath(t *testing.T) {
 	c := NewCamelContext()
 	c.AddComponent("http", NewHTTPComponent())
+	addr := getFreePort(t)
 	c.CreateRouteBuilder().
-		From("http://127.0.0.1:18193").
+		From("http://" + addr).
 		ProcessFunc(func(e *Exchange) error {
 			e.GetOut().SetBody("root")
 			return nil
@@ -82,9 +96,9 @@ func TestHTTPConsumer_URIWithoutPath(t *testing.T) {
 		require.NoError(t, c.Start())
 	})
 	defer c.Stop()
-	waitForHTTP(t, "http://127.0.0.1:18193/")
+	waitForHTTP(t, "http://"+addr+"/")
 
-	resp, err := http.Post("http://127.0.0.1:18193/anything", "text/plain", nil)
+	resp, err := http.Post("http://"+addr+"/anything", "text/plain", nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -97,14 +111,15 @@ func TestHTTPConsumer_RejectsOversizedBody(t *testing.T) {
 	comp.SetMaxBodySize(1024)
 	c := NewCamelContext()
 	c.AddComponent("http", comp)
+	addr := getFreePort(t)
 	c.CreateRouteBuilder().
-		From("http://127.0.0.1:18194/upload").
+		From("http://" + addr + "/upload").
 		ProcessFunc(func(e *Exchange) error { return nil })
 	require.NoError(t, c.Start())
 	defer c.Stop()
-	waitForHTTP(t, "http://127.0.0.1:18194/upload")
+	waitForHTTP(t, "http://"+addr+"/upload")
 
-	resp, err := http.Post("http://127.0.0.1:18194/upload", "application/octet-stream",
+	resp, err := http.Post("http://"+addr+"/upload", "application/octet-stream",
 		strings.NewReader(strings.Repeat("x", 4096)))
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -115,16 +130,17 @@ func TestHTTPConsumer_RejectsOversizedBody(t *testing.T) {
 func TestHTTPConsumer_DoesNotLeakErrorDetail(t *testing.T) {
 	c := NewCamelContext()
 	c.AddComponent("http", NewHTTPComponent())
+	addr := getFreePort(t)
 	c.CreateRouteBuilder().
-		From("http://127.0.0.1:18195/fail").
+		From("http://" + addr + "/fail").
 		ProcessFunc(func(e *Exchange) error {
 			return errors.New("SELECT secret FROM vault -- internal detail")
 		})
 	require.NoError(t, c.Start())
 	defer c.Stop()
-	waitForHTTP(t, "http://127.0.0.1:18195/fail")
+	waitForHTTP(t, "http://"+addr+"/fail")
 
-	resp, err := http.Post("http://127.0.0.1:18195/fail", "text/plain", nil)
+	resp, err := http.Post("http://"+addr+"/fail", "text/plain", nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -167,9 +183,12 @@ func TestHTTPProducer_StatusIsAnError(t *testing.T) {
 
 // The producer must not forward the inbound request's framing headers.
 func TestHTTPProducer_StripsHopByHopHeaders(t *testing.T) {
+	var mu sync.Mutex
 	var got http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		got = r.Header.Clone()
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -186,8 +205,12 @@ func TestHTTPProducer_StripsHopByHopHeaders(t *testing.T) {
 	ex.SetHeader("X-Trace", "keep-me")
 	require.NoError(t, prod.Send(ex))
 
-	assert.Equal(t, "keep-me", got.Get("X-Trace"), "ordinary headers still forwarded")
-	assert.NotEqual(t, "99999", got.Get("Content-Length"), "framing header must not be forwarded")
+	mu.Lock()
+	header := got.Clone()
+	mu.Unlock()
+
+	assert.Equal(t, "keep-me", header.Get("X-Trace"), "ordinary headers still forwarded")
+	assert.NotEqual(t, "99999", header.Get("Content-Length"), "framing header must not be forwarded")
 }
 
 // A panicking processor must fail its exchange, not the process.
@@ -431,22 +454,29 @@ func TestChoiceAttachesToSplitContainer(t *testing.T) {
 func TestHTTPConsumer_SetsMethodHeaders(t *testing.T) {
 	c := NewCamelContext()
 	c.AddComponent("http", NewHTTPComponent())
+	addr := getFreePort(t)
+	var mu sync.Mutex
 	var method, path string
 	c.CreateRouteBuilder().
-		From("http://127.0.0.1:18201/hdr").
+		From("http://" + addr + "/hdr").
 		ProcessFunc(func(e *Exchange) error {
-			method, _ = e.GetHeaderAsString(CamelHttpMethod)
-			path, _ = e.GetHeaderAsString(CamelHttpPath)
+			m, _ := e.GetHeaderAsString(CamelHttpMethod)
+			p, _ := e.GetHeaderAsString(CamelHttpPath)
+			mu.Lock()
+			method, path = m, p
+			mu.Unlock()
 			e.GetOut().SetBody("ok")
 			return nil
 		})
 	require.NoError(t, c.Start())
 	t.Cleanup(func() { _ = c.Stop() })
-	waitForHTTP(t, "http://127.0.0.1:18201/hdr")
+	waitForHTTP(t, "http://"+addr+"/hdr")
 
-	resp, err := http.Get("http://127.0.0.1:18201/hdr")
+	resp, err := http.Get("http://" + addr + "/hdr")
 	require.NoError(t, err)
 	defer resp.Body.Close()
+	mu.Lock()
+	defer mu.Unlock()
 	assert.Equal(t, http.MethodGet, method)
 	assert.Equal(t, "/hdr", path)
 }

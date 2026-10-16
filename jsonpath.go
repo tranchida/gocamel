@@ -1,7 +1,6 @@
 package gocamel
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -104,12 +103,12 @@ func normalizeJSONSource(source any) (any, error) {
 		}
 		return parsed, nil
 	case io.Reader:
-		var buf bytes.Buffer
-		if _, err := buf.ReadFrom(v); err != nil {
+		b, err := ReadLimited(v, DefaultMaxBodySize)
+		if err != nil {
 			return nil, err
 		}
 		var parsed any
-		if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		if err := json.Unmarshal(b, &parsed); err != nil {
 			return nil, fmt.Errorf("failed to parse JSON reader: %w", err)
 		}
 		return parsed, nil

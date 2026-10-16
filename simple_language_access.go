@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+var nullSafeBracketRegex = regexp.MustCompile(`^(body|header|exchangeProperty)\?\.\[([^\]]+)\](.*)$`)
+
 // This file implements property and index access for the Simple Language:
 // bracket notation (body[0], body['key']), dot notation (body.field), and
 // their null-safe variants (body?.field, body?.['key']). All helpers delegate
@@ -194,8 +196,7 @@ func evaluateNullSafeBracketNotation(expr string, exchange *Exchange) (interface
 	expr = strings.TrimSpace(expr)
 
 	// Find the null-safe bracket pattern
-	pattern := regexp.MustCompile(`^(body|header|exchangeProperty)\?\.\[([^\]]+)\](.*)$`)
-	match := pattern.FindStringSubmatch(expr)
+	match := nullSafeBracketRegex.FindStringSubmatch(expr)
 	if match == nil {
 		return nil, fmt.Errorf("invalid null-safe bracket notation")
 	}

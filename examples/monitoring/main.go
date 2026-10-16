@@ -66,8 +66,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Route de destination
-	_, _ = ctx.CreateRouteBuilder().
+	// Destination route.
+	_, err = ctx.CreateRouteBuilder().
 		From("direct:next").
 		SetID("destination-route").
 		Intercept(gocamelprom.Metrics()).
@@ -78,6 +78,9 @@ func main() {
 			return nil
 		}).
 		Build()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// 4. HTTP server to expose Prometheus metrics.
 	go func() {

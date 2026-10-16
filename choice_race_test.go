@@ -20,6 +20,9 @@ func TestChoiceProcessor_ConcurrentProcessDoesNotReparse(t *testing.T) {
 
 	saved := MaxSimpleInputBytes
 	MaxSimpleInputBytes = 16
+	t.Cleanup(func() {
+		MaxSimpleInputBytes = saved
+	})
 	choice := NewChoiceProcessor().When(expression, ProcessorFunc(func(*Exchange) error { return nil }))
 	MaxSimpleInputBytes = saved
 

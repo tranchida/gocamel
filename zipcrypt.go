@@ -276,6 +276,7 @@ type zipAESReader struct {
 	mac       hash.Hash
 	remaining int64 // compressed payload bytes left before the 10-byte MAC
 	macDone   bool
+	macErr    error
 }
 
 func newZipAESReader(r io.Reader, password string, extra *zipAESExtra, compressedSize int64) (*zipAESReader, error) {
@@ -316,10 +317,11 @@ func newZipAESReader(r io.Reader, password string, extra *zipAESExtra, compresse
 
 func (z *zipAESReader) finishMAC() error {
 	if z.macDone {
-		return nil
+		return z.macErr
 	}
 	z.macDone = true
-	return z.verifyMAC()
+	z.macErr = z.verifyMAC()
+	return z.macErr
 }
 
 func (z *zipAESReader) Read(p []byte) (int, error) {

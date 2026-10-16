@@ -81,32 +81,32 @@ type NATSEndpoint struct {
 	subject             string
 	allowHeaderOverride bool // opt-in: the CamelNATSSubject header may override the subject
 	conn                *nats.Conn
+	connUsers           int
 	consumer            *NATSConsumer
 	mu                  sync.Mutex
 }
 
-// closeConn closes the endpoint's shared NATS connection exactly once.
-//
-// The producer and the consumer created from the same endpoint share one
-// connection, and both call Stop() on it (via Route.Stop and
-// CamelContext.Stop). Closing twice — or racing a Close against a Send that
-// already grabbed the conn reference — is a use-after-close. sync.Once makes
-// the shutdown idempotent; the mutex serialises the close against connection
-// establishment and Send's conn snapshot.
+// closeConn decrements the active user count and closes the endpoint's shared
+// NATS connection when the last user releases it.
 func (e *NATSEndpoint) closeConn() {
 	e.mu.Lock()
+	if e.connUsers > 0 {
+		e.connUsers--
+	}
+	if e.connUsers > 0 || e.conn == nil {
+		e.mu.Unlock()
+		return
+	}
 	conn := e.conn
 	e.conn = nil
 	e.mu.Unlock()
 
-	if conn != nil {
-		conn.Close()
-	}
+	conn.Close()
 }
 
-// URI returns the endpoint URI.
+// URI returns the endpoint URI with sensitive parameters masked.
 func (e *NATSEndpoint) URI() string {
-	return e.uri
+	return gocamel.RedactURI(e.uri)
 }
 
 // CreateProducer creates a NATSProducer.
@@ -120,7 +120,7 @@ func (e *NATSEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Cons
 	defer e.mu.Unlock()
 
 	if e.consumer != nil {
-		return nil, fmt.Errorf("multiple consumers for the same NATS endpoint are not allowed: %s", e.uri)
+		return nil, fmt.Errorf("multiple consumers for the same NATS endpoint are not allowed: %s", e.URI())
 	}
 
 	e.consumer = &NATSConsumer{
@@ -133,28 +133,44 @@ func (e *NATSEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Cons
 // NATSProducer publishes messages to NATS.
 type NATSProducer struct {
 	endpoint *NATSEndpoint
+	mu       sync.Mutex
+	started  bool
 }
 
 // Start starts the producer by opening a NATS connection.
 func (p *NATSProducer) Start(ctx context.Context) error {
-	p.endpoint.mu.Lock()
-	defer p.endpoint.mu.Unlock()
-
-	if p.endpoint.conn != nil {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.started {
 		return nil
 	}
 
-	conn, err := nats.Connect(p.endpoint.servers)
-	if err != nil {
-		return fmt.Errorf("nats producer connect failed: %w", err)
+	p.endpoint.mu.Lock()
+	defer p.endpoint.mu.Unlock()
+
+	if p.endpoint.conn == nil || p.endpoint.conn.IsClosed() {
+		conn, err := nats.Connect(p.endpoint.servers)
+		if err != nil {
+			return fmt.Errorf("nats producer connect failed: %w", err)
+		}
+		p.endpoint.conn = conn
 	}
 
-	p.endpoint.conn = conn
+	p.endpoint.connUsers++
+	p.started = true
 	return nil
 }
 
-// Stop stops the producer by closing the shared NATS connection.
+// Stop stops the producer by releasing its reference to the shared NATS connection.
 func (p *NATSProducer) Stop() error {
+	p.mu.Lock()
+	if !p.started {
+		p.mu.Unlock()
+		return nil
+	}
+	p.started = false
+	p.mu.Unlock()
+
 	p.endpoint.closeConn()
 	return nil
 }
@@ -224,6 +240,8 @@ type NATSConsumer struct {
 	processor gocamel.Processor
 	subLock   sync.Mutex // Protects sub, replaced by run on resubscription
 	sub       *nats.Subscription
+	mu        sync.Mutex
+	started   bool
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 }
@@ -236,6 +254,12 @@ func (c *NATSConsumer) subscription() *nats.Subscription {
 
 // Start opens NATS connection, subscribes to subject and handles incoming messages.
 func (c *NATSConsumer) Start(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return nil
+	}
+
 	c.endpoint.mu.Lock()
 	defer c.endpoint.mu.Unlock()
 
@@ -243,12 +267,14 @@ func (c *NATSConsumer) Start(ctx context.Context) error {
 		return fmt.Errorf("nats consumer: subject is required to subscribe")
 	}
 
-	if c.endpoint.conn == nil {
+	createdConn := false
+	if c.endpoint.conn == nil || c.endpoint.conn.IsClosed() {
 		conn, err := nats.Connect(c.endpoint.servers)
 		if err != nil {
 			return fmt.Errorf("nats consumer connect failed: %w", err)
 		}
 		c.endpoint.conn = conn
+		createdConn = true
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -258,11 +284,17 @@ func (c *NATSConsumer) Start(ctx context.Context) error {
 	sub, err := c.endpoint.conn.SubscribeSync(c.endpoint.subject)
 	if err != nil {
 		cancel()
+		if createdConn && c.endpoint.connUsers == 0 {
+			c.endpoint.conn.Close()
+			c.endpoint.conn = nil
+		}
 		return fmt.Errorf("nats subscription failed: %w", err)
 	}
 	c.subLock.Lock()
 	c.sub = sub
 	c.subLock.Unlock()
+	c.endpoint.connUsers++
+	c.started = true
 
 	c.wg.Add(1)
 	go c.run(ctx)
@@ -271,10 +303,13 @@ func (c *NATSConsumer) Start(ctx context.Context) error {
 }
 
 // Stop unsubscribes and releases the endpoint's shared NATS connection. The
-// connection is closed via closeConn, which is safe when the producer is
-// still active on the same endpoint: nats.Conn is safe for concurrent use,
-// and the mutex prevents a Close from racing a subsequent Send's snapshot.
+// connection is closed via closeConn when the last user releases it.
 func (c *NATSConsumer) Stop() error {
+	c.mu.Lock()
+	wasStarted := c.started
+	c.started = false
+	c.mu.Unlock()
+
 	if c.cancel != nil {
 		c.cancel()
 	}
@@ -284,7 +319,9 @@ func (c *NATSConsumer) Stop() error {
 	}
 	c.wg.Wait()
 
-	c.endpoint.closeConn()
+	if wasStarted {
+		c.endpoint.closeConn()
+	}
 
 	c.endpoint.mu.Lock()
 	if c.endpoint.consumer == c {
@@ -319,13 +356,13 @@ func (c *NATSConsumer) run(ctx context.Context) {
 			delay := retryDelay(failures)
 			failures++
 			gocamel.LogWarn("nats receive failed; retrying",
-				"uri", c.endpoint.uri, "retry_in", delay, "error", err)
+				"uri", c.endpoint.URI(), "retry_in", delay, "error", err)
 			if !waitForRetry(ctx, delay) {
 				return
 			}
 			if err := c.resubscribe(); err != nil {
 				gocamel.LogWarn("nats resubscription failed; retrying",
-					"uri", c.endpoint.uri, "error", err)
+					"uri", c.endpoint.URI(), "error", err)
 			}
 			continue
 		}
@@ -337,7 +374,7 @@ func (c *NATSConsumer) run(ctx context.Context) {
 
 		if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
 			gocamel.LogError("nats consumer processing error",
-				"uri", c.endpoint.uri,
+				"uri", c.endpoint.URI(),
 				"error", err,
 				"exchange_id", exchange.ID,
 			)
@@ -387,6 +424,10 @@ func (c *NATSConsumer) liveConn() (*nats.Conn, error) {
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.connUsers == 0 {
+		newConn.Close()
+		return nil, errors.New("nats endpoint has no active users")
+	}
 	if e.conn != nil && e.conn != conn && !e.conn.IsClosed() {
 		// The producer reconnected concurrently: share its connection.
 		newConn.Close()

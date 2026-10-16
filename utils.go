@@ -162,7 +162,7 @@ func patternToRegex(pattern string) *regexp.Regexp {
 // case-insensitive because components read options with mixed cases
 // (apiKey vs apikey, authorizationToken vs AuthorizationToken).
 var defaultSensitiveURIKeys = []string{
-	"password", "passwd", "secret", "token",
+	"password", "passwd", "secret", "token", "passcode",
 	"apikey", "apitoken", "authorizationtoken", "accesstoken",
 	"privatekey", "clientsecret",
 }

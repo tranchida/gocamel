@@ -89,6 +89,7 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 		if !ep.skipFailedMessage {
 			gocamel.LogError("POP3 stat error", "error", err)
 		}
+		c.disconnect()
 		return
 	}
 
@@ -147,16 +148,20 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 	defer c.mu.Unlock()
 
 	if c.client != nil {
-		// Already connected
-		return nil
+		if err := c.client.Noop(); err == nil {
+			return nil
+		}
+		_ = c.client.Quit()
+		c.client = nil
 	}
 
 	ep := c.endpoint
 
 	// Create POP3 client
 	clientOpt := pop3.Opt{
-		Host: ep.host,
-		Port: ep.port,
+		Host:        ep.host,
+		Port:        ep.port,
+		DialTimeout: ep.connectionTimeout,
 	}
 
 	// TLS for POP3S

@@ -49,6 +49,7 @@ func NewContentEnricher(camelContext *CamelContext, uri string, strategy Aggrega
 func (e *ContentEnricher) Process(exchange *Exchange) error {
 	// Send a copy so the enrichment endpoint cannot corrupt the original.
 	enrichExchange := exchange.Copy()
+	enrichExchange.Out = NewMessage()
 
 	producer, release, err := e.context.acquireProducer(e.uri)
 	if err != nil {

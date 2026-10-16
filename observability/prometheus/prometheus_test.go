@@ -101,9 +101,8 @@ func TestMetricsInterceptor_ClassifiesFailures(t *testing.T) {
 	assert.NotContains(t, body, `status="failure"`)
 
 	// A wrapped ErrStopRouting must ALSO be a success: it is the same control
-	// signal with context attached by the returning processor. Each
-	// MetricsWith call registers its own families, so the second route gets
-	// its own registry to avoid a duplicate-registration panic.
+	// signal with context attached by the returning processor. A fresh registry
+	// is used here to isolate the test scrape metrics.
 	reg2 := prometheus.NewRegistry()
 	ctx2 := newIsolatedContext(t, reg2, gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
 		return fmt.Errorf("filter rejected message: %w", gocamel.ErrStopRouting)

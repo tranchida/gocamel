@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+var multipleSpacesRegex = regexp.MustCompile(` +`)
+
 // applyStringFunction implements the Simple Language string verbs invoked via
 // chained calls like body.trim().uppercase(). It is the leaf of the chained
 // function-call dispatch built in simple_language_eval.go.
@@ -76,8 +78,7 @@ func applyStringFunction(funcName string, val interface{}, args []interface{}) (
 		normalized = strings.ReplaceAll(normalized, "\n", " ")
 		normalized = strings.ReplaceAll(normalized, "\r", " ")
 		// Collapse multiple spaces into a single space
-		re := regexp.MustCompile(` +`)
-		normalized = re.ReplaceAllString(normalized, " ")
+		normalized = multipleSpacesRegex.ReplaceAllString(normalized, " ")
 		return strings.TrimSpace(normalized), nil
 	case "split":
 		sep := ","
@@ -118,13 +119,18 @@ func applyStringFunction(funcName string, val interface{}, args []interface{}) (
 		if len(args) >= 2 {
 			padChar = fmt.Sprintf("%v", args[1])
 		}
-		if len(strVal) >= targetLen {
+		if len(strVal) >= targetLen || padChar == "" {
 			return strVal, nil
 		}
-		if targetLen > MaxSimpleInputBytes {
+		if targetLen > MaxSimpleInputBytes || len(strVal) > MaxSimpleInputBytes {
 			return nil, fmt.Errorf("padstart target length %d exceeds MaxSimpleInputBytes (%d)", targetLen, MaxSimpleInputBytes)
 		}
-		padding := strings.Repeat(padChar, targetLen-len(strVal))
+		needed := targetLen - len(strVal)
+		repeats := (needed + len(padChar) - 1) / len(padChar)
+		padding := strings.Repeat(padChar, repeats)
+		if len(padding) > needed {
+			padding = padding[:needed]
+		}
 		return padding + strVal, nil
 	case "padend":
 		if len(args) < 1 {
@@ -135,13 +141,18 @@ func applyStringFunction(funcName string, val interface{}, args []interface{}) (
 		if len(args) >= 2 {
 			padChar = fmt.Sprintf("%v", args[1])
 		}
-		if len(strVal) >= targetLen {
+		if len(strVal) >= targetLen || padChar == "" {
 			return strVal, nil
 		}
-		if targetLen > MaxSimpleInputBytes {
+		if targetLen > MaxSimpleInputBytes || len(strVal) > MaxSimpleInputBytes {
 			return nil, fmt.Errorf("padend target length %d exceeds MaxSimpleInputBytes (%d)", targetLen, MaxSimpleInputBytes)
 		}
-		padding := strings.Repeat(padChar, targetLen-len(strVal))
+		needed := targetLen - len(strVal)
+		repeats := (needed + len(padChar) - 1) / len(padChar)
+		padding := strings.Repeat(padChar, repeats)
+		if len(padding) > needed {
+			padding = padding[:needed]
+		}
 		return strVal + padding, nil
 	default:
 		return nil, fmt.Errorf("unknown function: %s", funcName)

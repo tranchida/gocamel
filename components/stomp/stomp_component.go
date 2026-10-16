@@ -337,31 +337,64 @@ type StompEndpoint struct {
 	// connectTimeout bounds the TCP connect plus the TLS and STOMP handshakes.
 	connectTimeout time.Duration
 
-	conn     *stomp.Conn
-	consumer *StompConsumer
-	mu       sync.Mutex
+	conn      *stomp.Conn
+	connUsers int
+	consumer  *StompConsumer
+	mu        sync.Mutex
 }
 
-// closeConn closes the endpoint's shared STOMP connection.
+// closeConn decrements the active user count and closes the endpoint's shared
+// STOMP connection when the last user releases it.
 //
 // The producer and the consumer created from the same endpoint may share
 // one connection, and both call Stop() on shutdown. The mutex serialises
 // the close against connection establishment and Send's conn snapshot;
-// nil-ing the reference keeps the teardown idempotent.
+// reference counting keeps the connection open while another user is still
+// active.
 func (e *StompEndpoint) closeConn() {
 	e.mu.Lock()
+	if e.connUsers > 0 {
+		e.connUsers--
+	}
+	if e.connUsers > 0 || e.conn == nil {
+		e.mu.Unlock()
+		return
+	}
 	conn := e.conn
 	e.conn = nil
 	e.mu.Unlock()
 
-	if conn != nil {
-		_ = conn.Disconnect()
-	}
+	_ = conn.Disconnect()
 }
 
-// URI returns the endpoint URI.
+// replaceConn replaces the endpoint's shared connection with a newly dialed
+// connection while preserving the active user reference count, and force-closes
+// the previous broken connection.
+func (e *StompEndpoint) replaceConn(ctx context.Context, conn *stomp.Conn) error {
+	e.mu.Lock()
+	if ctx.Err() != nil || e.connUsers == 0 {
+		e.mu.Unlock()
+		_ = conn.MustDisconnect()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("stomp endpoint has no active users")
+	}
+	old := e.conn
+	e.conn = conn
+	e.mu.Unlock()
+
+	if old != nil {
+		// The old connection is broken: a graceful Disconnect could wait
+		// forever for a RECEIPT.
+		_ = old.MustDisconnect()
+	}
+	return nil
+}
+
+// URI returns the endpoint URI with sensitive credentials masked.
 func (e *StompEndpoint) URI() string {
-	return e.uri
+	return gocamel.RedactURI(e.uri)
 }
 
 // CreateProducer creates a StompProducer.
@@ -375,7 +408,7 @@ func (e *StompEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Con
 	defer e.mu.Unlock()
 
 	if e.consumer != nil {
-		return nil, fmt.Errorf("multiple consumers for the same STOMP endpoint are not allowed: %s", e.uri)
+		return nil, fmt.Errorf("multiple consumers for the same STOMP endpoint are not allowed: %s", e.URI())
 	}
 
 	e.consumer = &StompConsumer{
@@ -442,27 +475,43 @@ func (e *StompEndpoint) dial(ctx context.Context) (*stomp.Conn, error) {
 // StompProducer publishes messages to a STOMP destination.
 type StompProducer struct {
 	endpoint *StompEndpoint
+	mu       sync.Mutex
+	started  bool
 }
 
 // Start starts the producer by opening a STOMP connection.
 func (p *StompProducer) Start(ctx context.Context) error {
-	p.endpoint.mu.Lock()
-	defer p.endpoint.mu.Unlock()
-
-	if p.endpoint.conn != nil {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.started {
 		return nil
 	}
 
-	conn, err := p.endpoint.dial(ctx)
-	if err != nil {
-		return err
+	p.endpoint.mu.Lock()
+	defer p.endpoint.mu.Unlock()
+
+	if p.endpoint.conn == nil {
+		conn, err := p.endpoint.dial(ctx)
+		if err != nil {
+			return err
+		}
+		p.endpoint.conn = conn
 	}
-	p.endpoint.conn = conn
+	p.endpoint.connUsers++
+	p.started = true
 	return nil
 }
 
-// Stop stops the producer by closing the shared STOMP connection.
+// Stop stops the producer by releasing its reference to the shared STOMP connection.
 func (p *StompProducer) Stop() error {
+	p.mu.Lock()
+	if !p.started {
+		p.mu.Unlock()
+		return nil
+	}
+	p.started = false
+	p.mu.Unlock()
+
 	p.endpoint.closeConn()
 	return nil
 }
@@ -553,14 +602,35 @@ func (p *StompProducer) Send(exchange *gocamel.Exchange) error {
 type StompConsumer struct {
 	endpoint  *StompEndpoint
 	processor gocamel.Processor
+	subMu     sync.Mutex
 	sub       subscriptionReader
+	mu        sync.Mutex
+	started   bool
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+}
+
+func (c *StompConsumer) subscription() subscriptionReader {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+	return c.sub
+}
+
+func (c *StompConsumer) setSubscription(sub subscriptionReader) {
+	c.subMu.Lock()
+	c.sub = sub
+	c.subMu.Unlock()
 }
 
 // Start opens the STOMP connection, subscribes to the destination and
 // handles incoming messages.
 func (c *StompConsumer) Start(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return nil
+	}
+
 	c.endpoint.mu.Lock()
 	defer c.endpoint.mu.Unlock()
 
@@ -568,12 +638,14 @@ func (c *StompConsumer) Start(ctx context.Context) error {
 		return fmt.Errorf("stomp consumer: destination is required to subscribe")
 	}
 
+	createdConn := false
 	if c.endpoint.conn == nil {
 		conn, err := c.endpoint.dial(ctx)
 		if err != nil {
 			return err
 		}
 		c.endpoint.conn = conn
+		createdConn = true
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -582,9 +654,15 @@ func (c *StompConsumer) Start(ctx context.Context) error {
 	sub, err := c.endpoint.conn.Subscribe(c.endpoint.destination, c.endpoint.ackMode)
 	if err != nil {
 		cancel()
+		if createdConn && c.endpoint.connUsers == 0 {
+			_ = c.endpoint.conn.Disconnect()
+			c.endpoint.conn = nil
+		}
 		return fmt.Errorf("stomp subscription to %q failed: %w", c.endpoint.destination, err)
 	}
-	c.sub = sub
+	c.setSubscription(sub)
+	c.endpoint.connUsers++
+	c.started = true
 
 	c.wg.Add(1)
 	go c.run(ctx)
@@ -596,19 +674,26 @@ func (c *StompConsumer) Start(ctx context.Context) error {
 //
 // The go-stomp Unsubscribe blocks until the broker returns a RECEIPT for
 // the UNSUBSCRIBE frame, which not all brokers send reliably (the embedded
-// test broker never does). Instead the connection is disconnected first:
-// the resulting TCP close unblocks the run loop's Read, and the broker
-// requeues any unacknowledged message, which is the correct STOMP
-// behavior on abrupt disconnect.
+// test broker never does). Instead ctx is cancelled and the shared connection
+// reference is released: when the last user stops, the resulting TCP close
+// unblocks the run loop's Read, and the broker requeues any unacknowledged
+// message, which is the correct STOMP behavior on abrupt disconnect.
 func (c *StompConsumer) Stop() error {
+	c.mu.Lock()
+	wasStarted := c.started
+	c.started = false
+	c.mu.Unlock()
+
 	if c.cancel != nil {
 		c.cancel()
 	}
 
-	// Closing the connection unblocks the run loop's Read (the
-	// subscription channel closes with ErrCompletedSubscription) before
-	// wg.Wait.
-	c.endpoint.closeConn()
+	if wasStarted {
+		// Closing the connection unblocks the run loop's Read (the
+		// subscription channel closes with ErrCompletedSubscription) before
+		// wg.Wait.
+		c.endpoint.closeConn()
+	}
 	c.wg.Wait()
 
 	c.endpoint.mu.Lock()
@@ -626,12 +711,40 @@ type subscriptionReader interface {
 	Read() (*stomp.Message, error)
 }
 
+func (c *StompConsumer) readMessage(ctx context.Context) (*stomp.Message, error) {
+	sub := c.subscription()
+	if sub == nil {
+		return nil, stomp.ErrCompletedSubscription
+	}
+	if s, ok := sub.(*stomp.Subscription); ok {
+		if !s.Active() {
+			return nil, stomp.ErrCompletedSubscription
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case msg, ok := <-s.C:
+			if !ok {
+				return nil, stomp.ErrCompletedSubscription
+			}
+			if msg != nil && msg.Err != nil {
+				return nil, msg.Err
+			}
+			return msg, nil
+		}
+	}
+	return sub.Read()
+}
+
 func (c *StompConsumer) run(ctx context.Context) {
 	defer c.wg.Done()
 
 	failures := 0
 	for {
-		msg, err := c.sub.Read()
+		msg, err := c.readMessage(ctx)
+		if err == nil && msg == nil {
+			continue
+		}
 		// Server-side ERROR frames surface as a read error or as a message
 		// with Err set; either way the broker closed the connection.
 		if err == nil && msg.Err != nil {
@@ -647,7 +760,7 @@ func (c *StompConsumer) run(ctx context.Context) {
 			delay := retryDelay(failures)
 			failures++
 			gocamel.LogWarn("stomp subscription failed; reconnecting",
-				"uri", c.endpoint.uri,
+				"uri", c.endpoint.URI(),
 				"destination", c.endpoint.destination,
 				"retry_in", delay,
 				"error", err,
@@ -657,7 +770,7 @@ func (c *StompConsumer) run(ctx context.Context) {
 			}
 			if err := c.reconnect(ctx); err != nil {
 				gocamel.LogWarn("stomp reconnect failed",
-					"uri", c.endpoint.uri,
+					"uri", c.endpoint.URI(),
 					"error", err,
 				)
 			}
@@ -771,22 +884,10 @@ func (c *StompConsumer) reconnect(ctx context.Context) error {
 		return fmt.Errorf("stomp subscription to %q failed: %w", e.destination, err)
 	}
 
-	e.mu.Lock()
-	if ctx.Err() != nil {
-		e.mu.Unlock()
-		_ = conn.MustDisconnect()
-		return ctx.Err()
+	if err := e.replaceConn(ctx, conn); err != nil {
+		return err
 	}
-	old := e.conn
-	e.conn = conn
-	e.mu.Unlock()
-
-	if old != nil {
-		// The old connection is broken: a graceful Disconnect could wait
-		// forever for a RECEIPT.
-		_ = old.MustDisconnect()
-	}
-	c.sub = sub
+	c.setSubscription(sub)
 	return nil
 }
 

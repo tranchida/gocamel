@@ -562,3 +562,53 @@ func TestStompComponent_TLSInvalidCAFile(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sslCertFile")
 }
+
+func TestStompEndpoint_URI_RedactsCredentials(t *testing.T) {
+	component := NewStompComponent()
+	ep, err := component.CreateEndpoint("stomp://queue/orders?host=localhost:61613&login=admin&passcode=super-secret-passcode")
+	require.NoError(t, err)
+
+	uri := ep.URI()
+	assert.NotContains(t, uri, "super-secret-passcode")
+	assert.Contains(t, uri, "passcode=xxxxx")
+}
+
+func TestStompEndpoint_SharedConnectionReferenceCounting(t *testing.T) {
+	addr := startTestBroker(t)
+	component := NewStompComponent()
+	ep, err := component.CreateEndpoint("stomp://queue/shared?host=" + addr)
+	require.NoError(t, err)
+	se := ep.(*StompEndpoint)
+
+	p1, err := ep.CreateProducer()
+	require.NoError(t, err)
+	p2, err := ep.CreateProducer()
+	require.NoError(t, err)
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, p1.Start(ctx))
+	require.NoError(t, p2.Start(ctx))
+	require.NoError(t, consumer.Start(ctx))
+	assert.Equal(t, 3, se.connUsers)
+
+	// Stopping p1 (even twice) and consumer leaves p2's shared connection active.
+	require.NoError(t, p1.Stop())
+	require.NoError(t, p1.Stop())
+	assert.Equal(t, 2, se.connUsers)
+
+	require.NoError(t, consumer.Stop())
+	require.NoError(t, consumer.Stop())
+	assert.Equal(t, 1, se.connUsers)
+	assert.NotNil(t, se.conn)
+
+	ex := gocamel.NewExchange(ctx)
+	ex.In.SetBody("still works")
+	require.NoError(t, p2.Send(ex))
+
+	require.NoError(t, p2.Stop())
+	assert.Equal(t, 0, se.connUsers)
+	assert.Nil(t, se.conn)
+}
+

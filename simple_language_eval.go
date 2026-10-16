@@ -40,9 +40,16 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 
 	// Check for function chaining: e.g., body.trim(), header.name.uppercase()
 	if idx := findFirstMethodCall(expr); idx > 0 {
-		result, err := evaluateFunctionChain(expr, exchange)
-		if err == nil {
-			return result, nil
+		base := strings.TrimSpace(expr[:idx])
+		if !strings.ContainsAny(base, " ?><=!|&+-*/%:") {
+			result, err := evaluateFunctionChain(expr, exchange)
+			if err == nil {
+				return result, nil
+			}
+			if !strings.Contains(err.Error(), "unexpected trailing characters") &&
+				!strings.Contains(err.Error(), "not a function chain base") {
+				return nil, err
+			}
 		}
 	}
 
@@ -279,9 +286,12 @@ func evaluateVariable(expr string, exchange *Exchange) (interface{}, error) {
 		case "endsWith":
 			return strings.HasSuffix(leftStr, rightVal), nil
 		case "regex":
+			if len(rightVal) > MaxSimpleInputBytes {
+				return false, fmt.Errorf("regex pattern length %d exceeds MaxSimpleInputBytes (%d)", len(rightVal), MaxSimpleInputBytes)
+			}
 			re, err := regexp.Compile(rightVal)
 			if err != nil {
-				return false, fmt.Errorf("invalid regex pattern: %v", err)
+				return false, fmt.Errorf("invalid regex pattern: %w", err)
 			}
 			return re.MatchString(leftStr), nil
 		}
@@ -429,6 +439,9 @@ func evaluateFunctionChain(expr string, exchange *Exchange) (interface{}, error)
 
 	// Get the base value
 	baseExpr := strings.TrimSpace(expr[:dotIdx])
+	if strings.ContainsAny(baseExpr, " ?><=!|&+-*/%:") {
+		return nil, fmt.Errorf("not a function chain base: %s", baseExpr)
+	}
 	rest := expr[dotIdx:]
 
 	baseVal, err := evaluateVariable(baseExpr, exchange)
@@ -477,6 +490,10 @@ func applyChainedFunctions(currentVal interface{}, chain string, exchange *Excha
 			}
 			currentVal = result
 		}
+	}
+
+	if strings.TrimSpace(chain) != "" {
+		return nil, fmt.Errorf("unexpected trailing characters in function chain: %s", chain)
 	}
 
 	return currentVal, nil

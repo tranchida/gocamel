@@ -137,9 +137,9 @@ func (e *RedisEndpoint) releaseClient(conn *redisConnection) error {
 	return nil
 }
 
-// URI returns the endpoint URI.
+// URI returns the endpoint URI with sensitive parameters masked.
 func (e *RedisEndpoint) URI() string {
-	return e.uri
+	return gocamel.RedactURI(e.uri)
 }
 
 // CreateProducer creates a RedisProducer.
@@ -153,7 +153,7 @@ func (e *RedisEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Con
 	defer e.mu.Unlock()
 
 	if e.consumer != nil {
-		return nil, fmt.Errorf("multiple consumers for the same Redis endpoint are not allowed: %s", e.uri)
+		return nil, fmt.Errorf("multiple consumers for the same Redis endpoint are not allowed: %s", e.URI())
 	}
 
 	e.consumer = &RedisConsumer{
@@ -340,6 +340,10 @@ func (c *RedisConsumer) Start(ctx context.Context) error {
 	_, err := c.pubSub.Receive(ctx)
 	if err != nil {
 		cancel()
+		_ = c.pubSub.Close()
+		c.pubSub = nil
+		_ = c.endpoint.releaseClient(c.connection)
+		c.connection = nil
 		return fmt.Errorf("redis subscription failed: %w", err)
 	}
 
@@ -388,7 +392,7 @@ func (c *RedisConsumer) run(ctx context.Context) {
 
 			if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
 				gocamel.LogError("redis consumer processing error",
-					"uri", c.endpoint.uri,
+					"uri", c.endpoint.URI(),
 					"error", err,
 					"exchange_id", exchange.ID,
 				)

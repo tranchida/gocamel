@@ -176,6 +176,17 @@ func (c *MailComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	// Query parameters
 	q := u.Query()
 
+	c.mu.RLock()
+	defaultFrom := c.defaultFrom
+	defaultSubject := c.defaultSubject
+	connTimeout := c.connectionTimeout
+	c.mu.RUnlock()
+
+	maxMessageSize := gocamel.ParseInt64Option(q.Get("maxMessageSize"))
+	if maxMessageSize <= 0 {
+		maxMessageSize = gocamel.DefaultMaxBodySize
+	}
+
 	return &MailEndpoint{
 		uri:                 uri,
 		scheme:              scheme,
@@ -183,28 +194,28 @@ func (c *MailComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		port:                portNum,
 		username:            q.Get("username"),
 		password:            q.Get("password"),
-		from:                getFirstNotEmpty(q.Get("from"), c.defaultFrom),
+		from:                getFirstNotEmpty(q.Get("from"), defaultFrom),
 		to:                  q.Get("to"),
 		cc:                  q.Get("cc"),
 		bcc:                 q.Get("bcc"),
-		subject:             getFirstNotEmpty(q.Get("subject"), c.defaultSubject),
+		subject:             getFirstNotEmpty(q.Get("subject"), defaultSubject),
 		contentType:         getFirstNotEmpty(q.Get("contentType"), DefaultContentType),
 		folderName:          getFirstNotEmpty(q.Get("folderName"), DefaultFolderName),
 		delete:              q.Get("delete") == "true",
-		unseen:              q.Get("unseen") != "false", // defaut: true
+		unseen:              q.Get("unseen") != "false", // default: true
 		moveTo:              q.Get("moveTo"),
 		copyTo:              q.Get("copyTo"),
 		disconnect:          q.Get("disconnect") == "true",
-		peek:                q.Get("peek") != "false",        // defaut: true
-		closeFolder:         q.Get("closeFolder") != "false", // defaut: true
+		peek:                q.Get("peek") != "false",        // default: true
+		closeFolder:         q.Get("closeFolder") != "false", // default: true
 		useIdle:             q.Get("idle") == "true",
-		connectionTimeout:   parseDurationMs(q.Get("connectionTimeout"), c.connectionTimeout),
+		connectionTimeout:   parseDurationMs(q.Get("connectionTimeout"), connTimeout),
 		pollDelay:           parseDurationMs(q.Get("pollDelay"), DefaultPollDelay),
 		fetchSize:           parseInt(q.Get("fetchSize"), DefaultFetchSize),
 		skipFailedMessage:   q.Get("skipFailedMessage") == "true",
 		handleFailedMessage: q.Get("handleFailedMessage") == "true",
 		debugMode:           q.Get("debugMode") == "true",
-		maxMessageSize:      gocamel.ParseInt64Option(q.Get("maxMessageSize")),
+		maxMessageSize:      maxMessageSize,
 		allowHeaderOverride: parseBool(q.Get("allowHeaderOverride"), false),
 		requireStartTLS:     parseBool(q.Get("requireStartTLS"), false),
 		component:           c,

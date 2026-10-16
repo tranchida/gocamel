@@ -8,7 +8,7 @@ Guidance for AI coding agents and LLMs working in the **GoCamel** repository. As
 
 **GoCamel** is an enterprise integration framework for Go, inspired by [Apache Camel](https://camel.apache.org/). It provides a fluent DSL for building integration routes that connect heterogeneous systems, plus implementations of the classic Enterprise Integration Patterns (EIPs).
 
-- **Module path**: `gitlab.com/tranchida/gocamel`
+- **Module path**: `github.com/tranchida/gocamel`
 - **Language**: Go 1.27 (see `go.mod`, `go.work`)
 - **License**: Apache 2.0
 - **Language / Naming Policy**: All code, comments, docstrings, variable names, error messages, logs, and commit messages **MUST be written in English**. (User-facing docs are bilingual EN/FR).
@@ -37,13 +37,14 @@ GoCamel is structured as a **multi-module Go workspace** (`go.work`). Each modul
 ```text
 gocamel/
 ├── go.work / go.work.sum
-├── go.mod / go.sum                 # Root core module (gitlab.com/tranchida/gocamel)
+├── go.mod / go.sum                 # Root core module (github.com/tranchida/gocamel)
 ├── *.go / *_test.go               # Core routing engine, EIPs, Simple language, DataFormats, stdlib components
 ├── components/                    # Standalone optional component modules
 │   ├── cron/                      # Cron component (robfig/cron)
 │   ├── file/                      # File component (fsnotify)
 │   ├── ftp/                       # FTP component (jlaffaye/ftp)
 │   ├── grpc/                      # gRPC component (google.golang.org/grpc)
+│   ├── jev/                       # Jev decisions component (OpenRouter Decisions API)
 │   ├── kafka/                     # Kafka component (segmentio/kafka-go)
 │   ├── mail/                      # Mail component (emersion/go-smtp, go-imap)
 │   ├── mongodb/                   # MongoDB component (go.mongodb.org/mongo-driver)
@@ -59,6 +60,7 @@ gocamel/
 ├── observability/                 # Metrics & Tracing modules
 │   ├── prometheus/                # Prometheus metrics interceptor
 │   └── otel/                      # OpenTelemetry tracing interceptor
+├── examples/                      # Runnable integration examples
 └── hugo-site/                     # Bilingual documentation website (Hugo + Relearn theme)
 ```
 
@@ -67,7 +69,7 @@ gocamel/
 1. **Zero Third-Party Dependencies in Core**: The root module (`.`) is strictly stdlib-only.
    - Allowed exceptions in root `go.mod`: `github.com/stretchr/testify` and `modernc.org/sqlite` (pure-Go SQLite driver used in tests, **no CGO required**).
    - **NEVER** add third-party libraries to the root `go.mod` for optional components or formats.
-2. **Component Isolation**: Any component requiring an external package **must** live in `components/<name>/` with its own independent `go.mod` referencing `gitlab.com/tranchida/gocamel`.
+2. **Component Isolation**: Any component requiring an external package **must** live in `components/<name>/` with its own independent `go.mod` referencing `github.com/tranchida/gocamel`.
 3. **Stdlib-only Components**: Reside directly in the core root module: `direct`, `seda`, `chan`, `timer`, `http`, `exec`, `template`, `sql`, `sql-stored`, `net` (TCP/UDP).
 
 ---

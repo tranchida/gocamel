@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,11 +16,23 @@ import (
 	gocamel "github.com/tranchida/gocamel"
 )
 
-// stubServer records the last request it received and returns a fixed body.
 type stubServer struct {
 	*httptest.Server
+	mu       sync.Mutex
 	lastPath string
 	lastBody []byte
+}
+
+func (s *stubServer) path() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastPath
+}
+
+func (s *stubServer) body() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastBody
 }
 
 func newStubServer(t *testing.T, status int, respBody string) *stubServer {
@@ -28,10 +41,14 @@ func newStubServer(t *testing.T, status int, respBody string) *stubServer {
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			t.Fatalf("read body: %v", err)
+			t.Errorf("read body: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
+		s.mu.Lock()
 		s.lastPath = r.URL.Path
 		s.lastBody = body
+		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(respBody))
@@ -97,9 +114,9 @@ func TestOllamaProducer_Chat(t *testing.T) {
 	assert.EqualValues(t, 2, mustGetHeader(t, ex, "OllamaPromptEvalCount"))
 	assert.EqualValues(t, 3, mustGetHeader(t, ex, "OllamaEvalCount"))
 
-	assert.Equal(t, "/api/chat", stub.lastPath)
+	assert.Equal(t, "/api/chat", stub.path())
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "llama3.1", got["model"])
 	assert.EqualValues(t, false, got["stream"])
 	msgs, _ := got["messages"].([]any)
@@ -121,7 +138,7 @@ func TestOllamaProducer_Chat_SystemFromHeader(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	msgs, _ := got["messages"].([]any)
 	require.Len(t, msgs, 2)
 	first, _ := msgs[0].(map[string]any)
@@ -141,7 +158,7 @@ func TestOllamaProducer_Chat_ModelOverrideHeader(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "phi3", got["model"])
 }
 
@@ -160,9 +177,9 @@ func TestOllamaProducer_Generate(t *testing.T) {
 	assert.EqualValues(t, 4, mustGetHeader(t, ex, "OllamaPromptEvalCount"))
 	assert.EqualValues(t, 5, mustGetHeader(t, ex, "OllamaEvalCount"))
 
-	assert.Equal(t, "/api/generate", stub.lastPath)
+	assert.Equal(t, "/api/generate", stub.path())
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "llama3.1", got["model"])
 	assert.Equal(t, "hi", got["prompt"])
 	assert.Equal(t, "sysprompt", got["system"])
@@ -181,7 +198,7 @@ func TestOllamaProducer_Generate_SystemHeaderOverride(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "header-system", got["system"])
 }
 
@@ -198,7 +215,7 @@ func TestOllamaProducer_Chat_HeaderOverridesIgnoredByDefault(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "llama3.1", got["model"])
 	msgs, _ := got["messages"].([]any)
 	require.Len(t, msgs, 1, "the system header must not add a system message")
@@ -217,7 +234,7 @@ func TestOllamaProducer_Generate_SystemHeaderIgnoredByDefault(t *testing.T) {
 	require.NoError(t, p.Send(ex))
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "uri-system", got["system"])
 	assert.Equal(t, "m", got["model"])
 }
@@ -236,10 +253,10 @@ func TestOllamaProducer_Embed(t *testing.T) {
 	v, ok := body.([]float32)
 	require.True(t, ok, "expected []float32, got %T", body)
 	assert.Equal(t, []float32{0.1, 0.2, 0.3}, v)
-	assert.Equal(t, "/api/embed", stub.lastPath)
+	assert.Equal(t, "/api/embed", stub.path())
 
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(stub.lastBody, &got))
+	require.NoError(t, json.Unmarshal(stub.body(), &got))
 	assert.Equal(t, "nomic-embed-text", got["model"])
 	assert.Equal(t, "embed me", got["input"])
 }

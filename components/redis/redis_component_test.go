@@ -217,3 +217,45 @@ func TestRedisComponent_PubSub(t *testing.T) {
 		t.Fatal("timed out waiting for the pubsub message to be consumed")
 	}
 }
+
+func TestRedisEndpoint_URI_RedactsCredentials(t *testing.T) {
+	comp := NewRedisComponent()
+	ep, err := comp.CreateEndpoint("redis://:super-secret@localhost:6379?password=query-secret&key=mykey")
+	assert.NoError(t, err)
+
+	uri := ep.URI()
+	assert.NotContains(t, uri, "super-secret")
+	assert.NotContains(t, uri, "query-secret")
+	assert.Contains(t, uri, "key=mykey")
+}
+
+func TestRedisConsumer_StartFailureReleasesConnection(t *testing.T) {
+	s, err := miniredis.Run()
+	assert.NoError(t, err)
+	addr := s.Addr()
+	// Close miniredis immediately so Receive(ctx) fails during consumer Start.
+	s.Close()
+
+	comp := NewRedisComponent()
+	ep, err := comp.CreateEndpoint("redis://" + addr + "?subscribe=true&channel=news")
+	assert.NoError(t, err)
+	redisEp := ep.(*RedisEndpoint)
+
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	assert.NoError(t, err)
+	redisConsumer := consumer.(*RedisConsumer)
+
+	err = consumer.Start(context.Background())
+	assert.Error(t, err)
+	assert.Nil(t, redisConsumer.pubSub)
+	assert.Nil(t, redisConsumer.connection)
+
+	redisEp.mu.Lock()
+	conn := redisEp.connection
+	redisEp.mu.Unlock()
+	assert.Nil(t, conn, "failed Start must release the endpoint connection")
+
+	// Calling Stop after a failed Start must be a safe no-op.
+	assert.NoError(t, consumer.Stop())
+}
+

@@ -32,8 +32,16 @@ func (b *RouteBuilder) adoptErr(child *RouteBuilder) {
 	if b == nil || child == nil || child == b {
 		return
 	}
-	if child.err != nil && b.err == nil {
-		b.err = child.err
+	b.recordErr(child.err)
+}
+
+// recordErr records the first error encountered during route building.
+func (b *RouteBuilder) recordErr(err error) {
+	if b == nil || err == nil {
+		return
+	}
+	if b.err == nil {
+		b.err = err
 	}
 }
 
@@ -42,7 +50,7 @@ func (b *RouteBuilder) adoptErr(child *RouteBuilder) {
 func (b *RouteBuilder) From(uri string) *RouteBuilder {
 	b.route.From(uri)
 	if b.route.err != nil {
-		b.err = b.route.err
+		b.recordErr(b.route.err)
 	}
 	return b
 }
@@ -184,7 +192,7 @@ func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
 func (b *RouteBuilder) LogSimple(expression string) *RouteBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		b.err = fmt.Errorf("failed to parse simple expression for log: %w", err)
+		b.recordErr(fmt.Errorf("failed to parse simple expression for log: %w", err))
 		return b
 	}
 	return b.ProcessFunc(func(exchange *Exchange) error {
@@ -326,7 +334,7 @@ func (b *RouteBuilder) Build() (*Route, error) {
 func (b *RouteBuilder) SimpleSetBody(expression string) *RouteBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		b.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		b.recordErr(fmt.Errorf("failed to parse simple expression: %w", err))
 		return b
 	}
 
@@ -338,7 +346,7 @@ func (b *RouteBuilder) SimpleSetBody(expression string) *RouteBuilder {
 func (b *RouteBuilder) SimpleSetHeader(headerName string, expression string) *RouteBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		b.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		b.recordErr(fmt.Errorf("failed to parse simple expression: %w", err))
 		return b
 	}
 
@@ -366,7 +374,7 @@ func (b *RouteBuilder) Transform(transformFn func(*Exchange) (any, error)) *Rout
 func (b *RouteBuilder) TransformSimple(expression string) *RouteBuilder {
 	t, err := NewSimpleTransformer(expression)
 	if err != nil {
-		b.err = err
+		b.recordErr(err)
 		return b
 	}
 	b.container.AddProcessor(t)
@@ -416,12 +424,12 @@ func (b *RouteBuilder) Filter(expression any) *RouteBuilder {
 	case string:
 		f, err := NewSimpleMessageFilter(expr)
 		if err != nil {
-			b.err = err
+			b.recordErr(err)
 			return b
 		}
 		b.container.AddProcessor(f)
 	default:
-		b.err = fmt.Errorf("Filter: unsupported expression type %T (want func(*Exchange)(bool,error) or string)", expression)
+		b.recordErr(fmt.Errorf("Filter: unsupported expression type %T (want func(*Exchange)(bool,error) or string)", expression))
 	}
 	return b
 }
@@ -445,12 +453,12 @@ func (b *RouteBuilder) IdempotentConsumer(expression any, repo IdempotentReposit
 	case string:
 		p, err := NewSimpleIdempotentConsumer(expr, repo)
 		if err != nil {
-			b.err = err
+			b.recordErr(err)
 			return b
 		}
 		b.container.AddProcessor(p)
 	default:
-		b.err = fmt.Errorf("IdempotentConsumer: unsupported expression type %T (want func(*Exchange)(string,error) or string)", expression)
+		b.recordErr(fmt.Errorf("IdempotentConsumer: unsupported expression type %T (want func(*Exchange)(string,error) or string)", expression))
 	}
 	return b
 }
@@ -528,7 +536,7 @@ func (b *RouteBuilder) Delay(d time.Duration) *RouteBuilder {
 //	    Build()
 func (b *RouteBuilder) DelayFunc(fn func(*Exchange) (time.Duration, error)) *RouteBuilder {
 	if fn == nil {
-		b.err = fmt.Errorf("DelayFunc: delay function is nil")
+		b.recordErr(fmt.Errorf("DelayFunc: delay function is nil"))
 		return b
 	}
 	b.container.AddProcessor(NewDelayerFunc(fn))
@@ -650,7 +658,7 @@ func (b *RouteBuilder) RoutingSlip(expression any) *RouteBuilder {
 	case func(*Exchange) ([]string, error):
 		rs.SetURIFunc(expr)
 	default:
-		b.err = fmt.Errorf("unsupported RoutingSlip expression type: %T", expression)
+		b.recordErr(fmt.Errorf("unsupported RoutingSlip expression type: %T", expression))
 		return b
 	}
 

@@ -497,6 +497,11 @@ func (c *CronConsumer) Stop() error {
 		if added {
 			c.endpoint.component.scheduler.Remove(entryID)
 		}
+	} else if c.endpoint.repeatInterval > 0 {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		c.startWG.Wait()
 	}
 	c.jobsWG.Wait()
 	return nil

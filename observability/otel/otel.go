@@ -7,6 +7,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	gocamel "github.com/tranchida/gocamel"
@@ -17,14 +18,26 @@ const (
 )
 
 // Tracing returns a RouteInterceptor that wraps every exchange in an
-// OpenTelemetry span named after the route.
+// OpenTelemetry span named after the route using the global TracerProvider.
 //
 //	route.Intercept(otel.Tracing())
 func Tracing() gocamel.RouteInterceptor {
+	return TracingWith(nil)
+}
+
+// TracingWith returns a RouteInterceptor using the provided TracerProvider.
+// If tp is nil, otel.GetTracerProvider() is used.
+func TracingWith(tp trace.TracerProvider) gocamel.RouteInterceptor {
 	return func(route *gocamel.Route, next func(*gocamel.Exchange) error) func(*gocamel.Exchange) error {
-		tracer := otel.Tracer(instrumentationName)
+		var tracer trace.Tracer
+		if tp != nil {
+			tracer = tp.Tracer(instrumentationName)
+		} else {
+			tracer = otel.Tracer(instrumentationName)
+		}
 		return func(exchange *gocamel.Exchange) error {
-			ctx := exchange.Context
+			prevCtx := exchange.Context
+			ctx := prevCtx
 			if ctx == nil {
 				ctx = context.Background()
 			}
@@ -38,12 +51,17 @@ func Tracing() gocamel.RouteInterceptor {
 			defer span.End()
 
 			exchange.Context = ctx
+			defer func() {
+				exchange.Context = prevCtx
+			}()
+
 			err := next(exchange)
 			// ErrStopRouting is a control signal, not a failure — and it may
 			// be wrapped by the processor that returned it, so compare with
 			// errors.Is like the core does (route.processFrom), not by value.
 			if err != nil && !errors.Is(err, gocamel.ErrStopRouting) {
 				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
 			}
 			return err
 		}

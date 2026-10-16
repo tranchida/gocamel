@@ -16,6 +16,7 @@ func main() {
 	if err := os.MkdirAll(templateDir, 0750); err != nil {
 		log.Fatal(err)
 	}
+	defer os.RemoveAll(templateDir)
 
 	// Create a basic email template.
 	emailTemplate := `Hello {{.Headers.name}},
@@ -74,6 +75,7 @@ This is an automated message from GoCamel
 	if err != nil {
 		log.Fatalf("Error starting email producer: %v", err)
 	}
+	defer emailProducer.Stop()
 	emailExchange := gocamel.NewExchange(context.Background())
 	emailExchange.SetHeader("name", "Ali")
 	emailExchange.SetBody("Your order has been shipped.")
@@ -98,6 +100,7 @@ This is an automated message from GoCamel
 	if err != nil {
 		log.Fatalf("Error starting JSON producer: %v", err)
 	}
+	defer jsonProducer.Stop()
 	jsonExchange := gocamel.NewExchange(context.Background())
 	jsonExchange.SetHeader("user", "Giampaolo")
 	jsonExchange.SetHeader("status", "success")
@@ -123,6 +126,7 @@ This is an automated message from GoCamel
 	if err != nil {
 		log.Fatalf("Error starting cached producer: %v", err)
 	}
+	defer cachedProducer.Stop()
 	cachedExchange := gocamel.NewExchange(context.Background())
 	cachedExchange.SetHeader("name", "Rachel")
 	cachedExchange.SetBody("Welcome to the GoCamel system.")

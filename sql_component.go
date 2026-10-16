@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -447,14 +448,36 @@ func stripLeadingSQLNoise(query string) string {
 // Priority: SqlParameters header first, then the body if it is a []any.
 func extractSQLParameters(exchange *Exchange) []any {
 	if v, ok := exchange.GetIn().GetHeader(SqlParameters); ok {
-		if s, ok := v.([]any); ok {
+		if s := toAnySlice(v); s != nil {
 			return s
 		}
 	}
 	if body := exchange.GetIn().GetBody(); body != nil {
-		if s, ok := body.([]any); ok {
+		if s := toAnySlice(body); s != nil {
 			return s
 		}
+	}
+	return nil
+}
+
+func toAnySlice(v any) []any {
+	if v == nil {
+		return nil
+	}
+	if s, ok := v.([]any); ok {
+		return s
+	}
+	if _, ok := v.([]byte); ok {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice {
+		n := rv.Len()
+		res := make([]any, n)
+		for i := 0; i < n; i++ {
+			res[i] = rv.Index(i).Interface()
+		}
+		return res
 	}
 	return nil
 }

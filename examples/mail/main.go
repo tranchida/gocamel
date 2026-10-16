@@ -23,14 +23,18 @@ func ExampleMailProducer() {
 	ctx.AddComponent("direct", gocamel.NewDirectComponent())
 
 	// Create a route that sends an email
-	route := ctx.CreateRoute()
-	route.From("direct:send-email").
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:send-email").
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
 			// Email is configured via headers or URI options
 			fmt.Println("Preparing email...")
 			return nil
 		}).
-		To("smtp://smtp.example.com:587?to=recipient@example.com\u0026subject=Hello%20World")
+		To("smtp://smtp.example.com:587?to=recipient@example.com&subject=Hello%20World").
+		Build()
+	if err != nil {
+		log.Fatalf("Route build error: %v", err)
+	}
 
 	// Start the context
 	if err := ctx.Start(); err != nil {
@@ -58,9 +62,13 @@ func ExampleMailWithAttachments() {
 	mailComponent := mail.NewMailComponent()
 	ctx.AddComponent("smtp", mailComponent)
 	ctx.AddComponent("direct", gocamel.NewDirectComponent())
-	route := ctx.CreateRoute()
-	route.From("direct:send-with-attachments").
-		To("smtp://smtp.gmail.com:587?username=user@gmail.com&password=mypassword&to=dest@example.com&subject=Daily%20Report")
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:send-with-attachments").
+		To("smtp://smtp.gmail.com:587?username=user@gmail.com&password=mypassword&to=dest@example.com&subject=Daily%20Report").
+		Build()
+	if err != nil {
+		log.Fatalf("Route build error: %v", err)
+	}
 
 	if err := ctx.Start(); err != nil {
 		log.Fatalf("Startup error: %v", err)
@@ -99,8 +107,8 @@ func ExampleMailConsumer() {
 	ctx.AddComponent("imaps", mailComponent)
 
 	// Create a route that reads emails
-	route := ctx.CreateRoute()
-	route.From("imaps://imap.gmail.com:993?folderName=INBOX\u0026username=user@gmail.com\u0026password=apppassword\u0026unseen=true\u0026delete=false").
+	_, err := ctx.CreateRouteBuilder().
+		From("imaps://imap.gmail.com:993?folderName=INBOX&username=user@gmail.com&password=apppassword&unseen=true&delete=false").
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
 			// Process received email
 			subject, _ := exchange.GetIn().GetHeader("Subject")
@@ -113,7 +121,11 @@ func ExampleMailConsumer() {
 
 			return nil
 		}).
-		To("direct:processed")
+		To("direct:processed").
+		Build()
+	if err != nil {
+		log.Fatalf("Route build error: %v", err)
+	}
 
 	if err := ctx.Start(); err != nil {
 		log.Fatalf("Startup error: %v", err)

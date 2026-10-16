@@ -1,8 +1,11 @@
 package ftp
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	gocamel "github.com/tranchida/gocamel"
 )
 
 func TestFTPConsumer_StopWaitsForPollingWorker(t *testing.T) {
@@ -55,3 +58,49 @@ func TestFTPConsumer_ReadLockOptions(t *testing.T) {
 		t.Errorf("expected readLockCheckInterval=1s, got %v", ftpConsumer.opts.ReadLockCheckInterval)
 	}
 }
+
+func TestFTPEndpoint_RedactsCredentialsInURI(t *testing.T) {
+	c := NewFTPComponent()
+	ep, err := c.CreateEndpoint("ftp://admin:topsecret@example.com/incoming?password=querysecret")
+	if err != nil {
+		t.Fatalf("unexpected error creating endpoint: %v", err)
+	}
+	got := ep.URI()
+	if strings.Contains(got, "topsecret") || strings.Contains(got, "querysecret") {
+		t.Errorf("expected credentials to be redacted in URI(), got %q", got)
+	}
+}
+
+func TestFTPEndpoint_RejectsMoveAndMoveFailedTraversal(t *testing.T) {
+	c := NewFTPComponent()
+	for _, uri := range []string{
+		"ftp://example.com/incoming?move=../outside",
+		"ftp://example.com/incoming?move=a/../../outside",
+		"ftp://example.com/incoming?moveFailed=../failed",
+		"ftp://example.com/incoming?moveFailed=a/b/../../../failed",
+	} {
+		if _, err := c.CreateEndpoint(uri); err == nil {
+			t.Errorf("expected CreateEndpoint(%q) to reject path traversal", uri)
+		}
+	}
+
+	ep, err := c.CreateEndpoint("ftp://example.com/incoming?move=.done&moveFailed=.error")
+	if err != nil {
+		t.Fatalf("expected valid move/moveFailed to be accepted: %v", err)
+	}
+	if _, err := ep.CreateConsumer(nil); err != nil {
+		t.Fatalf("expected CreateConsumer with valid move/moveFailed to succeed: %v", err)
+	}
+}
+
+func TestFTPEndpoint_DefaultMaxMessageSize(t *testing.T) {
+	c := NewFTPComponent()
+	ep, err := c.CreateEndpoint("ftp://example.com/incoming")
+	if err != nil {
+		t.Fatalf("unexpected error creating endpoint: %v", err)
+	}
+	if ep.(*FTPEndpoint).maxMessageSize != gocamel.DefaultMaxBodySize {
+		t.Errorf("expected default maxMessageSize=%d, got %d", gocamel.DefaultMaxBodySize, ep.(*FTPEndpoint).maxMessageSize)
+	}
+}
+

@@ -512,3 +512,97 @@ func TestFileConsumer_IngestsExistingDirectoryFiles(t *testing.T) {
 		t.Fatal("timed out waiting for preexisting file")
 	}
 }
+
+func waitForStableFile(ctx context.Context, path string, timeout, interval time.Duration) bool {
+	return gocamel.WaitForStable(ctx, func() (int64, time.Time, error) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return 0, time.Time{}, err
+		}
+		return info.Size(), info.ModTime(), nil
+	}, timeout, interval, 0, 0)
+}
+
+func TestFileEndpoint_RejectsMoveAndMoveFailedTraversal(t *testing.T) {
+	c := NewFileComponent()
+	dir := t.TempDir()
+
+	for _, uri := range []string{
+		"file://" + dir + "?move=../outside",
+		"file://" + dir + "?move=sub/../../outside",
+		"file://" + dir + "?moveFailed=../failed",
+		"file://" + dir + "?moveFailed=a/b/../../../failed",
+	} {
+		if _, err := c.CreateEndpoint(uri); err == nil {
+			t.Errorf("expected CreateEndpoint(%q) to reject path traversal", uri)
+		}
+	}
+
+	ep, err := c.CreateEndpoint("file://" + dir + "?move=.done&moveFailed=.error")
+	if err != nil {
+		t.Fatalf("expected valid move/moveFailed to be accepted: %v", err)
+	}
+	if _, err := ep.CreateConsumer(nil); err != nil {
+		t.Fatalf("expected CreateConsumer with valid move/moveFailed to succeed: %v", err)
+	}
+}
+
+func TestFileConsumer_StopIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir + "?readLock=none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Calling Stop multiple times must not panic on closing stopChan twice.
+	if err := consumer.Stop(); err != nil {
+		t.Fatalf("first Stop failed: %v", err)
+	}
+	if err := consumer.Stop(); err != nil {
+		t.Fatalf("second Stop failed: %v", err)
+	}
+}
+
+func TestFileConsumer_WatchDirectoryExitsOnContextCancel(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir + "?readLock=none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := consumer.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+
+	fc := consumer.(*FileConsumer)
+	done := make(chan struct{})
+	go func() {
+		fc.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watcher goroutine did not exit after context cancellation")
+	}
+	_ = consumer.Stop()
+}
+

@@ -57,7 +57,6 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("routing slip simple expression error: %w", err)
 		}
-		resolved = Interpolate(resolved, exchange)
 		uris := splitAndTrim(resolved)
 		LogDebug("routing slip resolved URIs via simple expression",
 			"expression", r.SimpleExpression,
@@ -68,8 +67,11 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 	}
 
 	if r.StaticURIs != "" {
-		resolved := Interpolate(r.StaticURIs, exchange)
-		uris := splitAndTrim(resolved)
+		rawList := splitAndTrim(r.StaticURIs)
+		uris := make([]string, 0, len(rawList))
+		for _, raw := range rawList {
+			uris = append(uris, InterpolateURI(raw, exchange))
+		}
 		LogDebug("routing slip resolved URIs via static string", "count", len(uris), "uris", uris)
 		return uris, nil
 	}

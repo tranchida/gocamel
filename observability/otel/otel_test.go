@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
@@ -23,6 +24,9 @@ func TestTracingInterceptor(t *testing.T) {
 		trace.WithSpanProcessor(trace.NewSimpleSpanProcessor(exporter)),
 	)
 	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(trace.NewTracerProvider())
+	})
 
 	ctx := gocamel.NewCamelContext()
 	ctx.AddComponent("direct", gocamel.NewDirectComponent())
@@ -74,6 +78,9 @@ func TestTracingInterceptor_WrappedStopRoutingNotRecordedAsError(t *testing.T) {
 		trace.WithSpanProcessor(trace.NewSimpleSpanProcessor(exporter)),
 	)
 	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(trace.NewTracerProvider())
+	})
 
 	ctx := gocamel.NewCamelContext()
 	ctx.AddComponent("direct", gocamel.NewDirectComponent())
@@ -118,6 +125,7 @@ func TestTracingInterceptor_WrappedStopRoutingNotRecordedAsError(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.Empty(t, spans[0].Events,
 		"a wrapped ErrStopRouting is a control signal, not a failure: no error event must be recorded")
+	assert.NotEqual(t, codes.Error, spans[0].Status.Code)
 
 	// Contrast: a plain error IS recorded.
 	exporter.Reset()
@@ -136,4 +144,56 @@ func TestTracingInterceptor_WrappedStopRoutingNotRecordedAsError(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.NotEmpty(t, spans[0].Events,
 		"a plain error must be recorded on the span")
+	assert.Equal(t, codes.Error, spans[0].Status.Code)
+}
+
+func TestTracingWith_RestoresContext(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSampler(trace.AlwaysSample()),
+		trace.WithSpanProcessor(trace.NewSimpleSpanProcessor(exporter)),
+	)
+
+	type ctxKey struct{}
+	initialCtx := context.WithValue(context.Background(), ctxKey{}, "initial-val")
+
+	ctx := gocamel.NewCamelContext()
+	ctx.AddComponent("direct", gocamel.NewDirectComponent())
+
+	var insideCtx context.Context
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:custom-tp").
+		Intercept(TracingWith(tp)).
+		ProcessFunc(func(e *gocamel.Exchange) error {
+			insideCtx = e.Context
+			assert.Equal(t, "initial-val", insideCtx.Value(ctxKey{}))
+			return nil
+		}).
+		Build()
+	require.NoError(t, err)
+
+	require.NoError(t, ctx.Start())
+	defer ctx.Stop()
+
+	ep, err := ctx.CreateEndpoint("direct:custom-tp")
+	require.NoError(t, err)
+	producer, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, producer.Start(context.Background()))
+	defer producer.Stop()
+
+	exchange := gocamel.NewExchange(initialCtx)
+	err = producer.Send(exchange)
+	require.NoError(t, err)
+
+	// Inside route, context had the span attached (different context)
+	assert.NotNil(t, insideCtx)
+	assert.NotEqual(t, initialCtx, insideCtx)
+
+	// Outside route, context was restored to initialCtx
+	assert.Equal(t, initialCtx, exchange.Context)
+
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "route:route-1", spans[0].Name)
 }

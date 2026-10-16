@@ -203,10 +203,14 @@ func startHTTPRoute(t *testing.T, camelCtx *CamelContext, path string, proc func
 }
 
 func TestHTTPConsumer_DoesNotExposeOrAcceptCamelHeaders(t *testing.T) {
+	var mu sync.Mutex
 	var inbound any
 	var hadInbound bool
 	base := startHTTPRoute(t, NewCamelContext(), "/p", func(e *Exchange) error {
-		inbound, hadInbound = e.GetHeader("Camelfilename")
+		in, had := e.GetHeader("Camelfilename")
+		mu.Lock()
+		inbound, hadInbound = in, had
+		mu.Unlock()
 		e.SetHeader(CamelFileName, "/srv/secret/in.csv")
 		e.SetHeader("Set-Cookie", []string{"a=1", "b=2"})
 		return nil
@@ -219,7 +223,12 @@ func TestHTTPConsumer_DoesNotExposeOrAcceptCamelHeaders(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	assert.False(t, hadInbound, "inbound Camel* header must be dropped, got %v", inbound)
+	mu.Lock()
+	had := hadInbound
+	in := inbound
+	mu.Unlock()
+
+	assert.False(t, had, "inbound Camel* header must be dropped, got %v", in)
 	for key := range resp.Header {
 		assert.False(t, IsCamelHeader(key), "response leaks internal header %s", key)
 	}
@@ -227,10 +236,13 @@ func TestHTTPConsumer_DoesNotExposeOrAcceptCamelHeaders(t *testing.T) {
 }
 
 func TestHTTPProducer_BodyTypesAndMultiValuedResponseHeaders(t *testing.T) {
+	var mu sync.Mutex
 	var received string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		received = string(b)
+		mu.Unlock()
 		w.Header().Add("Set-Cookie", "a=1")
 		w.Header().Add("Set-Cookie", "b=2")
 	}))
@@ -241,7 +253,11 @@ func TestHTTPProducer_BodyTypesAndMultiValuedResponseHeaders(t *testing.T) {
 	ex := NewExchange(context.Background())
 	ex.SetBody(strings.NewReader("streamed"))
 	require.NoError(t, producer.Send(ex))
-	assert.Equal(t, "streamed", received)
+
+	mu.Lock()
+	gotReceived := received
+	mu.Unlock()
+	assert.Equal(t, "streamed", gotReceived)
 	cookies, _ := ex.GetOut().GetHeader("Set-Cookie")
 	assert.Equal(t, []string{"a=1", "b=2"}, cookies)
 
@@ -253,8 +269,11 @@ func TestHTTPProducer_BodyTypesAndMultiValuedResponseHeaders(t *testing.T) {
 }
 
 func TestHTTPProxy_DoesNotForwardClientCredentialsByDefault(t *testing.T) {
+	var mu sync.Mutex
 	var upstreamAuth, upstreamCamel []string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		upstreamAuth = r.Header.Values("Authorization")
 		for key := range r.Header {
 			if IsCamelHeader(key) {
@@ -275,7 +294,9 @@ func TestHTTPProxy_DoesNotForwardClientCredentialsByDefault(t *testing.T) {
 		{name: "route-set credential sent", routeAuth: "Bearer service", want: []string{"Bearer service"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
 			upstreamAuth, upstreamCamel = nil, nil
+			mu.Unlock()
 			camelCtx := NewCamelContext()
 			httpComp := NewHTTPComponent()
 			httpComp.SetForwardInboundCredentials(tc.forward)
@@ -295,8 +316,14 @@ func TestHTTPProxy_DoesNotForwardClientCredentialsByDefault(t *testing.T) {
 			require.NoError(t, err)
 			_ = resp.Body.Close()
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
-			assert.Equal(t, tc.want, upstreamAuth)
-			assert.Empty(t, upstreamCamel, "Camel* headers must not reach the upstream")
+
+			mu.Lock()
+			gotAuth := append([]string(nil), upstreamAuth...)
+			gotCamel := append([]string(nil), upstreamCamel...)
+			mu.Unlock()
+
+			assert.Equal(t, tc.want, gotAuth)
+			assert.Empty(t, gotCamel, "Camel* headers must not reach the upstream")
 		})
 	}
 }

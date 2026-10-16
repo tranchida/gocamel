@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"net"
 	"testing"
 
 	"github.com/segmentio/kafka-go"
@@ -43,8 +44,13 @@ func TestKafkaComponent_DefaultBrokers(t *testing.T) {
 }
 
 func TestKafkaComponent_ProducerLifecycle(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	unusedAddr := ln.Addr().String()
+	_ = ln.Close()
+
 	component := NewKafkaComponent()
-	endpoint, err := component.CreateEndpoint("kafka:events?brokers=localhost:9092")
+	endpoint, err := component.CreateEndpoint("kafka:events?brokers=" + unusedAddr)
 	require.NoError(t, err)
 
 	producer, err := endpoint.CreateProducer()

@@ -75,11 +75,7 @@ func (p *DynamicRouter) resolveNextURI(exchange *Exchange) (string, error) {
 	}
 
 	if p.expression != "" {
-		result, err := evaluateSimpleExpression(p.expression, exchange)
-		if err != nil {
-			return "", err
-		}
-		return Interpolate(result, exchange), nil
+		return evaluateSimpleExpression(p.expression, exchange)
 	}
 
 	return "", nil

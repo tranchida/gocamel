@@ -55,7 +55,7 @@ check_module() {
 export -f check_module
 
 echo "Checking ${#modules[@]} module(s), $jobs at a time..."
-results=$(printf '%s\n' "${modules[@]}" | xargs -P "$jobs" -I{} bash -c 'check_module {}')
+results=$(printf '%s\n' "${modules[@]}" | xargs -P "$jobs" -I{} bash -c 'check_module "$1"' _ {})
 printf '%s\n' "$results"
 
 failed=$(printf '%s\n' "$results" | grep -c '^FAIL')

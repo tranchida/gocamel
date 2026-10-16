@@ -167,11 +167,20 @@ func (cb *ChoiceBuilder) finalizeActiveWhen() {
 	}
 }
 
+func (cb *ChoiceBuilder) recordErr(err error) {
+	if cb == nil || err == nil {
+		return
+	}
+	if cb.err == nil {
+		cb.err = err
+	}
+}
+
 // When adds a When condition to the Choice
 func (cb *ChoiceBuilder) When(expression string) *ChoiceBuilder {
 	cb.finalizeActiveWhen()
 	if _, err := ParseSimpleTemplate(expression); err != nil {
-		cb.err = fmt.Errorf("choice When: failed to parse %q: %w", expression, err)
+		cb.recordErr(fmt.Errorf("choice When: failed to parse %q: %w", expression, err))
 		return cb
 	}
 	cb.activeExpression = expression
@@ -186,7 +195,7 @@ func (cb *ChoiceBuilder) Process(processor Processor) *ChoiceBuilder {
 		cb.activeProcessors = append(cb.activeProcessors, processor)
 	} else {
 		// We're not in a When clause - record error with helpful message
-		cb.err = fmt.Errorf("Process called without a When clause. Call When() first, or use EndChoice to complete the Choice")
+		cb.recordErr(fmt.Errorf("Process called without a When clause. Call When() first, or use EndChoice to complete the Choice"))
 	}
 	return cb
 }
@@ -210,7 +219,7 @@ func (cb *ChoiceBuilder) SetHeader(key string, value interface{}) *ChoiceBuilder
 func (cb *ChoiceBuilder) SimpleSetBody(expression string) *ChoiceBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		cb.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		cb.recordErr(fmt.Errorf("failed to parse simple expression: %w", err))
 		return cb
 	}
 	return cb.Process(&SimpleLanguageProcessor{Template: template})
@@ -220,7 +229,7 @@ func (cb *ChoiceBuilder) SimpleSetBody(expression string) *ChoiceBuilder {
 func (cb *ChoiceBuilder) SimpleSetHeader(headerName string, expression string) *ChoiceBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		cb.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		cb.recordErr(fmt.Errorf("failed to parse simple expression: %w", err))
 		return cb
 	}
 	return cb.Process(&SimpleSetHeaderProcessor{
@@ -263,7 +272,7 @@ func (cb *ChoiceBuilder) Otherwise() *OtherwiseBuilder {
 
 func (cb *ChoiceBuilder) EndChoice() *RouteBuilder {
 	if cb.err != nil {
-		cb.routeBuilder.err = cb.err
+		cb.routeBuilder.recordErr(cb.err)
 		return cb.routeBuilder
 	}
 
