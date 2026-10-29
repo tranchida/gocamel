@@ -343,11 +343,15 @@ func ValidatePathInDir(path, baseDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to resolve base directory: %w", err)
 	}
-	// The base itself may be reached through a symlink; resolve it so both
-	// sides of the comparison are in the same (real) namespace.
-	if resolvedBase, err := filepath.EvalSymlinks(absBase); err == nil {
-		absBase = resolvedBase
+	// The base itself may be reached through a symlink, and it may not exist
+	// yet (a producer targeting a file in a directory created on demand).
+	// Resolve its longest existing prefix so both sides of the comparison are
+	// in the same (real) namespace.
+	resolvedBase, err := resolveExistingPrefix(absBase)
+	if err != nil {
+		return fmt.Errorf("failed to resolve base directory: %w", err)
 	}
+	absBase = resolvedBase
 
 	absPath, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {

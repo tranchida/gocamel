@@ -157,6 +157,22 @@ func TestValidatePathInDir_SymlinkBase(t *testing.T) {
 	assert.NoError(t, ValidatePathInDir(filepath.Join(linkBase, "file.txt"), linkBase))
 }
 
+// TestValidatePathInDir_NonExistingBaseUnderSymlink verifies that a base
+// directory that does not exist yet but is reached through a symlinked parent
+// is resolved the same way as the candidate path. On macOS, for example, /var
+// is a symlink to /private/var, so a producer writing into a not-yet-created
+// /var/.../out/ directory must not be rejected because the base was compared
+// in its unresolved form.
+func TestValidatePathInDir_NonExistingBaseUnderSymlink(t *testing.T) {
+	realBase := t.TempDir()
+	linkBase := filepath.Join(t.TempDir(), "linkbase")
+	require.NoError(t, os.Symlink(realBase, linkBase))
+
+	// Neither "sub" nor the file exist yet.
+	sub := filepath.Join(linkBase, "sub")
+	assert.NoError(t, ValidatePathInDir(filepath.Join(sub, "new.txt"), sub))
+}
+
 // TestValidatePathInDir_NonExistingUnderSymlink verifies that a to-be-created
 // file under a symlinked directory is resolved via its closest existing
 // ancestor and still confined.
