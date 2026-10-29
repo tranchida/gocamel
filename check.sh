@@ -35,7 +35,14 @@ if [ ${#modules[@]} -eq 0 ]; then
 fi
 
 # -race makes every test binary heavy: half the CPUs keeps the machine usable.
-default_jobs=$(($(nproc) / 2))
+if command -v nproc >/dev/null 2>&1; then
+  cpus=$(nproc)
+elif command -v sysctl >/dev/null 2>&1; then
+  cpus=$(sysctl -n hw.ncpu 2>/dev/null || echo 2)
+else
+  cpus=2
+fi
+default_jobs=$((cpus / 2))
 [ "$default_jobs" -lt 1 ] && default_jobs=1
 jobs="${JOBS:-$default_jobs}"
 
@@ -58,7 +65,9 @@ echo "Checking ${#modules[@]} module(s), $jobs at a time..."
 results=$(printf '%s\n' "${modules[@]}" | xargs -P "$jobs" -I{} bash -c 'check_module "$1"' _ {})
 printf '%s\n' "$results"
 
-failed=$(printf '%s\n' "$results" | grep -c '^FAIL')
+# Count module result lines only: failed modules also print their test output,
+# which contains bare "FAIL" lines that must not be counted.
+failed=$(printf '%s\n' "$results" | grep -c '^FAIL  ')
 if [ "$failed" -ne 0 ]; then
   echo "❌ $failed module(s) failed."
   exit 1
