@@ -364,7 +364,14 @@ func (e *StompEndpoint) closeConn() {
 	e.conn = nil
 	e.mu.Unlock()
 
-	_ = conn.Disconnect()
+	// MustDisconnect, not Disconnect: a graceful Disconnect waits for the
+	// broker's RECEIPT while holding go-stomp's close mutex. If the connection
+	// is already broken, the client's read loop reacts by calling
+	// MustDisconnect itself and blocks on that same mutex, deadlocking both
+	// sides. Many brokers never send a RECEIPT for DISCONNECT either. Closing
+	// the TCP connection abruptly is equivalent from the broker's point of
+	// view: it requeues unacknowledged messages.
+	_ = conn.MustDisconnect()
 }
 
 // replaceConn replaces the endpoint's shared connection with a newly dialed
@@ -655,7 +662,9 @@ func (c *StompConsumer) Start(ctx context.Context) error {
 	if err != nil {
 		cancel()
 		if createdConn && c.endpoint.connUsers == 0 {
-			_ = c.endpoint.conn.Disconnect()
+			// Same rationale as closeConn: a graceful Disconnect can hang
+			// waiting for a RECEIPT that never arrives.
+			_ = c.endpoint.conn.MustDisconnect()
 			c.endpoint.conn = nil
 		}
 		return fmt.Errorf("stomp subscription to %q failed: %w", c.endpoint.destination, err)
