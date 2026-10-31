@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [v0.19.0] - 2026-10-31
+
+Concurrency, goroutine lifecycle, and shutdown resilience release across the core routing engine, components, and OpenTelemetry interceptor. Every component and observability module at v0.19.0 requires core v0.19.0.
+
+### Fixed
+
+- **Core Concurrency & Lifecycle**:
+  - `DirectConsumer`, `WireTap` & `lazyProducer`: tracked in-flight exchanges in `DirectConsumer` so `Stop()` waits for active deliveries before tearing down downstream processors and producers; synchronized `WireTap` `WaitGroup` access under `RWMutex` with `stopped` state and `CompleteExchange` invocation; prevented `lazyProducer` from recreating and leaking producers after `Route.Stop()`.
+  - `Seda` & `Chan`: closed the `Send()` vs `Stop()` race window so exchanges enqueued concurrently with shutdown are drained rather than stranded; replaced the boolean `polling` guard with an active poll reference counter so concurrent `PollEnrich` callers can poll the same `seda:` or `chan:` endpoint simultaneously.
+  - Deep Copying & Memory Isolation: extended `deepCopyValue` (`Exchange.Copy` / `Message.DeepCopy`) to clone `[]map[string]any` (SQL), `map[string]string`, `[]map[string]string`, `[][]string` (CSV), and `map[string][]byte` (Zip/TarGz); added `Exchange.deepCopyWithoutInBody()` so parallel `Splitter` avoids $O(N^2)$ body cloning; applied deep copying in `MemoryClaimCheckRepository` and `SagaState.clone()`.
+  - `TimerConsumer`, `NetConsumer`, `HTTPConsumer` & `ManagementServer`: added `stopping` lifecycle guards under mutex to prevent `Start()`/`Stop()` overlap during `WaitGroup.Wait()`, replaced one-shot `sync.Once` teardown in `HTTPConsumer` and `ManagementServer` to support clean restarts, closed TCP/UDP listeners via `context.AfterFunc` on context cancellation, and stopped `ManagementServer` first during `CamelContext.GracefulStop()` while blocking route starts during shutdown.
+  - EIPs (`Aggregator`, `Resequencer`, `DeadLetterChannel`, `ContentEnricher`, `CircuitBreaker`): prevented `Aggregator.timeoutWG` reuse races when `Stop()` runs without configured timeouts, tracked synchronous and asynchronous `Resequencer.deliver()` executions in `timeoutWG`, invoked `CompleteExchange` on timed-out/resequenced/enriched exchanges, cleaned up `DeadLetterChannel.synchronized` entries on retry exhaustion/cancellation, and scoped `CircuitBreaker` state transitions to the state observed at call start.
+
+- **Components & Observability**:
+  - `telegram`: guarded `TelegramConsumer.Start`/`Stop` with a mutex and per-start `sync.Once` on `StopReceivingUpdates()` (fixing a double-`Stop()` panic), drained buffered updates on exit to prevent `tgbotapi` goroutine leaks, and rejected `TelegramProducer.Send()` after `Stop()`.
+  - `mail`: removed mutex locks held across blocking IMAP/POP3 network I/O, honored `ctx` during connection establishment, enforced socket deadlines and forced connection close during `Stop()` to unblock stalled `idle.Wait()` / `Logout().Wait()` calls, and prevented `runWithIdle` from falling back to polling during shutdown.
+  - `cron`: synchronized `CronComponent.scheduler` access across `Start()`/`Stop()`, waited for running jobs outside `CronComponent.mu`, and ensured `CronConsumer.Stop()` always cancels its startup context and waits on `startWG` even when `pauseJob=true`.
+  - `kafka`: delayed `reader.Close()` in `KafkaConsumer.Stop()` until after `wg.Wait()` and committed in-flight processed offsets using a bounded `context.WithoutCancel(ctx)` timeout; added reference counting (`writerUsers`) to `KafkaEndpoint.writer` and closed the writer outside the endpoint mutex.
+  - `redis`: verified `Ping(ctx)` in `RedisProducer.Start()` before publishing `p.connection`, and replaced one-shot `stopOnce` on `RedisConsumer` with mutex-protected `started`/`stopping` state.
+  - `grpc`: bounded `GracefulStop()` with the endpoint timeout (falling back to `server.Stop()`), observed `ctx.Done()` in `GRPCConsumer.Start()`, and synchronized access to `server` and `listener`.
+  - `file`, `ftp`, `sftp` & `smb`: cancelled the `WaitForStable` context on `FileConsumer.Stop()`, checked `ctx.Err()` across directory walks and file loops in `doPoll`, synchronized consumer `Start()`/`Stop()`, prevented `FTPProducer`/`SFTPProducer`/`SMBProducer` from dialing and leaking persistent connections after `Stop()`, and enforced a deadline on SMB handshakes.
+  - `nats` & `stomp`: held the `stopping` state across `wg.Wait()` and `closeConn()` in `Stop()`, used `MustDisconnect()` in STOMP to avoid deadlocks on broken connections, bounded permanent STOMP ACK retry loops, and verified `p.started` in `Producer.Send()`.
+  - `mongodb`, `ollama`, `openai`, `anthropic` & `jev`: synchronized producer lifecycle state under `sync.RWMutex`, returned an error instead of nil-pointer panicking when `MongoDBProducer.Send()` is called before `Start()`, and reset producer state on `Stop()`.
+  - `observability/otel`: avoided mutating `exchange.Context` after `next(exchange)` returns `ErrStopRouting`, preventing data races when exchanges are parked asynchronously by an `Aggregator`.
+  - `security`: allowed `ValidatePathInDir` when the base directory does not exist yet.
+
 ## [v0.18.0] - 2026-10-16
 
 Release introducing the TypeSafe Jev decision component and global security, concurrency, and reliability remediations across the core engine, components, and observability modules. Every component and observability module at v0.18.0 requires core v0.18.0.
@@ -684,6 +710,7 @@ framework for Go, organized as a Go workspace of independent modules.
   a published library.
 - Pre-v1: breaking API changes are allowed between minor versions.
 
+[v0.19.0]: https://github.com/tranchida/gocamel/releases/tag/v0.19.0
 [v0.18.0]: https://github.com/tranchida/gocamel/releases/tag/v0.18.0
 [v0.17.0]: https://github.com/tranchida/gocamel/releases/tag/v0.17.0
 [v0.16.0]: https://github.com/tranchida/gocamel/releases/tag/v0.16.0
