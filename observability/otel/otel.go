@@ -51,11 +51,11 @@ func TracingWith(tp trace.TracerProvider) gocamel.RouteInterceptor {
 			defer span.End()
 
 			exchange.Context = ctx
-			defer func() {
-				exchange.Context = prevCtx
-			}()
 
 			err := next(exchange)
+			if !errors.Is(err, gocamel.ErrStopRouting) {
+				exchange.Context = prevCtx
+			}
 			// ErrStopRouting is a control signal, not a failure — and it may
 			// be wrapped by the processor that returned it, so compare with
 			// errors.Is like the core does (route.processFrom), not by value.

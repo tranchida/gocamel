@@ -440,15 +440,24 @@ type HTTPConsumer struct {
 	processor   Processor
 	middleware  func(http.Handler) http.Handler
 	maxBodySize int64
+	mu          sync.Mutex
+	running     bool
+	stopping    bool
 	server      *http.Server
 	wg          sync.WaitGroup
 	handlerWG   sync.WaitGroup
 	cancel      context.CancelFunc
-	stopOnce    sync.Once
 }
 
 // Start starts the HTTP consumer
 func (c *HTTPConsumer) Start(ctx context.Context) error {
+	c.mu.Lock()
+	if c.running || c.stopping {
+		c.mu.Unlock()
+		return errors.New("http consumer is already running")
+	}
+	c.mu.Unlock()
+
 	parsedURL, err := url.Parse(c.uri)
 	if err != nil {
 		return fmt.Errorf("invalid HTTP URI: %v", err)
@@ -467,7 +476,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, c.cancel = context.WithCancel(ctx)
+	reqCtx, cancel := context.WithCancel(ctx)
 	// http.ServeMux panics on an empty pattern, so a URI without a path
 	// ("http://host:8080") must still register a valid route.
 	pattern := parsedURL.Path
@@ -477,7 +486,14 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		c.mu.Lock()
+		if !c.running || c.stopping {
+			c.mu.Unlock()
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		c.handlerWG.Add(1)
+		c.mu.Unlock()
 		defer c.handlerWG.Done()
 
 		exchange := NewExchange(r.Context())
@@ -597,7 +613,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		handler = c.middleware(mux)
 	}
 
-	c.server = &http.Server{
+	server := &http.Server{
 		Addr:    addr,
 		Handler: handler,
 		// Bound the time a client may take to send its headers (slowloris).
@@ -610,17 +626,29 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		IdleTimeout: 60 * time.Second,
 		// BaseContext ties every inbound request to the consumer's parent ctx
 		// so that CamelContext.Stop() cancels in-flight requests.
-		BaseContext: func(net.Listener) context.Context { return ctx },
+		BaseContext: func(net.Listener) context.Context { return reqCtx },
 	}
 
+	c.mu.Lock()
+	if c.running || c.stopping {
+		c.mu.Unlock()
+		cancel()
+		_ = listener.Close()
+		return errors.New("http consumer is already running")
+	}
+	c.running = true
+	c.cancel = cancel
+	c.server = server
 	// Starting the server. The listener is created synchronously above so bind
 	// failures are returned from Start. The WaitGroup is signalled when Serve
 	// returns, so Stop() can wait for the goroutine to fully unwind before
 	// the CamelContext continues its shutdown.
 	c.wg.Add(1)
+	c.mu.Unlock()
+
 	go func() {
 		defer c.wg.Done()
-		if err := c.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			LogError("HTTP server error", "error", err)
 		}
 	}()
@@ -628,25 +656,38 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops the HTTP consumer. Safe to call multiple times: server.Shutdown
-// is invoked at most once via sync.Once and Stop blocks until the
-// ListenAndServe goroutine has fully returned to avoid leaking goroutines
-// past CamelContext.Stop().
+// Stop stops the HTTP consumer. Safe to call multiple times: Stop blocks until
+// the Serve goroutine and all active handlers have fully returned to avoid
+// leaking goroutines past CamelContext.Stop().
 func (c *HTTPConsumer) Stop() error {
-	if c.server == nil {
+	c.mu.Lock()
+	if !c.running || c.stopping {
+		c.mu.Unlock()
 		return nil
 	}
-	var err error
-	c.stopOnce.Do(func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		err = c.server.Shutdown(shutdownCtx)
-		if c.cancel != nil {
-			c.cancel()
-		}
-	})
+	c.stopping = true
+	server := c.server
+	cancel := c.cancel
+	c.mu.Unlock()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+	err := server.Shutdown(shutdownCtx)
+	if err != nil {
+		_ = server.Close()
+	}
+	if cancel != nil {
+		cancel()
+	}
 	c.handlerWG.Wait()
 	c.wg.Wait()
+
+	c.mu.Lock()
+	c.server = nil
+	c.cancel = nil
+	c.running = false
+	c.stopping = false
+	c.mu.Unlock()
 	return err
 }
 

@@ -103,11 +103,15 @@ func (p *DirectProducer) Stop() error {
 func (p *DirectProducer) Send(exchange *Exchange) error {
 	p.endpoint.mu.RLock()
 	consumer := p.endpoint.consumer
+	if consumer != nil {
+		consumer.inFlight.Add(1)
+	}
 	p.endpoint.mu.RUnlock()
 
 	if consumer == nil {
 		return fmt.Errorf("no consumers available on endpoint: %s", p.endpoint.uri)
 	}
+	defer consumer.inFlight.Done()
 	err := ProcessSafely(consumer.processor, exchange)
 	if errors.Is(err, ErrStopRouting) && !isRouteStopRequested(exchange) {
 		// A Filter, an incomplete Aggregator, a Resequencer or a handled dead
@@ -129,6 +133,7 @@ func isRouteStopRequested(exchange *Exchange) bool {
 type DirectConsumer struct {
 	endpoint  *DirectEndpoint
 	processor Processor
+	inFlight  sync.WaitGroup
 }
 
 // Start starts the consumer
@@ -136,12 +141,13 @@ func (c *DirectConsumer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops the consumer
+// Stop stops the consumer and waits for any in-flight synchronous sends to finish.
 func (c *DirectConsumer) Stop() error {
 	c.endpoint.mu.Lock()
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}
 	c.endpoint.mu.Unlock()
+	c.inFlight.Wait()
 	return nil
 }

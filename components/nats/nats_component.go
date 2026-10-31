@@ -177,6 +177,13 @@ func (p *NATSProducer) Stop() error {
 
 // Send publishes the exchange body to NATS.
 func (p *NATSProducer) Send(exchange *gocamel.Exchange) error {
+	p.mu.Lock()
+	started := p.started
+	p.mu.Unlock()
+	if !started {
+		return fmt.Errorf("nats producer is not started or connected")
+	}
+
 	p.endpoint.mu.Lock()
 	conn := p.endpoint.conn
 	p.endpoint.mu.Unlock()
@@ -242,6 +249,7 @@ type NATSConsumer struct {
 	sub       *nats.Subscription
 	mu        sync.Mutex
 	started   bool
+	stopping  bool
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 }
@@ -256,7 +264,7 @@ func (c *NATSConsumer) subscription() *nats.Subscription {
 func (c *NATSConsumer) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.started {
+	if c.started || c.stopping {
 		return nil
 	}
 
@@ -284,6 +292,7 @@ func (c *NATSConsumer) Start(ctx context.Context) error {
 	sub, err := c.endpoint.conn.SubscribeSync(c.endpoint.subject)
 	if err != nil {
 		cancel()
+		c.cancel = nil
 		if createdConn && c.endpoint.connUsers == 0 {
 			c.endpoint.conn.Close()
 			c.endpoint.conn = nil
@@ -306,12 +315,26 @@ func (c *NATSConsumer) Start(ctx context.Context) error {
 // connection is closed via closeConn when the last user releases it.
 func (c *NATSConsumer) Stop() error {
 	c.mu.Lock()
-	wasStarted := c.started
-	c.started = false
+	if c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	if !c.started {
+		c.mu.Unlock()
+		c.endpoint.mu.Lock()
+		if c.endpoint.consumer == c {
+			c.endpoint.consumer = nil
+		}
+		c.endpoint.mu.Unlock()
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	c.cancel = nil
 	c.mu.Unlock()
 
-	if c.cancel != nil {
-		c.cancel()
+	if cancel != nil {
+		cancel()
 	}
 	// Unsubscribing wakes run up from NextMsg instead of waiting for its timeout.
 	if sub := c.subscription(); sub != nil {
@@ -319,15 +342,18 @@ func (c *NATSConsumer) Stop() error {
 	}
 	c.wg.Wait()
 
-	if wasStarted {
-		c.endpoint.closeConn()
-	}
+	c.endpoint.closeConn()
 
 	c.endpoint.mu.Lock()
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}
 	c.endpoint.mu.Unlock()
+
+	c.mu.Lock()
+	c.started = false
+	c.stopping = false
+	c.mu.Unlock()
 	return nil
 }
 

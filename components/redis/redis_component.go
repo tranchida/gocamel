@@ -173,17 +173,16 @@ type RedisProducer struct {
 // Start starts the producer.
 func (p *RedisProducer) Start(ctx context.Context) error {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.connection != nil {
-		p.mu.Unlock()
 		return nil
 	}
 	conn := p.endpoint.acquireClient()
-	p.connection = conn
-	p.mu.Unlock()
 	if err := conn.client.Ping(ctx).Err(); err != nil {
-		_ = p.Stop()
+		_ = p.endpoint.releaseClient(conn)
 		return err
 	}
+	p.connection = conn
 	return nil
 }
 
@@ -308,10 +307,11 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 type RedisConsumer struct {
 	endpoint   *RedisEndpoint
 	processor  gocamel.Processor
+	mu         sync.Mutex
+	started    bool
+	stopping   bool
 	pubSub     *redis.PubSub
 	connection *redisConnection
-	stopOnce   sync.Once
-	stopErr    error
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 }
@@ -330,52 +330,96 @@ func (c *RedisConsumer) Start(ctx context.Context) error {
 		return fmt.Errorf("redis consumer: channel or key is required for subscription")
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	c.cancel = cancel
+	c.mu.Lock()
+	if c.started || c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
 
-	c.connection = c.endpoint.acquireClient()
-	c.pubSub = c.connection.client.Subscribe(ctx, channel)
+	ctx, cancel := context.WithCancel(ctx)
+	conn := c.endpoint.acquireClient()
+	pubSub := conn.client.Subscribe(ctx, channel)
 
 	// Verify subscription
-	_, err := c.pubSub.Receive(ctx)
+	_, err := pubSub.Receive(ctx)
 	if err != nil {
 		cancel()
-		_ = c.pubSub.Close()
-		c.pubSub = nil
-		_ = c.endpoint.releaseClient(c.connection)
-		c.connection = nil
+		_ = pubSub.Close()
+		_ = c.endpoint.releaseClient(conn)
 		return fmt.Errorf("redis subscription failed: %w", err)
 	}
 
+	c.mu.Lock()
+	if c.started || c.stopping {
+		c.mu.Unlock()
+		cancel()
+		_ = pubSub.Close()
+		_ = c.endpoint.releaseClient(conn)
+		return nil
+	}
+	c.cancel = cancel
+	c.connection = conn
+	c.pubSub = pubSub
+	c.started = true
 	c.wg.Add(1)
-	go c.run(ctx)
+	c.mu.Unlock()
+
+	go c.run(ctx, pubSub)
 
 	return nil
 }
 
 // Stop unsubscribes and closes the pubsub client and Redis connection.
 func (c *RedisConsumer) Stop() error {
-	c.stopOnce.Do(func() {
-		if c.cancel != nil {
-			c.cancel()
+	c.mu.Lock()
+	if !c.started || c.stopping {
+		stopping := c.stopping
+		c.mu.Unlock()
+		if !stopping {
+			c.endpoint.mu.Lock()
+			if c.endpoint.consumer == c {
+				c.endpoint.consumer = nil
+			}
+			c.endpoint.mu.Unlock()
 		}
-		if c.pubSub != nil {
-			_ = c.pubSub.Close()
-		}
-		c.wg.Wait()
-		c.stopErr = c.endpoint.releaseClient(c.connection)
-		c.endpoint.mu.Lock()
-		if c.endpoint.consumer == c {
-			c.endpoint.consumer = nil
-		}
-		c.endpoint.mu.Unlock()
-	})
-	return c.stopErr
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	pubSub := c.pubSub
+	conn := c.connection
+	c.cancel = nil
+	c.pubSub = nil
+	c.connection = nil
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if pubSub != nil {
+		_ = pubSub.Close()
+	}
+	c.wg.Wait()
+	err := c.endpoint.releaseClient(conn)
+
+	c.endpoint.mu.Lock()
+	if c.endpoint.consumer == c {
+		c.endpoint.consumer = nil
+	}
+	c.endpoint.mu.Unlock()
+
+	c.mu.Lock()
+	c.started = false
+	c.stopping = false
+	c.mu.Unlock()
+
+	return err
 }
 
-func (c *RedisConsumer) run(ctx context.Context) {
+func (c *RedisConsumer) run(ctx context.Context, pubSub *redis.PubSub) {
 	defer c.wg.Done()
-	ch := c.pubSub.Channel()
+	ch := pubSub.Channel()
 
 	for {
 		select {

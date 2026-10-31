@@ -3,9 +3,11 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -64,7 +66,8 @@ type TelegramEndpoint struct {
 	uri                 string
 	url                 *url.URL
 	comp                *TelegramComponent
-	allowHeaderOverride bool // opt-in: the CamelTelegramChatId header may replace the chatId URI parameter
+	allowHeaderOverride bool         // opt-in: the CamelTelegramChatId header may replace the chatId URI parameter
+	httpClient          *http.Client // optional custom HTTP client for tests
 }
 
 // URI returns the endpoint URI, with the authorizationToken masked for safe
@@ -79,7 +82,15 @@ func (e *TelegramEndpoint) getBot() (*tgbotapi.BotAPI, error) {
 		return nil, fmt.Errorf("authorizationToken missing for Telegram")
 	}
 
-	bot, err := tgbotapi.NewBotAPI(token)
+	var (
+		bot *tgbotapi.BotAPI
+		err error
+	)
+	if e.httpClient != nil {
+		bot, err = tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, e.httpClient)
+	} else {
+		bot, err = tgbotapi.NewBotAPI(token)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("error creating the Telegram bot: %w", err)
 	}
@@ -107,16 +118,21 @@ type TelegramProducer struct {
 	endpoint *TelegramEndpoint
 	bot      *tgbotapi.BotAPI
 	mu       sync.Mutex
+	stopped  bool
 }
 
 func (p *TelegramProducer) Start(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.bot != nil && !p.stopped {
+		return nil
+	}
 	bot, err := p.endpoint.getBot()
 	if err != nil {
 		return err
 	}
 	p.bot = bot
+	p.stopped = false
 	return nil
 }
 
@@ -124,12 +140,16 @@ func (p *TelegramProducer) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.bot = nil
+	p.stopped = true
 	return nil
 }
 
 func (p *TelegramProducer) getBot() (*tgbotapi.BotAPI, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.stopped {
+		return nil, fmt.Errorf("telegram producer is stopped")
+	}
 	if p.bot != nil {
 		return p.bot, nil
 	}
@@ -142,6 +162,13 @@ func (p *TelegramProducer) getBot() (*tgbotapi.BotAPI, error) {
 }
 
 func (p *TelegramProducer) Send(exchange *gocamel.Exchange) error {
+	p.mu.Lock()
+	stopped := p.stopped
+	p.mu.Unlock()
+	if stopped {
+		return fmt.Errorf("telegram producer is stopped")
+	}
+
 	// Resolve the chat ID and the text before building the bot: getBot performs
 	// a network round-trip to Telegram, so validating the locally-available
 	// inputs first turns a misconfiguration into an immediate, precise error
@@ -215,22 +242,41 @@ func messageText(body any) string {
 
 // TelegramConsumer represents a Telegram consumer
 type TelegramConsumer struct {
-	endpoint  *TelegramEndpoint
-	processor gocamel.Processor
-	cancel    context.CancelFunc
-	bot       *tgbotapi.BotAPI
-	wg        sync.WaitGroup
+	endpoint    *TelegramEndpoint
+	processor   gocamel.Processor
+	mu          sync.Mutex
+	started     bool
+	stopping    bool
+	stopUpdates sync.Once
+	cancel      context.CancelFunc
+	bot         *tgbotapi.BotAPI
+	wg          sync.WaitGroup
 }
 
 func (c *TelegramConsumer) Start(ctx context.Context) error {
+	c.mu.Lock()
+	if c.started || c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
+
 	bot, err := c.endpoint.getBot()
 	if err != nil {
 		return err
 	}
 
+	c.mu.Lock()
+	if c.started || c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+
+	c.stopUpdates = sync.Once{}
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.bot = bot
+	c.started = true
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -238,8 +284,25 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 	updates := bot.GetUpdatesChan(u)
 
 	c.wg.Add(1)
+	c.mu.Unlock()
+
 	go func() {
-		defer c.wg.Done()
+		defer func() {
+			c.stopUpdates.Do(func() {
+				bot.StopReceivingUpdates()
+			})
+			drained := make(chan struct{})
+			go func() {
+				for range updates {
+				}
+				close(drained)
+			}()
+			select {
+			case <-drained:
+			case <-time.After(100 * time.Millisecond):
+			}
+			c.wg.Done()
+		}()
 		for {
 			select {
 			case <-ctx.Done():
@@ -270,15 +333,34 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 }
 
 func (c *TelegramConsumer) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
+	c.mu.Lock()
+	if !c.started || c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	bot := c.bot
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
 	}
 	// Stop the library's long-polling goroutine and close its updates channel
 	// so the consumer goroutine exits (it would otherwise keep polling Telegram
 	// and block sending on the now-unread channel after Stop returns).
-	if c.bot != nil {
-		c.bot.StopReceivingUpdates()
+	if bot != nil {
+		c.stopUpdates.Do(func() {
+			bot.StopReceivingUpdates()
+		})
 	}
 	c.wg.Wait()
+
+	c.mu.Lock()
+	c.started = false
+	c.stopping = false
+	c.cancel = nil
+	c.bot = nil
+	c.mu.Unlock()
 	return nil
 }

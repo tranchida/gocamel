@@ -53,11 +53,13 @@ func (e *ContentEnricher) Process(exchange *Exchange) error {
 
 	producer, release, err := e.context.acquireProducer(e.uri)
 	if err != nil {
+		_ = CompleteExchange(enrichExchange, err)
 		return fmt.Errorf("enrich: failed to get producer for %q: %w", e.uri, err)
 	}
 	err = producer.Send(enrichExchange)
 	release()
 	if err != nil {
+		_ = CompleteExchange(enrichExchange, err)
 		return fmt.Errorf("enrich: failed to send to %q: %w", e.uri, err)
 	}
 
@@ -79,5 +81,6 @@ func (e *ContentEnricher) Process(exchange *Exchange) error {
 		}
 	}
 
+	_ = CompleteExchange(enrichExchange, nil)
 	return nil
 }

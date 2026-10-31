@@ -183,9 +183,17 @@ type SFTPProducer struct {
 	operation  chan struct{} // exclusive connection lease for the entire transfer
 	sshClient  *ssh.Client
 	sftpClient *sftp.Client
+	stopped    bool // guarded by operation lease
 }
 
-func (p *SFTPProducer) Start(ctx context.Context) error { return nil }
+func (p *SFTPProducer) Start(ctx context.Context) error {
+	if err := p.acquire(ctx); err != nil {
+		return err
+	}
+	defer p.release()
+	p.stopped = false
+	return nil
+}
 
 // acquire leases the connection for one operation without holding a mutex
 // across network I/O. A blocked sender can still cancel while waiting.
@@ -214,6 +222,7 @@ func (p *SFTPProducer) Stop() error {
 		return err
 	}
 	defer p.release()
+	p.stopped = true
 	if p.sftpClient != nil {
 		p.sftpClient.Close()
 		p.sftpClient = nil
@@ -266,6 +275,9 @@ func (p *SFTPProducer) Send(exchange *gocamel.Exchange) error {
 		return err
 	}
 	defer p.release()
+	if p.stopped {
+		return fmt.Errorf("sftp producer is stopped")
+	}
 	sshClient, sftpClient, err := p.getClients()
 	if err != nil {
 		return err
@@ -364,6 +376,9 @@ type SFTPConsumer struct {
 	endpoint   *SFTPEndpoint
 	processor  gocamel.Processor
 	opts       gocamel.PollingOptions
+	mu         sync.Mutex
+	started    bool
+	stopping   bool
 	cancel     context.CancelFunc
 	sshClient  *ssh.Client  // persistent connection (disconnect=false)
 	sftpClient *sftp.Client // persistent connection (disconnect=false)
@@ -371,8 +386,14 @@ type SFTPConsumer struct {
 }
 
 func (c *SFTPConsumer) Start(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started || c.stopping {
+		return nil
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+	c.started = true
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -404,21 +425,39 @@ func (c *SFTPConsumer) getClients() (*ssh.Client, *sftp.Client, error) {
 	if c.endpoint.disconnect {
 		return c.endpoint.connect()
 	}
-	if c.sftpClient != nil {
-		if _, err := c.sftpClient.Getwd(); err == nil {
-			return c.sshClient, c.sftpClient, nil
+	c.mu.Lock()
+	sshClient := c.sshClient
+	sftpClient := c.sftpClient
+	c.mu.Unlock()
+	if sftpClient != nil {
+		if _, err := sftpClient.Getwd(); err == nil {
+			return sshClient, sftpClient, nil
 		}
-		c.sftpClient.Close()
-		c.sshClient.Close()
-		c.sftpClient = nil
-		c.sshClient = nil
+		sftpClient.Close()
+		if sshClient != nil {
+			sshClient.Close()
+		}
+		c.mu.Lock()
+		if c.sftpClient == sftpClient {
+			c.sftpClient = nil
+			c.sshClient = nil
+		}
+		c.mu.Unlock()
 	}
 	ssh, sftp, err := c.endpoint.connect()
 	if err != nil {
 		return nil, nil, err
 	}
+	c.mu.Lock()
+	if c.stopping || !c.started {
+		c.mu.Unlock()
+		sftp.Close()
+		ssh.Close()
+		return nil, nil, fmt.Errorf("sftp consumer is stopped")
+	}
 	c.sshClient = ssh
 	c.sftpClient = sftp
+	c.mu.Unlock()
 	return ssh, sftp, nil
 }
 
@@ -490,6 +529,9 @@ func (s *sftpSynchronization) OnFailure(exchange *gocamel.Exchange) {
 }
 
 func (c *SFTPConsumer) doPoll(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	sshClient, sftpClient, err := c.getClients()
 	if err != nil {
 		gocamel.LogError("SFTP polling connection error", "error", err)
@@ -511,6 +553,9 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 	if c.opts.Recursive {
 		walker := sftpClient.Walk(rootPath)
 		for walker.Step() {
+			if ctx.Err() != nil {
+				return
+			}
 			if walker.Err() != nil {
 				continue
 			}
@@ -536,6 +581,9 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 			return
 		}
 		for _, entry := range entries {
+			if ctx.Err() != nil {
+				return
+			}
 			if entry.Mode()&os.ModeSymlink != 0 {
 				continue
 			}
@@ -561,6 +609,9 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 
 	count := 0
 	for _, f := range files {
+		if ctx.Err() != nil {
+			return
+		}
 		if c.opts.MaxMessagesPerPoll > 0 && count >= c.opts.MaxMessagesPerPoll {
 			break
 		}
@@ -578,6 +629,9 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 				return info.Size(), info.ModTime(), nil
 			}
 			if !gocamel.WaitForStable(ctx, statFn, c.opts.ReadLockTimeout, c.opts.ReadLockCheckInterval, c.opts.ReadLockMinAge, c.opts.ReadLockMinLength) {
+				if ctx.Err() != nil {
+					return
+				}
 				gocamel.LogWarn("SFTP file did not stabilise before read lock timeout; skipping",
 					"file", f.path, "timeout", c.opts.ReadLockTimeout)
 				continue
@@ -660,17 +714,35 @@ func (c *SFTPConsumer) doPoll(ctx context.Context) {
 }
 
 func (c *SFTPConsumer) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
+	c.mu.Lock()
+	if c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	c.cancel = nil
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
 	}
 	c.wg.Wait()
-	if c.sftpClient != nil {
-		c.sftpClient.Close()
-		c.sftpClient = nil
+
+	c.mu.Lock()
+	sftpClient := c.sftpClient
+	sshClient := c.sshClient
+	c.sftpClient = nil
+	c.sshClient = nil
+	c.started = false
+	c.stopping = false
+	c.mu.Unlock()
+
+	if sftpClient != nil {
+		sftpClient.Close()
 	}
-	if c.sshClient != nil {
-		c.sshClient.Close()
-		c.sshClient = nil
+	if sshClient != nil {
+		sshClient.Close()
 	}
 	return nil
 }

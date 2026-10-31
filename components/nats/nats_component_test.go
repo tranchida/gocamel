@@ -361,3 +361,31 @@ func TestNATSEndpoint_SharedConnectionReferenceCounting(t *testing.T) {
 	assert.Nil(t, ne.conn)
 }
 
+func TestNATSProducer_SendRejectsUnstartedOrStoppedProducerWithSharedConn(t *testing.T) {
+	ns := runEmbeddedNatsServer(t)
+	defer ns.Shutdown()
+
+	comp := NewNATSComponent()
+	ep, err := comp.CreateEndpoint("nats://shared?servers=" + ns.ClientURL())
+	require.NoError(t, err)
+
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	require.NoError(t, err)
+	require.NoError(t, consumer.Start(context.Background()))
+	defer consumer.Stop()
+
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.In.SetBody("should fail")
+	err = prod.Send(ex)
+	assert.ErrorContains(t, err, "nats producer is not started")
+
+	require.NoError(t, prod.Start(context.Background()))
+	require.NoError(t, prod.Send(ex))
+
+	require.NoError(t, prod.Stop())
+	err = prod.Send(ex)
+	assert.ErrorContains(t, err, "nats producer is not started")
+}

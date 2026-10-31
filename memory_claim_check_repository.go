@@ -24,39 +24,42 @@ func NewMemoryClaimCheckRepository() *MemoryClaimCheckRepository {
 // Add stores the data and returns a unique key.
 func (r *MemoryClaimCheckRepository) Add(ctx context.Context, data any) (string, error) {
 	key := fmt.Sprintf("cc-%d", r.counter.Add(1))
+	copied := deepCopyValue(data)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.store[key] = data
+	r.store[key] = copied
 	return key, nil
 }
 
 // Set stores the data with a specific key.
 func (r *MemoryClaimCheckRepository) Set(ctx context.Context, key string, data any) error {
+	copied := deepCopyValue(data)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.store[key] = data
+	r.store[key] = copied
 	return nil
 }
 
 // Get retrieves the data for the given key.
 func (r *MemoryClaimCheckRepository) Get(ctx context.Context, key string) (any, error) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	data, exists := r.store[key]
+	r.mu.RUnlock()
 	if !exists {
 		return nil, nil
 	}
-	return data, nil
+	return deepCopyValue(data), nil
 }
 
 // Remove removes the data for the given key and returns it.
 func (r *MemoryClaimCheckRepository) Remove(ctx context.Context, key string) (any, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	data, exists := r.store[key]
 	if !exists {
+		r.mu.Unlock()
 		return nil, nil
 	}
 	delete(r.store, key)
-	return data, nil
+	r.mu.Unlock()
+	return deepCopyValue(data), nil
 }

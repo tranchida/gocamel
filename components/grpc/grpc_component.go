@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -196,6 +197,13 @@ func (c *GRPCComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		}
 	}
 
+	timeout := 5 * time.Second
+	if v := gocamel.GetConfigValue(u, "timeout"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			timeout = d
+		}
+	}
+
 	return &GRPCEndpoint{
 		uri:                 uri,
 		target:              host,
@@ -203,6 +211,7 @@ func (c *GRPCComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		method:              method,
 		insecure:            isInsecure,
 		caCert:              caCert,
+		timeout:             timeout,
 		allowHeaderOverride: allowHeaderOverride,
 		forwardHeaders:      parseForwardHeaders(gocamel.GetConfigValue(u, "forwardHeaders")),
 	}, nil
@@ -248,6 +257,7 @@ type GRPCEndpoint struct {
 	method              string
 	insecure            bool
 	caCert              string
+	timeout             time.Duration
 	allowHeaderOverride bool // opt-in: the CamelGrpcMethod header may replace the configured method
 	// forwardHeaders is the optional header allowlist: when non-nil, ONLY the
 	// listed headers are forwarded as outgoing metadata; when nil, every
@@ -489,62 +499,129 @@ type GRPCConsumer struct {
 	processor gocamel.Processor
 	server    *grpc.Server
 	listener  net.Listener
+	addr      string
+	stopAfter func() bool
+	stopping  bool
 	wg        sync.WaitGroup
 }
 
 // Start begins listening on the configured address.
 func (c *GRPCConsumer) Start(ctx context.Context) error {
 	c.endpoint.mu.Lock()
-	defer c.endpoint.mu.Unlock()
+	if c.server != nil || c.stopping {
+		c.endpoint.mu.Unlock()
+		return nil
+	}
 
 	target := c.endpoint.target
 	if !strings.Contains(target, ":") {
 		target = ":" + target
 	}
 
-	lis, err := net.Listen("tcp", target)
-	if err != nil {
-		return fmt.Errorf("grpc consumer failed to listen on %s: %w", target, err)
+	lis := c.listener
+	if lis == nil {
+		var err error
+		lis, err = net.Listen("tcp", target)
+		if err != nil {
+			c.endpoint.mu.Unlock()
+			return fmt.Errorf("grpc consumer failed to listen on %s: %w", target, err)
+		}
+		c.listener = lis
 	}
-	c.listener = lis
+	c.addr = lis.Addr().String()
 
 	// Use unknown service handler to receive all RPC calls and forward them to GoCamel
-	c.server = grpc.NewServer(
+	srv := grpc.NewServer(
 		grpc.ForceServerCodec(RawBytesCodec{}),
 		grpc.UnknownServiceHandler(c.handler),
 	)
+	c.server = srv
+	c.stopAfter = context.AfterFunc(ctx, func() {
+		_ = c.Stop()
+	})
 
 	c.wg.Add(1)
+	c.endpoint.mu.Unlock()
+
 	go func() {
 		defer c.wg.Done()
-		_ = c.server.Serve(lis)
+		_ = srv.Serve(lis)
 	}()
 
 	return nil
 }
 
-// Stop gracefully shuts down the gRPC server.
+// Stop gracefully shuts down the gRPC server, falling back to a forced Stop()
+// if GracefulStop() does not complete within the endpoint timeout.
 func (c *GRPCConsumer) Stop() error {
-	if c.server != nil {
-		c.server.GracefulStop()
+	c.endpoint.mu.Lock()
+	if c.stopping {
+		c.endpoint.mu.Unlock()
+		c.wg.Wait()
+		return nil
 	}
-	if c.listener != nil {
-		_ = c.listener.Close()
+	if c.server == nil && c.listener == nil {
+		if c.endpoint.consumer == c {
+			c.endpoint.consumer = nil
+		}
+		c.endpoint.mu.Unlock()
+		return nil
+	}
+	c.stopping = true
+	srv := c.server
+	lis := c.listener
+	stopAfter := c.stopAfter
+	c.server = nil
+	c.listener = nil
+	c.stopAfter = nil
+	c.endpoint.mu.Unlock()
+
+	if stopAfter != nil {
+		stopAfter()
+	}
+
+	if srv != nil {
+		timeout := c.endpoint.timeout
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		stopped := make(chan struct{})
+		go func() {
+			srv.GracefulStop()
+			close(stopped)
+		}()
+		timer := time.NewTimer(timeout)
+		select {
+		case <-stopped:
+			timer.Stop()
+		case <-timer.C:
+			srv.Stop()
+			<-stopped
+		}
+	}
+	if lis != nil {
+		_ = lis.Close()
 	}
 	c.wg.Wait()
 
 	c.endpoint.mu.Lock()
-	defer c.endpoint.mu.Unlock()
+	c.stopping = false
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}
+	c.endpoint.mu.Unlock()
 	return nil
 }
 
 // Address returns the actual listening address (useful when port 0 is used in tests).
 func (c *GRPCConsumer) Address() string {
+	c.endpoint.mu.Lock()
+	defer c.endpoint.mu.Unlock()
 	if c.listener != nil {
 		return c.listener.Addr().String()
+	}
+	if c.addr != "" {
+		return c.addr
 	}
 	return c.endpoint.target
 }

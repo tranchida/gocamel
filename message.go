@@ -179,24 +179,93 @@ func (m *Message) DeepCopy() *Message {
 func deepCopyValue(v any) any {
 	switch val := v.(type) {
 	case []byte:
+		if val == nil {
+			return []byte(nil)
+		}
 		cp := make([]byte, len(val))
 		copy(cp, val)
 		return cp
 	case []any:
+		if val == nil {
+			return []any(nil)
+		}
 		cp := make([]any, len(val))
 		for i, item := range val {
 			cp[i] = deepCopyValue(item)
 		}
 		return cp
 	case map[string]any:
+		if val == nil {
+			return map[string]any(nil)
+		}
 		cp := make(map[string]any, len(val))
 		for k, item := range val {
 			cp[k] = deepCopyValue(item)
 		}
 		return cp
+	case []map[string]any:
+		if val == nil {
+			return []map[string]any(nil)
+		}
+		cp := make([]map[string]any, len(val))
+		for i, item := range val {
+			if item != nil {
+				cp[i] = deepCopyValue(item).(map[string]any)
+			}
+		}
+		return cp
+	case map[string]string:
+		if val == nil {
+			return map[string]string(nil)
+		}
+		cp := make(map[string]string, len(val))
+		maps.Copy(cp, val)
+		return cp
+	case []map[string]string:
+		if val == nil {
+			return []map[string]string(nil)
+		}
+		cp := make([]map[string]string, len(val))
+		for i, item := range val {
+			if item != nil {
+				itemCopy := make(map[string]string, len(item))
+				maps.Copy(itemCopy, item)
+				cp[i] = itemCopy
+			}
+		}
+		return cp
 	case []string:
+		if val == nil {
+			return []string(nil)
+		}
 		cp := make([]string, len(val))
 		copy(cp, val)
+		return cp
+	case [][]string:
+		if val == nil {
+			return [][]string(nil)
+		}
+		cp := make([][]string, len(val))
+		for i, row := range val {
+			if row != nil {
+				rowCopy := make([]string, len(row))
+				copy(rowCopy, row)
+				cp[i] = rowCopy
+			}
+		}
+		return cp
+	case map[string][]byte:
+		if val == nil {
+			return map[string][]byte(nil)
+		}
+		cp := make(map[string][]byte, len(val))
+		for k, b := range val {
+			if b != nil {
+				bCopy := make([]byte, len(b))
+				copy(bCopy, b)
+				cp[k] = bCopy
+			}
+		}
 		return cp
 	default:
 		return v

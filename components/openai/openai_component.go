@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/sashabaranov/go-openai"
@@ -66,12 +67,18 @@ func (e *OpenAIEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Co
 
 // OpenAIProducer represents an OpenAI producer.
 type OpenAIProducer struct {
-	endpoint *OpenAIEndpoint
-	client   *openai.Client
-	model    string
+	endpoint   *OpenAIEndpoint
+	mu         sync.RWMutex
+	httpClient *http.Client
+	client     *openai.Client
+	model      string
+	started    bool
 }
 
 func (p *OpenAIProducer) Start(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	token := gocamel.GetConfigValue(p.endpoint.url, "authorizationToken")
 	if token == "" {
 		token = gocamel.GetConfigValue(p.endpoint.url, "apiKey") // alias
@@ -85,23 +92,39 @@ func (p *OpenAIProducer) Start(ctx context.Context) error {
 		model = openai.GPT3Dot5Turbo // default model
 	}
 
+	p.httpClient = &http.Client{Timeout: 60 * time.Second}
 	cfg := openai.DefaultConfig(token)
-	cfg.HTTPClient = &http.Client{Timeout: 60 * time.Second}
+	cfg.HTTPClient = p.httpClient
 	if baseURL := gocamel.GetConfigValue(p.endpoint.url, "baseURL"); baseURL != "" {
 		cfg.BaseURL = baseURL
 	}
 	p.client = openai.NewClientWithConfig(cfg)
 	p.model = model
+	p.started = true
 
 	return nil
 }
 
 func (p *OpenAIProducer) Stop() error {
+	p.mu.Lock()
+	httpClient := p.httpClient
+	p.httpClient = nil
+	p.client = nil
+	p.started = false
+	p.mu.Unlock()
+	if httpClient != nil {
+		httpClient.CloseIdleConnections()
+	}
 	return nil
 }
 
 func (p *OpenAIProducer) Send(exchange *gocamel.Exchange) error {
-	if p.client == nil {
+	p.mu.RLock()
+	client := p.client
+	model := p.model
+	p.mu.RUnlock()
+
+	if client == nil {
 		return fmt.Errorf("the OpenAI producer has not been started")
 	}
 
@@ -119,10 +142,10 @@ func (p *OpenAIProducer) Send(exchange *gocamel.Exchange) error {
 	if reqCtx == nil {
 		reqCtx = context.Background()
 	}
-	resp, err := p.client.CreateChatCompletion(
+	resp, err := client.CreateChatCompletion(
 		reqCtx,
 		openai.ChatCompletionRequest{
-			Model: p.model,
+			Model: model,
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role:    openai.ChatMessageRoleUser,

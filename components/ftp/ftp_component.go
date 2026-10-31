@@ -138,9 +138,17 @@ type FTPProducer struct {
 	mu        sync.Mutex      // protects operation initialization
 	operation chan struct{}   // exclusive connection lease for the entire transfer
 	conn      *ftp.ServerConn // persistent connection (disconnect=false)
+	stopped   bool            // guarded by operation lease
 }
 
-func (p *FTPProducer) Start(ctx context.Context) error { return nil }
+func (p *FTPProducer) Start(ctx context.Context) error {
+	if err := p.acquire(ctx); err != nil {
+		return err
+	}
+	defer p.release()
+	p.stopped = false
+	return nil
+}
 
 // acquire leases the connection for one operation without holding a mutex
 // across network I/O. A blocked sender can still cancel while waiting.
@@ -169,6 +177,7 @@ func (p *FTPProducer) Stop() error {
 		return err
 	}
 	defer p.release()
+	p.stopped = true
 	if p.conn != nil {
 		conn := p.conn
 		p.conn = nil
@@ -208,6 +217,9 @@ func (p *FTPProducer) Send(exchange *gocamel.Exchange) error {
 		return err
 	}
 	defer p.release()
+	if p.stopped {
+		return fmt.Errorf("ftp producer is stopped")
+	}
 	conn, err := p.getConn()
 	if err != nil {
 		return err
@@ -302,14 +314,23 @@ type FTPConsumer struct {
 	endpoint  *FTPEndpoint
 	processor gocamel.Processor
 	opts      gocamel.PollingOptions
+	mu        sync.Mutex
+	started   bool
+	stopping  bool
 	cancel    context.CancelFunc
 	conn      *ftp.ServerConn // persistent connection (disconnect=false)
 	wg        sync.WaitGroup
 }
 
 func (c *FTPConsumer) Start(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started || c.stopping {
+		return nil
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+	c.started = true
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -341,19 +362,33 @@ func (c *FTPConsumer) getConn() (*ftp.ServerConn, error) {
 	if c.endpoint.disconnect {
 		return c.endpoint.connect()
 	}
-	if c.conn != nil {
-		if err := c.conn.NoOp(); err == nil {
-			return c.conn, nil
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn != nil {
+		if err := conn.NoOp(); err == nil {
+			return conn, nil
 		}
-		c.conn.Quit()
-		c.conn = nil
+		conn.Quit()
+		c.mu.Lock()
+		if c.conn == conn {
+			c.conn = nil
+		}
+		c.mu.Unlock()
 	}
-	conn, err := c.endpoint.connect()
+	newConn, err := c.endpoint.connect()
 	if err != nil {
 		return nil, err
 	}
-	c.conn = conn
-	return conn, nil
+	c.mu.Lock()
+	if c.stopping || !c.started {
+		c.mu.Unlock()
+		newConn.Quit()
+		return nil, fmt.Errorf("ftp consumer is stopped")
+	}
+	c.conn = newConn
+	c.mu.Unlock()
+	return newConn, nil
 }
 
 func (c *FTPConsumer) releaseConn(conn *ftp.ServerConn) {
@@ -423,6 +458,9 @@ func (s *ftpSynchronization) OnFailure(exchange *gocamel.Exchange) {
 }
 
 func (c *FTPConsumer) doPoll(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	conn, err := c.getConn()
 	if err != nil {
 		gocamel.LogError("FTP polling connection error", "error", err)
@@ -443,12 +481,18 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 
 	var listDir func(dir string)
 	listDir = func(dir string) {
+		if ctx.Err() != nil {
+			return
+		}
 		entries, err := conn.List(dir)
 		if err != nil {
 			gocamel.LogError("FTP listing error", "directory", dir, "error", err)
 			return
 		}
 		for _, entry := range entries {
+			if ctx.Err() != nil {
+				return
+			}
 			fullPath := dir + "/" + entry.Name
 			if dir == "." {
 				fullPath = entry.Name
@@ -472,6 +516,9 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 
 	count := 0
 	for _, f := range files {
+		if ctx.Err() != nil {
+			return
+		}
 		if c.opts.MaxMessagesPerPoll > 0 && count >= c.opts.MaxMessagesPerPoll {
 			break
 		}
@@ -490,6 +537,9 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 				return size, modTime, nil
 			}
 			if !gocamel.WaitForStable(ctx, statFn, c.opts.ReadLockTimeout, c.opts.ReadLockCheckInterval, c.opts.ReadLockMinAge, c.opts.ReadLockMinLength) {
+				if ctx.Err() != nil {
+					return
+				}
 				gocamel.LogWarn("FTP file did not stabilise before read lock timeout; skipping",
 					"file", f.path, "timeout", c.opts.ReadLockTimeout)
 				continue
@@ -570,13 +620,30 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 }
 
 func (c *FTPConsumer) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
+	c.mu.Lock()
+	if c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	c.cancel = nil
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
 	}
 	c.wg.Wait()
-	if c.conn != nil {
-		c.conn.Quit()
-		c.conn = nil
+
+	c.mu.Lock()
+	conn := c.conn
+	c.conn = nil
+	c.started = false
+	c.stopping = false
+	c.mu.Unlock()
+
+	if conn != nil {
+		conn.Quit()
 	}
 	return nil
 }

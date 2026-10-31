@@ -90,6 +90,7 @@ func (e *MailEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Cons
 		endpoint:  e,
 		processor: processor,
 		stopChan:  make(chan struct{}),
+		changes:   make(chan struct{}, 1),
 	}, nil
 }
 

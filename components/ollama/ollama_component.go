@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -106,18 +107,23 @@ func (e *OllamaEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Co
 
 // OllamaProducer represents an Ollama producer.
 type OllamaProducer struct {
-	endpoint  *OllamaEndpoint
-	client    *api.Client
-	model     string
-	mode      string
-	system    string
-	keepAlive string
-	think     string
-	format    string
-	started   bool
+	endpoint   *OllamaEndpoint
+	mu         sync.RWMutex
+	httpClient *http.Client
+	client     *api.Client
+	model      string
+	mode       string
+	system     string
+	keepAlive  string
+	think      string
+	format     string
+	started    bool
 }
 
 func (p *OllamaProducer) Start(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	u := p.endpoint.url
 
 	mode := u.Opaque
@@ -147,7 +153,8 @@ func (p *OllamaProducer) Start(ctx context.Context) error {
 			return fmt.Errorf("invalid default host: %w", err)
 		}
 	}
-	p.client = api.NewClient(base, &http.Client{Timeout: 60 * time.Second})
+	p.httpClient = &http.Client{Timeout: 60 * time.Second}
+	p.client = api.NewClient(base, p.httpClient)
 
 	p.system = gocamel.GetConfigValue(u, "system")
 	p.keepAlive = gocamel.GetConfigValue(u, "keepAlive")
@@ -158,27 +165,41 @@ func (p *OllamaProducer) Start(ctx context.Context) error {
 }
 
 func (p *OllamaProducer) Stop() error {
+	p.mu.Lock()
+	httpClient := p.httpClient
+	p.httpClient = nil
+	p.client = nil
+	p.started = false
+	p.mu.Unlock()
+	if httpClient != nil {
+		httpClient.CloseIdleConnections()
+	}
 	return nil
 }
 
 // Send dispatches the exchange to the configured Ollama API mode.
 func (p *OllamaProducer) Send(exchange *gocamel.Exchange) error {
-	if !p.started {
+	p.mu.RLock()
+	started := p.started
+	client := p.client
+	mode := p.mode
+	p.mu.RUnlock()
+	if !started || client == nil {
 		return fmt.Errorf("the Ollama producer has not been started")
 	}
-	switch p.mode {
+	switch mode {
 	case "chat":
-		return p.sendChat(exchange)
+		return p.sendChat(exchange, client)
 	case "generate":
-		return p.sendGenerate(exchange)
+		return p.sendGenerate(exchange, client)
 	case "embed":
-		return p.sendEmbed(exchange)
+		return p.sendEmbed(exchange, client)
 	default:
-		return fmt.Errorf("unknown ollama mode %q", p.mode)
+		return fmt.Errorf("unknown ollama mode %q", mode)
 	}
 }
 
-func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange) error {
+func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange, client *api.Client) error {
 	prompt := bodyAsString(exchange.GetIn().GetBody())
 	model := p.resolveModel(exchange)
 
@@ -197,7 +218,7 @@ func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange) error {
 		ctx = context.Background()
 	}
 	var resp api.ChatResponse
-	err := p.client.Chat(ctx, req, func(r api.ChatResponse) error {
+	err := client.Chat(ctx, req, func(r api.ChatResponse) error {
 		resp = r
 		return nil
 	})
@@ -217,10 +238,12 @@ func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange) error {
 	return nil
 }
 
-func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange) error {
+func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange, client *api.Client) error {
 	prompt := bodyAsString(exchange.GetIn().GetBody())
 	model := p.resolveModel(exchange)
+	p.mu.RLock()
 	system := p.system
+	p.mu.RUnlock()
 	if v, ok := p.overrideHeader(exchange, "OllamaSystem"); ok {
 		system = v
 	}
@@ -240,7 +263,7 @@ func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange) error {
 		ctx = context.Background()
 	}
 	var resp api.GenerateResponse
-	err := p.client.Generate(ctx, req, func(r api.GenerateResponse) error {
+	err := client.Generate(ctx, req, func(r api.GenerateResponse) error {
 		resp = r
 		return nil
 	})
@@ -260,7 +283,7 @@ func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange) error {
 	return nil
 }
 
-func (p *OllamaProducer) sendEmbed(exchange *gocamel.Exchange) error {
+func (p *OllamaProducer) sendEmbed(exchange *gocamel.Exchange, client *api.Client) error {
 	input := bodyAsString(exchange.GetIn().GetBody())
 	model := p.resolveModel(exchange)
 
@@ -272,7 +295,7 @@ func (p *OllamaProducer) sendEmbed(exchange *gocamel.Exchange) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	resp, err := p.client.Embed(ctx, req)
+	resp, err := client.Embed(ctx, req)
 	if err != nil {
 		return fmt.Errorf("ollama embed error: %w", err)
 	}
@@ -292,6 +315,8 @@ func (p *OllamaProducer) resolveModel(exchange *gocamel.Exchange) string {
 	if v, ok := p.overrideHeader(exchange, "OllamaModel"); ok && v != "" {
 		return v
 	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return p.model
 }
 
@@ -310,10 +335,15 @@ func (p *OllamaProducer) overrideHeader(exchange *gocamel.Exchange, key string) 
 
 // applyOptions mutates the request to carry keepAlive/think/format when set.
 func (p *OllamaProducer) applyOptions(req any) {
-	if p.keepAlive == "" && p.think == "" && p.format == "" {
+	p.mu.RLock()
+	keepAlive := p.keepAlive
+	think := p.think
+	format := p.format
+	p.mu.RUnlock()
+	if keepAlive == "" && think == "" && format == "" {
 		return
 	}
-	if ka, err := time.ParseDuration(p.keepAlive); err == nil {
+	if ka, err := time.ParseDuration(keepAlive); err == nil {
 		switch r := req.(type) {
 		case *api.ChatRequest:
 			d := api.Duration{Duration: ka}
@@ -323,8 +353,8 @@ func (p *OllamaProducer) applyOptions(req any) {
 			r.KeepAlive = &d
 		}
 	}
-	if p.think != "" {
-		tv := parseThinkValue(p.think)
+	if think != "" {
+		tv := parseThinkValue(think)
 		switch r := req.(type) {
 		case *api.ChatRequest:
 			r.Think = &tv
@@ -332,12 +362,12 @@ func (p *OllamaProducer) applyOptions(req any) {
 			r.Think = &tv
 		}
 	}
-	if p.format != "" {
+	if format != "" {
 		switch r := req.(type) {
 		case *api.ChatRequest:
-			r.Format = json.RawMessage(strconv.Quote(p.format))
+			r.Format = json.RawMessage(strconv.Quote(format))
 		case *api.GenerateRequest:
-			r.Format = json.RawMessage(strconv.Quote(p.format))
+			r.Format = json.RawMessage(strconv.Quote(format))
 		}
 	}
 }

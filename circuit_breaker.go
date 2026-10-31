@@ -139,10 +139,10 @@ func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 			cb.mu.Unlock()
 			return err
 		}
-		cb.onFailure()
+		cb.onFailure(state)
 		fb = cb.fallbackProcessor
 	} else {
-		cb.onSuccess()
+		cb.onSuccess(state)
 	}
 	cb.mu.Unlock()
 
@@ -152,31 +152,34 @@ func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 	return nil
 }
 
-func (cb *CircuitBreaker) onFailure() {
+func (cb *CircuitBreaker) onFailure(fromState CircuitBreakerState) {
+	if fromState == StateHalfOpen {
+		cb.openCircuit()
+		return
+	}
+	if cb.state != StateClosed {
+		return
+	}
 	now := time.Now()
 	// Idle reset: failures older than OpenTimeout do not count toward the
 	// threshold, so a burst of errors years ago cannot open the circuit today.
-	if cb.state == StateClosed && !cb.lastFailureTime.IsZero() && now.Sub(cb.lastFailureTime) > cb.openTimeout {
+	if !cb.lastFailureTime.IsZero() && now.Sub(cb.lastFailureTime) > cb.openTimeout {
 		cb.failureCount = 0
 	}
 	cb.lastFailureTime = now
 	cb.failureCount++
-	if cb.state == StateClosed {
-		if cb.failureCount >= cb.failureThreshold {
-			cb.openCircuit()
-		}
-	} else if cb.state == StateHalfOpen {
+	if cb.failureCount >= cb.failureThreshold {
 		cb.openCircuit()
 	}
 }
 
-func (cb *CircuitBreaker) onSuccess() {
-	if cb.state == StateHalfOpen {
+func (cb *CircuitBreaker) onSuccess(fromState CircuitBreakerState) {
+	if fromState == StateHalfOpen && cb.state == StateHalfOpen {
 		cb.successCount++
 		if cb.successCount >= cb.successThreshold {
 			cb.closeCircuit()
 		}
-	} else if cb.state == StateClosed {
+	} else if fromState == StateClosed && cb.state == StateClosed {
 		cb.failureCount = 0
 	}
 }

@@ -308,11 +308,12 @@ type NetConsumer struct {
 	endpoint  *NetEndpoint
 	processor Processor
 
-	mu      sync.Mutex
-	started bool
-	conns   map[net.Conn]struct{}
-	stop    chan struct{}
-	wg      sync.WaitGroup
+	mu       sync.Mutex
+	started  bool
+	stopping bool
+	conns    map[net.Conn]struct{}
+	stop     chan struct{}
+	wg       sync.WaitGroup
 
 	listener   net.Listener
 	packetConn net.PacketConn
@@ -331,7 +332,7 @@ func (c *NetConsumer) Address() net.Addr {
 // misconfiguration surfaces at Start, not on the first message.
 func (c *NetConsumer) Start(ctx context.Context) error {
 	c.mu.Lock()
-	if c.started {
+	if c.started || c.stopping {
 		c.mu.Unlock()
 		return errors.New("net consumer is already running")
 	}
@@ -348,12 +349,17 @@ func (c *NetConsumer) Start(ctx context.Context) error {
 			return fmt.Errorf("net: error listening on udp://%s: %w", c.endpoint.address, err)
 		}
 		c.mu.Lock()
+		if c.started || c.stopping {
+			c.mu.Unlock()
+			_ = pc.Close()
+			return errors.New("net consumer is already running")
+		}
 		c.started = true
 		c.stop = stop
 		c.packetConn = pc
 		c.addr = pc.LocalAddr()
-		c.mu.Unlock()
 		c.wg.Add(1)
+		c.mu.Unlock()
 		go c.runUDP(ctx, pc, stop)
 		return nil
 	}
@@ -363,13 +369,18 @@ func (c *NetConsumer) Start(ctx context.Context) error {
 		return fmt.Errorf("net: error listening on tcp://%s: %w", c.endpoint.address, err)
 	}
 	c.mu.Lock()
+	if c.started || c.stopping {
+		c.mu.Unlock()
+		_ = ln.Close()
+		return errors.New("net consumer is already running")
+	}
 	c.started = true
 	c.stop = stop
 	c.listener = ln
 	c.addr = ln.Addr()
 	c.conns = make(map[net.Conn]struct{})
-	c.mu.Unlock()
 	c.wg.Add(1)
+	c.mu.Unlock()
 	go c.acceptLoop(ctx, ln, stop)
 	return nil
 }
@@ -379,10 +390,11 @@ func (c *NetConsumer) Start(ctx context.Context) error {
 // unwind. Safe to call multiple times.
 func (c *NetConsumer) Stop() error {
 	c.mu.Lock()
-	if !c.started {
+	if !c.started || c.stopping {
 		c.mu.Unlock()
 		return nil
 	}
+	c.stopping = true
 	close(c.stop)
 	if c.listener != nil {
 		_ = c.listener.Close()
@@ -397,18 +409,24 @@ func (c *NetConsumer) Stop() error {
 	c.mu.Unlock()
 
 	c.wg.Wait()
+
+	c.mu.Lock()
+	c.stopping = false
+	c.mu.Unlock()
 	return nil
 }
 
 // acceptLoop accepts connections until the listener is closed (Stop).
 func (c *NetConsumer) acceptLoop(ctx context.Context, ln net.Listener, stop <-chan struct{}) {
 	defer c.wg.Done()
+	stopAfter := context.AfterFunc(ctx, func() { _ = ln.Close() })
+	defer stopAfter()
 	var backoff time.Duration
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return // listener closed by Stop
+			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
+				return // listener closed by Stop or context cancelled
 			}
 			// Any other error (typically EMFILE/ENFILE when file descriptors
 			// run out) is transient: exiting here left a "started" route
@@ -456,14 +474,14 @@ func (c *NetConsumer) acceptLoop(ctx context.Context, ln net.Listener, stop <-ch
 		c.wg.Add(1)
 		c.mu.Unlock()
 
-		go c.handleConn(ctx, conn)
+		go c.handleConn(ctx, conn, stop)
 	}
 }
 
 // handleConn reads messages from one connection and runs the route for each.
 // One message is one newline-delimited line (textline mode, the default) or
 // one read (raw mode).
-func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn) {
+func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn, stop <-chan struct{}) {
 	defer c.wg.Done()
 	defer func() {
 		_ = conn.Close()
@@ -471,6 +489,8 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn) {
 		delete(c.conns, conn)
 		c.mu.Unlock()
 	}()
+	stopAfter := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopAfter()
 
 	reader := bufio.NewReaderSize(conn, c.endpoint.bufferSize)
 	writeReply := func(resp []byte) error {
@@ -487,7 +507,7 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.stop:
+		case <-stop:
 			return
 		default:
 		}
@@ -563,6 +583,8 @@ func readTextLine(r *bufio.Reader) ([]byte, error) {
 // message, sized at most bufferSize.
 func (c *NetConsumer) runUDP(ctx context.Context, pc net.PacketConn, stop <-chan struct{}) {
 	defer c.wg.Done()
+	stopAfter := context.AfterFunc(ctx, func() { _ = pc.Close() })
+	defer stopAfter()
 	buf := make([]byte, c.endpoint.bufferSize)
 	for {
 		select {

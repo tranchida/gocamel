@@ -311,6 +311,8 @@ type FileConsumer struct {
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	mu        sync.Mutex
+	cancel    context.CancelFunc
+	started   bool
 	ignored   map[string]struct{}
 	seen      map[string]fileStamp // last ingested size+mtime; skips Create+Write duplicates
 	seenOrder []string             // insertion order of seen keys, oldest first; guarded by mu
@@ -341,14 +343,41 @@ func (c *FileConsumer) checkAndClearIgnored(path string) bool {
 
 // Start starts the File consumer
 func (c *FileConsumer) Start(ctx context.Context) error {
+	c.mu.Lock()
+	if c.started {
+		c.mu.Unlock()
+		return nil
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = cancel
+	c.started = true
+	c.mu.Unlock()
+
+	resetStart := func() {
+		cancel()
+		c.mu.Lock()
+		c.cancel = nil
+		c.started = false
+		c.mu.Unlock()
+	}
+
 	info, err := os.Stat(c.path)
 	if err != nil {
+		resetStart()
 		return fmt.Errorf("error accessing path: %w", err)
 	}
 	if info.IsDir() {
-		return c.watchDirectory(ctx)
+		if err := c.watchDirectory(ctx); err != nil {
+			resetStart()
+			return err
+		}
+		return nil
 	}
-	return c.watchFile(ctx)
+	if err := c.watchFile(ctx); err != nil {
+		resetStart()
+		return err
+	}
+	return nil
 }
 
 type fileSynchronization struct {
@@ -424,8 +453,11 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error creating watcher: %w", err)
 	}
+	stopChan := make(chan struct{})
+	c.mu.Lock()
 	c.watcher = watcher
-	c.stopChan = make(chan struct{})
+	c.stopChan = stopChan
+	c.mu.Unlock()
 
 	opts := gocamel.ParsePollingOptions(c.url)
 	// For local file watching, default interval is 100ms if not explicitly overridden
@@ -440,12 +472,24 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 
 	if err := watcher.Add(c.path); err != nil {
 		_ = watcher.Close()
+		c.mu.Lock()
+		c.watcher = nil
+		c.stopChan = nil
+		c.mu.Unlock()
 		return fmt.Errorf("error adding path to watcher: %w", err)
 	}
 
 	// If recursive, also add all existing subdirectories
 	if opts.Recursive {
 		filepath.Walk(c.path, func(path string, info os.FileInfo, err error) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			select {
+			case <-stopChan:
+				return filepath.SkipAll
+			default:
+			}
 			if err != nil || path == c.path {
 				return nil
 			}
@@ -459,6 +503,14 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	// Snapshot files already in the directory so a consumer started against a
 	// non-empty inbox does not wait for a later Create event.
 	filepath.Walk(c.path, func(path string, info os.FileInfo, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		select {
+		case <-stopChan:
+			return filepath.SkipAll
+		default:
+		}
 		if err != nil || info == nil || info.IsDir() {
 			return nil
 		}
@@ -472,6 +524,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
+		defer func() { _ = watcher.Close() }()
 		for {
 			select {
 			case event, ok := <-watcher.Events:
@@ -487,7 +540,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 					return
 				}
 				gocamel.LogError("watcher error", "error", err)
-			case <-c.stopChan:
+			case <-stopChan:
 				return
 			case <-ctx.Done():
 				return
@@ -511,8 +564,13 @@ func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.Pol
 		return
 	}
 	if info.IsDir() {
-		if opts.Recursive && c.watcher != nil {
-			_ = c.watcher.Add(path)
+		if opts.Recursive {
+			c.mu.Lock()
+			w := c.watcher
+			c.mu.Unlock()
+			if w != nil {
+				_ = w.Add(path)
+			}
 		}
 		return
 	}
@@ -546,6 +604,9 @@ func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.Pol
 				return fi.Size(), fi.ModTime(), nil
 			}
 			if !gocamel.WaitForStable(ctx, statFn, opts.ReadLockTimeout, opts.ReadLockCheckInterval, opts.ReadLockMinAge, opts.ReadLockMinLength) {
+				if ctx.Err() != nil {
+					return
+				}
 				gocamel.LogWarn("file did not stabilise before the read lock timeout; skipping",
 					"file", path, "timeout", opts.ReadLockTimeout)
 				return
@@ -689,11 +750,22 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 func (c *FileConsumer) Stop() error {
 	var err error
 	c.stopOnce.Do(func() {
-		if c.stopChan != nil {
-			close(c.stopChan)
+		c.mu.Lock()
+		cancel := c.cancel
+		c.cancel = nil
+		c.started = false
+		stopChan := c.stopChan
+		watcher := c.watcher
+		c.mu.Unlock()
+
+		if cancel != nil {
+			cancel()
 		}
-		if c.watcher != nil {
-			err = c.watcher.Close()
+		if stopChan != nil {
+			close(stopChan)
+		}
+		if watcher != nil {
+			err = watcher.Close()
 		}
 	})
 	c.wg.Wait()

@@ -208,11 +208,14 @@ func (e *MongoDBEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.C
 // Thread-safe: does not store mutable message-related state.
 type MongoDBProducer struct {
 	endpoint *MongoDBEndpoint
+	mu       sync.RWMutex
 	client   *mongo.Client
 }
 
 // Start starts the producer and establishes the connection if needed.
 func (p *MongoDBProducer) Start(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.client = p.endpoint.connection.client
 	if p.client == nil {
 		return fmt.Errorf("no MongoDB client available for connection '%s'", p.endpoint.connName)
@@ -223,6 +226,9 @@ func (p *MongoDBProducer) Start(ctx context.Context) error {
 // Stop stops the producer.
 // Note: The MongoDB client is not closed as it is managed by MongoDBConnection.
 func (p *MongoDBProducer) Stop() error {
+	p.mu.Lock()
+	p.client = nil
+	p.mu.Unlock()
 	return nil
 }
 
@@ -260,7 +266,14 @@ func (p *MongoDBProducer) getCollection(exchange *gocamel.Exchange) (*mongo.Coll
 		return nil, fmt.Errorf("no collection configured for MongoDB operation (use 'collection' in the URI or the CamelMongoDbCollection header)")
 	}
 
-	return p.client.Database(dbName).Collection(collName), nil
+	p.mu.RLock()
+	client := p.client
+	p.mu.RUnlock()
+	if client == nil {
+		return nil, fmt.Errorf("mongodb producer is not started")
+	}
+
+	return client.Database(dbName).Collection(collName), nil
 }
 
 // getOperation returns the operation to execute.

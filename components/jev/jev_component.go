@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gocamel "github.com/tranchida/gocamel"
@@ -170,6 +171,7 @@ func (e *JevEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consu
 // JevProducer sends the exchange body to Jev as the state to judge.
 type JevProducer struct {
 	endpoint *JevEndpoint
+	mu       sync.RWMutex
 	client   *http.Client
 	apiKey   string
 	started  bool
@@ -177,6 +179,9 @@ type JevProducer struct {
 
 // Start resolves the API key and builds the HTTP client.
 func (p *JevProducer) Start(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	u := p.endpoint.url
 
 	token := gocamel.GetConfigValue(u, "authorizationToken")
@@ -201,8 +206,13 @@ func (p *JevProducer) Start(ctx context.Context) error {
 
 // Stop releases idle connections.
 func (p *JevProducer) Stop() error {
-	if p.client != nil {
-		p.client.CloseIdleConnections()
+	p.mu.Lock()
+	client := p.client
+	p.client = nil
+	p.started = false
+	p.mu.Unlock()
+	if client != nil {
+		client.CloseIdleConnections()
 	}
 	return nil
 }
@@ -221,7 +231,13 @@ func (p *JevProducer) Stop() error {
 // only where headers cannot be influenced by untrusted input, otherwise a
 // sender could pick the model (cost) and rewrite the questions.
 func (p *JevProducer) Send(exchange *gocamel.Exchange) error {
-	if !p.started {
+	p.mu.RLock()
+	started := p.started
+	client := p.client
+	apiKey := p.apiKey
+	p.mu.RUnlock()
+
+	if !started || client == nil {
 		return fmt.Errorf("the Jev producer has not been started")
 	}
 	e := p.endpoint
@@ -262,10 +278,10 @@ func (p *JevProducer) Send(exchange *gocamel.Exchange) error {
 		return fmt.Errorf("failed to build Jev request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	start := time.Now()
-	resp, err := p.client.Do(req)
+	resp, err := client.Do(req)
 	elapsed := time.Since(start)
 	if err != nil {
 		return fmt.Errorf("request error from Jev: %w", err)

@@ -296,6 +296,18 @@ func TestOllamaProducer_Send_NotStarted(t *testing.T) {
 	assert.Contains(t, err.Error(), "not been started")
 }
 
+func TestOllamaProducer_SendAfterStop(t *testing.T) {
+	p := producerForTest(t, "ollama:chat?model=m")
+	require.NoError(t, p.Start(context.Background()))
+	require.NoError(t, p.Stop())
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.SetBody("hi")
+	err := p.Send(ex)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not been started")
+}
+
 func TestOllamaProducer_Chat_NoContent(t *testing.T) {
 	stub := newStubServer(t, http.StatusOK, `{"model":"m","created_at":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}`)
 	p := producerForTest(t, "ollama:chat?model=m&host="+stub.URL)

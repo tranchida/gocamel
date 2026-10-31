@@ -102,6 +102,9 @@ func (e *SMBEndpoint) connect() (*smbConn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("TCP connection error (SMB): %w", err)
 	}
+	if e.connectTimeout > 0 {
+		_ = tcp.SetDeadline(time.Now().Add(e.connectTimeout))
+	}
 
 	d := &smb2.Dialer{
 		Initiator: &smb2.NTLMInitiator{
@@ -124,12 +127,16 @@ func (e *SMBEndpoint) connect() (*smbConn, error) {
 		return nil, fmt.Errorf("no share name specified in the SMB URI")
 	}
 
+	if e.connectTimeout > 0 {
+		_ = tcp.SetDeadline(time.Now().Add(e.connectTimeout))
+	}
 	share, err := session.Mount(shareName)
 	if err != nil {
 		session.Logoff()
 		tcp.Close()
 		return nil, fmt.Errorf("error mounting SMB share %s: %w", shareName, err)
 	}
+	_ = tcp.SetDeadline(time.Time{})
 
 	return &smbConn{tcp: tcp, session: session, share: share}, nil
 }
@@ -184,9 +191,17 @@ type SMBProducer struct {
 	mu        sync.Mutex    // protects operation initialization
 	operation chan struct{} // exclusive connection lease for the entire transfer
 	sc        *smbConn      // persistent connection (disconnect=false)
+	stopped   bool          // guarded by operation lease
 }
 
-func (p *SMBProducer) Start(ctx context.Context) error { return nil }
+func (p *SMBProducer) Start(ctx context.Context) error {
+	if err := p.acquire(ctx); err != nil {
+		return err
+	}
+	defer p.release()
+	p.stopped = false
+	return nil
+}
 
 // acquire leases the connection for one operation without holding a mutex
 // across network I/O. A blocked sender can still cancel while waiting.
@@ -215,6 +230,7 @@ func (p *SMBProducer) Stop() error {
 		return err
 	}
 	defer p.release()
+	p.stopped = true
 	if p.sc != nil {
 		p.sc.close()
 		p.sc = nil
@@ -253,6 +269,9 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 		return err
 	}
 	defer p.release()
+	if p.stopped {
+		return fmt.Errorf("smb producer is stopped")
+	}
 	sc, err := p.getConn()
 	if err != nil {
 		return err
@@ -341,15 +360,25 @@ type SMBConsumer struct {
 	endpoint  *SMBEndpoint
 	processor gocamel.Processor
 	opts      gocamel.PollingOptions
+	mu        sync.Mutex
+	started   bool
+	stopping  bool
 	cancel    context.CancelFunc
 	sc        *smbConn // persistent connection (disconnect=false)
 	wg        sync.WaitGroup
 }
 
 func (c *SMBConsumer) Start(ctx context.Context) error {
+	c.mu.Lock()
+	if c.started || c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+	c.started = true
 	c.wg.Add(1)
+	c.mu.Unlock()
 	go func() {
 		defer c.wg.Done()
 		select {
@@ -380,19 +409,33 @@ func (c *SMBConsumer) getConn() (*smbConn, error) {
 	if c.endpoint.disconnect {
 		return c.endpoint.connect()
 	}
-	if c.sc != nil {
-		if _, err := c.sc.share.Stat("."); err == nil {
-			return c.sc, nil
+	c.mu.Lock()
+	sc := c.sc
+	c.mu.Unlock()
+	if sc != nil {
+		if _, err := sc.share.Stat("."); err == nil {
+			return sc, nil
 		}
-		c.sc.close()
-		c.sc = nil
+		sc.close()
+		c.mu.Lock()
+		if c.sc == sc {
+			c.sc = nil
+		}
+		c.mu.Unlock()
 	}
-	sc, err := c.endpoint.connect()
+	newSC, err := c.endpoint.connect()
 	if err != nil {
 		return nil, err
 	}
-	c.sc = sc
-	return sc, nil
+	c.mu.Lock()
+	if c.stopping || !c.started {
+		c.mu.Unlock()
+		newSC.close()
+		return nil, fmt.Errorf("smb consumer is stopped")
+	}
+	c.sc = newSC
+	c.mu.Unlock()
+	return newSC, nil
 }
 
 func (c *SMBConsumer) releaseConn(sc *smbConn) {
@@ -407,7 +450,10 @@ type smbFile struct {
 }
 
 // listSMBFiles lists files (recursively if opts.Recursive) applying include/exclude filters.
-func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile {
+func (c *SMBConsumer) listSMBFiles(ctx context.Context, share *smb2.Share, dirPath string) []smbFile {
+	if ctx.Err() != nil {
+		return nil
+	}
 	entries, err := share.ReadDir(dirPath)
 	if err != nil {
 		gocamel.LogError("SMB listing error", "directory", dirPath, "error", err)
@@ -416,12 +462,15 @@ func (c *SMBConsumer) listSMBFiles(share *smb2.Share, dirPath string) []smbFile 
 
 	var result []smbFile
 	for _, entry := range entries {
+		if ctx.Err() != nil {
+			return result
+		}
 		entryPath := filepath.Join(dirPath, entry.Name())
 		entryPath = strings.ReplaceAll(entryPath, "/", "\\")
 
 		if entry.IsDir() {
 			if c.opts.Recursive && entry.Name() != "." && entry.Name() != ".." {
-				result = append(result, c.listSMBFiles(share, entryPath)...)
+				result = append(result, c.listSMBFiles(ctx, share, entryPath)...)
 			}
 			continue
 		}
@@ -496,6 +545,9 @@ func (s *smbSynchronization) OnFailure(exchange *gocamel.Exchange) {
 }
 
 func (c *SMBConsumer) doPoll(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	sc, err := c.getConn()
 	if err != nil {
 		gocamel.LogError("SMB polling connection error", "error", err)
@@ -508,10 +560,13 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 		rootPath = "."
 	}
 
-	files := c.listSMBFiles(sc.share, rootPath)
+	files := c.listSMBFiles(ctx, sc.share, rootPath)
 
 	count := 0
 	for _, f := range files {
+		if ctx.Err() != nil {
+			return
+		}
 		if c.opts.MaxMessagesPerPoll > 0 && count >= c.opts.MaxMessagesPerPoll {
 			break
 		}
@@ -529,6 +584,9 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 				return info.Size(), info.ModTime(), nil
 			}
 			if !gocamel.WaitForStable(ctx, statFn, c.opts.ReadLockTimeout, c.opts.ReadLockCheckInterval, c.opts.ReadLockMinAge, c.opts.ReadLockMinLength) {
+				if ctx.Err() != nil {
+					return
+				}
 				gocamel.LogWarn("SMB file did not stabilise before read lock timeout; skipping",
 					"file", f.path, "timeout", c.opts.ReadLockTimeout)
 				continue
@@ -611,13 +669,30 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 }
 
 func (c *SMBConsumer) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
+	c.mu.Lock()
+	if c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	c.cancel = nil
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
 	}
 	c.wg.Wait()
-	if c.sc != nil {
-		c.sc.close()
-		c.sc = nil
+
+	c.mu.Lock()
+	sc := c.sc
+	c.sc = nil
+	c.started = false
+	c.stopping = false
+	c.mu.Unlock()
+
+	if sc != nil {
+		sc.close()
 	}
 	return nil
 }

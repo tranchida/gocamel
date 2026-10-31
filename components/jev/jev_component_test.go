@@ -228,3 +228,10 @@ func TestSend_NotStarted(t *testing.T) {
 	p := producer(t, "jev:decisions?apiKey=k&questions="+url.QueryEscape(testQuestions))
 	require.Error(t, p.Send(gocamel.NewExchange(context.Background())))
 }
+
+func TestSend_AfterStop(t *testing.T) {
+	p := producer(t, "jev:decisions?apiKey=k&questions="+url.QueryEscape(testQuestions))
+	require.NoError(t, p.Start(context.Background()))
+	require.NoError(t, p.Stop())
+	require.Error(t, p.Send(gocamel.NewExchange(context.Background())))
+}

@@ -258,4 +258,3 @@ func TestRedisConsumer_StartFailureReleasesConnection(t *testing.T) {
 	// Calling Stop after a failed Start must be a safe no-op.
 	assert.NoError(t, consumer.Stop())
 }
-

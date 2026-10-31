@@ -73,16 +73,48 @@ func (c *CronComponent) ensureStarted() {
 	}
 }
 
+func (c *CronComponent) addJob(spec string, cmd cron.Job) (cron.EntryID, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	id, err := c.scheduler.AddJob(spec, cmd)
+	if err != nil {
+		return 0, err
+	}
+	if !c.started {
+		c.scheduler.Start()
+		c.started = true
+	}
+	return id, nil
+}
+
+func (c *CronComponent) removeJob(id cron.EntryID) {
+	c.mu.Lock()
+	sched := c.scheduler
+	c.mu.Unlock()
+	sched.Remove(id)
+}
+
+func (c *CronComponent) entry(id cron.EntryID) cron.Entry {
+	c.mu.Lock()
+	sched := c.scheduler
+	c.mu.Unlock()
+	return sched.Entry(id)
+}
+
 // Stop stops the shared scheduler if it was started.
 func (c *CronComponent) Stop() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.started {
-		ctx := c.scheduler.Stop()
-		<-ctx.Done()
-		c.started = false
-		c.scheduler = cron.New(cron.WithSeconds())
+	if !c.started {
+		c.mu.Unlock()
+		return nil
 	}
+	sched := c.scheduler
+	c.scheduler = cron.New(cron.WithSeconds())
+	c.started = false
+	stopCtx := sched.Stop()
+	c.mu.Unlock()
+
+	<-stopCtx.Done()
 	return nil
 }
 
@@ -294,16 +326,33 @@ func (c *CronConsumer) Start(ctx context.Context) error {
 
 // startCronTrigger registers a job in the shared robfig/cron scheduler.
 func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	c.cancel = cancel
 	spec, err := c.buildSpec()
 	if err != nil {
-		cancel()
 		return err
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	ep := c.endpoint
-	sched := ep.component.scheduler
+
+	c.mu.Lock()
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.cancel = cancel
+	c.stopped = false
+	c.paused.Store(false)
+	var oldID cron.EntryID
+	wasAdded := c.added
+	if wasAdded {
+		oldID = c.entryID
+		c.added = false
+	}
+	c.startWG.Add(1)
+	c.mu.Unlock()
+
+	if wasAdded {
+		ep.component.removeJob(oldID)
+	}
 
 	jobFn := func() {
 		c.mu.Lock()
@@ -311,15 +360,13 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 			c.mu.Unlock()
 			return
 		}
+		entryID := c.entryID
 		c.jobsWG.Add(1)
 		c.mu.Unlock()
 		defer c.jobsWG.Done()
 
 		now := time.Now()
-
-		c.mu.Lock()
-		entry := sched.Entry(c.entryID)
-		c.mu.Unlock()
+		entry := ep.component.entry(entryID)
 
 		var prevTime time.Time
 		if p := c.prevFireTime.Load(); p != nil {
@@ -352,7 +399,6 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 
 	gCtx := ctx
 
-	c.startWG.Add(1)
 	go func() {
 		defer c.startWG.Done()
 
@@ -362,15 +408,14 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 			return
 		}
 
-		// The add and the stopped flag are decided under the same mutex Stop()
-		// holds, so a Stop() that raced this goroutine either removed a job
-		// that was never added (impossible) or is honoured here.
+		// The add and the stopped/paused flags are decided under the same mutex
+		// Stop() holds, so a Stop() that raced this goroutine is honoured here.
 		c.mu.Lock()
-		if c.stopped {
+		if c.stopped || c.paused.Load() {
 			c.mu.Unlock()
 			return
 		}
-		entryID, err := sched.AddJob(spec, job)
+		entryID, err := ep.component.addJob(spec, job)
 		if err != nil {
 			gocamel.LogError("Cron job add error", "group", ep.group, "name", ep.name, "error", err)
 			c.mu.Unlock()
@@ -379,8 +424,6 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 		c.entryID = entryID
 		c.added = true
 		c.mu.Unlock()
-
-		ep.component.ensureStarted()
 	}()
 
 	return nil
@@ -393,9 +436,16 @@ func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 	interval := time.Duration(ep.repeatInterval) * time.Millisecond
 
 	gCtx, cancel := context.WithCancel(ctx)
+	c.mu.Lock()
+	if c.cancel != nil {
+		c.cancel()
+	}
 	c.cancel = cancel
-
+	c.stopped = false
+	c.paused.Store(false)
 	c.startWG.Add(1)
+	c.mu.Unlock()
+
 	go func() {
 		defer c.startWG.Done()
 		defer cancel()
@@ -446,7 +496,12 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 			select {
 			case <-gCtx.Done(): // already cancelled
 			default:
-				c.cancel()
+				c.mu.Lock()
+				cancel := c.cancel
+				c.mu.Unlock()
+				if cancel != nil {
+					cancel()
+				}
 			}
 		}()
 	}
@@ -484,24 +539,23 @@ func (c *CronConsumer) Stop() error {
 	} else {
 		c.stopped = true
 	}
+	cancel := c.cancel
+	c.cancel = nil
 	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	c.startWG.Wait()
+
 	if !pause {
-		if c.cancel != nil {
-			c.cancel()
-		}
-		c.startWG.Wait()
 		c.mu.Lock()
 		added, entryID := c.added, c.entryID
 		c.added = false
 		c.mu.Unlock()
 		if added {
-			c.endpoint.component.scheduler.Remove(entryID)
+			c.endpoint.component.removeJob(entryID)
 		}
-	} else if c.endpoint.repeatInterval > 0 {
-		if c.cancel != nil {
-			c.cancel()
-		}
-		c.startWG.Wait()
 	}
 	c.jobsWG.Wait()
 	return nil

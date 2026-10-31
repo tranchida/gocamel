@@ -3,7 +3,6 @@ package gocamel
 import (
 	"context"
 	"errors"
-	"maps"
 	"time"
 )
 
@@ -84,13 +83,24 @@ type SagaState struct {
 	UpdatedAt time.Time   `json:"updatedAt"`
 }
 
-// clone copies the slice and header map so a stored state does not alias the
+// DeepCopy returns a deep copy of the SagaMessage.
+func (m SagaMessage) DeepCopy() SagaMessage {
+	m.Body = deepCopyValue(m.Body)
+	if m.Headers != nil {
+		headers := make(map[string]any, len(m.Headers))
+		for k, v := range m.Headers {
+			headers[k] = deepCopyValue(v)
+		}
+		m.Headers = headers
+	}
+	return m
+}
+
+// clone copies the slice and message so a stored state does not alias the
 // caller's (in-memory repositories would otherwise share live maps).
 func (s SagaState) clone() SagaState {
 	s.CompletedSteps = append([]CompletedStep(nil), s.CompletedSteps...)
-	if s.Message.Headers != nil {
-		s.Message.Headers = maps.Clone(s.Message.Headers)
-	}
+	s.Message = s.Message.DeepCopy()
 	return s
 }
 

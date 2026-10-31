@@ -192,6 +192,7 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 			// and surface the cancellation alongside the original error.
 			dlc.mu.Lock()
 			delete(dlc.retryAttempts, exID)
+			delete(dlc.synchronized, exID)
 			dlc.mu.Unlock()
 			return fmt.Errorf("dead letter channel: redelivery aborted: %w (original error: %v)", sleepErr, err)
 		}
@@ -204,6 +205,7 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 	// 2. Max redeliveries reached or no redelivery configured — clean up retry state
 	dlc.mu.Lock()
 	delete(dlc.retryAttempts, exID)
+	delete(dlc.synchronized, exID)
 	dlc.mu.Unlock()
 
 	// Prepare exchange for dead letter — inject error details as properties and headers

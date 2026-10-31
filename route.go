@@ -134,6 +134,7 @@ type lazyProducer struct {
 	uri     string
 	mu      sync.Mutex
 	p       Producer
+	stopped bool
 }
 
 func newLazyProducer(ctx *CamelContext, uri string) *lazyProducer {
@@ -152,6 +153,9 @@ func (lp *lazyProducer) Process(exchange *Exchange) error {
 func (lp *lazyProducer) producer() (Producer, error) {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
+	if lp.stopped {
+		return nil, fmt.Errorf("producer for %s is stopped", lp.uri)
+	}
 	if lp.p != nil {
 		return lp.p, nil
 	}
@@ -177,6 +181,7 @@ func (lp *lazyProducer) producer() (Producer, error) {
 
 func (lp *lazyProducer) Stop() error {
 	lp.mu.Lock()
+	lp.stopped = true
 	prod := lp.p
 	lp.p = nil
 	lp.mu.Unlock()
@@ -184,6 +189,12 @@ func (lp *lazyProducer) Stop() error {
 		return prod.Stop()
 	}
 	return nil
+}
+
+func (lp *lazyProducer) reset() {
+	lp.mu.Lock()
+	lp.stopped = false
+	lp.mu.Unlock()
 }
 
 func NewRoute() *Route {
@@ -424,6 +435,14 @@ func (r *Route) Start(ctx context.Context) (err error) {
 		return fmt.Errorf("error creating consumer: %w", err)
 	}
 	r.consumer = consumer
+	for _, lp := range r.lazyProducers {
+		lp.reset()
+	}
+	r.forEachProcessor(func(p Processor) {
+		if wt, ok := p.(*WireTap); ok {
+			wt.Start()
+		}
+	})
 	r.configureAggregatorTimeouts(ctx)
 	if err := consumer.Start(ctx); err != nil {
 		r.consumer = nil

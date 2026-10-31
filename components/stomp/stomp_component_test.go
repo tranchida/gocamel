@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-stomp/stomp"
+	"github.com/go-stomp/stomp/frame"
 	"github.com/go-stomp/stomp/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -612,3 +614,88 @@ func TestStompEndpoint_SharedConnectionReferenceCounting(t *testing.T) {
 	assert.Nil(t, se.conn)
 }
 
+func TestStompProducer_SendRejectsUnstartedProducerWithSharedConn(t *testing.T) {
+	component := NewStompComponent()
+	ep, err := component.CreateEndpoint("stomp://queue/shared")
+	require.NoError(t, err)
+	se := ep.(*StompEndpoint)
+	// Simulate a shared connection held by a consumer.
+	se.conn = &stomp.Conn{}
+
+	p, err := ep.CreateProducer()
+	require.NoError(t, err)
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.In.SetBody("rejected")
+	err = p.Send(ex)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "stomp producer is not started")
+}
+
+type sliceSubReader struct {
+	msgs []*stomp.Message
+	idx  int
+}
+
+func (s *sliceSubReader) Read() (*stomp.Message, error) {
+	if s.idx >= len(s.msgs) {
+		return nil, stomp.ErrCompletedSubscription
+	}
+	m := s.msgs[s.idx]
+	s.idx++
+	return m, nil
+}
+
+func TestStompConsumer_AckPermanentFailureDoesNotSpinForever(t *testing.T) {
+	component := NewStompComponent()
+	ep, err := component.CreateEndpoint("stomp://queue/acktest?ack=client-individual")
+	require.NoError(t, err)
+
+	received := make(chan string, 2)
+	cons, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		b, _ := ex.In.GetBody().([]byte)
+		received <- string(b)
+		return nil
+	}))
+	require.NoError(t, err)
+	sc := cons.(*StompConsumer)
+
+	// First message requires ack (Subscription != nil with AckClientIndividual, via Conn == &stomp.Conn{} and Header)
+	// but has no valid subscription/ack headers on Conn so Conn.Ack returns ErrNotReceivedMessage immediately.
+	msg1 := &stomp.Message{
+		Destination:  "/queue/acktest",
+		Body:         []byte("msg-1"),
+		Conn:         &stomp.Conn{},
+		Header:       frame.NewHeader(),
+		Subscription: &stomp.Subscription{},
+	}
+	msg2 := &stomp.Message{
+		Destination: "/queue/acktest",
+		Body:        []byte("msg-2"),
+		Header:      frame.NewHeader(),
+	}
+	sc.setSubscription(&sliceSubReader{msgs: []*stomp.Message{msg1, msg2}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sc.wg.Add(1)
+	go func() {
+		sc.run(ctx)
+	}()
+
+	select {
+	case got := <-received:
+		assert.Equal(t, "msg-1", got)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for msg-1")
+	}
+
+	select {
+	case got := <-received:
+		assert.Equal(t, "msg-2", got)
+	case <-time.After(time.Second):
+		t.Fatal("consumer spun on failed Ack instead of advancing to msg-2")
+	}
+	cancel()
+	sc.wg.Wait()
+}

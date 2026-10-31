@@ -483,3 +483,23 @@ func (e *Exchange) DeepCopy() *Exchange {
 
 	return cloned
 }
+
+// deepCopyWithoutInBody is like DeepCopy but omits copying In.Body when each
+// branch immediately replaces In.Body with its own payload (e.g., Splitter).
+func (e *Exchange) deepCopyWithoutInBody() *Exchange {
+	cloned := NewExchange(e.Context)
+	cloned.In = NewMessage()
+	for k, v := range e.In.Headers {
+		cloned.In.Headers[k] = deepCopyValue(v)
+	}
+	cloned.Out = e.Out.DeepCopy()
+	for k, v := range e.Properties {
+		cloned.Properties[k] = deepCopyValue(v)
+	}
+
+	cloned.Created = e.Created
+	cloned.Modified = time.Now()
+	cloned.Error = e.Error
+
+	return cloned
+}

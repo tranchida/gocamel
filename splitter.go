@@ -121,7 +121,7 @@ func (s *Splitter) Process(exchange *Exchange) error {
 	branches := make([]*Exchange, len(splitParts))
 	for i, part := range splitParts {
 		if s.ParallelProcessing {
-			branches[i] = exchange.DeepCopy()
+			branches[i] = exchange.deepCopyWithoutInBody()
 			part = deepCopyValue(part)
 		} else {
 			branches[i] = exchange.Copy()

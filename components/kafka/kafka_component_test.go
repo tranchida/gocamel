@@ -2,8 +2,11 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"net"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
@@ -214,4 +217,115 @@ func TestKafkaConsumer_StopReleasesEndpointRegistration(t *testing.T) {
 	// Can now register another consumer
 	_, err = endpoint.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
 	assert.NoError(t, err)
+}
+
+type shutdownOrderReader struct {
+	mu        sync.Mutex
+	fetched   bool
+	closed    bool
+	committed []int64
+}
+
+func (r *shutdownOrderReader) FetchMessage(ctx context.Context) (kafka.Message, error) {
+	r.mu.Lock()
+	alreadyFetched := r.fetched
+	r.fetched = true
+	r.mu.Unlock()
+	if alreadyFetched {
+		<-ctx.Done()
+		return kafka.Message{}, ctx.Err()
+	}
+	return kafka.Message{Topic: "orders", Offset: 42, Value: []byte("in-flight")}, nil
+}
+
+func (r *shutdownOrderReader) CommitMessages(ctx context.Context, msgs ...kafka.Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errors.New("reader already closed before commit")
+	}
+	r.committed = append(r.committed, msgs[0].Offset)
+	return nil
+}
+
+func (r *shutdownOrderReader) Close() error {
+	r.mu.Lock()
+	r.closed = true
+	r.mu.Unlock()
+	return nil
+}
+
+func TestKafkaConsumer_StopCommitsInFlightRecordBeforeClosingReader(t *testing.T) {
+	component := NewKafkaComponent()
+	ep, err := component.CreateEndpoint("kafka:orders?brokers=localhost:9092&groupId=billing")
+	require.NoError(t, err)
+
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+	consumerIface, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error {
+		close(inFlight)
+		<-release
+		return nil
+	}))
+	require.NoError(t, err)
+
+	consumer := consumerIface.(*KafkaConsumer)
+	reader := &shutdownOrderReader{}
+	consumer.reader = reader
+
+	require.NoError(t, consumer.Start(context.Background()))
+	<-inFlight
+
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- consumer.Stop()
+	}()
+
+	// Give Stop() time to cancel fetch context while processor is still running
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+
+	select {
+	case err := <-stopDone:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop() did not finish")
+	}
+
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	assert.Equal(t, []int64{42}, reader.committed, "in-flight processed offset must be committed before reader closes")
+	assert.True(t, reader.closed, "reader must be closed after Stop()")
+}
+
+func TestKafkaProducer_SharedWriterReferenceCounting(t *testing.T) {
+	component := NewKafkaComponent()
+	ep, err := component.CreateEndpoint("kafka:orders?brokers=localhost:9092")
+	require.NoError(t, err)
+	ke := ep.(*KafkaEndpoint)
+
+	p1, err := ep.CreateProducer()
+	require.NoError(t, err)
+	p2, err := ep.CreateProducer()
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, p1.Start(ctx))
+	require.NoError(t, p2.Start(ctx))
+	assert.Equal(t, 2, ke.writerUsers)
+	assert.NotNil(t, ke.writer)
+
+	// Stopping p1 (even twice) must leave the writer open for p2
+	require.NoError(t, p1.Stop())
+	require.NoError(t, p1.Stop())
+	assert.Equal(t, 1, ke.writerUsers)
+	assert.NotNil(t, ke.writer)
+
+	// Stopping p2 closes and clears the shared writer
+	require.NoError(t, p2.Stop())
+	assert.Equal(t, 0, ke.writerUsers)
+	assert.Nil(t, ke.writer)
 }

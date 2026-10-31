@@ -290,6 +290,18 @@ func TestAnthropicProducer_Send_NotStarted(t *testing.T) {
 	assert.Contains(t, err.Error(), "not been started")
 }
 
+func TestAnthropicProducer_SendAfterStop(t *testing.T) {
+	p := producerForTest(t, "anthropic:messages?apiKey=k&model=m")
+	require.NoError(t, p.Start(context.Background()))
+	require.NoError(t, p.Stop())
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.SetBody("hi")
+	err := p.Send(ex)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not been started")
+}
+
 func TestAnthropicProducer_Send_NoTextContent(t *testing.T) {
 	// Response with only a non-text content block.
 	body := `{"id":"msg","type":"message","role":"assistant","model":"m","stop_reason":"end_turn","content":[{"type":"tool_use","id":"t1","name":"x","input":{}}],"usage":{"input_tokens":1,"output_tokens":1}}`

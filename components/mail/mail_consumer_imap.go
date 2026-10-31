@@ -25,14 +25,77 @@ type MailConsumer struct {
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	client    *imapclient.Client
+	conn      net.Conn
 	mu        sync.Mutex
+	started   bool
+	stopping  bool
+	stopped   bool
+	cancel    context.CancelFunc
 	changes   chan struct{} // initialized before connecting; notifications are coalesced
+}
+
+func (c *MailConsumer) getClient() *imapclient.Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client
+}
+
+func (c *MailConsumer) getConn() net.Conn {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn
+}
+
+func (c *MailConsumer) isStopping(ctx context.Context) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return true
+	}
+	c.mu.Lock()
+	stopping := c.stopping || c.stopped
+	stopCh := c.stopChan
+	c.mu.Unlock()
+	if stopping {
+		return true
+	}
+	if stopCh != nil {
+		select {
+		case <-stopCh:
+			return true
+		default:
+		}
+	}
+	return false
+}
+
+func (c *MailConsumer) disconnectDeadline() time.Duration {
+	const maxShutdownWait = 2 * time.Second
+	if c.endpoint != nil && c.endpoint.connectionTimeout > 0 && c.endpoint.connectionTimeout < maxShutdownWait {
+		return c.endpoint.connectionTimeout
+	}
+	return maxShutdownWait
 }
 
 // Start starts the mail consumer.
 func (c *MailConsumer) Start(ctx context.Context) error {
-	c.changes = make(chan struct{}, 1)
+	c.mu.Lock()
+	if c.started || c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	if c.stopped || c.stopChan == nil {
+		c.stopChan = make(chan struct{})
+		c.stopOnce = sync.Once{}
+		c.stopped = false
+	}
+	if c.changes == nil {
+		c.changes = make(chan struct{}, 1)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = cancel
+	c.started = true
 	c.wg.Add(1)
+	c.mu.Unlock()
+
 	go c.run(ctx)
 	return nil
 }
@@ -40,12 +103,16 @@ func (c *MailConsumer) Start(ctx context.Context) error {
 // run executes the polling or IDLE loop based on configuration.
 func (c *MailConsumer) run(ctx context.Context) {
 	defer c.wg.Done()
+	defer c.disconnect()
 
 	ep := c.endpoint
 
 	// If IDLE is enabled and this is IMAP, use IDLE
 	if ep.useIdle && ep.isIMAP() {
 		if err := c.runWithIdle(ctx); err != nil {
+			if c.isStopping(ctx) {
+				return
+			}
 			if ep.debugMode {
 				gocamel.LogError("Mail IDLE failed, fallback to polling", "error", err)
 			}
@@ -83,20 +150,33 @@ func (c *MailConsumer) runPolling(ctx context.Context) {
 // Returns an error if IDLE is not supported or fails.
 func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 	ep := c.endpoint
+	c.mu.Lock()
 	if c.changes == nil {
 		c.changes = make(chan struct{}, 1)
 	}
+	changes := c.changes
+	c.mu.Unlock()
+
 	ctx, cancel := context.WithTimeout(parentCtx, ep.connectionTimeout)
 	defer cancel()
 	if err := c.connect(ctx); err != nil {
+		if c.isStopping(parentCtx) {
+			return nil
+		}
 		return fmt.Errorf("connection error for IDLE: %w", err)
 	}
 	// Poll once before IDLE so mail already present is not left waiting for a
 	// future notification. The selected mailbox also enables unilateral updates.
 	if _, err := c.selectFolder(ep.folderName); err != nil {
+		if c.isStopping(parentCtx) {
+			return nil
+		}
 		return err
 	}
 	if err := c.processNewMessages(parentCtx); err != nil {
+		if c.isStopping(parentCtx) {
+			return nil
+		}
 		return err
 	}
 	for {
@@ -107,14 +187,18 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 			return nil
 		default:
 		}
-		c.mu.Lock()
-		client := c.client
-		c.mu.Unlock()
+		client := c.getClient()
 		if client == nil {
+			if c.isStopping(parentCtx) {
+				return nil
+			}
 			return errors.New("client disconnected during IDLE")
 		}
 		idle, err := client.Idle()
 		if err != nil {
+			if c.isStopping(parentCtx) {
+				return nil
+			}
 			return fmt.Errorf("IDLE start error: %w", err)
 		}
 		done := make(chan error, 1)
@@ -125,27 +209,63 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 			stopping = true
 		case <-parentCtx.Done():
 			stopping = true
-		case <-c.changes:
+		case <-changes:
 		case err := <-done:
 			_ = idle.Close()
+			if c.isStopping(parentCtx) {
+				return nil
+			}
 			if err == nil {
 				err = errors.New("IDLE ended unexpectedly")
 			}
 			return err
 		}
+		if stopping {
+			deadline := c.disconnectDeadline()
+			if conn := c.getConn(); conn != nil {
+				_ = conn.SetDeadline(time.Now().Add(deadline))
+			}
+			_ = idle.Close()
+			select {
+			case <-done:
+			case <-time.After(deadline):
+				_ = client.Close()
+				if conn := c.getConn(); conn != nil {
+					_ = conn.Close()
+				}
+				<-done
+			}
+			return nil
+		}
 		// Close must precede Wait: EXISTS notifications do not complete IDLE.
+		if conn := c.getConn(); conn != nil && ep.connectionTimeout > 0 {
+			_ = conn.SetDeadline(time.Now().Add(ep.connectionTimeout))
+		}
 		if err := idle.Close(); err != nil {
 			_ = client.Close()
 			<-done
+			if c.isStopping(parentCtx) {
+				return nil
+			}
 			return err
 		}
-		if err := <-done; err != nil {
+		err = <-done
+		if conn := c.getConn(); conn != nil {
+			_ = conn.SetDeadline(time.Time{})
+		}
+		if err != nil {
+			if c.isStopping(parentCtx) {
+				return nil
+			}
 			return err
 		}
-		if stopping {
+		if c.isStopping(parentCtx) {
 			return nil
 		}
 		if err := c.processNewMessages(parentCtx); err != nil {
+			if c.isStopping(parentCtx) {
+				return nil
+			}
 			gocamel.LogError("Mail error processing IDLE notification", "error", err)
 		}
 	}
@@ -317,23 +437,47 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 
 // connect establishes a connection to the IMAP server.
 func (c *MailConsumer) connect(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	if c.client != nil {
-		// Already connected — verify it's still alive
-		noopCmd := c.client.Noop()
-		if err := noopCmd.Wait(); err == nil {
+	ep := c.endpoint
+
+	c.mu.Lock()
+	existingClient := c.client
+	existingConn := c.conn
+	c.mu.Unlock()
+
+	if existingClient != nil {
+		// Already connected — verify it's still alive without holding c.mu
+		if existingConn != nil && ep.connectionTimeout > 0 {
+			_ = existingConn.SetDeadline(time.Now().Add(ep.connectionTimeout))
+		}
+		err := existingClient.Noop().Wait()
+		if existingConn != nil {
+			_ = existingConn.SetDeadline(time.Time{})
+		}
+		if err == nil {
 			return nil
 		}
 		// Reconnection needed: close the stale connection so its socket and
 		// server-side session are released rather than leaked on every
 		// reconnect cycle.
-		c.client.Close()
-		c.client = nil
+		_ = existingClient.Close()
+		if existingConn != nil {
+			_ = existingConn.Close()
+		}
+		c.mu.Lock()
+		if c.client == existingClient {
+			c.client = nil
+			c.conn = nil
+		}
+		c.mu.Unlock()
 	}
 
-	ep := c.endpoint
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Connection options — TLS config
 	tlsConfig := &tls.Config{
@@ -341,70 +485,119 @@ func (c *MailConsumer) connect(ctx context.Context) error {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	var client *imapclient.Client
-	var err error
+	dialer := &net.Dialer{Timeout: ep.connectionTimeout}
+	rawConn, err := dialer.DialContext(ctx, "tcp", ep.address())
+	if err != nil {
+		return fmt.Errorf("IMAP connection error: %w", err)
+	}
+
+	if ep.connectionTimeout > 0 {
+		_ = rawConn.SetDeadline(time.Now().Add(ep.connectionTimeout))
+	}
+	stopAbort := context.AfterFunc(ctx, func() {
+		_ = rawConn.Close()
+	})
+	defer stopAbort()
 
 	opts := &imapclient.Options{
 		TLSConfig:             tlsConfig,
 		UnilateralDataHandler: &imapclient.UnilateralDataHandler{Mailbox: c.mailboxChanged},
-		Dialer:                &net.Dialer{Timeout: ep.connectionTimeout},
+		Dialer:                dialer,
 	}
+
+	var conn net.Conn = rawConn
+	var client *imapclient.Client
 
 	if ep.isSecure() {
 		// IMAPS native TLS (port 993)
-		client, err = imapclient.DialTLS(ep.address(), opts)
+		if tlsConfig.NextProtos == nil {
+			tlsConfig.NextProtos = []string{"imap"}
+		}
+		tlsConn := tls.Client(rawConn, tlsConfig)
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = rawConn.Close()
+			return fmt.Errorf("IMAP connection error: %w", err)
+		}
+		conn = tlsConn
+		client = imapclient.New(tlsConn, opts)
 	} else {
-		// IMAP with optional STARTTLS (port 143)
-		client, err = imapclient.DialStartTLS(ep.address(), opts)
-	}
-
-	if err != nil {
-		return fmt.Errorf("IMAP connection error: %w", err)
+		// IMAP with STARTTLS (port 143)
+		client, err = imapclient.NewStartTLS(rawConn, opts)
+		if err != nil {
+			_ = rawConn.Close()
+			return fmt.Errorf("IMAP connection error: %w", err)
+		}
 	}
 
 	// Authentication
 	if ep.username != "" && ep.password != "" {
 		if err := client.Login(ep.username, ep.password).Wait(); err != nil {
-			client.Close()
+			_ = client.Close()
+			_ = conn.Close()
 			return fmt.Errorf("authentication error: %w", err)
 		}
 	}
 
+	_ = rawConn.SetDeadline(time.Time{})
+
+	c.mu.Lock()
+	if c.stopping || c.stopped {
+		c.mu.Unlock()
+		_ = client.Close()
+		_ = conn.Close()
+		return errors.New("mail consumer stopped")
+	}
 	c.client = client
+	c.conn = conn
+	c.mu.Unlock()
 	return nil
 }
 
-// disconnect closes the connection.
+// disconnect closes the connection without holding c.mu across network I/O.
 func (c *MailConsumer) disconnect() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	client := c.client
+	conn := c.conn
+	c.client = nil
+	c.conn = nil
+	c.mu.Unlock()
 
-	if c.client != nil {
-		c.client.Logout().Wait()
-		c.client.Close()
-		c.client = nil
+	if client != nil {
+		deadline := c.disconnectDeadline()
+		if conn != nil {
+			_ = conn.SetDeadline(time.Now().Add(deadline))
+		}
+		done := make(chan struct{})
+		go func() {
+			_ = client.Logout().Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(deadline):
+		}
+		_ = client.Close()
+		if conn != nil {
+			_ = conn.Close()
+		}
 	}
 }
 
 // selectFolder selects a folder.
 func (c *MailConsumer) selectFolder(folderName string) (*imap.SelectData, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client == nil {
+	client := c.getClient()
+	if client == nil {
 		return nil, errors.New("client not connected")
 	}
 
 	opts := &imap.SelectOptions{}
-	return c.client.Select(folderName, opts).Wait()
+	return client.Select(folderName, opts).Wait()
 }
 
 // searchUnseen searches for unread messages.
 func (c *MailConsumer) searchUnseen() ([]imap.UID, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client == nil {
+	client := c.getClient()
+	if client == nil {
 		return nil, errors.New("client not connected")
 	}
 
@@ -412,7 +605,7 @@ func (c *MailConsumer) searchUnseen() ([]imap.UID, error) {
 		NotFlag: []imap.Flag{imap.FlagSeen},
 	}
 
-	searchData, err := c.client.UIDSearch(criteria, nil).Wait()
+	searchData, err := client.UIDSearch(criteria, nil).Wait()
 	if err != nil {
 		return nil, err
 	}
@@ -422,17 +615,15 @@ func (c *MailConsumer) searchUnseen() ([]imap.UID, error) {
 
 // searchAll searches for all messages.
 func (c *MailConsumer) searchAll() ([]imap.UID, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client == nil {
+	client := c.getClient()
+	if client == nil {
 		return nil, errors.New("client not connected")
 	}
 
 	// Empty criteria = all messages
 	criteria := &imap.SearchCriteria{}
 
-	searchData, err := c.client.UIDSearch(criteria, nil).Wait()
+	searchData, err := client.UIDSearch(criteria, nil).Wait()
 	if err != nil {
 		return nil, err
 	}
@@ -442,17 +633,15 @@ func (c *MailConsumer) searchAll() ([]imap.UID, error) {
 
 // fetchMessage retrieves the content of a message.
 func (c *MailConsumer) fetchMessage(uid imap.UID, options *imap.FetchOptions) (*imapclient.FetchMessageBuffer, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client == nil {
+	client := c.getClient()
+	if client == nil {
 		return nil, errors.New("client not connected")
 	}
 
 	// Use UID as sequence set
 	uidSet := imap.UIDSetNum(uid)
 
-	cmd := c.client.Fetch(uidSet, options)
+	cmd := client.Fetch(uidSet, options)
 	messages, err := cmd.Collect()
 	if err != nil {
 		return nil, err
@@ -637,10 +826,8 @@ func (c *MailConsumer) populateExchange(exchange *gocamel.Exchange, msg *MailMes
 
 // markSeen marks a message as read.
 func (c *MailConsumer) markSeen(uid imap.UID) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client == nil {
+	client := c.getClient()
+	if client == nil {
 		return errors.New("client not connected")
 	}
 
@@ -651,7 +838,7 @@ func (c *MailConsumer) markSeen(uid imap.UID) error {
 		Flags:  []imap.Flag{imap.FlagSeen},
 	}
 
-	cmd := c.client.Store(uidSet, store, nil)
+	cmd := client.Store(uidSet, store, nil)
 	// Wait for the command to finish by consuming data
 	_, err := cmd.Collect()
 	cmd.Close()
@@ -660,10 +847,8 @@ func (c *MailConsumer) markSeen(uid imap.UID) error {
 
 // markUnseen removes the SEEN flag.
 func (c *MailConsumer) markUnseen(uid imap.UID) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client == nil {
+	client := c.getClient()
+	if client == nil {
 		return errors.New("client not connected")
 	}
 
@@ -674,7 +859,7 @@ func (c *MailConsumer) markUnseen(uid imap.UID) error {
 		Flags:  []imap.Flag{imap.FlagSeen},
 	}
 
-	cmd := c.client.Store(uidSet, store, nil)
+	cmd := client.Store(uidSet, store, nil)
 	_, err := cmd.Collect()
 	cmd.Close()
 	return err
@@ -727,10 +912,8 @@ func (c *MailConsumer) postProcess(uid imap.UID, exchange *gocamel.Exchange) err
 
 // deleteMessage deletes a message.
 func (c *MailConsumer) deleteMessage(uid imap.UID) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client == nil {
+	client := c.getClient()
+	if client == nil {
 		return errors.New("client not connected")
 	}
 
@@ -743,7 +926,7 @@ func (c *MailConsumer) deleteMessage(uid imap.UID) error {
 		Flags:  []imap.Flag{imap.FlagDeleted},
 	}
 
-	cmd := c.client.Store(uidSet, store, nil)
+	cmd := client.Store(uidSet, store, nil)
 	_, err := cmd.Collect()
 	cmd.Close()
 	if err != nil {
@@ -751,7 +934,7 @@ func (c *MailConsumer) deleteMessage(uid imap.UID) error {
 	}
 
 	// Expunge (permanent deletion)
-	expungeCmd := c.client.Expunge()
+	expungeCmd := client.Expunge()
 	_, err = expungeCmd.Collect()
 	expungeCmd.Close()
 	return err
@@ -759,10 +942,8 @@ func (c *MailConsumer) deleteMessage(uid imap.UID) error {
 
 // moveMessage moves a message to another folder.
 func (c *MailConsumer) moveMessage(uid imap.UID, folder string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client == nil {
+	client := c.getClient()
+	if client == nil {
 		return errors.New("client not connected")
 	}
 
@@ -770,10 +951,10 @@ func (c *MailConsumer) moveMessage(uid imap.UID, folder string) error {
 
 	// Use MOVE if supported by the server; otherwise fall back to COPY + DELETE.
 	// In go-imap v2, Move returns MoveData.
-	_, err := c.client.Move(uidSet, folder).Wait()
+	_, err := client.Move(uidSet, folder).Wait()
 	if err != nil {
 		// MOVE not supported — fall back to COPY + DELETE
-		_, err := c.client.Copy(uidSet, folder).Wait()
+		_, err := client.Copy(uidSet, folder).Wait()
 		if err != nil {
 			return err
 		}
@@ -783,13 +964,13 @@ func (c *MailConsumer) moveMessage(uid imap.UID, folder string) error {
 			Silent: true,
 			Flags:  []imap.Flag{imap.FlagDeleted},
 		}
-		cmd := c.client.Store(uidSet, store, nil)
+		cmd := client.Store(uidSet, store, nil)
 		_, err = cmd.Collect()
 		cmd.Close()
 		if err != nil {
 			return err
 		}
-		expungeCmd := c.client.Expunge()
+		expungeCmd := client.Expunge()
 		_, err = expungeCmd.Collect()
 		expungeCmd.Close()
 		return err
@@ -800,15 +981,13 @@ func (c *MailConsumer) moveMessage(uid imap.UID, folder string) error {
 
 // copyMessage copies a message to another folder.
 func (c *MailConsumer) copyMessage(uid imap.UID, folder string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client == nil {
+	client := c.getClient()
+	if client == nil {
 		return errors.New("client not connected")
 	}
 
 	uidSet := imap.UIDSetNum(uid)
-	_, err := c.client.Copy(uidSet, folder).Wait()
+	_, err := client.Copy(uidSet, folder).Wait()
 	return err
 }
 
@@ -853,8 +1032,66 @@ func (c *MailConsumer) getBoolHeader(exchange *gocamel.Exchange, header string) 
 // is closed at most once via sync.Once to prevent a "close of closed channel"
 // panic when Stop() is invoked more than once (e.g. during CamelContext rollback).
 func (c *MailConsumer) Stop() error {
-	c.stopOnce.Do(func() { close(c.stopChan) })
-	c.wg.Wait()
+	c.mu.Lock()
+	if c.stopping {
+		c.mu.Unlock()
+		c.wg.Wait()
+		return nil
+	}
+	if !c.started {
+		c.stopped = true
+		c.mu.Unlock()
+		c.stopOnce.Do(func() {
+			if c.stopChan != nil {
+				close(c.stopChan)
+			}
+		})
+		c.disconnect()
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	conn := c.conn
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	c.stopOnce.Do(func() {
+		if c.stopChan != nil {
+			close(c.stopChan)
+		}
+	})
+	deadline := c.disconnectDeadline()
+	if conn != nil {
+		_ = conn.SetDeadline(time.Now().Add(deadline))
+	}
+
+	done := make(chan struct{})
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(deadline):
+		if cl := c.getClient(); cl != nil {
+			_ = cl.Close()
+		}
+		if cn := c.getConn(); cn != nil {
+			_ = cn.Close()
+		}
+		<-done
+	}
+
 	c.disconnect()
+
+	c.mu.Lock()
+	c.started = false
+	c.stopping = false
+	c.stopped = true
+	c.cancel = nil
+	c.mu.Unlock()
 	return nil
 }

@@ -27,8 +27,9 @@ type Resequencer struct {
 	timerGen   uint64 // incremented each time a new timer is created; guards against stale callbacks
 	delivering bool   // one goroutine at a time delivers, without holding mu
 	stopped    bool   // set by Stop: no timer is armed until the next Process
-	// timeoutWG tracks timeout callbacks that are delivering downstream, so
-	// Stop can wait for them before the route stops its producers.
+	stopping   bool   // set while Stop is waiting for in-flight delivery
+	// timeoutWG tracks active downstream delivery (synchronous or timeout), so
+	// Stop can wait for it before the route stops its producers.
 	timeoutWG sync.WaitGroup
 }
 
@@ -85,6 +86,10 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 	}
 
 	r.mu.Lock()
+	if r.stopping {
+		r.mu.Unlock()
+		return ErrStopRouting
+	}
 	// An exchange only arrives while the route runs: a Process after Stop
 	// means the route was restarted.
 	r.stopped = false
@@ -119,7 +124,10 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 	var ready []*resequencerEntry
 	if !r.delivering {
 		ready = r.takeReady()
-		r.delivering = len(ready) > 0
+		if len(ready) > 0 {
+			r.delivering = true
+			r.timeoutWG.Add(1)
+		}
 	}
 	r.updateTimer()
 	r.mu.Unlock()
@@ -131,6 +139,9 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 }
 
 func (r *Resequencer) takeReady() []*resequencerEntry {
+	if r.stopped {
+		return nil
+	}
 	var ready []*resequencerEntry
 	for len(r.buffer) > 0 && r.buffer[0].seq == r.nextSeq {
 		ready = append(ready, r.buffer[0])
@@ -141,13 +152,21 @@ func (r *Resequencer) takeReady() []*resequencerEntry {
 }
 
 func (r *Resequencer) deliver(ready []*resequencerEntry) error {
+	done := false
+	defer func() {
+		if !done {
+			r.timeoutWG.Done()
+		}
+	}()
 	var firstErr error
 	for {
 		for _, entry := range ready {
 			if r.processor == nil {
+				_ = CompleteExchange(entry.exchange, nil)
 				continue
 			}
-			if err := safeProcess(func() error { return r.processor.Process(entry.exchange) }); err != nil {
+			err := safeProcess(func() error { return r.processor.Process(entry.exchange) })
+			if err := CompleteExchange(entry.exchange, err); err != nil {
 				if firstErr == nil {
 					firstErr = err
 				}
@@ -158,6 +177,8 @@ func (r *Resequencer) deliver(ready []*resequencerEntry) error {
 		if len(ready) == 0 {
 			r.delivering = false
 			r.updateTimer()
+			done = true
+			r.timeoutWG.Done()
 			r.mu.Unlock()
 			break
 		}
@@ -188,9 +209,6 @@ func (r *Resequencer) onTimeout(gen uint64) {
 		r.mu.Unlock()
 		return
 	}
-	// Registered under mu, so it is ordered before a Stop that waits on it.
-	r.timeoutWG.Add(1)
-	defer r.timeoutWG.Done()
 	if len(r.buffer) == 0 || r.buffer[0].seq <= r.nextSeq {
 		r.mu.Unlock()
 		return
@@ -204,7 +222,10 @@ func (r *Resequencer) onTimeout(gen uint64) {
 		return
 	}
 	ready := r.takeReady()
-	r.delivering = len(ready) > 0
+	if len(ready) > 0 {
+		r.delivering = true
+		r.timeoutWG.Add(1)
+	}
 	r.updateTimer()
 	r.mu.Unlock()
 
@@ -219,12 +240,18 @@ func (r *Resequencer) onTimeout(gen uint64) {
 // Stop cancels the pending completion timer so no callback fires after the
 // route has stopped (and its downstream producers are gone). The timer
 // generation is advanced so a callback that has not started yet observes a
-// mismatch and returns without delivering, and Stop waits for a callback that
-// is already delivering downstream. Buffered exchanges that have not yet
+// mismatch and returns without delivering, and Stop waits for any delivery that
+// is already in flight downstream. Buffered exchanges that have not yet
 // reached their sequence are intentionally not flushed.
 func (r *Resequencer) Stop() error {
 	r.mu.Lock()
+	if r.stopping {
+		r.mu.Unlock()
+		r.timeoutWG.Wait()
+		return nil
+	}
 	r.stopped = true
+	r.stopping = true
 	r.timerGen++
 	if r.timer != nil {
 		r.timer.Stop()
@@ -232,6 +259,9 @@ func (r *Resequencer) Stop() error {
 	}
 	r.mu.Unlock()
 	r.timeoutWG.Wait()
+	r.mu.Lock()
+	r.stopping = false
+	r.mu.Unlock()
 	return nil
 }
 

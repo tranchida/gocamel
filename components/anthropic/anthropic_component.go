@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -88,15 +89,20 @@ func (e *AnthropicEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel
 
 // AnthropicProducer represents an Anthropic producer.
 type AnthropicProducer struct {
-	endpoint  *AnthropicEndpoint
-	client    anthropic.Client
-	model     anthropic.Model
-	maxTokens int64
-	system    string
-	started   bool
+	endpoint   *AnthropicEndpoint
+	mu         sync.RWMutex
+	httpClient *http.Client
+	client     anthropic.Client
+	model      anthropic.Model
+	maxTokens  int64
+	system     string
+	started    bool
 }
 
 func (p *AnthropicProducer) Start(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	u := p.endpoint.url
 
 	token := gocamel.GetConfigValue(u, "authorizationToken")
@@ -125,9 +131,10 @@ func (p *AnthropicProducer) Start(ctx context.Context) error {
 
 	p.system = gocamel.GetConfigValue(u, "system")
 
+	p.httpClient = &http.Client{Timeout: 60 * time.Second}
 	opts := []option.RequestOption{
 		option.WithAPIKey(token),
-		option.WithHTTPClient(&http.Client{Timeout: 60 * time.Second}),
+		option.WithHTTPClient(p.httpClient),
 	}
 	if baseURL := gocamel.GetConfigValue(u, "baseURL"); baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
@@ -138,6 +145,14 @@ func (p *AnthropicProducer) Start(ctx context.Context) error {
 }
 
 func (p *AnthropicProducer) Stop() error {
+	p.mu.Lock()
+	httpClient := p.httpClient
+	p.httpClient = nil
+	p.started = false
+	p.mu.Unlock()
+	if httpClient != nil {
+		httpClient.CloseIdleConnections()
+	}
 	return nil
 }
 
@@ -155,24 +170,29 @@ func (p *AnthropicProducer) Stop() error {
 // by untrusted input: they would let a sender replace the system prompt
 // (prompt injection) and pick the model and token budget (cost).
 func (p *AnthropicProducer) Send(exchange *gocamel.Exchange) error {
-	if !p.started {
+	p.mu.RLock()
+	started := p.started
+	client := p.client
+	model := p.model
+	maxTokens := p.maxTokens
+	system := p.system
+	p.mu.RUnlock()
+
+	if !started {
 		return fmt.Errorf("the Anthropic producer has not been started")
 	}
 
 	prompt := bodyAsString(exchange.GetIn().GetBody())
 	override := p.endpoint.allowHeaderOverride
 
-	system := p.system
 	if v, ok := getStringHeader(exchange, "AnthropicSystem"); override && ok && v != "" {
 		system = v
 	}
 
-	model := p.model
 	if v, ok := getStringHeader(exchange, "AnthropicModel"); override && ok && v != "" {
 		model = anthropic.Model(v)
 	}
 
-	maxTokens := p.maxTokens
 	if v, ok := getStringHeader(exchange, "AnthropicMaxTokens"); override && ok && v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			maxTokens = n
@@ -199,7 +219,7 @@ func (p *AnthropicProducer) Send(exchange *gocamel.Exchange) error {
 	if reqCtx == nil {
 		reqCtx = context.Background()
 	}
-	resp, err := p.client.Messages.New(reqCtx, params)
+	resp, err := client.Messages.New(reqCtx, params)
 	if err != nil {
 		return fmt.Errorf("request error from Anthropic: %w", err)
 	}

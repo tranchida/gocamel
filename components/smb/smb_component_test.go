@@ -1,8 +1,14 @@
 package smb
 
 import (
+	"context"
+	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/tranchida/gocamel"
 )
 
 func TestSMBConsumer_StopWaitsForPollingWorker(t *testing.T) {
@@ -57,4 +63,96 @@ func TestSMBConsumer_ReadLockOptions(t *testing.T) {
 	if smbConsumer.opts.ReadLockMinLength != 100 {
 		t.Errorf("expected readLockMinLength=100, got %v", smbConsumer.opts.ReadLockMinLength)
 	}
+}
+
+func TestSMBEndpoint_ConnectHandshakeDeadline(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	// Accept connection and hold it open without responding so SMB handshake stalls
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		<-done
+	}()
+
+	c := NewSMBComponent()
+	ep, err := c.CreateEndpoint("smb://" + ln.Addr().String() + "/share/folder?connectTimeout=100ms")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	smbEp := ep.(*SMBEndpoint)
+
+	start := time.Now()
+	_, err = smbEp.connect()
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected connect to fail on stalled SMB handshake")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("connect took too long (%v), deadline was not applied", elapsed)
+	}
+}
+
+func TestSMBProducer_SendAfterStopFailsWithoutDialing(t *testing.T) {
+	c := NewSMBComponent()
+	ep, err := c.CreateEndpoint("smb://127.0.0.1:1/share/out?disconnect=false&connectTimeout=50ms")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	prod, err := ep.CreateProducer()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := prod.Start(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := prod.Stop(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.SetBody("hello")
+	ex.SetHeader(gocamel.CamelFileName, "test.txt")
+	err = prod.Send(ex)
+	if err == nil || !strings.Contains(err.Error(), "smb producer is stopped") {
+		t.Fatalf("expected 'smb producer is stopped' error, got: %v", err)
+	}
+}
+
+func TestSMBConsumer_ConcurrentStartStop(t *testing.T) {
+	c := NewSMBComponent()
+	ep, err := c.CreateEndpoint("smb://127.0.0.1:1/share/in?initialDelay=1h&delay=1h")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cons, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		return nil
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = cons.Start(context.Background())
+		}()
+		go func() {
+			defer wg.Done()
+			_ = cons.Stop()
+		}()
+	}
+	wg.Wait()
+	_ = cons.Stop()
 }

@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,11 +24,36 @@ type Pop3Consumer struct {
 	wg        sync.WaitGroup
 	client    *pop3.Conn
 	mu        sync.Mutex
+	started   bool
+	stopping  bool
+	stopped   bool
+	cancel    context.CancelFunc
+}
+
+func (c *Pop3Consumer) getClient() *pop3.Conn {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client
 }
 
 // Start starts the POP3 consumer.
 func (c *Pop3Consumer) Start(ctx context.Context) error {
+	c.mu.Lock()
+	if c.started || c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	if c.stopped || c.stopChan == nil {
+		c.stopChan = make(chan struct{})
+		c.stopOnce = sync.Once{}
+		c.stopped = false
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = cancel
+	c.started = true
 	c.wg.Add(1)
+	c.mu.Unlock()
+
 	go c.run(ctx)
 	return nil
 }
@@ -35,6 +61,7 @@ func (c *Pop3Consumer) Start(ctx context.Context) error {
 // run executes the POP3 polling loop.
 func (c *Pop3Consumer) run(ctx context.Context) {
 	defer c.wg.Done()
+	defer c.disconnect()
 
 	for {
 		select {
@@ -83,8 +110,13 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 		defer c.disconnect()
 	}
 
+	client := c.getClient()
+	if client == nil {
+		return
+	}
+
 	// List messages
-	count, size, err := c.client.Stat()
+	count, size, err := client.Stat()
 	if err != nil {
 		if !ep.skipFailedMessage {
 			gocamel.LogError("POP3 stat error", "error", err)
@@ -144,15 +176,28 @@ func (c *Pop3Consumer) poll(parentCtx context.Context) {
 
 // connect establishes a connection to the POP3 server.
 func (c *Pop3Consumer) connect(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	if c.client != nil {
-		if err := c.client.Noop(); err == nil {
+	c.mu.Lock()
+	existing := c.client
+	c.mu.Unlock()
+
+	if existing != nil {
+		if err := existing.Noop(); err == nil {
 			return nil
 		}
-		_ = c.client.Quit()
-		c.client = nil
+		_ = existing.Quit()
+		c.mu.Lock()
+		if c.client == existing {
+			c.client = nil
+		}
+		c.mu.Unlock()
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	ep := c.endpoint
@@ -184,30 +229,48 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 	// Authentication
 	if ep.username != "" && ep.password != "" {
 		if err := conn.Auth(ep.username, ep.password); err != nil {
-			conn.Quit()
+			_ = conn.Quit()
 			return fmt.Errorf("POP3 authentication error: %w", err)
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		_ = conn.Quit()
+		return err
+	}
+
+	c.mu.Lock()
+	if c.stopping || c.stopped {
+		c.mu.Unlock()
+		_ = conn.Quit()
+		return errors.New("pop3 consumer stopped")
+	}
 	c.client = conn
+	c.mu.Unlock()
 	return nil
 }
 
 // disconnect closes the POP3 connection.
 func (c *Pop3Consumer) disconnect() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	client := c.client
+	c.client = nil
+	c.mu.Unlock()
 
-	if c.client != nil {
-		c.client.Quit()
-		c.client = nil
+	if client != nil {
+		_ = client.Quit()
 	}
 }
 
 // processMessage fetches and processes a POP3 message.
 func (c *Pop3Consumer) processMessage(ctx context.Context, msgID int) error {
+	client := c.getClient()
+	if client == nil {
+		return errors.New("pop3 client not connected")
+	}
+
 	// Download the full message
-	msgData, err := c.client.Retr(msgID)
+	msgData, err := client.Retr(msgID)
 	if err != nil {
 		return fmt.Errorf("message retrieval error: %w", err)
 	}
@@ -335,7 +398,11 @@ func (c *Pop3Consumer) postProcess(msgID int, exchange *gocamel.Exchange) error 
 
 	// Delete
 	if ep.delete || c.getBoolHeader(exchange, MailDeleteHeader) {
-		if err := c.client.Dele(msgID); err != nil {
+		client := c.getClient()
+		if client == nil {
+			return errors.New("pop3 client not connected")
+		}
+		if err := client.Dele(msgID); err != nil {
 			return fmt.Errorf("deletion error for message %d: %w", msgID, err)
 		}
 		return nil
@@ -370,8 +437,43 @@ func (c *Pop3Consumer) getBoolHeader(exchange *gocamel.Exchange, header string) 
 // is closed at most once via sync.Once to prevent a "close of closed channel"
 // panic when Stop() is invoked more than once (e.g. during CamelContext rollback).
 func (c *Pop3Consumer) Stop() error {
-	c.stopOnce.Do(func() { close(c.stopChan) })
+	c.mu.Lock()
+	if c.stopping {
+		c.mu.Unlock()
+		c.wg.Wait()
+		return nil
+	}
+	if !c.started {
+		c.stopped = true
+		c.mu.Unlock()
+		c.stopOnce.Do(func() {
+			if c.stopChan != nil {
+				close(c.stopChan)
+			}
+		})
+		c.disconnect()
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	c.stopOnce.Do(func() {
+		if c.stopChan != nil {
+			close(c.stopChan)
+		}
+	})
 	c.wg.Wait()
 	c.disconnect()
+
+	c.mu.Lock()
+	c.started = false
+	c.stopping = false
+	c.stopped = true
+	c.cancel = nil
+	c.mu.Unlock()
 	return nil
 }

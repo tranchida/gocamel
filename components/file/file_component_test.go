@@ -606,3 +606,35 @@ func TestFileConsumer_WatchDirectoryExitsOnContextCancel(t *testing.T) {
 	_ = consumer.Stop()
 }
 
+func TestFileConsumer_StopCancelsWaitForStable(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	// Configure readLockMinAge=10s so WaitForStable blocks until cancelled.
+	ep, err := c.CreateEndpoint("file://" + dir + "?readLock=changed&readLockTimeout=10s&readLockMinAge=10s&readLockCheckInterval=50ms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Trigger an fsnotify Create event so ingest enters WaitForStable.
+	if err := os.WriteFile(filepath.Join(dir, "slow.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	if err := consumer.Stop(); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("Stop blocked for %v; expected immediate cancellation of WaitForStable", elapsed)
+	}
+}

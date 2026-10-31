@@ -30,19 +30,25 @@ import (
 // authentication before exposing it beyond localhost.
 type ManagementServer struct {
 	context      *CamelContext
+	mu           sync.Mutex
 	authToken    string   // set before Start; empty = no authentication
 	allowedHosts []string // set before Start; extra accepted Host names
+	started      bool
+	stopping     bool
 	server       *http.Server
 	listener     net.Listener
 	wg           sync.WaitGroup
-	stopOnce     sync.Once
 }
 
 // NewManagementServer creates a new ManagementServer instance.
 func NewManagementServer(context *CamelContext) *ManagementServer {
-	return &ManagementServer{
+	m := &ManagementServer{
 		context: context,
 	}
+	if context != nil {
+		context.registerManagementServer(m)
+	}
+	return m
 }
 
 // RouteInfo represents the public information about a route for the REST API.
@@ -63,7 +69,9 @@ type ContextInfo struct {
 // SetAuthToken requires every request to carry "Authorization: Bearer <token>".
 // It must be called before Start; an empty token disables authentication.
 func (m *ManagementServer) SetAuthToken(token string) *ManagementServer {
+	m.mu.Lock()
 	m.authToken = token
+	m.mu.Unlock()
 	return m
 }
 
@@ -71,41 +79,61 @@ func (m *ManagementServer) SetAuthToken(token string) *ManagementServer {
 // e.g. the name of a reverse proxy in front of the API. IP literals and
 // "localhost" are always accepted. It must be called before Start.
 func (m *ManagementServer) SetAllowedHosts(hosts ...string) *ManagementServer {
+	m.mu.Lock()
 	m.allowedHosts = append(m.allowedHosts, hosts...)
+	m.mu.Unlock()
 	return m
 }
 
 // Start starts the management REST server on the given address (e.g.
 // "127.0.0.1:8081"). It returns an error when the address cannot be bound.
 func (m *ManagementServer) Start(addr string) error {
-	if m.server != nil {
+	m.mu.Lock()
+	if m.started || m.stopping {
+		m.mu.Unlock()
 		return errors.New("management server: already started")
 	}
+	m.mu.Unlock()
+
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("management server: error listening on %s: %w", addr, err)
 	}
-	m.listener = listener
-	m.server = &http.Server{
+	server := &http.Server{
 		Handler: m.handler(),
 		// Bound the time a client may take to send its headers (slowloris).
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	m.mu.Lock()
+	if m.started || m.stopping {
+		m.mu.Unlock()
+		_ = listener.Close()
+		return errors.New("management server: already started")
+	}
+	m.started = true
+	m.listener = listener
+	m.server = server
 	// The WaitGroup is signalled when Serve returns, so Stop() can wait for
 	// the goroutine to fully unwind before returning — mirroring the HTTP
 	// consumer shutdown pattern.
-	m.wg.Go(func() {
-		if err := m.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+	m.wg.Add(1)
+	m.mu.Unlock()
+
+	go func() {
+		defer m.wg.Done()
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			LogError("Management REST server error", "error", err)
 		}
-	})
+	}()
 	return nil
 }
 
 // Addr returns the address the server listens on (useful with port 0), or
 // nil before Start.
 func (m *ManagementServer) Addr() net.Addr {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.listener == nil {
 		return nil
 	}
@@ -127,7 +155,7 @@ func (m *ManagementServer) handler() http.Handler {
 			http.Error(w, "Forbidden host", http.StatusForbidden)
 			return
 		}
-		if m.authToken != "" && !m.isAuthorized(r) {
+		if !m.isAuthorized(r) {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="gocamel-management"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -150,7 +178,10 @@ func (m *ManagementServer) isAllowedHost(hostport string) bool {
 	if net.ParseIP(host) != nil || strings.EqualFold(host, "localhost") {
 		return true
 	}
-	for _, allowed := range m.allowedHosts {
+	m.mu.Lock()
+	allowedHosts := m.allowedHosts
+	m.mu.Unlock()
+	for _, allowed := range allowedHosts {
 		if strings.EqualFold(host, allowed) {
 			return true
 		}
@@ -159,26 +190,44 @@ func (m *ManagementServer) isAllowedHost(hostport string) bool {
 }
 
 func (m *ManagementServer) isAuthorized(r *http.Request) bool {
+	m.mu.Lock()
+	authToken := m.authToken
+	m.mu.Unlock()
+	if authToken == "" {
+		return true
+	}
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return ok && subtle.ConstantTimeCompare([]byte(token), []byte(m.authToken)) == 1
+	return ok && subtle.ConstantTimeCompare([]byte(token), []byte(authToken)) == 1
 }
 
-// Stop stops the management REST server. Safe to call multiple times: server
-// shutdown is invoked at most once via sync.Once and Stop blocks until the
-// ListenAndServe goroutine has fully returned (no leaked goroutine). Shutdown
-// is graceful: in-flight requests are given up to 10s to complete before the
-// connections are closed.
+// Stop stops the management REST server. Safe to call multiple times: Stop
+// blocks until the Serve goroutine has fully returned (no leaked goroutine).
+// Shutdown is graceful: in-flight requests are given up to 10s to complete
+// before the connections are closed.
 func (m *ManagementServer) Stop() error {
-	if m.server == nil {
+	m.mu.Lock()
+	if !m.started || m.stopping {
+		m.mu.Unlock()
 		return nil
 	}
-	var err error
-	m.stopOnce.Do(func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		err = m.server.Shutdown(shutdownCtx)
-	})
+	m.stopping = true
+	server := m.server
+	m.mu.Unlock()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := server.Shutdown(shutdownCtx)
+	if err != nil {
+		_ = server.Close()
+	}
 	m.wg.Wait()
+
+	m.mu.Lock()
+	m.server = nil
+	m.listener = nil
+	m.started = false
+	m.stopping = false
+	m.mu.Unlock()
 	return err
 }
 
@@ -261,9 +310,9 @@ func (m *ManagementServer) handleStartAction(w http.ResponseWriter, route *Route
 		http.Error(w, "Route already started", http.StatusBadRequest)
 		return
 	}
-	// A route started while the context is stopped would never be stopped:
-	// CamelContext.Stop returns early when the context is not started.
-	if !m.context.IsStarted() {
+	// A route started while the context is stopped or stopping would never be
+	// stopped: CamelContext.Stop returns early when the context is not started.
+	if !m.context.canStartRoute() {
 		http.Error(w, "Camel context not started", http.StatusConflict)
 		return
 	}
@@ -271,6 +320,11 @@ func (m *ManagementServer) handleStartAction(w http.ResponseWriter, route *Route
 		// Details stay in the logs: they may expose hosts or credentials.
 		LogError("Management API: failed to start route", "route", route.ID, "error", err)
 		http.Error(w, "Failed to start route", http.StatusInternalServerError)
+		return
+	}
+	if !m.context.canStartRoute() {
+		_ = route.Stop()
+		http.Error(w, "Camel context not started", http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

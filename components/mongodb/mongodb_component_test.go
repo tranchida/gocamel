@@ -278,3 +278,23 @@ func TestMongoDBComponent_AllowUpdateAllRequiresExplicitOptIn(t *testing.T) {
 		t.Fatal("expected invalid allowUpdateAll value to be rejected")
 	}
 }
+
+func TestMongoDBProducer_SendReturnsErrorWhenNotStartedOrStopped(t *testing.T) {
+	component := NewMongoDBComponent()
+	component.RegisterConnection("test", CreateMongoDBConnection(nil, "mongodb://test", "db"))
+
+	endpoint, err := component.CreateEndpoint("mongodb://test?collection=items&operation=find")
+	if err != nil {
+		t.Fatalf("CreateEndpoint failed: %v", err)
+	}
+	prod, err := endpoint.CreateProducer()
+	if err != nil {
+		t.Fatalf("CreateProducer failed: %v", err)
+	}
+
+	ex := gocamel.NewExchange(context.Background())
+	err = prod.Send(ex)
+	if err == nil || !strings.Contains(err.Error(), "mongodb producer is not started") {
+		t.Fatalf("expected 'mongodb producer is not started', got %v", err)
+	}
+}

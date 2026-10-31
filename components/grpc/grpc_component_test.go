@@ -21,7 +21,9 @@ import (
 	"github.com/stretchr/testify/require"
 	grpcstd "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/test/bufconn"
 
 	gocamel "github.com/tranchida/gocamel"
 )
@@ -485,3 +487,104 @@ func TestGRPCProducer_SharedEndpointReferenceCounting(t *testing.T) {
 	assert.Nil(t, ge.clientConn)
 }
 
+func TestGRPCConsumer_ContextCancelAndConcurrentAddressStop(t *testing.T) {
+	component := NewGRPCComponent()
+	endpoint, err := component.CreateEndpoint("grpc://127.0.0.1:0/test.EchoService/Echo")
+	require.NoError(t, err)
+
+	consumer, err := endpoint.CreateConsumer(gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
+		e.Out.SetBody("ok")
+		return nil
+	}))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, consumer.Start(ctx))
+	gc := consumer.(*GRPCConsumer)
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		for range 50 {
+			assert.NotEmpty(t, gc.Address())
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		cancel()
+	}()
+	go func() {
+		defer wg.Done()
+		_ = consumer.Stop()
+	}()
+	wg.Wait()
+
+	require.Eventually(t, func() bool {
+		ge := endpoint.(*GRPCEndpoint)
+		ge.mu.Lock()
+		defer ge.mu.Unlock()
+		return ge.consumer == nil
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestGRPCConsumer_StopTimeoutForcesShutdown(t *testing.T) {
+	component := NewGRPCComponent()
+	serverEndpoint, err := component.CreateEndpoint("grpc://127.0.0.1:0/test.EchoService/Echo?timeout=100ms")
+	require.NoError(t, err)
+
+	inHandler := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	consumer, err := serverEndpoint.CreateConsumer(gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
+		close(inHandler)
+		select {
+		case <-e.Context.Done():
+			return e.Context.Err()
+		case <-releaseHandler:
+			return nil
+		}
+	}))
+	require.NoError(t, err)
+
+	bufLis := bufconn.Listen(1024 * 1024)
+	consumer.(*GRPCConsumer).listener = bufLis
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, consumer.Start(ctx))
+	defer close(releaseHandler)
+
+	conn, err := grpcstd.NewClient(
+		"passthrough:///bufnet",
+		grpcstd.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return bufLis.DialContext(ctx)
+		}),
+		grpcstd.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	callDone := make(chan error, 1)
+	go func() {
+		req := []byte("hang")
+		var resp []byte
+		callDone <- conn.Invoke(ctx, "/test.EchoService/Echo", &req, &resp, grpcstd.ForceCodec(RawBytesCodec{}))
+	}()
+
+	select {
+	case <-inHandler:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handler to be entered")
+	}
+
+	stopStart := time.Now()
+	require.NoError(t, consumer.Stop())
+	assert.Less(t, time.Since(stopStart), 2*time.Second)
+
+	select {
+	case err := <-callDone:
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("client call did not abort after forced server stop")
+	}
+}

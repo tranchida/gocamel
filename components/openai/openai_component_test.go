@@ -51,6 +51,22 @@ func TestOpenAIProducer_Send_NotStarted(t *testing.T) {
 	}
 }
 
+func TestOpenAIProducer_SendAfterStop(t *testing.T) {
+	u, _ := url.Parse("openai:chat?model=gpt-4&apiKey=test-token")
+	endpoint := &OpenAIEndpoint{uri: "openai:chat?model=gpt-4", url: u}
+	producer := &OpenAIProducer{endpoint: endpoint}
+	if err := producer.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if err := producer.Stop(); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	exchange := gocamel.NewExchange(context.Background())
+	if err := producer.Send(exchange); err == nil {
+		t.Fatal("expected error when sending after Stop")
+	}
+}
+
 func TestOpenAIEndpoint_URI_RedactsCredentials(t *testing.T) {
 	uri := "openai:chat?model=gpt-4&apiKey=sk-super-secret-key"
 	endpoint, err := NewOpenAIComponent().CreateEndpoint(uri)

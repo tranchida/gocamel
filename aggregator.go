@@ -264,9 +264,8 @@ func (a *Aggregator) startTimeout(key string, fallback context.Context, gen uint
 // already started. A later Route.Start configures the Aggregator again.
 func (a *Aggregator) Stop() error {
 	a.lifecycleMu.Lock()
-	if a.timeoutConfigured {
-		a.timeoutActive = false
-	}
+	a.timeoutConfigured = true
+	a.timeoutActive = false
 	cancel := a.timeoutCancel
 	a.timeoutCancel = nil
 	a.timeoutContext = nil
@@ -327,16 +326,18 @@ func (a *Aggregator) runTimeout(key string, ctx context.Context, gen uint64, st 
 	// (for example an HTTP consumer). Timeout completion belongs to the route
 	// lifecycle, so downstream work must use the timeout's route context.
 	stored.Context = ctx
+	var procErr error
 	if processor != nil {
-		err := safeProcess(func() error { return processor.Process(stored) })
-		if err != nil && !errors.Is(err, ErrStopRouting) {
+		procErr = safeProcess(func() error { return processor.Process(stored) })
+		if procErr != nil && !errors.Is(procErr, ErrStopRouting) {
 			LogError("Aggregator timeout: downstream processing failed",
 				"key", key,
 				"exchange_id", stored.ID,
-				"error", err,
+				"error", procErr,
 			)
 		}
 	}
+	_ = CompleteExchange(stored, procErr)
 	LogDebug("Aggregator timeout: group completed",
 		"key", key,
 		"exchange_id", stored.ID,

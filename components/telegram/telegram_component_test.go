@@ -2,8 +2,12 @@ package telegram
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	gocamel "github.com/tranchida/gocamel"
 )
@@ -150,4 +154,126 @@ func indexOf(h, n string) int {
 		}
 	}
 	return -1
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func newFakeTelegramClient() *http.Client {
+	return &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			var body string
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/getMe"):
+				body = `{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`
+			case strings.HasSuffix(r.URL.Path, "/getUpdates"):
+				body = `{"ok":true,"result":[{"update_id":1,"message":{"message_id":1,"chat":{"id":42,"type":"private"},"text":"hello"}}]}`
+			case strings.HasSuffix(r.URL.Path, "/sendMessage"):
+				body = `{"ok":true,"result":{"message_id":2,"chat":{"id":42,"type":"private"},"text":"ok"}}`
+			default:
+				body = `{"ok":true,"result":true}`
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}),
+	}
+}
+
+func TestConsumer_DoubleStopAndContextCancel(t *testing.T) {
+	ep := newEndpoint(t, "telegram://bots?authorizationToken=123:test&chatId=42")
+	ep.httpClient = newFakeTelegramClient()
+
+	received := make(chan string, 16)
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		body, _ := ex.GetIn().GetBodyAsString()
+		select {
+		case received <- body:
+		default:
+		}
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := consumer.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Duplicate Start must be a no-op
+	if err := consumer.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+
+	select {
+	case msg := <-received:
+		if msg != "hello" {
+			t.Fatalf("got %q, want %q", msg, "hello")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for message")
+	}
+
+	// Concurrent and repeated Stop calls must not panic
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := consumer.Stop(); err != nil {
+				t.Errorf("Stop: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Restart, then cancel context before Stop
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	if err := consumer.Start(ctx2); err != nil {
+		t.Fatalf("restart Start: %v", err)
+	}
+	cancel2()
+	time.Sleep(20 * time.Millisecond)
+	if err := consumer.Stop(); err != nil {
+		t.Fatalf("Stop after context cancel: %v", err)
+	}
+}
+
+func TestProducer_SendRejectedAfterStopUntilRestarted(t *testing.T) {
+	ep := newEndpoint(t, "telegram://bots?authorizationToken=123:test&chatId=42")
+	ep.httpClient = newFakeTelegramClient()
+
+	prod, err := ep.CreateProducer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := prod.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := prod.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	ex := gocamel.NewExchange(ctx)
+	ex.SetBody("after stop")
+	if err := prod.Send(ex); err == nil {
+		t.Fatal("expected error when sending after Stop()")
+	}
+
+	if err := prod.Start(ctx); err != nil {
+		t.Fatalf("restart Start: %v", err)
+	}
+	defer prod.Stop()
+	if err := prod.Send(ex); err != nil {
+		t.Fatalf("Send after restart: %v", err)
+	}
 }

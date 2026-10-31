@@ -109,6 +109,7 @@ type TimerConsumer struct {
 	processor Processor
 	stopChan  chan struct{}
 	running   bool
+	stopping  bool
 	mu        sync.Mutex
 	wg        sync.WaitGroup
 }
@@ -118,15 +119,19 @@ func (c *TimerConsumer) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.running {
+	if c.running || c.stopping {
 		return errors.New("timer is already running")
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stopChan := make(chan struct{})
+	c.stopChan = stopChan
 	c.running = true
-	c.stopChan = make(chan struct{})
 
 	c.wg.Add(1)
-	go c.run(ctx)
+	go c.run(ctx, stopChan)
 
 	return nil
 }
@@ -135,30 +140,38 @@ func (c *TimerConsumer) Start(ctx context.Context) error {
 // exchange) to finish, so a subsequent Start cannot overlap with the previous run.
 func (c *TimerConsumer) Stop() error {
 	c.mu.Lock()
-	if !c.running {
+	if !c.running || c.stopping {
 		c.mu.Unlock()
 		return nil
 	}
 
-	c.running = false
+	c.stopping = true
 	close(c.stopChan)
 	c.mu.Unlock()
 	c.wg.Wait()
+
+	c.mu.Lock()
+	c.running = false
+	c.stopping = false
+	c.mu.Unlock()
 	return nil
 }
 
-func (c *TimerConsumer) run(ctx context.Context) {
+func (c *TimerConsumer) run(ctx context.Context, stopChan <-chan struct{}) {
 	defer c.wg.Done()
 
 	// Initial wait (delay).
 	delayDuration := time.Duration(c.endpoint.delay) * time.Millisecond
 
 	if delayDuration > 0 {
+		delayTimer := time.NewTimer(delayDuration)
 		select {
-		case <-time.After(delayDuration):
-		case <-c.stopChan:
+		case <-delayTimer.C:
+		case <-stopChan:
+			delayTimer.Stop()
 			return
 		case <-ctx.Done():
+			delayTimer.Stop()
 			return
 		}
 	} else if delayDuration < 0 {
@@ -166,12 +179,21 @@ func (c *TimerConsumer) run(ctx context.Context) {
 	}
 
 	periodDuration := time.Duration(c.endpoint.period) * time.Millisecond
+	waitDuration := periodDuration
+	if waitDuration <= 0 {
+		waitDuration = time.Millisecond
+	}
 	counter := int64(0)
 
 	var ticker *time.Ticker
+	var periodTimer *time.Timer
 	if c.endpoint.fixedRate && periodDuration > 0 {
 		ticker = time.NewTicker(periodDuration)
 		defer ticker.Stop()
+	} else {
+		periodTimer = time.NewTimer(waitDuration)
+		periodTimer.Stop()
+		defer periodTimer.Stop()
 	}
 
 	for {
@@ -200,30 +222,19 @@ func (c *TimerConsumer) run(ctx context.Context) {
 		if ticker != nil {
 			select {
 			case <-ticker.C:
-			case <-c.stopChan:
+			case <-stopChan:
 				return
 			case <-ctx.Done():
 				return
 			}
 		} else {
-			// Period mode (wait after execution).
-			if periodDuration > 0 {
-				select {
-				case <-time.After(periodDuration):
-				case <-c.stopChan:
-					return
-				case <-ctx.Done():
-					return
-				}
-			} else {
-				// If period is <= 0, add a small delay to avoid a CPU spin loop.
-				select {
-				case <-time.After(1 * time.Millisecond):
-				case <-c.stopChan:
-					return
-				case <-ctx.Done():
-					return
-				}
+			periodTimer.Reset(waitDuration)
+			select {
+			case <-periodTimer.C:
+			case <-stopChan:
+				return
+			case <-ctx.Done():
+				return
 			}
 		}
 	}

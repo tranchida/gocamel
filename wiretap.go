@@ -29,6 +29,8 @@ import (
 type WireTap struct {
 	context *CamelContext
 	uri     string
+	mu      sync.RWMutex
+	stopped bool
 	wg      sync.WaitGroup
 }
 
@@ -46,16 +48,24 @@ func NewWireTap(camelContext *CamelContext, uri string) *WireTap {
 // the copy to the tap endpoint, and returns immediately so the main
 // route continues without waiting.
 func (w *WireTap) Process(exchange *Exchange) error {
+	w.mu.RLock()
+	if w.stopped {
+		w.mu.RUnlock()
+		return nil
+	}
+	w.wg.Add(1)
+	w.mu.RUnlock()
+
 	// Deep copy to isolate the tap from the main route: the tap goroutine runs
 	// concurrently with the rest of the route, so shared mutable bodies would race.
 	tapExchange := exchange.DeepCopy()
 	// Use an independent context so the tap is not tied to the main route lifecycle
 	tapExchange.Context = context.Background()
 
-	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
-		if err := safeProcess(func() error { return w.sendTap(tapExchange) }); err != nil {
+		err := safeProcess(func() error { return w.sendTap(tapExchange) })
+		if err := CompleteExchange(tapExchange, err); err != nil {
 			LogWarn("WireTap: tap delivery failed",
 				"uri", w.uri,
 				"error", err,
@@ -71,8 +81,18 @@ func (w *WireTap) Process(exchange *Exchange) error {
 	return nil
 }
 
-// Stop waits for all in-flight taps to complete. Called by Route.Stop().
+// Start resets the stopped state when a route restarts.
+func (w *WireTap) Start() {
+	w.mu.Lock()
+	w.stopped = false
+	w.mu.Unlock()
+}
+
+// Stop rejects new taps and waits for all in-flight taps to complete. Called by Route.Stop().
 func (w *WireTap) Stop() error {
+	w.mu.Lock()
+	w.stopped = true
+	w.mu.Unlock()
 	w.wg.Wait()
 	return nil
 }

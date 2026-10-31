@@ -48,25 +48,25 @@ func pollQueue(ctx context.Context, queue <-chan *Exchange, timeout time.Duratio
 // Poll receives a single queued message, preserving the endpoint lifecycle.
 func (e *SedaEndpoint) Poll(ctx context.Context, timeout time.Duration) (*Exchange, error) {
 	e.mu.Lock()
-	if e.consumer != nil || e.polling || e.stopped {
+	if e.consumer != nil || e.stopped {
 		e.mu.Unlock()
 		return nil, fmt.Errorf("seda: endpoint is stopped or already has a receiver: %s", e.uri)
 	}
-	e.polling = true
+	e.polling++
 	e.mu.Unlock()
-	defer func() { e.mu.Lock(); e.polling = false; e.mu.Unlock() }()
+	defer func() { e.mu.Lock(); e.polling--; e.mu.Unlock() }()
 	return pollQueue(ctx, e.queue, timeout)
 }
 
 // Poll receives a single queued message, preserving the endpoint lifecycle.
 func (e *ChanEndpoint) Poll(ctx context.Context, timeout time.Duration) (*Exchange, error) {
 	e.mu.Lock()
-	if e.consumer != nil || e.polling || e.stopped {
+	if e.consumer != nil || e.stopped {
 		e.mu.Unlock()
 		return nil, fmt.Errorf("chan: endpoint is stopped or already has a receiver: %s", e.uri)
 	}
-	e.polling = true
+	e.polling++
 	e.mu.Unlock()
-	defer func() { e.mu.Lock(); e.polling = false; e.mu.Unlock() }()
+	defer func() { e.mu.Lock(); e.polling--; e.mu.Unlock() }()
 	return pollQueue(ctx, e.queue, timeout)
 }

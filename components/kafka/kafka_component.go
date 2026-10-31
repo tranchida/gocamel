@@ -171,9 +171,10 @@ type KafkaEndpoint struct {
 	// committed (consumer side).
 	redelivery gocamel.ConsumerRedeliveryPolicy
 
-	writer   *kafka.Writer
-	consumer *KafkaConsumer
-	mu       sync.Mutex
+	writer      *kafka.Writer
+	writerUsers int
+	consumer    *KafkaConsumer
+	mu          sync.Mutex
 }
 
 // URI returns the endpoint URI.
@@ -205,37 +206,56 @@ func (e *KafkaEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Con
 // KafkaProducer publishes messages to a Kafka topic.
 type KafkaProducer struct {
 	endpoint *KafkaEndpoint
+	mu       sync.Mutex
+	started  bool
 }
 
 // Start initializes the Kafka writer.
 func (p *KafkaProducer) Start(_ context.Context) error {
-	p.endpoint.mu.Lock()
-	defer p.endpoint.mu.Unlock()
-
-	if p.endpoint.writer != nil {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.started {
 		return nil
 	}
 
-	w := &kafka.Writer{
-		Addr:         kafka.TCP(p.endpoint.brokers...),
-		Balancer:     &kafka.LeastBytes{},
-		BatchTimeout: 10 * time.Millisecond,
-	}
-	p.endpoint.writer = w
-	return nil
-}
-
-// Stop closes the Kafka writer.
-func (p *KafkaProducer) Stop() error {
 	p.endpoint.mu.Lock()
 	defer p.endpoint.mu.Unlock()
 
-	if p.endpoint.writer != nil {
-		err := p.endpoint.writer.Close()
-		p.endpoint.writer = nil
-		return err
+	if p.endpoint.writer == nil {
+		p.endpoint.writer = &kafka.Writer{
+			Addr:         kafka.TCP(p.endpoint.brokers...),
+			Balancer:     &kafka.LeastBytes{},
+			BatchTimeout: 10 * time.Millisecond,
+		}
 	}
+	p.endpoint.writerUsers++
+	p.started = true
 	return nil
+}
+
+// Stop closes the Kafka writer when the last producer stops.
+func (p *KafkaProducer) Stop() error {
+	p.mu.Lock()
+	if !p.started {
+		p.mu.Unlock()
+		return nil
+	}
+	p.started = false
+	p.mu.Unlock()
+
+	p.endpoint.mu.Lock()
+	if p.endpoint.writerUsers > 0 {
+		p.endpoint.writerUsers--
+	}
+	if p.endpoint.writerUsers > 0 || p.endpoint.writer == nil {
+		p.endpoint.mu.Unlock()
+		return nil
+	}
+	w := p.endpoint.writer
+	p.endpoint.writer = nil
+	p.endpoint.mu.Unlock()
+
+	return w.Close()
 }
 
 // resolveTopic returns the topic to publish to.
@@ -299,6 +319,13 @@ func (p *KafkaProducer) filterHeaders(exchange *gocamel.Exchange) []kafka.Header
 
 // Send publishes the exchange body to Kafka.
 func (p *KafkaProducer) Send(exchange *gocamel.Exchange) error {
+	p.mu.Lock()
+	started := p.started
+	p.mu.Unlock()
+	if !started {
+		return fmt.Errorf("kafka producer is not started")
+	}
+
 	p.endpoint.mu.Lock()
 	w := p.endpoint.writer
 	p.endpoint.mu.Unlock()
@@ -354,6 +381,9 @@ func (p *KafkaProducer) Send(exchange *gocamel.Exchange) error {
 type KafkaConsumer struct {
 	endpoint  *KafkaEndpoint
 	processor gocamel.Processor
+	mu        sync.Mutex
+	started   bool
+	stopping  bool
 	reader    messageReader
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -361,10 +391,14 @@ type KafkaConsumer struct {
 
 // Start begins consuming Kafka messages.
 func (c *KafkaConsumer) Start(ctx context.Context) error {
-	c.endpoint.mu.Lock()
-	defer c.endpoint.mu.Unlock()
+	c.mu.Lock()
+	if c.started || c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
 
 	if c.endpoint.topic == "" {
+		c.mu.Unlock()
 		return fmt.Errorf("kafka consumer: topic is required")
 	}
 
@@ -381,32 +415,65 @@ func (c *KafkaConsumer) Start(ctx context.Context) error {
 		readerConfig.Partition = c.endpoint.partition
 	}
 
-	c.reader = kafka.NewReader(readerConfig)
+	if c.reader == nil {
+		c.reader = kafka.NewReader(readerConfig)
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+	c.started = true
 
 	c.wg.Add(1)
+	c.mu.Unlock()
+
 	go c.run(ctx)
 
 	return nil
 }
 
-// Stop stops the consumer and closes the reader.
+// Stop stops the consumer and closes the reader after any in-flight processor
+// finishes and commits its offset.
 func (c *KafkaConsumer) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
+	c.mu.Lock()
+	if c.stopping {
+		c.mu.Unlock()
+		return nil
 	}
-	if c.reader != nil {
-		_ = c.reader.Close()
+	if !c.started && c.cancel == nil && c.reader == nil {
+		c.mu.Unlock()
+		c.endpoint.mu.Lock()
+		if c.endpoint.consumer == c {
+			c.endpoint.consumer = nil
+		}
+		c.endpoint.mu.Unlock()
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	c.cancel = nil
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
 	}
 	c.wg.Wait()
 
+	c.mu.Lock()
+	reader := c.reader
+	c.reader = nil
+	c.started = false
+	c.stopping = false
+	c.mu.Unlock()
+
+	if reader != nil {
+		_ = reader.Close()
+	}
+
 	c.endpoint.mu.Lock()
-	defer c.endpoint.mu.Unlock()
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}
+	c.endpoint.mu.Unlock()
 	return nil
 }
 
@@ -420,8 +487,15 @@ type messageReader interface {
 
 func (c *KafkaConsumer) run(ctx context.Context) {
 	defer c.wg.Done()
+	c.mu.Lock()
+	reader := c.reader
+	c.mu.Unlock()
+	if reader == nil {
+		return
+	}
+
 	for ctx.Err() == nil {
-		msg, err := c.reader.FetchMessage(ctx)
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 				return
@@ -487,7 +561,15 @@ func (c *KafkaConsumer) run(ctx context.Context) {
 			// Retrying a commit must not re-run a successful processor. The
 			// backoff restarts from commitRetry.Delay for every record.
 			for attempt := 0; ; attempt++ {
-				err := c.reader.CommitMessages(ctx, msg)
+				commitCtx := ctx
+				var commitCancel context.CancelFunc
+				if commitCtx.Err() != nil {
+					commitCtx, commitCancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				}
+				err := reader.CommitMessages(commitCtx, msg)
+				if commitCancel != nil {
+					commitCancel()
+				}
 				if err == nil {
 					break
 				}

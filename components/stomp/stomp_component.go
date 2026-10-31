@@ -568,6 +568,13 @@ func (p *StompProducer) filterHeaders(exchange *gocamel.Exchange) []func(*frame.
 
 // Send publishes the exchange body to a STOMP destination.
 func (p *StompProducer) Send(exchange *gocamel.Exchange) error {
+	p.mu.Lock()
+	started := p.started
+	p.mu.Unlock()
+	if !started {
+		return fmt.Errorf("stomp producer is not started or connected")
+	}
+
 	p.endpoint.mu.Lock()
 	conn := p.endpoint.conn
 	p.endpoint.mu.Unlock()
@@ -613,6 +620,7 @@ type StompConsumer struct {
 	sub       subscriptionReader
 	mu        sync.Mutex
 	started   bool
+	stopping  bool
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 }
@@ -634,7 +642,7 @@ func (c *StompConsumer) setSubscription(sub subscriptionReader) {
 func (c *StompConsumer) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.started {
+	if c.started || c.stopping {
 		return nil
 	}
 
@@ -661,6 +669,7 @@ func (c *StompConsumer) Start(ctx context.Context) error {
 	sub, err := c.endpoint.conn.Subscribe(c.endpoint.destination, c.endpoint.ackMode)
 	if err != nil {
 		cancel()
+		c.cancel = nil
 		if createdConn && c.endpoint.connUsers == 0 {
 			// Same rationale as closeConn: a graceful Disconnect can hang
 			// waiting for a RECEIPT that never arrives.
@@ -689,20 +698,32 @@ func (c *StompConsumer) Start(ctx context.Context) error {
 // message, which is the correct STOMP behavior on abrupt disconnect.
 func (c *StompConsumer) Stop() error {
 	c.mu.Lock()
-	wasStarted := c.started
-	c.started = false
+	if c.stopping {
+		c.mu.Unlock()
+		return nil
+	}
+	if !c.started {
+		c.mu.Unlock()
+		c.endpoint.mu.Lock()
+		if c.endpoint.consumer == c {
+			c.endpoint.consumer = nil
+		}
+		c.endpoint.mu.Unlock()
+		return nil
+	}
+	c.stopping = true
+	cancel := c.cancel
+	c.cancel = nil
 	c.mu.Unlock()
 
-	if c.cancel != nil {
-		c.cancel()
+	if cancel != nil {
+		cancel()
 	}
 
-	if wasStarted {
-		// Closing the connection unblocks the run loop's Read (the
-		// subscription channel closes with ErrCompletedSubscription) before
-		// wg.Wait.
-		c.endpoint.closeConn()
-	}
+	// Closing the connection unblocks the run loop's Read (the
+	// subscription channel closes with ErrCompletedSubscription) before
+	// wg.Wait.
+	c.endpoint.closeConn()
 	c.wg.Wait()
 
 	c.endpoint.mu.Lock()
@@ -710,6 +731,11 @@ func (c *StompConsumer) Stop() error {
 		c.endpoint.consumer = nil
 	}
 	c.endpoint.mu.Unlock()
+
+	c.mu.Lock()
+	c.started = false
+	c.stopping = false
+	c.mu.Unlock()
 	return nil
 }
 
@@ -850,17 +876,32 @@ func (c *StompConsumer) run(ctx context.Context) {
 		}
 
 		if msg.ShouldAck() {
+			if msg.Conn == nil {
+				gocamel.LogError("stomp ack failed: message has no connection",
+					"destination", c.endpoint.destination,
+				)
+				continue
+			}
 			// Retrying an ack must not re-run a successful processor.
-			for {
+			const maxAckRetries = 3
+			for ackAttempts := 0; ; ackAttempts++ {
 				err := msg.Conn.Ack(msg)
 				if err == nil {
 					break
 				}
-				if errors.Is(err, stomp.ErrClosedUnexpectedly) {
+				if errors.Is(err, stomp.ErrClosedUnexpectedly) || errors.Is(err, stomp.ErrAlreadyClosed) {
 					// The broker requeues the unacknowledged message; the
 					// next Read fails and triggers the reconnection.
 					gocamel.LogWarn("stomp ack failed on a closed connection; message will be redelivered",
 						"destination", c.endpoint.destination,
+						"error", err,
+					)
+					break
+				}
+				if errors.Is(err, stomp.ErrNotReceivedMessage) || errors.Is(err, stomp.ErrCompletedSubscription) || ackAttempts >= maxAckRetries {
+					gocamel.LogError("stomp ack failed permanently; advancing",
+						"destination", c.endpoint.destination,
+						"attempts", ackAttempts+1,
 						"error", err,
 					)
 					break

@@ -197,3 +197,44 @@ func TestTracingWith_RestoresContext(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.Equal(t, "route:route-1", spans[0].Name)
 }
+
+func TestTracingWith_StopRoutingDoesNotRaceOnParkedExchangeContext(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSampler(trace.AlwaysSample()),
+		trace.WithSpanProcessor(trace.NewSimpleSpanProcessor(exporter)),
+	)
+
+	ctx := gocamel.NewCamelContext()
+	ctx.AddComponent("direct", gocamel.NewDirectComponent())
+
+	done := make(chan struct{})
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:park").
+		Intercept(TracingWith(tp)).
+		ProcessFunc(func(e *gocamel.Exchange) error {
+			// Simulate an Aggregator parking the exchange and reading e.Context
+			// asynchronously after returning ErrStopRouting.
+			go func(parked *gocamel.Exchange) {
+				defer close(done)
+				_ = parked.Context.Err()
+			}(e)
+			return gocamel.ErrStopRouting
+		}).
+		Build()
+	require.NoError(t, err)
+
+	require.NoError(t, ctx.Start())
+	defer ctx.Stop()
+
+	ep, err := ctx.CreateEndpoint("direct:park")
+	require.NoError(t, err)
+	producer, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, producer.Start(context.Background()))
+	defer producer.Stop()
+
+	ex := gocamel.NewExchange(context.Background())
+	require.NoError(t, producer.Send(ex))
+	<-done
+}

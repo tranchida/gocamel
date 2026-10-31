@@ -11,18 +11,20 @@ import (
 
 // CamelContext represents the main application context
 type CamelContext struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	routes        []*Route
-	routesLock    sync.RWMutex // Protects routes slice and routeCounter
-	registry      *ComponentRegistry
-	started       bool
-	starting      bool         // guarded by startLock
-	stopping      bool         // true while Stop/GracefulStop is still tearing down
-	startLock     sync.RWMutex // Protects lifecycle state, ctx and cancel
-	routeCounter  int
-	usedRouteIDs  map[string]bool // ids already assigned; guarded by routesLock
-	producerCache *ProducerCache
+	ctx               context.Context
+	cancel            context.CancelFunc
+	routes            []*Route
+	routesLock        sync.RWMutex // Protects routes slice and routeCounter
+	registry          *ComponentRegistry
+	started           bool
+	starting          bool         // guarded by startLock
+	stopping          bool         // true while Stop/GracefulStop is still tearing down
+	startLock         sync.RWMutex // Protects lifecycle state, ctx and cancel
+	routeCounter      int
+	usedRouteIDs      map[string]bool // ids already assigned; guarded by routesLock
+	producerCache     *ProducerCache
+	mgmtLock          sync.Mutex
+	managementServers []*ManagementServer
 }
 
 // NewCamelContext creates a new CamelContext instance
@@ -205,8 +207,29 @@ func (c *CamelContext) beginStop() (bool, error) {
 	return true, nil
 }
 
+func (c *CamelContext) registerManagementServer(m *ManagementServer) {
+	c.mgmtLock.Lock()
+	c.managementServers = append(c.managementServers, m)
+	c.mgmtLock.Unlock()
+}
+
+func (c *CamelContext) canStartRoute() bool {
+	c.startLock.RLock()
+	defer c.startLock.RUnlock()
+	return c.started && !c.stopping
+}
+
 func (c *CamelContext) stopResources() error {
 	var errs []error
+	c.mgmtLock.Lock()
+	mgmtServers := make([]*ManagementServer, len(c.managementServers))
+	copy(mgmtServers, c.managementServers)
+	c.mgmtLock.Unlock()
+	for _, m := range mgmtServers {
+		if err := m.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("management server: %w", err))
+		}
+	}
 	for _, route := range c.GetRoutes() {
 		if err := route.Stop(); err != nil {
 			errs = append(errs, fmt.Errorf("route %s: %w", route.ID, err))
