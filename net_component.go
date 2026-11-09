@@ -308,16 +308,44 @@ type NetConsumer struct {
 	endpoint  *NetEndpoint
 	processor Processor
 
-	mu       sync.Mutex
-	started  bool
-	stopping bool
-	conns    map[net.Conn]struct{}
-	stop     chan struct{}
-	wg       sync.WaitGroup
+	mu sync.Mutex
+	// transition is non-nil while a Start or Stop is in progress. It serializes
+	// the two operations so a Stop racing a Start cannot observe started=false
+	// and leave a listener running. Guarded by mu.
+	transition chan struct{}
+	started    bool
+	conns      map[net.Conn]struct{}
+	stop       chan struct{}
+	wg         sync.WaitGroup
 
 	listener   net.Listener
 	packetConn net.PacketConn
 	addr       net.Addr // bound address, useful when the URI port is 0
+}
+
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *NetConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (c *NetConsumer) releaseTransition() {
+	c.mu.Lock()
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
 }
 
 // Address returns the address the consumer is bound to. Useful when the URI
@@ -331,16 +359,20 @@ func (c *NetConsumer) Address() net.Addr {
 // Start begins listening. Bind errors are returned synchronously so
 // misconfiguration surfaces at Start, not on the first message.
 func (c *NetConsumer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	if c.started || c.stopping {
+	if c.started {
 		c.mu.Unlock()
 		return errors.New("net consumer is already running")
 	}
 	c.mu.Unlock()
 
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	stop := make(chan struct{})
 
 	if c.endpoint.protocol == "udp" {
@@ -349,11 +381,6 @@ func (c *NetConsumer) Start(ctx context.Context) error {
 			return fmt.Errorf("net: error listening on udp://%s: %w", c.endpoint.address, err)
 		}
 		c.mu.Lock()
-		if c.started || c.stopping {
-			c.mu.Unlock()
-			_ = pc.Close()
-			return errors.New("net consumer is already running")
-		}
 		c.started = true
 		c.stop = stop
 		c.packetConn = pc
@@ -369,11 +396,6 @@ func (c *NetConsumer) Start(ctx context.Context) error {
 		return fmt.Errorf("net: error listening on tcp://%s: %w", c.endpoint.address, err)
 	}
 	c.mu.Lock()
-	if c.started || c.stopping {
-		c.mu.Unlock()
-		_ = ln.Close()
-		return errors.New("net consumer is already running")
-	}
 	c.started = true
 	c.stop = stop
 	c.listener = ln
@@ -389,12 +411,14 @@ func (c *NetConsumer) Start(ctx context.Context) error {
 // listener and every tracked connection, and waits for the goroutines to
 // unwind. Safe to call multiple times.
 func (c *NetConsumer) Stop() error {
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	if !c.started || c.stopping {
+	if !c.started {
 		c.mu.Unlock()
 		return nil
 	}
-	c.stopping = true
 	close(c.stop)
 	if c.listener != nil {
 		_ = c.listener.Close()
@@ -409,10 +433,6 @@ func (c *NetConsumer) Stop() error {
 	c.mu.Unlock()
 
 	c.wg.Wait()
-
-	c.mu.Lock()
-	c.stopping = false
-	c.mu.Unlock()
 	return nil
 }
 

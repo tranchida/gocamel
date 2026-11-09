@@ -496,3 +496,68 @@ func TestCircuitBreaker_StaleClosedRequestDoesNotCorruptHalfOpen(t *testing.T) {
 	assert.Equal(t, StateClosed, state)
 	_ = http.StatusOK
 }
+
+func TestLifecycle_ConcurrentStartStopDoesNotLeakOrDeadlock(t *testing.T) {
+	t.Run("http", func(t *testing.T) {
+		ep, err := NewHTTPComponent().CreateEndpoint("http://127.0.0.1:0/concurrent")
+		require.NoError(t, err)
+		consumer, err := ep.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+		require.NoError(t, err)
+
+		for i := 0; i < 10; i++ {
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_ = consumer.Start(context.Background())
+			}()
+			go func() {
+				defer wg.Done()
+				_ = consumer.Stop()
+			}()
+			wg.Wait()
+			require.NoError(t, consumer.Stop())
+		}
+	})
+
+	t.Run("net", func(t *testing.T) {
+		ep, err := NewNetComponent().CreateEndpoint("net:tcp://127.0.0.1:0?sync=false")
+		require.NoError(t, err)
+		consumer, err := ep.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+		require.NoError(t, err)
+
+		for i := 0; i < 10; i++ {
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_ = consumer.Start(context.Background())
+			}()
+			go func() {
+				defer wg.Done()
+				_ = consumer.Stop()
+			}()
+			wg.Wait()
+			require.NoError(t, consumer.Stop())
+		}
+	})
+
+	t.Run("management", func(t *testing.T) {
+		ctx := NewCamelContext()
+		mgmt := NewManagementServer(ctx)
+		for i := 0; i < 10; i++ {
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_ = mgmt.Start("127.0.0.1:0")
+			}()
+			go func() {
+				defer wg.Done()
+				_ = mgmt.Stop()
+			}()
+			wg.Wait()
+			require.NoError(t, mgmt.Stop())
+		}
+	})
+}

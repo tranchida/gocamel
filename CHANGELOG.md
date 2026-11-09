@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `file`: removed the one-shot `sync.Once` from `FileConsumer.Stop()` so a consumer can be restarted and stopped again without deadlocking.
+- Lifecycle: serialized concurrent `Start()`/`Stop()` transitions for the HTTP, net, management, Redis, Telegram and file consumers, so a `Stop()` racing a `Start()` can no longer be lost and leave a listener/consumer running.
+
 ## [v0.19.0] - 2026-10-31
 
 Concurrency, goroutine lifecycle, and shutdown resilience release across the core routing engine, components, and OpenTelemetry interceptor. Every component and observability module at v0.19.0 requires core v0.19.0.

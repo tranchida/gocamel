@@ -29,15 +29,43 @@ import (
 // (e.g. "127.0.0.1:8081") or put it behind a reverse proxy enforcing
 // authentication before exposing it beyond localhost.
 type ManagementServer struct {
-	context      *CamelContext
-	mu           sync.Mutex
+	context *CamelContext
+	mu      sync.Mutex
+	// transition is non-nil while a Start or Stop is in progress. It serializes
+	// the two operations so a Stop racing a Start cannot observe started=false
+	// and leave the REST server running. Guarded by mu.
+	transition   chan struct{}
 	authToken    string   // set before Start; empty = no authentication
 	allowedHosts []string // set before Start; extra accepted Host names
 	started      bool
-	stopping     bool
 	server       *http.Server
 	listener     net.Listener
 	wg           sync.WaitGroup
+}
+
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds m.mu while waiting.
+func (m *ManagementServer) acquireTransition() {
+	for {
+		m.mu.Lock()
+		if m.transition != nil {
+			done := m.transition
+			m.mu.Unlock()
+			<-done
+			continue
+		}
+		m.transition = make(chan struct{})
+		m.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (m *ManagementServer) releaseTransition() {
+	m.mu.Lock()
+	close(m.transition)
+	m.transition = nil
+	m.mu.Unlock()
 }
 
 // NewManagementServer creates a new ManagementServer instance.
@@ -88,8 +116,11 @@ func (m *ManagementServer) SetAllowedHosts(hosts ...string) *ManagementServer {
 // Start starts the management REST server on the given address (e.g.
 // "127.0.0.1:8081"). It returns an error when the address cannot be bound.
 func (m *ManagementServer) Start(addr string) error {
+	m.acquireTransition()
+	defer m.releaseTransition()
+
 	m.mu.Lock()
-	if m.started || m.stopping {
+	if m.started {
 		m.mu.Unlock()
 		return errors.New("management server: already started")
 	}
@@ -106,11 +137,6 @@ func (m *ManagementServer) Start(addr string) error {
 	}
 
 	m.mu.Lock()
-	if m.started || m.stopping {
-		m.mu.Unlock()
-		_ = listener.Close()
-		return errors.New("management server: already started")
-	}
 	m.started = true
 	m.listener = listener
 	m.server = server
@@ -205,12 +231,14 @@ func (m *ManagementServer) isAuthorized(r *http.Request) bool {
 // Shutdown is graceful: in-flight requests are given up to 10s to complete
 // before the connections are closed.
 func (m *ManagementServer) Stop() error {
+	m.acquireTransition()
+	defer m.releaseTransition()
+
 	m.mu.Lock()
-	if !m.started || m.stopping {
+	if !m.started {
 		m.mu.Unlock()
 		return nil
 	}
-	m.stopping = true
 	server := m.server
 	m.mu.Unlock()
 
@@ -226,7 +254,6 @@ func (m *ManagementServer) Stop() error {
 	m.server = nil
 	m.listener = nil
 	m.started = false
-	m.stopping = false
 	m.mu.Unlock()
 	return err
 }

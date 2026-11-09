@@ -441,18 +441,54 @@ type HTTPConsumer struct {
 	middleware  func(http.Handler) http.Handler
 	maxBodySize int64
 	mu          sync.Mutex
-	running     bool
-	stopping    bool
-	server      *http.Server
-	wg          sync.WaitGroup
-	handlerWG   sync.WaitGroup
-	cancel      context.CancelFunc
+	// transition is non-nil while a Start or Stop is in progress. It serializes
+	// the two operations so a Stop racing a Start cannot observe running=false
+	// and return before the server is up (and vice versa). Guarded by mu.
+	transition chan struct{}
+	running    bool
+	stopping   bool
+	server     *http.Server
+	wg         sync.WaitGroup
+	handlerWG  sync.WaitGroup
+	cancel     context.CancelFunc
+}
+
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *HTTPConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (c *HTTPConsumer) releaseTransition() {
+	c.mu.Lock()
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
 }
 
 // Start starts the HTTP consumer
 func (c *HTTPConsumer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	if c.running || c.stopping {
+	if c.running {
 		c.mu.Unlock()
 		return errors.New("http consumer is already running")
 	}
@@ -472,9 +508,6 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("error listening on %s: %w", addr, err)
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	reqCtx, cancel := context.WithCancel(ctx)
 	// http.ServeMux panics on an empty pattern, so a URI without a path
@@ -630,12 +663,6 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
-	if c.running || c.stopping {
-		c.mu.Unlock()
-		cancel()
-		_ = listener.Close()
-		return errors.New("http consumer is already running")
-	}
 	c.running = true
 	c.cancel = cancel
 	c.server = server
@@ -658,10 +685,14 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 
 // Stop stops the HTTP consumer. Safe to call multiple times: Stop blocks until
 // the Serve goroutine and all active handlers have fully returned to avoid
-// leaking goroutines past CamelContext.Stop().
+// leaking goroutines past CamelContext.Stop(). A Stop racing a Start waits for
+// the server to be fully started and then shuts it down.
 func (c *HTTPConsumer) Stop() error {
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	if !c.running || c.stopping {
+	if !c.running {
 		c.mu.Unlock()
 		return nil
 	}

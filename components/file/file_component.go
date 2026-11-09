@@ -308,16 +308,44 @@ type FileConsumer struct {
 	processor gocamel.Processor
 	watcher   *fsnotify.Watcher
 	stopChan  chan struct{}
-	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	mu        sync.Mutex
-	cancel    context.CancelFunc
-	started   bool
-	ignored   map[string]struct{}
-	seen      map[string]fileStamp // last ingested size+mtime; skips Create+Write duplicates
-	seenOrder []string             // insertion order of seen keys, oldest first; guarded by mu
+	// transition is non-nil while a Start or Stop is in progress. It serializes
+	// the two operations so a Stop racing a Start cannot observe started=false
+	// and return before the consumer is fully up (and vice versa). Guarded by mu.
+	transition chan struct{}
+	cancel     context.CancelFunc
+	started    bool
+	ignored    map[string]struct{}
+	seen       map[string]fileStamp // last ingested size+mtime; skips Create+Write duplicates
+	seenOrder  []string             // insertion order of seen keys, oldest first; guarded by mu
 
 	maxSeenEntries int // cap on len(seen); 0 = unlimited
+}
+
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *FileConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (c *FileConsumer) releaseTransition() {
+	c.mu.Lock()
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
 }
 
 func (c *FileConsumer) ignoreNext(path string) {
@@ -341,23 +369,35 @@ func (c *FileConsumer) checkAndClearIgnored(path string) bool {
 	return false
 }
 
-// Start starts the File consumer
+// Start starts the File consumer. Start and Stop are serialized by
+// transition, so a concurrent Stop always tears down the consumer that Start
+// has just created instead of returning early.
 func (c *FileConsumer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
 	if c.started {
 		c.mu.Unlock()
 		return nil
 	}
+	c.mu.Unlock()
+
 	ctx, cancel := context.WithCancel(ctx)
+	c.mu.Lock()
 	c.cancel = cancel
-	c.started = true
 	c.mu.Unlock()
 
 	resetStart := func() {
 		cancel()
 		c.mu.Lock()
 		c.cancel = nil
-		c.started = false
+		c.watcher = nil
+		c.stopChan = nil
 		c.mu.Unlock()
 	}
 
@@ -371,12 +411,14 @@ func (c *FileConsumer) Start(ctx context.Context) error {
 			resetStart()
 			return err
 		}
-		return nil
-	}
-	if err := c.watchFile(ctx); err != nil {
+	} else if err := c.watchFile(ctx); err != nil {
 		resetStart()
 		return err
 	}
+
+	c.mu.Lock()
+	c.started = true
+	c.mu.Unlock()
 	return nil
 }
 
@@ -747,28 +789,40 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 }
 
 // Stop stops the File consumer and waits for the watcher goroutine to exit.
+// It is safe to call Stop repeatedly and after a previous Stop/Start cycle.
 func (c *FileConsumer) Stop() error {
-	var err error
-	c.stopOnce.Do(func() {
-		c.mu.Lock()
-		cancel := c.cancel
-		c.cancel = nil
-		c.started = false
-		stopChan := c.stopChan
-		watcher := c.watcher
-		c.mu.Unlock()
+	c.acquireTransition()
+	defer c.releaseTransition()
 
-		if cancel != nil {
-			cancel()
-		}
-		if stopChan != nil {
-			close(stopChan)
-		}
-		if watcher != nil {
-			err = watcher.Close()
-		}
-	})
+	c.mu.Lock()
+	if !c.started {
+		c.mu.Unlock()
+		return nil
+	}
+	cancel := c.cancel
+	c.cancel = nil
+	stopChan := c.stopChan
+	c.stopChan = nil
+	watcher := c.watcher
+	c.watcher = nil
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if stopChan != nil {
+		close(stopChan)
+	}
+	var err error
+	if watcher != nil {
+		err = watcher.Close()
+	}
+
 	c.wg.Wait()
+
+	c.mu.Lock()
+	c.started = false
+	c.mu.Unlock()
 	return err
 }
 

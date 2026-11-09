@@ -638,3 +638,74 @@ func TestFileConsumer_StopCancelsWaitForStable(t *testing.T) {
 		t.Fatalf("Stop blocked for %v; expected immediate cancellation of WaitForStable", elapsed)
 	}
 }
+
+func stopConsumerWithTimeout(t *testing.T, consumer gocamel.Consumer) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- consumer.Stop() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop deadlocked")
+		return nil
+	}
+}
+
+// TestFileConsumer_StartStopStartStop is the regression test for the
+// stopOnce deadlock: Start must be able to run again after Stop and the next
+// Stop must close the new watcher.
+func TestFileConsumer_StartStopStartStop(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir + "?delay=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := consumer.Start(context.Background()); err != nil {
+			t.Fatalf("Start #%d: %v", i, err)
+		}
+		if err := stopConsumerWithTimeout(t, consumer); err != nil {
+			t.Fatalf("Stop #%d: %v", i, err)
+		}
+	}
+}
+
+// TestFileConsumer_ConcurrentStartStop ensures a Stop racing a Start is not
+// lost: the consumer must not keep a watcher running after Stop returns.
+func TestFileConsumer_ConcurrentStartStop(t *testing.T) {
+	dir := t.TempDir()
+	c := NewFileComponent()
+	ep, err := c.CreateEndpoint("file://" + dir + "?delay=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 10; i++ {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = consumer.Start(context.Background())
+		}()
+		go func() {
+			defer wg.Done()
+			_ = consumer.Stop()
+		}()
+		wg.Wait()
+
+		if err := stopConsumerWithTimeout(t, consumer); err != nil {
+			t.Fatalf("Stop #%d: %v", i, err)
+		}
+	}
+}
