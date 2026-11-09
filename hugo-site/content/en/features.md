@@ -171,6 +171,11 @@ defer mgmt.Stop()
 - `POST /api/routes/{id}/start` — Start a route (`409` while the context is stopped)
 - `POST /api/routes/{id}/stop` — Stop a route
 
+**Lifecycle:** `CamelContext.Stop()` also stops management servers created with
+`NewManagementServer(ctx)`. They are not restarted automatically by a later
+`CamelContext.Start()`; call `mgmt.Start(...)` again on the same server if
+needed.
+
 **Security:** the API can stop any route, so every request is checked:
 
 - the `Host` header must be an IP address, `localhost` or a name given to

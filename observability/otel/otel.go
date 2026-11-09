@@ -53,6 +53,13 @@ func TracingWith(tp trace.TracerProvider) gocamel.RouteInterceptor {
 			exchange.Context = ctx
 
 			err := next(exchange)
+			// Do not restore prevCtx when a processor stopped the route with
+			// ErrStopRouting: an Aggregator (or a similar EIP) may have parked
+			// the exchange and another goroutine can read exchange.Context after
+			// this function returns. Writing prevCtx here would race with that
+			// reader. The span context is derived from prevCtx, so its values and
+			// cancellation semantics are preserved; the span itself is still
+			// ended by the defer above.
 			if !errors.Is(err, gocamel.ErrStopRouting) {
 				exchange.Context = prevCtx
 			}

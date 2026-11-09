@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -97,6 +98,13 @@ func (e *SFTPEndpoint) getHostKeyCallback(u *url.URL) (ssh.HostKeyCallback, erro
 
 // connect establishes an SSH + SFTP connection
 func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
+	return e.connectWithDial(nil)
+}
+
+// connectWithDial is connect but calls onDial as soon as the TCP transport is
+// established, before the SSH/SFTP handshake, so a consumer can force-close it
+// during shutdown. A connection timeout also bounds the handshake itself.
+func (e *SFTPEndpoint) connectWithDial(onDial func(net.Conn)) (*ssh.Client, *sftp.Client, error) {
 	host := e.url.Host
 	if !strings.Contains(host, ":") {
 		host += ":22"
@@ -137,16 +145,31 @@ func (e *SFTPEndpoint) connect() (*ssh.Client, *sftp.Client, error) {
 		config.Auth = append([]ssh.AuthMethod{ssh.PublicKeys(signer)}, config.Auth...)
 	}
 
-	sshClient, err := ssh.Dial("tcp", host, config)
+	dialer := &net.Dialer{Timeout: e.connectTimeout}
+	rawConn, err := dialer.Dial("tcp", host)
 	if err != nil {
 		return nil, nil, fmt.Errorf("SSH connection error: %w", err)
 	}
+	if e.connectTimeout > 0 {
+		_ = rawConn.SetDeadline(time.Now().Add(e.connectTimeout))
+	}
+	if onDial != nil {
+		onDial(rawConn)
+	}
+
+	sshConn, chans, reqs, err := ssh.NewClientConn(rawConn, host, config)
+	if err != nil {
+		_ = rawConn.Close()
+		return nil, nil, fmt.Errorf("SSH connection error: %w", err)
+	}
+	sshClient := ssh.NewClient(sshConn, chans, reqs)
 
 	sftpClient, err := sftp.NewClient(sshClient)
 	if err != nil {
-		sshClient.Close()
+		_ = sshClient.Close()
 		return nil, nil, fmt.Errorf("SFTP client creation error: %w", err)
 	}
+	_ = rawConn.SetDeadline(time.Time{})
 	return sshClient, sftpClient, nil
 }
 
@@ -382,6 +405,12 @@ type SFTPConsumer struct {
 	cancel     context.CancelFunc
 	sshClient  *ssh.Client  // persistent connection (disconnect=false)
 	sftpClient *sftp.Client // persistent connection (disconnect=false)
+	// activeSSH/activeSFTP reference the connection used by the current poll,
+	// including disconnect=true mode, so Stop can force-close it to unblock a
+	// stalled network operation. Guarded by mu.
+	activeSSH  *ssh.Client
+	activeSFTP *sftp.Client
+	activeRaw  net.Conn
 	wg         sync.WaitGroup
 }
 
@@ -422,50 +451,98 @@ func (c *SFTPConsumer) poll(ctx context.Context) {
 }
 
 func (c *SFTPConsumer) getClients() (*ssh.Client, *sftp.Client, error) {
+	onDial := func(raw net.Conn) {
+		c.mu.Lock()
+		if c.stopping || !c.started {
+			c.mu.Unlock()
+			_ = raw.Close()
+			return
+		}
+		c.activeRaw = raw
+		c.mu.Unlock()
+	}
+
 	if c.endpoint.disconnect {
-		return c.endpoint.connect()
+		ssh, sftp, err := c.endpoint.connectWithDial(onDial)
+		if err != nil {
+			return nil, nil, err
+		}
+		c.mu.Lock()
+		if c.stopping || !c.started {
+			c.mu.Unlock()
+			_ = sftp.Close()
+			_ = ssh.Close()
+			return nil, nil, fmt.Errorf("sftp consumer is stopped")
+		}
+		c.activeSSH = ssh
+		c.activeSFTP = sftp
+		c.mu.Unlock()
+		return ssh, sftp, nil
 	}
 	c.mu.Lock()
 	sshClient := c.sshClient
 	sftpClient := c.sftpClient
+	if sftpClient != nil {
+		c.activeSSH = sshClient
+		c.activeSFTP = sftpClient
+	}
 	c.mu.Unlock()
 	if sftpClient != nil {
 		if _, err := sftpClient.Getwd(); err == nil {
 			return sshClient, sftpClient, nil
 		}
-		sftpClient.Close()
+		_ = sftpClient.Close()
 		if sshClient != nil {
-			sshClient.Close()
+			_ = sshClient.Close()
 		}
 		c.mu.Lock()
 		if c.sftpClient == sftpClient {
 			c.sftpClient = nil
 			c.sshClient = nil
 		}
+		if c.activeSFTP == sftpClient {
+			c.activeSFTP = nil
+			c.activeSSH = nil
+			c.activeRaw = nil
+		}
 		c.mu.Unlock()
 	}
-	ssh, sftp, err := c.endpoint.connect()
+	ssh, sftp, err := c.endpoint.connectWithDial(onDial)
 	if err != nil {
 		return nil, nil, err
 	}
 	c.mu.Lock()
 	if c.stopping || !c.started {
 		c.mu.Unlock()
-		sftp.Close()
-		ssh.Close()
+		_ = sftp.Close()
+		_ = ssh.Close()
 		return nil, nil, fmt.Errorf("sftp consumer is stopped")
 	}
 	c.sshClient = ssh
 	c.sftpClient = sftp
+	c.activeSSH = ssh
+	c.activeSFTP = sftp
 	c.mu.Unlock()
 	return ssh, sftp, nil
 }
 
 func (c *SFTPConsumer) releaseClients(sshClient *ssh.Client, sftpClient *sftp.Client) {
-	if c.endpoint.disconnect {
-		sftpClient.Close()
-		sshClient.Close()
+	if !c.endpoint.disconnect {
+		return
 	}
+	if sftpClient != nil {
+		_ = sftpClient.Close()
+	}
+	if sshClient != nil {
+		_ = sshClient.Close()
+	}
+	c.mu.Lock()
+	if c.activeSFTP == sftpClient {
+		c.activeSFTP = nil
+		c.activeSSH = nil
+		c.activeRaw = nil
+	}
+	c.mu.Unlock()
 }
 
 type sftpSynchronization struct {
@@ -722,28 +799,46 @@ func (c *SFTPConsumer) Stop() error {
 	c.stopping = true
 	cancel := c.cancel
 	c.cancel = nil
+	sshClient := c.sshClient
+	sftpClient := c.sftpClient
+	activeSSH := c.activeSSH
+	activeSFTP := c.activeSFTP
+	activeRaw := c.activeRaw
+	c.sshClient = nil
+	c.sftpClient = nil
+	c.activeSSH = nil
+	c.activeSFTP = nil
+	c.activeRaw = nil
 	c.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
+
+	// Close the transports before waiting so a poll blocked in a network read
+	// is unblocked instead of keeping Stop (and the route shutdown) stuck.
+	if activeRaw != nil {
+		_ = activeRaw.Close()
+	}
+	if activeSSH != nil {
+		_ = activeSSH.Close()
+	}
+	if sshClient != nil {
+		_ = sshClient.Close()
+	}
+	if activeSFTP != nil {
+		_ = activeSFTP.Close()
+	}
+	if sftpClient != nil {
+		_ = sftpClient.Close()
+	}
+
 	c.wg.Wait()
 
 	c.mu.Lock()
-	sftpClient := c.sftpClient
-	sshClient := c.sshClient
-	c.sftpClient = nil
-	c.sshClient = nil
 	c.started = false
 	c.stopping = false
 	c.mu.Unlock()
-
-	if sftpClient != nil {
-		sftpClient.Close()
-	}
-	if sshClient != nil {
-		sshClient.Close()
-	}
 	return nil
 }
 

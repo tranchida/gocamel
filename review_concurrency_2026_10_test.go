@@ -561,3 +561,50 @@ func TestLifecycle_ConcurrentStartStopDoesNotLeakOrDeadlock(t *testing.T) {
 		}
 	})
 }
+
+func TestDeepCopyValue_PrimitiveContainers(t *testing.T) {
+	ints := []int{1, 2}
+	floats := []float64{1.5, 2.5}
+	bools := []bool{true, false}
+	bytesGrid := [][]byte{{1, 2}, {3}}
+	intMap := map[string]int{"a": 1}
+	boolMap := map[string]bool{"b": true}
+
+	ex := NewExchange(context.Background())
+	ex.SetHeader("ints", ints)
+	ex.SetHeader("floats", floats)
+	ex.SetHeader("bools", bools)
+	ex.SetHeader("bytesGrid", bytesGrid)
+	ex.SetHeader("intMap", intMap)
+	ex.SetHeader("boolMap", boolMap)
+	ex.SetHeader("emptyInts", []int{})
+
+	cp := ex.DeepCopy()
+
+	ints[0] = 99
+	floats[0] = 9.9
+	bools[0] = false
+	bytesGrid[0][0] = 9
+	bytesGrid[1] = []byte{9}
+	intMap["a"] = 99
+	boolMap["b"] = false
+
+	assert.Equal(t, []int{1, 2}, mustHeader(t, cp, "ints"))
+	assert.Equal(t, []float64{1.5, 2.5}, mustHeader(t, cp, "floats"))
+	assert.Equal(t, []bool{true, false}, mustHeader(t, cp, "bools"))
+	assert.Equal(t, [][]byte{{1, 2}, {3}}, mustHeader(t, cp, "bytesGrid"))
+	assert.Equal(t, map[string]int{"a": 1}, mustHeader(t, cp, "intMap"))
+	assert.Equal(t, map[string]bool{"b": true}, mustHeader(t, cp, "boolMap"))
+
+	empty, ok := mustHeader(t, cp, "emptyInts").([]int)
+	require.True(t, ok)
+	assert.NotNil(t, empty, "a non-nil empty slice must stay non-nil")
+	assert.Empty(t, empty)
+}
+
+func mustHeader(t *testing.T, ex *Exchange, key string) any {
+	t.Helper()
+	v, ok := ex.GetHeader(key)
+	require.True(t, ok, "missing header %q", key)
+	return v
+}

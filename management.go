@@ -69,6 +69,11 @@ func (m *ManagementServer) releaseTransition() {
 }
 
 // NewManagementServer creates a new ManagementServer instance.
+//
+// The server is registered with the context so CamelContext.Stop() stops it
+// before tearing down routes. It is not restarted automatically by a later
+// CamelContext.Start(): call Start again on the same ManagementServer if the
+// REST API should be available after a context restart.
 func NewManagementServer(context *CamelContext) *ManagementServer {
 	m := &ManagementServer{
 		context: context,
