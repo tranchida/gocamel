@@ -4,15 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [v0.19.1] - 2026-11-09
+
+Patch release fixing consumer lifecycle races, unbounded network shutdown, and queue-drain ownership. Every component and observability module at v0.19.1 requires core v0.19.1.
+
 ### Fixed
 
-- `file`: removed the one-shot `sync.Once` from `FileConsumer.Stop()` so a consumer can be restarted and stopped again without deadlocking.
-- Lifecycle: serialized concurrent `Start()`/`Stop()` transitions for the HTTP, net, management, Redis, Telegram and file consumers, so a `Stop()` racing a `Start()` can no longer be lost and leave a listener/consumer running.
-- Shutdown: force-close the active FTP/SFTP/SMB/POP3 transport before waiting for the poll goroutine, so a stalled network read can no longer block `Stop()` (and therefore the route/context shutdown) indefinitely. SFTP/SMB now track the connection used by the current poll, including the `disconnect=true` mode.
-- `seda`/`chan`: track in-flight `Send()` calls and wait for them before the final queue drain. A producer can no longer drain messages belonging to another concurrent producer or to a restarted consumer.
-- `observability/otel`: documented why the previous exchange context is intentionally not restored on `ErrStopRouting` (the exchange may be parked and read from another goroutine).
-- Deep copy: added primitive numeric/bool slices, `[][]byte` and primitive-string-keyed maps to `deepCopyValue`.
-- `management`: documented that `CamelContext.Stop()` stops registered management servers and that they are not restarted automatically by `CamelContext.Start()`.
+- **Consumer lifecycle**: serialized concurrent `Start()`/`Stop()` transitions for the HTTP, net, management, Redis, Telegram and file consumers, so a `Stop()` racing a `Start()` can no longer be lost and leave a listener, watcher or subscription running.
+- **`file`**: removed the one-shot `sync.Once` from `FileConsumer.Stop()` so a consumer can be restarted and stopped again without deadlocking.
+- **Network shutdown**: force-close the active FTP/SFTP/SMB/POP3 transport before waiting for the poll goroutine, so a stalled network read can no longer block `Stop()` (and therefore route/context shutdown) indefinitely. SFTP/SMB now track the connection used by the current poll, including `disconnect=true` mode, and SFTP bounds the SSH/SFTP handshake with `connectTimeout`.
+- **`seda`/`chan`**: track in-flight `Send()` calls and wait for them before the final queue drain. A producer can no longer drain messages belonging to another concurrent producer or to a restarted consumer.
+- **Deep copy**: extended `deepCopyValue` with primitive numeric/bool slices, `[][]byte` and primitive-string-keyed maps.
+- **`observability/otel`**: documented why the previous exchange context is intentionally not restored on `ErrStopRouting` (the exchange may be parked and read from another goroutine).
+- **`management`**: documented that `CamelContext.Stop()` stops registered management servers and that they are not restarted automatically by `CamelContext.Start()`.
 
 ## [v0.19.0] - 2026-10-31
 

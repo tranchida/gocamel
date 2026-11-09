@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/stretchr/testify v1.11.1
-	github.com/tranchida/gocamel v0.19.0
+	github.com/tranchida/gocamel v0.19.1
 )
 
 require (
