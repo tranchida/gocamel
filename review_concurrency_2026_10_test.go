@@ -496,3 +496,115 @@ func TestCircuitBreaker_StaleClosedRequestDoesNotCorruptHalfOpen(t *testing.T) {
 	assert.Equal(t, StateClosed, state)
 	_ = http.StatusOK
 }
+
+func TestLifecycle_ConcurrentStartStopDoesNotLeakOrDeadlock(t *testing.T) {
+	t.Run("http", func(t *testing.T) {
+		ep, err := NewHTTPComponent().CreateEndpoint("http://127.0.0.1:0/concurrent")
+		require.NoError(t, err)
+		consumer, err := ep.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+		require.NoError(t, err)
+
+		for i := 0; i < 10; i++ {
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_ = consumer.Start(context.Background())
+			}()
+			go func() {
+				defer wg.Done()
+				_ = consumer.Stop()
+			}()
+			wg.Wait()
+			require.NoError(t, consumer.Stop())
+		}
+	})
+
+	t.Run("net", func(t *testing.T) {
+		ep, err := NewNetComponent().CreateEndpoint("net:tcp://127.0.0.1:0?sync=false")
+		require.NoError(t, err)
+		consumer, err := ep.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
+		require.NoError(t, err)
+
+		for i := 0; i < 10; i++ {
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_ = consumer.Start(context.Background())
+			}()
+			go func() {
+				defer wg.Done()
+				_ = consumer.Stop()
+			}()
+			wg.Wait()
+			require.NoError(t, consumer.Stop())
+		}
+	})
+
+	t.Run("management", func(t *testing.T) {
+		ctx := NewCamelContext()
+		mgmt := NewManagementServer(ctx)
+		for i := 0; i < 10; i++ {
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_ = mgmt.Start("127.0.0.1:0")
+			}()
+			go func() {
+				defer wg.Done()
+				_ = mgmt.Stop()
+			}()
+			wg.Wait()
+			require.NoError(t, mgmt.Stop())
+		}
+	})
+}
+
+func TestDeepCopyValue_PrimitiveContainers(t *testing.T) {
+	ints := []int{1, 2}
+	floats := []float64{1.5, 2.5}
+	bools := []bool{true, false}
+	bytesGrid := [][]byte{{1, 2}, {3}}
+	intMap := map[string]int{"a": 1}
+	boolMap := map[string]bool{"b": true}
+
+	ex := NewExchange(context.Background())
+	ex.SetHeader("ints", ints)
+	ex.SetHeader("floats", floats)
+	ex.SetHeader("bools", bools)
+	ex.SetHeader("bytesGrid", bytesGrid)
+	ex.SetHeader("intMap", intMap)
+	ex.SetHeader("boolMap", boolMap)
+	ex.SetHeader("emptyInts", []int{})
+
+	cp := ex.DeepCopy()
+
+	ints[0] = 99
+	floats[0] = 9.9
+	bools[0] = false
+	bytesGrid[0][0] = 9
+	bytesGrid[1] = []byte{9}
+	intMap["a"] = 99
+	boolMap["b"] = false
+
+	assert.Equal(t, []int{1, 2}, mustHeader(t, cp, "ints"))
+	assert.Equal(t, []float64{1.5, 2.5}, mustHeader(t, cp, "floats"))
+	assert.Equal(t, []bool{true, false}, mustHeader(t, cp, "bools"))
+	assert.Equal(t, [][]byte{{1, 2}, {3}}, mustHeader(t, cp, "bytesGrid"))
+	assert.Equal(t, map[string]int{"a": 1}, mustHeader(t, cp, "intMap"))
+	assert.Equal(t, map[string]bool{"b": true}, mustHeader(t, cp, "boolMap"))
+
+	empty, ok := mustHeader(t, cp, "emptyInts").([]int)
+	require.True(t, ok)
+	assert.NotNil(t, empty, "a non-nil empty slice must stay non-nil")
+	assert.Empty(t, empty)
+}
+
+func mustHeader(t *testing.T, ex *Exchange, key string) any {
+	t.Helper()
+	v, ok := ex.GetHeader(key)
+	require.True(t, ok, "missing header %q", key)
+	return v
+}

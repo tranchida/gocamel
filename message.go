@@ -174,8 +174,8 @@ func (m *Message) DeepCopy() *Message {
 }
 
 // deepCopyValue duplicates the common mutable container types used in message
-// bodies and headers. Scalars are returned as-is; unknown types are shared by
-// reference.
+// bodies and headers. Scalars are returned as-is; unknown structs, pointers and
+// container types are shared by reference.
 func deepCopyValue(v any) any {
 	switch val := v.(type) {
 	case []byte:
@@ -185,6 +185,20 @@ func deepCopyValue(v any) any {
 		cp := make([]byte, len(val))
 		copy(cp, val)
 		return cp
+	case []int:
+		return cloneSlice(val)
+	case []int32:
+		return cloneSlice(val)
+	case []int64:
+		return cloneSlice(val)
+	case []uint:
+		return cloneSlice(val)
+	case []float32:
+		return cloneSlice(val)
+	case []float64:
+		return cloneSlice(val)
+	case []bool:
+		return cloneSlice(val)
 	case []any:
 		if val == nil {
 			return []any(nil)
@@ -201,6 +215,27 @@ func deepCopyValue(v any) any {
 		cp := make(map[string]any, len(val))
 		for k, item := range val {
 			cp[k] = deepCopyValue(item)
+		}
+		return cp
+	case map[string]int:
+		return maps.Clone(val)
+	case map[string]int64:
+		return maps.Clone(val)
+	case map[string]float64:
+		return maps.Clone(val)
+	case map[string]bool:
+		return maps.Clone(val)
+	case [][]byte:
+		if val == nil {
+			return [][]byte(nil)
+		}
+		cp := make([][]byte, len(val))
+		for i, b := range val {
+			if b != nil {
+				bCopy := make([]byte, len(b))
+				copy(bCopy, b)
+				cp[i] = bCopy
+			}
 		}
 		return cp
 	case []map[string]any:
@@ -235,12 +270,7 @@ func deepCopyValue(v any) any {
 		}
 		return cp
 	case []string:
-		if val == nil {
-			return []string(nil)
-		}
-		cp := make([]string, len(val))
-		copy(cp, val)
-		return cp
+		return cloneSlice(val)
 	case [][]string:
 		if val == nil {
 			return [][]string(nil)
@@ -270,4 +300,15 @@ func deepCopyValue(v any) any {
 	default:
 		return v
 	}
+}
+
+// cloneSlice returns a nil slice for a nil input and an independent copy
+// otherwise (including a non-nil, empty slice).
+func cloneSlice[T any](s []T) []T {
+	if s == nil {
+		return nil
+	}
+	cp := make([]T, len(s))
+	copy(cp, s)
+	return cp
 }

@@ -92,8 +92,9 @@ type SedaEndpoint struct {
 	shutdownTimeout     time.Duration // bound on draining queued exchanges at Stop
 	consumer            *SedaConsumer
 	mu                  sync.Mutex
-	stopCh              chan struct{} // closed when the consumer stops; nil until first Start
-	stopped             bool          // true after Stop until the next Start
+	stopCh              chan struct{}  // closed when the consumer stops; nil until first Start
+	stopped             bool           // true after Stop until the next Start
+	senders             sync.WaitGroup // in-flight Send calls; Add is guarded by mu
 }
 
 // URI returns the endpoint URI.
@@ -158,15 +159,10 @@ func (p *SedaProducer) Send(exchange *Exchange) error {
 	if err != nil {
 		return err
 	}
+	defer p.endpoint.senders.Done()
 	select {
 	case p.endpoint.queue <- queued:
-		select {
-		case <-stopCh:
-			drainExchangeQueue(p.endpoint.queue, fmt.Errorf("seda: consumer stopped before exchange was processed: %s", p.endpoint.uri))
-			return fmt.Errorf("seda: consumer stopped: %s", p.endpoint.uri)
-		default:
-			return nil
-		}
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-stopCh:
@@ -177,12 +173,15 @@ func (p *SedaProducer) Send(exchange *Exchange) error {
 // beginSend returns the current stop channel, or an error if the consumer
 // has already stopped. stopCh may be nil when no consumer has started yet
 // (enqueue is still allowed; a nil channel never fires in select).
+// It also registers the send so Stop can wait for every in-flight Send to
+// finish before it drains the queue.
 func (e *SedaEndpoint) beginSend() (<-chan struct{}, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.stopped {
 		return nil, fmt.Errorf("seda: consumer stopped: %s", e.uri)
 	}
+	e.senders.Add(1)
 	return e.stopCh, nil
 }
 
@@ -234,6 +233,11 @@ func (c *SedaConsumer) Stop() error {
 		}
 	}
 	c.endpoint.mu.Unlock()
+
+	// Every Send that passed beginSend either enqueued or observed stopCh.
+	// Wait for them before the workers/drain touch the queue, so no exchange
+	// can be enqueued after the final drain.
+	c.endpoint.senders.Wait()
 
 	stopQueueWorkers(c.drain, &c.wg, c.cancel, c.endpoint.shutdownTimeout)
 	c.drain = nil

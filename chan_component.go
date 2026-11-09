@@ -85,8 +85,9 @@ type ChanEndpoint struct {
 	// shutdownTimeout bounds draining queued exchanges at Stop.
 	shutdownTimeout time.Duration
 	mu              sync.Mutex
-	stopCh          chan struct{} // closed when the consumer stops; nil until first Start
-	stopped         bool          // true after Stop until the next Start
+	stopCh          chan struct{}  // closed when the consumer stops; nil until first Start
+	stopped         bool           // true after Stop until the next Start
+	senders         sync.WaitGroup // in-flight Send calls; Add is guarded by mu
 }
 
 // URI returns the endpoint URI.
@@ -147,15 +148,10 @@ func (p *ChanProducer) Send(exchange *Exchange) error {
 	if err != nil {
 		return err
 	}
+	defer p.endpoint.senders.Done()
 	select {
 	case p.endpoint.queue <- copy:
-		select {
-		case <-stopCh:
-			drainExchangeQueue(p.endpoint.queue, fmt.Errorf("chan: consumer stopped before exchange was processed: %s", p.endpoint.uri))
-			return fmt.Errorf("chan: consumer stopped: %s", p.endpoint.uri)
-		default:
-			return nil
-		}
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-stopCh:
@@ -169,6 +165,7 @@ func (e *ChanEndpoint) beginSend() (<-chan struct{}, error) {
 	if e.stopped {
 		return nil, fmt.Errorf("chan: consumer stopped: %s", e.uri)
 	}
+	e.senders.Add(1)
 	return e.stopCh, nil
 }
 
@@ -217,6 +214,11 @@ func (c *ChanConsumer) Stop() error {
 		}
 	}
 	c.endpoint.mu.Unlock()
+
+	// Every Send that passed beginSend either enqueued or observed stopCh.
+	// Wait for them before the worker/drain touch the queue, so no exchange
+	// can be enqueued after the final drain.
+	c.endpoint.senders.Wait()
 
 	stopQueueWorkers(c.drain, &c.wg, c.cancel, c.endpoint.shutdownTimeout)
 	c.drain = nil

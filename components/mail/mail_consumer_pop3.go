@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,11 +24,43 @@ type Pop3Consumer struct {
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	client    *pop3.Conn
+	conn      net.Conn // underlying transport, closed on Stop to unblock I/O
 	mu        sync.Mutex
 	started   bool
 	stopping  bool
 	stopped   bool
 	cancel    context.CancelFunc
+}
+
+// pop3CapturingDialer records the first net.Conn it dials so the consumer can
+// force-close the transport during shutdown. The go-pop3 client does not expose
+// its connection, and network operations do not take a context.
+type pop3CapturingDialer struct {
+	timeout time.Duration
+	onDial  func(net.Conn)
+	mu      sync.Mutex
+	conn    net.Conn
+}
+
+func (d *pop3CapturingDialer) Dial(network, address string) (net.Conn, error) {
+	conn, err := (&net.Dialer{Timeout: d.timeout}).Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	d.conn = conn
+	onDial := d.onDial
+	d.mu.Unlock()
+	if onDial != nil {
+		onDial(conn)
+	}
+	return conn, nil
+}
+
+func (d *pop3CapturingDialer) current() net.Conn {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.conn
 }
 
 func (c *Pop3Consumer) getClient() *pop3.Conn {
@@ -182,6 +215,7 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 
 	c.mu.Lock()
 	existing := c.client
+	existingConn := c.conn
 	c.mu.Unlock()
 
 	if existing != nil {
@@ -189,9 +223,13 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 			return nil
 		}
 		_ = existing.Quit()
+		if existingConn != nil {
+			_ = existingConn.Close()
+		}
 		c.mu.Lock()
 		if c.client == existing {
 			c.client = nil
+			c.conn = nil
 		}
 		c.mu.Unlock()
 	}
@@ -203,10 +241,22 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 	ep := c.endpoint
 
 	// Create POP3 client
+	dialer := &pop3CapturingDialer{timeout: ep.connectionTimeout}
+	dialer.onDial = func(conn net.Conn) {
+		c.mu.Lock()
+		if c.stopping || c.stopped {
+			c.mu.Unlock()
+			_ = conn.Close()
+			return
+		}
+		c.conn = conn
+		c.mu.Unlock()
+	}
 	clientOpt := pop3.Opt{
 		Host:        ep.host,
 		Port:        ep.port,
 		DialTimeout: ep.connectionTimeout,
+		Dialer:      dialer,
 	}
 
 	// TLS for POP3S
@@ -222,30 +272,63 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 	// Create client and obtain a connection
 	p3 := pop3.New(clientOpt)
 	conn, err := p3.NewConn()
+	rawConn := dialer.current()
 	if err != nil {
+		if rawConn != nil {
+			_ = rawConn.Close()
+		}
+		c.mu.Lock()
+		if c.conn == rawConn {
+			c.conn = nil
+		}
+		c.mu.Unlock()
 		return fmt.Errorf("POP3 connection error: %w", err)
 	}
+
+	abort := func() {
+		_ = conn.Quit()
+		if rawConn != nil {
+			_ = rawConn.Close()
+		}
+		c.mu.Lock()
+		if c.conn == rawConn {
+			c.conn = nil
+		}
+		c.mu.Unlock()
+	}
+
+	// Publish the transport before authentication so Stop can close it while
+	// Auth is blocked waiting for the server.
+	c.mu.Lock()
+	if c.stopping || c.stopped {
+		c.mu.Unlock()
+		abort()
+		return errors.New("pop3 consumer stopped")
+	}
+	c.conn = rawConn
+	c.mu.Unlock()
 
 	// Authentication
 	if ep.username != "" && ep.password != "" {
 		if err := conn.Auth(ep.username, ep.password); err != nil {
-			_ = conn.Quit()
+			abort()
 			return fmt.Errorf("POP3 authentication error: %w", err)
 		}
 	}
 
 	if err := ctx.Err(); err != nil {
-		_ = conn.Quit()
+		abort()
 		return err
 	}
 
 	c.mu.Lock()
 	if c.stopping || c.stopped {
 		c.mu.Unlock()
-		_ = conn.Quit()
+		abort()
 		return errors.New("pop3 consumer stopped")
 	}
 	c.client = conn
+	c.conn = rawConn
 	c.mu.Unlock()
 	return nil
 }
@@ -254,11 +337,16 @@ func (c *Pop3Consumer) connect(ctx context.Context) error {
 func (c *Pop3Consumer) disconnect() {
 	c.mu.Lock()
 	client := c.client
+	conn := c.conn
 	c.client = nil
+	c.conn = nil
 	c.mu.Unlock()
 
 	if client != nil {
 		_ = client.Quit()
+	}
+	if conn != nil {
+		_ = conn.Close()
 	}
 }
 
@@ -456,6 +544,11 @@ func (c *Pop3Consumer) Stop() error {
 	}
 	c.stopping = true
 	cancel := c.cancel
+	c.cancel = nil
+	client := c.client
+	conn := c.conn
+	c.client = nil
+	c.conn = nil
 	c.mu.Unlock()
 
 	if cancel != nil {
@@ -466,8 +559,18 @@ func (c *Pop3Consumer) Stop() error {
 			close(c.stopChan)
 		}
 	})
+
+	// Close the transport before waiting so connect/auth/fetch calls that do
+	// not accept a context are unblocked instead of hanging Stop.
+	if conn != nil {
+		_ = conn.Close()
+	}
+
 	c.wg.Wait()
-	c.disconnect()
+
+	if client != nil {
+		_ = client.Quit()
+	}
 
 	c.mu.Lock()
 	c.started = false

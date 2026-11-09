@@ -242,20 +242,55 @@ func messageText(body any) string {
 
 // TelegramConsumer represents a Telegram consumer
 type TelegramConsumer struct {
-	endpoint    *TelegramEndpoint
-	processor   gocamel.Processor
-	mu          sync.Mutex
+	endpoint  *TelegramEndpoint
+	processor gocamel.Processor
+	mu        sync.Mutex
+	// transition is non-nil while a Start or Stop is in progress. It serializes
+	// the two operations so a Stop racing a Start cannot observe started=false
+	// and return before the bot polling loop is up. Guarded by mu.
+	transition  chan struct{}
 	started     bool
-	stopping    bool
 	stopUpdates sync.Once
 	cancel      context.CancelFunc
 	bot         *tgbotapi.BotAPI
 	wg          sync.WaitGroup
 }
 
-func (c *TelegramConsumer) Start(ctx context.Context) error {
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *TelegramConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (c *TelegramConsumer) releaseTransition() {
 	c.mu.Lock()
-	if c.started || c.stopping {
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
+}
+
+func (c *TelegramConsumer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.acquireTransition()
+	defer c.releaseTransition()
+
+	c.mu.Lock()
+	if c.started {
 		c.mu.Unlock()
 		return nil
 	}
@@ -266,14 +301,9 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 		return err
 	}
 
-	c.mu.Lock()
-	if c.started || c.stopping {
-		c.mu.Unlock()
-		return nil
-	}
-
-	c.stopUpdates = sync.Once{}
 	ctx, cancel := context.WithCancel(ctx)
+	c.mu.Lock()
+	c.stopUpdates = sync.Once{}
 	c.cancel = cancel
 	c.bot = bot
 	c.started = true
@@ -333,12 +363,14 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 }
 
 func (c *TelegramConsumer) Stop() error {
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	if !c.started || c.stopping {
+	if !c.started {
 		c.mu.Unlock()
 		return nil
 	}
-	c.stopping = true
 	cancel := c.cancel
 	bot := c.bot
 	c.mu.Unlock()
@@ -358,7 +390,6 @@ func (c *TelegramConsumer) Stop() error {
 
 	c.mu.Lock()
 	c.started = false
-	c.stopping = false
 	c.cancel = nil
 	c.bot = nil
 	c.mu.Unlock()

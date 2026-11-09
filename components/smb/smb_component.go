@@ -79,6 +79,15 @@ type smbConn struct {
 	share   *smb2.Share
 }
 
+// abort force-closes the transport. It is used by Stop to unblock a poll that
+// is stuck in a network operation; Umount/Logoff are skipped because they
+// would try to use the same broken transport.
+func (sc *smbConn) abort() {
+	if sc.tcp != nil {
+		_ = sc.tcp.Close()
+	}
+}
+
 func (sc *smbConn) close() {
 	if sc.share != nil {
 		sc.share.Umount()
@@ -93,6 +102,13 @@ func (sc *smbConn) close() {
 
 // connect establishes an SMB connection
 func (e *SMBEndpoint) connect() (*smbConn, error) {
+	return e.connectWithDial(nil)
+}
+
+// connectWithDial is connect but calls onDial as soon as the TCP transport is
+// established, before the SMB handshake, so a consumer can force-close it
+// during shutdown.
+func (e *SMBEndpoint) connectWithDial(onDial func(net.Conn)) (*smbConn, error) {
 	host := e.url.Host
 	if !strings.Contains(host, ":") {
 		host += ":445"
@@ -104,6 +120,9 @@ func (e *SMBEndpoint) connect() (*smbConn, error) {
 	}
 	if e.connectTimeout > 0 {
 		_ = tcp.SetDeadline(time.Now().Add(e.connectTimeout))
+	}
+	if onDial != nil {
+		onDial(tcp)
 	}
 
 	d := &smb2.Dialer{
@@ -365,6 +384,11 @@ type SMBConsumer struct {
 	stopping  bool
 	cancel    context.CancelFunc
 	sc        *smbConn // persistent connection (disconnect=false)
+	// active references the connection used by the current poll, including
+	// disconnect=true mode, so Stop can abort it to unblock a stalled network
+	// operation. Guarded by mu.
+	active    *smbConn
+	activeRaw net.Conn
 	wg        sync.WaitGroup
 }
 
@@ -406,11 +430,37 @@ func (c *SMBConsumer) poll(ctx context.Context) {
 }
 
 func (c *SMBConsumer) getConn() (*smbConn, error) {
+	onDial := func(raw net.Conn) {
+		c.mu.Lock()
+		if c.stopping || !c.started {
+			c.mu.Unlock()
+			_ = raw.Close()
+			return
+		}
+		c.activeRaw = raw
+		c.mu.Unlock()
+	}
+
 	if c.endpoint.disconnect {
-		return c.endpoint.connect()
+		sc, err := c.endpoint.connectWithDial(onDial)
+		if err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+		if c.stopping || !c.started {
+			c.mu.Unlock()
+			sc.close()
+			return nil, fmt.Errorf("smb consumer is stopped")
+		}
+		c.active = sc
+		c.mu.Unlock()
+		return sc, nil
 	}
 	c.mu.Lock()
 	sc := c.sc
+	if sc != nil {
+		c.active = sc
+	}
 	c.mu.Unlock()
 	if sc != nil {
 		if _, err := sc.share.Stat("."); err == nil {
@@ -421,9 +471,13 @@ func (c *SMBConsumer) getConn() (*smbConn, error) {
 		if c.sc == sc {
 			c.sc = nil
 		}
+		if c.active == sc {
+			c.active = nil
+			c.activeRaw = nil
+		}
 		c.mu.Unlock()
 	}
-	newSC, err := c.endpoint.connect()
+	newSC, err := c.endpoint.connectWithDial(onDial)
 	if err != nil {
 		return nil, err
 	}
@@ -434,14 +488,22 @@ func (c *SMBConsumer) getConn() (*smbConn, error) {
 		return nil, fmt.Errorf("smb consumer is stopped")
 	}
 	c.sc = newSC
+	c.active = newSC
 	c.mu.Unlock()
 	return newSC, nil
 }
 
 func (c *SMBConsumer) releaseConn(sc *smbConn) {
-	if c.endpoint.disconnect {
-		sc.close()
+	if !c.endpoint.disconnect {
+		return
 	}
+	sc.close()
+	c.mu.Lock()
+	if c.active == sc {
+		c.active = nil
+		c.activeRaw = nil
+	}
+	c.mu.Unlock()
 }
 
 type smbFile struct {
@@ -677,23 +739,36 @@ func (c *SMBConsumer) Stop() error {
 	c.stopping = true
 	cancel := c.cancel
 	c.cancel = nil
+	sc := c.sc
+	active := c.active
+	activeRaw := c.activeRaw
+	c.sc = nil
+	c.active = nil
+	c.activeRaw = nil
 	c.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
+
+	// Abort the transport before waiting so a poll blocked in a network read
+	// is unblocked instead of keeping Stop (and the route shutdown) stuck.
+	if activeRaw != nil {
+		_ = activeRaw.Close()
+	}
+	if active != nil {
+		active.abort()
+	}
+	if sc != nil {
+		sc.abort()
+	}
+
 	c.wg.Wait()
 
 	c.mu.Lock()
-	sc := c.sc
-	c.sc = nil
 	c.started = false
 	c.stopping = false
 	c.mu.Unlock()
-
-	if sc != nil {
-		sc.close()
-	}
 	return nil
 }
 

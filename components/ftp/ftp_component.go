@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -80,19 +81,50 @@ func (e *FTPEndpoint) URI() string {
 
 // connect establishes an FTP connection
 func (e *FTPEndpoint) connect() (*ftp.ServerConn, error) {
+	conn, _, err := e.connectWithRaw(nil)
+	return conn, err
+}
+
+// connectWithRaw is connect but also returns the underlying control
+// connection so a consumer can force-close it during shutdown to unblock a
+// stalled network operation. The first net.Conn dialed by ftp.Dial is the
+// control connection; data connections use the same dialer afterwards.
+// onDial, when non-nil, is called as soon as the control connection is
+// dialed, before the FTP greeting/login completes.
+func (e *FTPEndpoint) connectWithRaw(onDial func(net.Conn)) (*ftp.ServerConn, net.Conn, error) {
 	host := e.url.Host
 	if !strings.Contains(host, ":") {
 		host += ":21"
 	}
 
-	opts := []ftp.DialOption{ftp.DialWithTimeout(e.connectTimeout)}
+	var rawConn net.Conn
+	dialer := &net.Dialer{Timeout: e.connectTimeout}
+	opts := []ftp.DialOption{
+		ftp.DialWithTimeout(e.connectTimeout),
+		ftp.DialWithDialFunc(func(network, address string) (net.Conn, error) {
+			c, err := dialer.Dial(network, address)
+			if err != nil {
+				return nil, err
+			}
+			if rawConn == nil {
+				rawConn = c
+				if onDial != nil {
+					onDial(c)
+				}
+			}
+			return c, nil
+		}),
+	}
 	if !e.passiveMode {
 		opts = append(opts, ftp.DialWithDisabledEPSV(true))
 	}
 
 	conn, err := ftp.Dial(host, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("FTP connection error: %w", err)
+		if rawConn != nil {
+			_ = rawConn.Close()
+		}
+		return nil, nil, fmt.Errorf("FTP connection error: %w", err)
 	}
 
 	user := gocamel.GetConfigValue(e.url, "username")
@@ -100,10 +132,13 @@ func (e *FTPEndpoint) connect() (*ftp.ServerConn, error) {
 		user = "anonymous"
 	}
 	if err := conn.Login(user, gocamel.GetConfigValue(e.url, "password")); err != nil {
-		conn.Quit()
-		return nil, fmt.Errorf("FTP authentication error: %w", err)
+		_ = conn.Quit()
+		if rawConn != nil {
+			_ = rawConn.Close()
+		}
+		return nil, nil, fmt.Errorf("FTP authentication error: %w", err)
 	}
-	return conn, nil
+	return conn, rawConn, nil
 }
 
 // CreateProducer creates an FTP producer
@@ -319,7 +354,13 @@ type FTPConsumer struct {
 	stopping  bool
 	cancel    context.CancelFunc
 	conn      *ftp.ServerConn // persistent connection (disconnect=false)
-	wg        sync.WaitGroup
+	rawConn   net.Conn        // underlying control connection for conn
+	// activeConn/activeRaw reference the connection used by the current poll,
+	// including disconnect=true mode, so Stop can force-close it to unblock a
+	// stalled network operation. Guarded by mu.
+	activeConn *ftp.ServerConn
+	activeRaw  net.Conn
+	wg         sync.WaitGroup
 }
 
 func (c *FTPConsumer) Start(ctx context.Context) error {
@@ -359,42 +400,95 @@ func (c *FTPConsumer) poll(ctx context.Context) {
 }
 
 func (c *FTPConsumer) getConn() (*ftp.ServerConn, error) {
+	onDial := func(raw net.Conn) {
+		c.mu.Lock()
+		if c.stopping || !c.started {
+			c.mu.Unlock()
+			_ = raw.Close()
+			return
+		}
+		c.activeRaw = raw
+		c.mu.Unlock()
+	}
+
 	if c.endpoint.disconnect {
-		return c.endpoint.connect()
+		conn, raw, err := c.endpoint.connectWithRaw(onDial)
+		if err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+		if c.stopping || !c.started {
+			c.mu.Unlock()
+			_ = conn.Quit()
+			if raw != nil {
+				_ = raw.Close()
+			}
+			return nil, fmt.Errorf("ftp consumer is stopped")
+		}
+		c.activeConn = conn
+		c.activeRaw = raw
+		c.mu.Unlock()
+		return conn, nil
 	}
 	c.mu.Lock()
 	conn := c.conn
+	raw := c.rawConn
+	if conn != nil {
+		c.activeConn = conn
+		c.activeRaw = raw
+	}
 	c.mu.Unlock()
 	if conn != nil {
 		if err := conn.NoOp(); err == nil {
 			return conn, nil
 		}
-		conn.Quit()
+		_ = conn.Quit()
+		if raw != nil {
+			_ = raw.Close()
+		}
 		c.mu.Lock()
 		if c.conn == conn {
 			c.conn = nil
+			c.rawConn = nil
+		}
+		if c.activeConn == conn {
+			c.activeConn = nil
+			c.activeRaw = nil
 		}
 		c.mu.Unlock()
 	}
-	newConn, err := c.endpoint.connect()
+	newConn, newRaw, err := c.endpoint.connectWithRaw(onDial)
 	if err != nil {
 		return nil, err
 	}
 	c.mu.Lock()
 	if c.stopping || !c.started {
 		c.mu.Unlock()
-		newConn.Quit()
+		_ = newConn.Quit()
+		if newRaw != nil {
+			_ = newRaw.Close()
+		}
 		return nil, fmt.Errorf("ftp consumer is stopped")
 	}
 	c.conn = newConn
+	c.rawConn = newRaw
+	c.activeConn = newConn
+	c.activeRaw = newRaw
 	c.mu.Unlock()
 	return newConn, nil
 }
 
 func (c *FTPConsumer) releaseConn(conn *ftp.ServerConn) {
-	if c.endpoint.disconnect {
-		conn.Quit()
+	if !c.endpoint.disconnect {
+		return
 	}
+	_ = conn.Quit()
+	c.mu.Lock()
+	if c.activeConn == conn {
+		c.activeConn = nil
+		c.activeRaw = nil
+	}
+	c.mu.Unlock()
 }
 
 type ftpSynchronization struct {
@@ -628,23 +722,43 @@ func (c *FTPConsumer) Stop() error {
 	c.stopping = true
 	cancel := c.cancel
 	c.cancel = nil
+	conn := c.conn
+	raw := c.rawConn
+	activeConn := c.activeConn
+	activeRaw := c.activeRaw
+	c.conn = nil
+	c.rawConn = nil
+	c.activeConn = nil
+	c.activeRaw = nil
 	c.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
+
+	// Close the control connection(s) before waiting so a poll blocked in a
+	// network read is unblocked instead of keeping Stop (and the route
+	// shutdown) stuck.
+	if raw != nil {
+		_ = raw.Close()
+	}
+	if activeRaw != nil && activeRaw != raw {
+		_ = activeRaw.Close()
+	}
+
 	c.wg.Wait()
 
+	if conn != nil {
+		_ = conn.Quit()
+	}
+	if activeConn != nil && activeConn != conn {
+		_ = activeConn.Quit()
+	}
+
 	c.mu.Lock()
-	conn := c.conn
-	c.conn = nil
 	c.started = false
 	c.stopping = false
 	c.mu.Unlock()
-
-	if conn != nil {
-		conn.Quit()
-	}
 	return nil
 }
 
