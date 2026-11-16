@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [v0.20.0] - 2026-11-16
+
+Code review release: several HTTP routes can share one port, and nine findings are fixed in the core routing engine and the `file` component. A few visible behaviours change (see Changed). Every component and observability module at v0.20.0 requires core v0.20.0.
+
 ### Changed
 
 - **`http` consumer**: consumers of one `HTTPComponent` whose URIs share a `host:port` now share a single listener and are told apart by their path, so several routes can be exposed on the same port (`From("http://0.0.0.0:8080/orders")` and `From("http://0.0.0.0:8080/health")`). The port is released when the last of them stops, and a path already served on the port is rejected at `Start`. The consumer middleware now wraps each consumer's handler: it no longer runs for a path no consumer serves (which answers 404).
