@@ -109,12 +109,21 @@ builder.To("file://output")
 | `include`               | string   | `""`       | Motif d'inclusion de fichiers                                                         |
 | `exclude`               | string   | `""`       | Motif d'exclusion de fichiers                                                         |
 | `preMove`               | string   | `""`       | Déplacer le fichier avant traitement                                                  |
-| `move`                  | string   | `""`       | Déplacer le fichier après traitement                                                  |
-| `moveFailed`            | string   | `""`       | Déplacer le fichier en cas d'échec                                                    |
+| `move`                  | string   | `""`       | Répertoire où déplacer le fichier après traitement                                    |
+| `moveFailed`            | string   | `""`       | Répertoire où déplacer le fichier en cas d'échec                                      |
 | `readLock`              | string   | `changed`  | Stratégie de verrouillage (`none`, `changed`, `rename`, `markerFile`)                 |
 | `readLockTimeout`       | Duration | `10s`      | Délai maximal d'attente pour acquérir le verrou                                       |
 | `readLockCheckInterval` | Duration | `100ms`    | Intervalle entre les vérifications du verrou                                          |
 | `readLockMinLength`     | int64    | `0`        | Taille minimale du fichier en octets                                                  |
+
+Un répertoire `move` / `moveFailed` relatif est résolu à côté du fichier
+consommé : avec `From("file:///data/in?move=.done")`, `/data/in/a.txt` aboutit
+dans `/data/in/.done/a.txt`. Un répertoire absolu est utilisé tel quel. Les
+fichiers présents dans ces répertoires ne sont jamais reconsommés, y compris
+avec `recursive=true`.
+
+Les fichiers déjà présents au démarrage de la route sont consommés en
+arrière-plan : `Start()` n'attend pas la fin de l'arriéré.
 | `readLockMinAge`        | Duration | `0`        | Âge minimal du fichier                                                                |
 | `maxSeenEntries`        | int      | `100000`   | Fichiers mémorisés pour ignorer les événements en double ; les plus anciens sont évincés en premier (`0` = illimité) |
 | `fileExist`             | string   | `Override` | Comportement si le fichier destination existe (`Override`, `Append`, `Fail`, `Ignore`) |
@@ -268,6 +277,16 @@ Le scheme `https` est **producer uniquement**. `From("https://...")` échoue à
 la création du consumer : le listener est du HTTP en clair. Terminez le TLS
 devant un consumer `http://` (reverse proxy, `HTTPComponent.SetMiddleware`, etc.).
 
+Plusieurs routes peuvent écouter sur le même `host:port` avec des chemins
+différents : les consumers d'un même `HTTPComponent` partagent le listener, qui
+est fermé à l'arrêt du dernier. Servir deux fois le même chemin sur un port
+échoue au démarrage.
+
+```go
+builder.From("http://0.0.0.0:8080/orders")
+builder.From("http://0.0.0.0:8080/health")
+```
+
 #### Headers posés par le consumer
 
 | Header            | Source                              |
@@ -305,7 +324,8 @@ ctx.AddComponent("http", http)
 ```
 
 Le middleware enveloppe chaque handler installé par un consumer `http://` dans ce
-contexte.
+contexte. Il s'exécute pour les requêtes routées vers un consumer ; un chemin
+qu'aucun consumer ne sert répond 404 sans passer par lui.
 
 #### Sanitisation des headers sortants
 
@@ -328,7 +348,10 @@ elle-même. Deux filtres l'en empêchent :
 - **Les headers entrants inchangés ne sont pas renvoyés.** Un header qui
   revient identique à celui reçu est écarté : `Cookie` et `Authorization` ne
   sont donc jamais réfléchis vers le client. Un header posé ou modifié par la
-  route est toujours émis.
+  route est toujours émis. `Content-Type` fait exception : il décrit le corps
+  de la réponse et est toujours émis, si bien qu'une route qui répond du JSON à
+  une requête JSON garde son `application/json` (et une route qui ne le pose
+  pas renvoie celui de la requête).
 - **Les headers hop-by-hop et de cadrage ne sont jamais émis** (`Connection`,
   `Keep-Alive`, `Transfer-Encoding`, `Content-Length`, `Host`, ...). Renvoyer
   le `Content-Length` de la requête corrompait le cadrage de la réponse.

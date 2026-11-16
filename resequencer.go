@@ -1,7 +1,7 @@
 package gocamel
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -25,9 +25,12 @@ type Resequencer struct {
 	processor  Processor
 	timer      *time.Timer
 	timerGen   uint64 // incremented each time a new timer is created; guards against stale callbacks
-	delivering bool   // one goroutine at a time delivers, without holding mu
-	stopped    bool   // set by Stop: no timer is armed until the next Process
-	stopping   bool   // set while Stop is waiting for in-flight delivery
+	// lifecycleCtx is the context of the running route (set by Route.Start,
+	// guarded by mu). Buffered exchanges are delivered under it.
+	lifecycleCtx context.Context
+	delivering   bool // one goroutine at a time delivers, without holding mu
+	stopped      bool // set by Stop: no timer is armed until the next Process
+	stopping     bool // set while Stop is waiting for in-flight delivery
 	// timeoutWG tracks active downstream delivery (synchronous or timeout), so
 	// Stop can wait for it before the route stops its producers.
 	timeoutWG sync.WaitGroup
@@ -113,9 +116,15 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 		return fmt.Errorf("resequencer: buffer full (%d); dropping seq %d", r.capacity, seq)
 	}
 
+	// A buffered exchange is delivered later, by another message or by the
+	// timeout timer, when the context of the request that brought it (an HTTP
+	// request, say) is typically done. Like the Aggregator and SEDA, delivery
+	// runs under the route's lifecycle instead.
+	buffered := exchange.DeepCopy()
+	buffered.Context = r.deliveryContext(exchange.Context)
 	r.buffer = append(r.buffer, &resequencerEntry{
 		seq:      seq,
-		exchange: exchange.DeepCopy(),
+		exchange: buffered,
 	})
 	sort.Slice(r.buffer, func(i, j int) bool {
 		return r.buffer[i].seq < r.buffer[j].seq
@@ -135,7 +144,28 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 	if len(ready) == 0 {
 		return ErrStopRouting
 	}
-	return r.deliver(ready)
+	return r.deliver(ready, &seq)
+}
+
+// start records the context of the route that runs this resequencer. Called
+// by Route.Start.
+func (r *Resequencer) start(ctx context.Context) {
+	r.mu.Lock()
+	r.lifecycleCtx = ctx
+	r.mu.Unlock()
+}
+
+// deliveryContext returns the context a buffered exchange is delivered with:
+// the route's lifecycle context, or, for a Resequencer used outside a route,
+// the exchange's own context detached from its cancellation. Caller holds mu.
+func (r *Resequencer) deliveryContext(exchangeCtx context.Context) context.Context {
+	if r.lifecycleCtx != nil {
+		return r.lifecycleCtx
+	}
+	if exchangeCtx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(exchangeCtx)
 }
 
 func (r *Resequencer) takeReady() []*resequencerEntry {
@@ -151,7 +181,14 @@ func (r *Resequencer) takeReady() []*resequencerEntry {
 	return ready
 }
 
-func (r *Resequencer) deliver(ready []*resequencerEntry) error {
+// deliver runs the ready exchanges downstream, in order, until none is left.
+//
+// own is the sequence number of the exchange whose Process call is doing the
+// delivery (nil for a timeout). Only that exchange's failure is returned: the
+// other exchanges of the batch belong to earlier callers that already returned,
+// so reporting their failure here would fail (and redeliver) the wrong message.
+// They are logged instead.
+func (r *Resequencer) deliver(ready []*resequencerEntry, own *int64) error {
 	done := false
 	defer func() {
 		if !done {
@@ -167,8 +204,11 @@ func (r *Resequencer) deliver(ready []*resequencerEntry) error {
 			}
 			err := safeProcess(func() error { return r.processor.Process(entry.exchange) })
 			if err := CompleteExchange(entry.exchange, err); err != nil {
-				if firstErr == nil {
+				if own != nil && entry.seq == *own {
 					firstErr = err
+				} else {
+					LogError("resequencer: downstream processing of a buffered exchange failed",
+						"seq", entry.seq, "exchange_id", entry.exchange.ID, "error", err)
 				}
 			}
 		}
@@ -232,9 +272,7 @@ func (r *Resequencer) onTimeout(gen uint64) {
 	if len(ready) == 0 {
 		return
 	}
-	if err := r.deliver(ready); err != nil && !errors.Is(err, ErrStopRouting) {
-		LogError("resequencer: downstream processing failed during timeout drain", "error", err)
-	}
+	_ = r.deliver(ready, nil) // failures are logged per exchange
 }
 
 // Stop cancels the pending completion timer so no callback fires after the

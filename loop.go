@@ -128,7 +128,13 @@ func (l *LoopProcessor) Process(exchange *Exchange) error {
 			propagateOutToInAndReset(exchange)
 			if err := p.Process(exchange); err != nil {
 				if errors.Is(err, ErrStopRouting) {
-					// Stop EIP stops the loop without propagating a failure
+					// The Stop EIP ends routing of the exchange everywhere:
+					// propagate it so the processors after the loop do not
+					// run. Any other stop signal (Filter, Sample...) only
+					// ends the loop.
+					if isRouteStopRequested(exchange) {
+						return err
+					}
 					return nil
 				}
 				return err

@@ -542,31 +542,33 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 		})
 	}
 
-	// Snapshot files already in the directory so a consumer started against a
-	// non-empty inbox does not wait for a later Create event.
-	filepath.Walk(c.path, func(path string, info os.FileInfo, err error) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		select {
-		case <-stopChan:
-			return filepath.SkipAll
-		default:
-		}
-		if err != nil || info == nil || info.IsDir() {
-			return nil
-		}
-		if !opts.Recursive && filepath.Dir(path) != c.path {
-			return nil
-		}
-		c.ingest(ctx, path, opts, false)
-		return nil
-	})
-
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		defer func() { _ = watcher.Close() }()
+		// Snapshot files already in the directory so a consumer started against
+		// a non-empty inbox does not wait for a later Create event. It runs
+		// here rather than in Start: routing a whole backlog from Start would
+		// block the route (and the CamelContext) from starting until done.
+		// Events raised meanwhile are queued by the watcher, registered above.
+		_ = filepath.Walk(c.path, func(path string, info os.FileInfo, err error) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			select {
+			case <-stopChan:
+				return filepath.SkipAll
+			default:
+			}
+			if err != nil || info == nil || info.IsDir() {
+				return nil
+			}
+			if !opts.Recursive && filepath.Dir(path) != c.path {
+				return nil
+			}
+			c.ingest(ctx, path, opts, false)
+			return nil
+		})
 		for {
 			select {
 			case event, ok := <-watcher.Events:
@@ -626,6 +628,12 @@ func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.Pol
 		return
 	}
 	if !gocamel.MatchFileName(filename, opts.Include, opts.Exclude) {
+		return
+	}
+	// A file sitting in a move/moveFailed directory was put there by this
+	// consumer: with recursive=true that directory is watched too, and
+	// ingesting it again would process every file twice (or forever).
+	if inPostProcessDir(path, opts.Move) || inPostProcessDir(path, opts.MoveFailed) {
 		return
 	}
 	if c.alreadySeen(path, info.Size(), info.ModTime()) {
@@ -826,8 +834,37 @@ func (c *FileConsumer) Stop() error {
 	return err
 }
 
+// resolveMoveDir returns the directory a file is moved to. A relative move or
+// moveFailed option is resolved against the directory of the file itself
+// (Apache Camel semantics: move=.done sends /data/in/a.txt to
+// /data/in/.done/a.txt), not against the working directory of the process.
+func resolveMoveDir(src, destDir string) string {
+	if filepath.IsAbs(destDir) {
+		return filepath.Clean(destDir)
+	}
+	return filepath.Join(filepath.Dir(src), destDir)
+}
+
+// inPostProcessDir reports whether path lies directly in the directory that
+// the move (or moveFailed) option moveDir designates for a file of its parent.
+func inPostProcessDir(path, moveDir string) bool {
+	if moveDir == "" {
+		return false
+	}
+	dir := filepath.Dir(path)
+	if filepath.IsAbs(moveDir) {
+		return dir == filepath.Clean(moveDir)
+	}
+	rel := filepath.Clean(moveDir)
+	if rel == "." {
+		return false
+	}
+	return dir == rel || strings.HasSuffix(dir, string(filepath.Separator)+rel)
+}
+
 // moveFilelocal moves src to destDir, creating the directory if needed.
 func moveFilelocal(src, destDir string) {
+	destDir = resolveMoveDir(src, destDir)
 	// 0755 is the deliberate default for move directories (see Send).
 	// #nosec G301
 	if err := os.MkdirAll(destDir, 0755); err != nil {

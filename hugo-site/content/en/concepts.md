@@ -144,6 +144,12 @@ context.Stop()
 // Start after Stop is supported: Stop installs a fresh root context.
 ```
 
+`Start()` starts the routes consuming from `direct:` first, then the others,
+each group in declaration order. A consumer that routes an exchange as soon as
+it starts (a `file:` consumer finding a backlog, a `timer:` with `delay=0`)
+therefore finds the `direct:` routes it calls already running, whatever the
+order the routes were declared in.
+
 ### Graceful Shutdown
 
 `Stop()` has no deadline: if a consumer's `Stop()` blocks (for example an HTTP

@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **`http` consumer**: consumers of one `HTTPComponent` whose URIs share a `host:port` now share a single listener and are told apart by their path, so several routes can be exposed on the same port (`From("http://0.0.0.0:8080/orders")` and `From("http://0.0.0.0:8080/health")`). The port is released when the last of them stops, and a path already served on the port is rejected at `Start`. The consumer middleware now wraps each consumer's handler: it no longer runs for a path no consumer serves (which answers 404).
+- **`CamelContext.Start`**: routes consuming from `direct:` are started first, then the others, each group in declaration order, so a consumer that routes an exchange as soon as it starts finds the `direct:` routes it calls already running.
+- **`file` consumer**: a relative `move` / `moveFailed` directory is resolved next to the consumed file (`move=.done` sends `/data/in/a.txt` to `/data/in/.done/a.txt`) instead of against the working directory of the process. Files lying in those directories are never consumed again, including with `recursive=true`.
+- **`file` consumer**: the files already present in the directory are consumed by the consumer goroutine instead of from `Start()`, so a backlog no longer blocks the route and the context from starting.
+- **`ParseURI`**: the error no longer quotes the raw URI nor the offending fragment; it reports the redacted URI and the kind of failure (`invalid URI "ftp://user:xxxxx@host/dir": invalid percent-encoding`).
+
+### Fixed
+
+- **`http` consumer**: a `Content-Type` the route sets to the value the request carried was dropped as an echoed inbound header, so a JSON API answering a JSON request replied `text/plain`. `Content-Type` is now exempt from the echo filter; a route that does not set it returns the request's.
+- **`Loop`**: the Stop EIP inside a loop was swallowed and the processors after the loop still ran. `Stop()` now ends routing of the exchange; any other stop signal (`Filter`, `Sample`...) still only ends the loop.
+- **`Resequencer`**: buffered exchanges kept the context of the request that brought them and were delivered downstream with a cancelled context once that request was over. They are now delivered under the route's lifecycle context.
+- **`Resequencer`**: the downstream failure of a buffered exchange was returned to whichever exchange triggered the delivery, failing (and redelivering) the wrong message. Only an exchange's own failure is returned to it; the others are logged.
+- **Idempotent Consumer**: the key of a failed exchange was rolled back with the exchange context, often already cancelled, so a context-aware repository (Redis) kept the key and the redelivered message was dropped as a duplicate. The rollback now ignores the cancellation and is bounded to 30s.
+- **Security**: `RedactURI` returned a URI it could not parse unchanged, credentials included (a password holding a stray `%`). Such URIs are now masked textually.
+
 ## [v0.19.1] - 2026-11-09
 
 Patch release fixing consumer lifecycle races, unbounded network shutdown, and queue-drain ownership. Every component and observability module at v0.19.1 requires core v0.19.1.

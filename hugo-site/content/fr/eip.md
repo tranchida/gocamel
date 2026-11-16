@@ -648,6 +648,12 @@ builder.From("direct:start").
   rerouter vers le même resequenceur.
 - Les numéros de séquence dupliqués ou obsolètes sont ignorés (avec un avertissement dans
   les logs).
+- Un exchange mis en tampon est délivré plus tard, par un autre message ou par le timeout : il
+  s'exécute en aval sous le contexte de cycle de vie de la route, pas sous celui de la requête
+  qui l'a apporté (généralement terminée à ce moment-là).
+- Un message n'échoue que pour sa propre erreur en aval. L'échec d'un autre exchange du tampon
+  délivré dans le même lot est journalisé ; il n'est pas remonté au message qui a déclenché la
+  livraison et ne passe pas par l'error handler de la route.
 
 ---
 
@@ -1032,6 +1038,10 @@ builder.From("direct:start").
 | `CamelLoopIndex` | int | Index de l'itération actuelle (commence à 0) |
 | `CamelLoopSize` | int | Nombre total d'itérations de la boucle |
 | `CamelLoopComplete` | bool | Booléen indiquant s'il s'agit de la dernière itération |
+
+**Note :** `Stop()` dans une boucle termine le routage de l'exchange : les étapes placées après
+`End()` ne s'exécutent pas. Tout autre signal d'arrêt levé dans le corps de la boucle (`Filter`,
+`Sample`...) ne termine que la boucle, et le routage reprend après `End()`.
 
 ---
 

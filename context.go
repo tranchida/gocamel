@@ -169,7 +169,7 @@ func (c *CamelContext) Start() (err error) {
 		c.startLock.Unlock()
 	}()
 	c.producerCache.Resume()
-	routes := c.GetRoutes()
+	routes := startOrder(c.GetRoutes())
 	for i, route := range routes {
 		if err := route.Start(ctx); err != nil {
 			errs := []error{fmt.Errorf("error starting route %s: %w", route.ID, err)}
@@ -190,6 +190,27 @@ func (c *CamelContext) Start() (err error) {
 		})
 	}
 	return nil
+}
+
+// startOrder returns the routes in the order Start starts them: the routes
+// consuming from direct: first, then the others, each group in declaration
+// order. A direct: consumer is passive (starting it emits nothing), whereas a
+// file, timer or broker consumer may route its first exchange from within its
+// own Start: it must find the direct: routes it calls already started,
+// whatever the order the routes were declared in.
+func startOrder(routes []*Route) []*Route {
+	ordered := make([]*Route, 0, len(routes))
+	for _, route := range routes {
+		if _, ok := route.from.(*DirectEndpoint); ok {
+			ordered = append(ordered, route)
+		}
+	}
+	for _, route := range routes {
+		if _, ok := route.from.(*DirectEndpoint); !ok {
+			ordered = append(ordered, route)
+		}
+	}
+	return ordered
 }
 
 // beginStop reserves the shutdown transition without holding a lock while

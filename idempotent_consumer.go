@@ -3,6 +3,7 @@ package gocamel
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // IdempotentConsumer implements the Idempotent Consumer EIP.
@@ -25,6 +26,10 @@ func NewIdempotentConsumer(expression func(*Exchange) (string, error), repo Idem
 	}
 }
 
+// idempotentRollbackTimeout bounds the repository call that removes the key of
+// a failed exchange.
+const idempotentRollbackTimeout = 30 * time.Second
+
 // idempotentSynchronization removes the eagerly-added key when the exchange
 // ultimately fails, restoring at-least-once semantics.
 type idempotentSynchronization struct {
@@ -39,6 +44,13 @@ func (s *idempotentSynchronization) OnFailure(exchange *Exchange) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// The exchange often failed because its context was cancelled (client
+	// gone, shutdown). Rolling the key back with that context would fail on a
+	// context-aware repository (Redis, SQL) and leave the key behind, so the
+	// redelivered message would be dropped as a duplicate. Keep the context
+	// values, drop its cancellation, and bound the call instead.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), idempotentRollbackTimeout)
+	defer cancel()
 	if err := s.repo.Remove(ctx, s.key); err != nil {
 		LogError("idempotent consumer: failed to remove key after exchange failure; "+
 			"future redeliveries of this message will be treated as duplicates",

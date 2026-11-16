@@ -149,6 +149,12 @@ context.Stop()
 // Start après Stop est supporté : Stop installe un nouveau contexte racine.
 ```
 
+`Start()` démarre d'abord les routes qui consomment depuis `direct:`, puis les
+autres, chaque groupe dans l'ordre de déclaration. Un consumer qui route un
+exchange dès son démarrage (un consumer `file:` qui trouve un arriéré, un
+`timer:` avec `delay=0`) trouve donc les routes `direct:` qu'il appelle déjà
+démarrées, quel que soit l'ordre de déclaration des routes.
+
 ### Arrêt propre (Graceful Shutdown)
 
 `Stop()` n'a pas de délai limite : si le `Stop()` d'un consumer bloque (par

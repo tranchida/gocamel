@@ -108,12 +108,20 @@ builder.To("file://output")
 | `include`               | string   | `""`       | Include file pattern                                                          |
 | `exclude`               | string   | `""`       | Exclude file pattern                                                          |
 | `preMove`               | string   | `""`       | Move file before processing                                                   |
-| `move`                  | string   | `""`       | Move file after processing                                                    |
-| `moveFailed`            | string   | `""`       | Move file on failure                                                          |
+| `move`                  | string   | `""`       | Directory the file is moved to after processing                               |
+| `moveFailed`            | string   | `""`       | Directory the file is moved to on failure                                     |
 | `readLock`              | string   | `changed`  | Read lock strategy (`none`, `changed`, `rename`, `markerFile`)                |
 | `readLockTimeout`       | Duration | `10s`      | Timeout waiting to acquire read lock                                          |
 | `readLockCheckInterval` | Duration | `100ms`    | Interval between read lock checks                                             |
 | `readLockMinLength`     | int64    | `0`        | Minimum file size in bytes                                                    |
+
+A relative `move` / `moveFailed` directory is resolved next to the consumed
+file: with `From("file:///data/in?move=.done")`, `/data/in/a.txt` ends up in
+`/data/in/.done/a.txt`. An absolute directory is used as is. Files lying in
+those directories are never consumed again, including with `recursive=true`.
+
+Files already present when the route starts are consumed in the background:
+`Start()` does not wait for the backlog.
 | `readLockMinAge`        | Duration | `0`        | Minimum file age                                                              |
 | `maxSeenEntries`        | int      | `100000`   | Files remembered to skip duplicate events; oldest evicted first (`0` = unlimited) |
 | `fileExist`             | string   | `Override` | Behavior if destination file exists (`Override`, `Append`, `Fail`, `Ignore`) |
@@ -266,6 +274,15 @@ The `https` scheme is **producer-only**. `From("https://...")` fails when creati
 the consumer: the listener is plaintext HTTP. Terminate TLS in front of an
 `http://` consumer (reverse proxy, `HTTPComponent.SetMiddleware`, or similar).
 
+Several routes can listen on the same `host:port` under different paths: the
+consumers of one `HTTPComponent` share the listener, which is closed when the
+last of them stops. Serving the same path twice on a port fails at start.
+
+```go
+builder.From("http://0.0.0.0:8080/orders")
+builder.From("http://0.0.0.0:8080/health")
+```
+
 #### Headers set on the consumer
 
 | Header            | Source                         |
@@ -303,7 +320,8 @@ ctx.AddComponent("http", http)
 ```
 
 The middleware wraps every handler installed by an `http://` consumer in this
-context.
+context. It runs for the requests routed to a consumer; a path no consumer
+serves answers 404 without going through it.
 
 #### Outbound header sanitisation
 
@@ -325,7 +343,9 @@ filters prevent that:
 - **Unchanged inbound headers are not echoed.** A header that comes back
   identical to the one received is dropped, so `Cookie` and `Authorization`
   are never reflected to the client. A header the route sets or modifies is
-  always sent.
+  always sent. `Content-Type` is the exception: it describes the response body
+  and is always emitted, so a route answering JSON to a JSON request keeps its
+  `application/json` (and a route that does not set it returns the request's).
 - **Hop-by-hop and framing headers are never emitted** (`Connection`,
   `Keep-Alive`, `Transfer-Encoding`, `Content-Length`, `Host`, ...). Echoing
   the request's `Content-Length` corrupted the response framing.

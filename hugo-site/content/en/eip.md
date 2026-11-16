@@ -411,6 +411,12 @@ builder.From("direct:start").
 - Delivery is serialized to guarantee ordering; downstream steps must not route back into the
   same resequencer.
 - Duplicate or outdated sequence numbers are dropped (logged as warnings).
+- A buffered exchange is delivered later, by another message or by the timeout: it runs
+  downstream under the route's lifecycle context, not the context of the request that brought
+  it (which is usually over by then).
+- A message only fails for its own downstream error. The failure of another buffered exchange
+  delivered in the same batch is logged; it is not reported to the message that triggered the
+  delivery, and does not go through the route's error handler.
 
 ---
 
@@ -875,6 +881,10 @@ builder.From("direct:start").
 | `CamelLoopIndex` | int | Current iteration index (0-based) |
 | `CamelLoopSize` | int | Total number of loop iterations |
 | `CamelLoopComplete` | bool | Boolean indicating if this is the last iteration |
+
+**Note:** `Stop()` inside a loop ends routing of the exchange: the steps after `End()` do not
+run. Any other stop signal raised in the loop body (`Filter`, `Sample`...) only ends the loop,
+and routing carries on after `End()`.
 
 ---
 

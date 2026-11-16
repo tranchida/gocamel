@@ -166,6 +166,7 @@ type HTTPComponent struct {
 	throwExceptionOnFailure  bool
 	skipAuthorizationHeaders bool
 	forwardInboundCreds      bool
+	servers                  *httpServers // listeners shared by this component's consumers
 }
 
 // NewHTTPComponent creates a new HTTPComponent instance with default timeouts.
@@ -185,6 +186,7 @@ func NewHTTPComponent() *HTTPComponent {
 		},
 		maxBodySize:             DefaultMaxBodySize,
 		throwExceptionOnFailure: true,
+		servers:                 newHTTPServers(),
 	}
 }
 
@@ -244,11 +246,13 @@ func (c *HTTPComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		throwExceptionOnFailure:  c.throwExceptionOnFailure,
 		skipAuthorizationHeaders: c.skipAuthorizationHeaders,
 		forwardInboundCreds:      c.forwardInboundCreds,
+		servers:                  c.servers,
 	}, nil
 }
 
 // HTTPEndpoint represents an HTTP endpoint
 type HTTPEndpoint struct {
+	servers                  *httpServers
 	uri                      string
 	client                   *http.Client
 	middleware               func(http.Handler) http.Handler
@@ -288,6 +292,7 @@ func (e *HTTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 		processor:   processor,
 		middleware:  e.middleware,
 		maxBodySize: e.maxBodySize,
+		servers:     e.servers,
 	}, nil
 }
 
@@ -447,8 +452,10 @@ type HTTPConsumer struct {
 	transition chan struct{}
 	running    bool
 	stopping   bool
-	server     *http.Server
-	wg         sync.WaitGroup
+	servers    *httpServers      // registry of shared listeners; nil: private to this consumer
+	shared     *sharedHTTPServer // listener this consumer is registered on while running
+	pattern    string            // path pattern registered on shared
+	server     *http.Server      // shared.server, while running
 	handlerWG  sync.WaitGroup
 	cancel     context.CancelFunc
 }
@@ -505,10 +512,6 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	}
 	host := parsedURL.Hostname()
 	addr := net.JoinHostPort(host, port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("error listening on %s: %w", addr, err)
-	}
 	reqCtx, cancel := context.WithCancel(ctx)
 	// http.ServeMux panics on an empty pattern, so a URI without a path
 	// ("http://host:8080") must still register a valid route.
@@ -517,8 +520,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		pattern = "/"
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+	handle := func(w http.ResponseWriter, r *http.Request) {
 		c.mu.Lock()
 		if !c.running || c.stopping {
 			c.mu.Unlock()
@@ -529,7 +531,15 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		c.mu.Unlock()
 		defer c.handlerWG.Done()
 
-		exchange := NewExchange(r.Context())
+		// The listener is shared by every consumer on this host:port, so the
+		// request context cannot be the consumer's: tie the two together here
+		// so that stopping this consumer (or the CamelContext) cancels its
+		// in-flight requests only.
+		requestCtx, cancelRequest := context.WithCancel(r.Context())
+		defer cancelRequest()
+		defer context.AfterFunc(reqCtx, cancelRequest)()
+
+		exchange := NewExchange(requestCtx)
 
 		reqBody := r.Body
 		if c.maxBodySize > 0 {
@@ -609,7 +619,13 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			// (e.g. "authorization" vs the "Authorization" recorded in
 			// requestHeaders) must still be recognized as unchanged rather than
 			// bypassing the echo guard and leaking the credential.
-			if prev, echoed := requestHeaders[http.CanonicalHeaderKey(key)]; echoed && len(values) == 1 && prev == values[0] {
+			//
+			// Content-Type is exempt: it describes the response body, and a
+			// route answering JSON to a JSON request sets it to the very value
+			// the request carried. Dropping it there made net/http sniff the
+			// body and answer "text/plain".
+			canonical := http.CanonicalHeaderKey(key)
+			if prev, echoed := requestHeaders[canonical]; echoed && canonical != "Content-Type" && len(values) == 1 && prev == values[0] {
 				continue
 			}
 			for i, v := range values {
@@ -639,47 +655,41 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			// returning an empty response for non-string bodies.
 			writeResponseBody(w, []byte(fmt.Sprintf("%v", body)), c.uri)
 		}
-	})
-
-	var handler http.Handler = mux
-	if c.middleware != nil {
-		handler = c.middleware(mux)
 	}
 
-	server := &http.Server{
-		Addr:    addr,
-		Handler: handler,
-		// Bound the time a client may take to send its headers (slowloris).
-		ReadHeaderTimeout: 10 * time.Second,
-		// Bound the total time to read the whole request (headers + body) and
-		// the idle time of a keep-alive connection, so a client that sends its
-		// headers promptly then trickles the body cannot pin a handler
-		// goroutine (and its MaxBytesReader) open indefinitely (slow body DoS).
-		ReadTimeout: 60 * time.Second,
-		IdleTimeout: 60 * time.Second,
-		// BaseContext ties every inbound request to the consumer's parent ctx
-		// so that CamelContext.Stop() cancels in-flight requests.
-		BaseContext: func(net.Listener) context.Context { return reqCtx },
+	// The middleware wraps this consumer's handler: it runs for the requests
+	// routed to it, not for the paths of other consumers sharing the listener.
+	var handler http.Handler = http.HandlerFunc(handle)
+	if c.middleware != nil {
+		handler = c.middleware(handler)
 	}
 
 	c.mu.Lock()
+	if c.servers == nil {
+		c.servers = newHTTPServers()
+	}
+	servers := c.servers
+	// Published before the handler is registered: the listener may already be
+	// serving other consumers, and a request must not find this one "stopped".
 	c.running = true
 	c.cancel = cancel
-	c.server = server
-	// Starting the server. The listener is created synchronously above so bind
-	// failures are returned from Start. The WaitGroup is signalled when Serve
-	// returns, so Stop() can wait for the goroutine to fully unwind before
-	// the CamelContext continues its shutdown.
-	c.wg.Add(1)
 	c.mu.Unlock()
 
-	go func() {
-		defer c.wg.Done()
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			LogError("HTTP server error", "error", err)
-		}
-	}()
+	shared, err := servers.acquire(addr, port != "0", pattern, handler)
+	if err != nil {
+		cancel()
+		c.mu.Lock()
+		c.running = false
+		c.cancel = nil
+		c.mu.Unlock()
+		return err
+	}
 
+	c.mu.Lock()
+	c.shared = shared
+	c.pattern = pattern
+	c.server = shared.server
+	c.mu.Unlock()
 	return nil
 }
 
@@ -697,28 +707,198 @@ func (c *HTTPConsumer) Stop() error {
 		return nil
 	}
 	c.stopping = true
-	server := c.server
+	shared := c.shared
+	pattern := c.pattern
+	servers := c.servers
 	cancel := c.cancel
 	c.mu.Unlock()
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
-	err := server.Shutdown(shutdownCtx)
-	if err != nil {
-		_ = server.Close()
+	// Stop routing new requests here, give the in-flight ones the same grace
+	// period http.Server.Shutdown would, then cancel them.
+	_ = shared.setHandler(pattern, nil)
+	handlersDone := make(chan struct{})
+	go func() {
+		c.handlerWG.Wait()
+		close(handlersDone)
+	}()
+	grace := time.NewTimer(httpShutdownTimeout)
+	select {
+	case <-handlersDone:
+	case <-grace.C:
 	}
+	grace.Stop()
 	if cancel != nil {
 		cancel()
 	}
-	c.handlerWG.Wait()
-	c.wg.Wait()
+	<-handlersDone
+
+	// The listener closes with its last consumer.
+	err := servers.release(shared)
 
 	c.mu.Lock()
+	c.shared = nil
 	c.server = nil
 	c.cancel = nil
 	c.running = false
 	c.stopping = false
 	c.mu.Unlock()
+	return err
+}
+
+// httpShutdownTimeout bounds how long a stopping HTTP consumer waits for its
+// in-flight requests, and a closing listener for its connections.
+const httpShutdownTimeout = 30 * time.Second
+
+// httpServers owns the listeners of an HTTPComponent. Consumers whose URIs
+// share a host:port share one listener and are told apart by their path, so
+// several routes can be exposed on the same port:
+//
+//	From("http://0.0.0.0:8080/orders")
+//	From("http://0.0.0.0:8080/health")
+type httpServers struct {
+	mu      sync.Mutex                   // Protects servers and every sharedHTTPServer.refs.
+	servers map[string]*sharedHTTPServer // keyed by host:port
+}
+
+func newHTTPServers() *httpServers {
+	return &httpServers{servers: make(map[string]*sharedHTTPServer)}
+}
+
+// sharedHTTPServer is one listener and the handlers registered on it.
+type sharedHTTPServer struct {
+	addr   string
+	server *http.Server
+	served chan struct{} // closed when Serve has returned
+	refs   int           // consumers registered; guarded by httpServers.mu
+
+	mu       sync.RWMutex            // Protects handlers and mux.
+	handlers map[string]http.Handler // by path pattern
+	mux      *http.ServeMux          // built from handlers; replaced, never mutated
+}
+
+// ServeHTTP dispatches to the consumer registered for the request path.
+func (s *sharedHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mux := s.mux
+	s.mu.RUnlock()
+	mux.ServeHTTP(w, r)
+}
+
+// setHandler registers handler for pattern, or removes the pattern when handler
+// is nil. http.ServeMux cannot unregister a pattern, so a new mux is built from
+// the handler set and swapped in.
+func (s *sharedHTTPServer) setHandler(pattern string, handler http.Handler) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.handlers[pattern]; exists && handler != nil {
+		return fmt.Errorf("http consumer: path %q is already served on %s", pattern, s.addr)
+	}
+	handlers := make(map[string]http.Handler, len(s.handlers)+1)
+	for p, h := range s.handlers {
+		handlers[p] = h
+	}
+	if handler != nil {
+		handlers[pattern] = handler
+	} else {
+		delete(handlers, pattern)
+	}
+	mux, err := buildServeMux(handlers)
+	if err != nil {
+		return fmt.Errorf("http consumer: cannot serve path %q on %s: %w", pattern, s.addr, err)
+	}
+	s.handlers, s.mux = handlers, mux
+	return nil
+}
+
+// buildServeMux registers handlers on a new mux. ServeMux panics on an invalid
+// or conflicting pattern; that is reported as an error.
+func buildServeMux(handlers map[string]http.Handler) (mux *http.ServeMux, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			mux, err = nil, fmt.Errorf("invalid path pattern: %v", r)
+		}
+	}()
+	mux = http.NewServeMux()
+	for pattern, handler := range handlers {
+		mux.Handle(pattern, handler)
+	}
+	return mux, nil
+}
+
+// acquire registers handler for pattern on the listener of addr, opening it if
+// this is its first consumer. shareable is false for an ephemeral port (":0"),
+// which designates a different listener on every call.
+func (hs *httpServers) acquire(addr string, shareable bool, pattern string, handler http.Handler) (*sharedHTTPServer, error) {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+
+	if shareable {
+		if s, ok := hs.servers[addr]; ok {
+			if err := s.setHandler(pattern, handler); err != nil {
+				return nil, err
+			}
+			s.refs++
+			return s, nil
+		}
+	}
+
+	// The listener is created synchronously so bind failures are returned
+	// from the consumer's Start.
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("error listening on %s: %w", addr, err)
+	}
+	s := &sharedHTTPServer{addr: addr, served: make(chan struct{}), refs: 1}
+	if err := s.setHandler(pattern, handler); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	s.server = &http.Server{
+		Addr:    addr,
+		Handler: s,
+		// Bound the time a client may take to send its headers (slowloris).
+		ReadHeaderTimeout: 10 * time.Second,
+		// Bound the total time to read the whole request (headers + body) and
+		// the idle time of a keep-alive connection, so a client that sends its
+		// headers promptly then trickles the body cannot pin a handler
+		// goroutine (and its MaxBytesReader) open indefinitely (slow body DoS).
+		ReadTimeout: 60 * time.Second,
+		IdleTimeout: 60 * time.Second,
+	}
+	if shareable {
+		hs.servers[addr] = s
+	}
+	go func() {
+		defer close(s.served)
+		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			LogError("HTTP server error", "addr", addr, "error", err)
+		}
+	}()
+	return s, nil
+}
+
+// release drops one consumer's reference and, for the last one, shuts the
+// listener down and waits for Serve to return. The registry stays locked
+// meanwhile so a consumer starting on the same address waits for the port to
+// be free instead of failing to bind; by then the consumer's own requests are
+// over, so only idle connections remain.
+func (hs *httpServers) release(s *sharedHTTPServer) error {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	s.refs--
+	if s.refs > 0 {
+		return nil
+	}
+	if hs.servers[s.addr] == s {
+		delete(hs.servers, s.addr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+	defer cancel()
+	err := s.server.Shutdown(ctx)
+	if err != nil {
+		_ = s.server.Close()
+	}
+	<-s.served
 	return err
 }
 

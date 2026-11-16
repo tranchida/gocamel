@@ -439,8 +439,11 @@ func (r *Route) Start(ctx context.Context) (err error) {
 		lp.reset()
 	}
 	r.forEachProcessor(func(p Processor) {
-		if wt, ok := p.(*WireTap); ok {
-			wt.Start()
+		switch started := p.(type) {
+		case *WireTap:
+			started.Start()
+		case *Resequencer:
+			started.start(ctx)
 		}
 	})
 	r.configureAggregatorTimeouts(ctx)

@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -22,9 +23,27 @@ var MaxSimpleInputBytes = 1 << 20
 func ParseURI(uri string) (*url.URL, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
-		return nil, fmt.Errorf("invalid URI: %w", err)
+		// url.Parse reports the raw URI, and often the offending fragment, in
+		// its error: both may hold a credential (a password with a stray '%').
+		// Report the redacted URI and the kind of failure only.
+		return nil, fmt.Errorf("invalid URI %q: %s", RedactURI(uri), uriParseFailure(err))
 	}
 	return u, nil
+}
+
+// uriParseFailure describes why url.Parse failed without quoting any part of
+// the URI.
+func uriParseFailure(err error) string {
+	var escapeErr url.EscapeError
+	var hostErr url.InvalidHostError
+	switch {
+	case errors.As(err, &escapeErr):
+		return "invalid percent-encoding"
+	case errors.As(err, &hostErr):
+		return "invalid character in host"
+	default:
+		return "malformed URI"
+	}
 }
 
 // ParseInt64Option parses a URI option value as a non-negative int64, returning
@@ -174,12 +193,13 @@ var defaultSensitiveURIKeys = []string{
 // Both the userinfo password (scheme://user:PASSWORD@host) and the values of
 // sensitive query parameters are replaced with "xxxxx". When keys is nil,
 // defaultSensitiveURIKeys is used; pass an explicit (case-insensitive) list
-// to override it. Non-parseable URIs are returned unchanged — an URI that
-// cannot be parsed was never accepted by a component in the first place.
+// to override it. A URI that cannot be parsed is masked textually on a best
+// effort basis (see redactUnparsedURI): it is exactly the one reported in a
+// "invalid URI" error, so it must not carry its credentials there.
 func RedactURI(uri string, keys ...string) string {
 	u, err := url.Parse(uri)
 	if err != nil {
-		return uri
+		return redactUnparsedURI(uri, keys)
 	}
 
 	changed := false
@@ -213,4 +233,52 @@ func RedactURI(uri string, keys ...string) string {
 		return u.String()
 	}
 	return uri
+}
+
+// redactUnparsedURI masks the userinfo password and the sensitive query
+// parameters of a URI that url.Parse rejects, working on the raw text.
+func redactUnparsedURI(uri string, keys []string) string {
+	sensitive := defaultSensitiveURIKeys
+	if len(keys) > 0 {
+		sensitive = keys
+	}
+
+	rest, fragment, hasFragment := strings.Cut(uri, "#")
+	base, query, hasQuery := strings.Cut(rest, "?")
+
+	// Userinfo: scheme://user:PASSWORD@host. The authority ends at the first
+	// '/'; the userinfo ends at its last '@' (a password may contain one).
+	if i := strings.Index(base, "://"); i >= 0 {
+		authority, path := base[i+3:], ""
+		if j := strings.IndexByte(authority, '/'); j >= 0 {
+			authority, path = authority[:j], authority[j:]
+		}
+		if at := strings.LastIndexByte(authority, '@'); at >= 0 {
+			if colon := strings.IndexByte(authority[:at], ':'); colon >= 0 {
+				authority = authority[:colon+1] + "xxxxx" + authority[at:]
+			}
+		}
+		base = base[:i+3] + authority + path
+	}
+
+	if hasQuery {
+		pairs := strings.Split(query, "&")
+		for i, pair := range pairs {
+			name, value, ok := strings.Cut(pair, "=")
+			if !ok || value == "" {
+				continue
+			}
+			for _, s := range sensitive {
+				if strings.EqualFold(name, s) {
+					pairs[i] = name + "=xxxxx"
+					break
+				}
+			}
+		}
+		base += "?" + strings.Join(pairs, "&")
+	}
+	if hasFragment {
+		base += "#" + fragment
+	}
+	return base
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,8 +35,8 @@ func TestFileConsumer_SeenMapIsBounded(t *testing.T) {
 	require.NoError(t, consumer.Start(context.Background()))
 	t.Cleanup(func() { _ = consumer.Stop() })
 
-	// The startup snapshot ingests every pre-existing file synchronously.
-	assert.Len(t, received, files)
+	// The startup snapshot ingests every pre-existing file, off the Start call.
+	require.Eventually(t, func() bool { return len(received) == files }, 5*time.Second, 10*time.Millisecond)
 
 	fc := consumer.(*FileConsumer)
 	fc.mu.Lock()
