@@ -44,7 +44,7 @@ Go **1.27.0 ou ultérieur** est requis pour le cœur, les composants et les exem
 
 Le module core (moteur de routage, EIPs, Simple Language et tous les
 composants sans dépendance externe : direct, seda, chan, timer, http, exec,
-template, sql, mock) n'a **aucune dépendance externe à l'exécution** et se compile sans
+template, sql, sql-stored, net, mock) n'a **aucune dépendance externe à l'exécution** et se compile sans
 CGO (les tests utilisent le driver pure-Go `modernc.org/sqlite`) :
 
 ```bash
@@ -97,7 +97,7 @@ import (
 )
 
 ctx.CreateRouteBuilder().
-	From("timer:tick?period=5s").
+	From("timer:tick?period=5000").
 	Intercept(gocamelprom.Metrics()).
 	Intercept(gocamelotel.Tracing()).
 	...
@@ -109,19 +109,25 @@ ctx.CreateRouteBuilder().
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
 func main() {
     context := gocamel.NewCamelContext()
-    
-    route := context.CreateRouteBuilder().
-        From("timer:tick?period=5s").
+
+    // period et delay du timer sont des entiers en millisecondes (défaut 1000)
+    route, err := context.CreateRouteBuilder().
+        From("timer:tick?period=5000").
         SetBody("Hello World").
-        Log("${body}").
+        LogSimple("${body}").
         To("direct:output").
         Build()
-    
+    if err != nil {
+        log.Fatal(err)
+    }
+
     context.AddRoute(route)
     context.Start()
     select {}
@@ -162,6 +168,7 @@ builder.From("direct:start").
 | **FTP/SFTP**   | Transfert via FTP/SSH          |
 | **SMB**        | Partages Windows/Samba         |
 | **Direct**     | Routage synchrone en mémoire   |
+| **SEDA**       | File asynchrone en mémoire     |
 | **NATS**       | Messagerie événementielle asynchrone |
 | **Redis**      | Commandes & Messagerie Pub/Sub |
 | **Go Channel** | Intégration de canal Go natif  |
@@ -173,8 +180,8 @@ builder.From("direct:start").
 | **Ollama**     | LLMs locaux (chat/generate/embed, API native) |
 | **Mail**       | Email SMTP/IMAP/POP3           |
 | **SQL**        | Requêtes base de données       |
+| **SQL-Stored** | Appels de procédures stockées (paramètres IN/OUT/INOUT) |
 | **MongoDB**    | Opérations CRUD MongoDB        |
-| **XSLT/XSD**   | Transformation/validation XML  |
 | **Template**   | Templates Go natifs            |
 | **Exec**       | Exécution commandes système    |
 | **Mock**       | Endpoint de test qui enregistre les échanges, avec attentes et substitution d'endpoints via `Route.AdviceWith` |

@@ -16,7 +16,7 @@ Content-based routing with conditional branches.
 builder.From("direct:start").
     Choice().
         When("${header.priority == 'high'}").
-            Log("High priority: ${body}").
+            LogSimple("High priority: ${body}").
             To("direct:urgent").
         When("${header.type} == 'order'&& ${body['amount']} > 1000").
             Log("Large order").
@@ -35,7 +35,6 @@ builder.From("direct:start").
 - `Otherwise()` - Adds a default branch
 - `EndChoice()` - Ends the Choice block and adds it to the **current** container
   (the route, or a surrounding `Split` / `Loop` / `Multicast` so each part is evaluated)
-- `End()` - Alternative method
 
 **Expression Operators:**
 
@@ -222,6 +221,17 @@ builder.From("direct:start").
     To("direct:process")
 ```
 
+**Dynamic URIs.** The URI may contain any Simple language expression in
+`${...}` (e.g. `${header.x}`, `${exchangeProperty.x}`, functions and string
+operations). The expressions are evaluated per exchange and the values are
+escaped for their position in the URI, exactly as `ToD` does: a value placed
+in the query string is query-escaped, and `?` and `#` are escaped in values
+placed in the path, so an exchange value cannot inject endpoint options such
+as `?bufferSize=...`. A placeholder that comes before the scheme (e.g.
+`PollEnrich("${header.uri}", ...)`) is inserted verbatim and must come from
+a trusted source. A malformed or failing expression makes the step return an
+error instead of polling with the unresolved URI.
+
 ---
 
 ### Message Validator
@@ -276,7 +286,9 @@ builder.From("direct:start").
 **Repositories:**
 
 - `NewMemoryIdempotentRepository()`: In-memory store (default).
-- `NewRedisIdempotentRepository()`: Distributed store backed by Redis.
+- `redis.NewRedisIdempotentRepository(rdb, prefix, ttl)`: Distributed store backed by Redis
+  (module `github.com/tranchida/gocamel/components/redis`; `rdb` is a `*redis.Client` from
+  `github.com/redis/go-redis/v9`).
 - SQL-based repositories can be implemented via the `IdempotentRepository` interface.
 
 ---
@@ -293,7 +305,10 @@ builder.From("direct:start").
         SuccessThreshold(2).           // Close after 2 successes in Half-Open
         Process(unstableProcessor).
         OnFallback().
-            Log("Circuit open or failed, calling fallback").
+            ProcessFunc(func(e *gocamel.Exchange) error {
+                log.Println("circuit open or failed, calling fallback")
+                return nil
+            }).
             To("direct:fallback").
         End().
     End().
@@ -344,7 +359,7 @@ Staged Event-Driven Architecture. Decouples producers and consumers using an int
 ```go
 // Consumer with concurrent workers
 builder.From("seda:process?concurrentConsumers=5&size=1000").
-    Log("Asynchronously processing: ${body}").
+    LogSimple("Asynchronously processing: ${body}").
     To("direct:next")
 
 // Producer
@@ -390,7 +405,7 @@ Reorder messages that arrived out of order based on a sequence number or timesta
 builder.From("direct:start").
     Resequence("${header.seq}", 1). // Starts with sequence 1
         Timeout(500 * time.Millisecond).
-        Log("Processing in order: ${header.seq}").
+        LogSimple("Processing in order: ${header.seq}").
         To("direct:next").
     End()
 ```
@@ -475,12 +490,38 @@ builder.From("direct:start").
 strategy := &MyAggregationStrategy{}
 
 builder.From("direct:start").
-    Multicast().Strategy(strategy).
+    Multicast().AggregationStrategy(strategy).
         To("direct:a").
         To("direct:b").
         To("direct:c").
     End()
 ```
+
+---
+
+### Wire Tap
+
+Send a copy of the exchange to a secondary endpoint asynchronously (fire-and-forget), without blocking the main route. The copy is independent: modifications on the tapped exchange do not affect the main route and vice versa.
+
+```go
+builder.From("direct:start").
+    WireTap("direct:audit"). // Async copy to audit
+    To("direct:result")
+```
+
+**How it works:**
+
+1. Creates a **deep copy** of the exchange.
+2. Launches a goroutine that sends the copy to the given endpoint.
+3. Returns immediately — the main route carries on without waiting.
+4. The tapped exchange uses an independent context (`context.Background()`): it is not cancelled when the main route finishes.
+5. Tap errors are logged but not propagated to the main route.
+
+**Notes:**
+
+- Ideal for auditing, logging or monitoring without impacting performance.
+- `Route.Stop()` waits for all in-flight taps to finish before stopping (no message is lost on shutdown).
+- Also available inside `Multicast`, `Pipeline`, `Split` and `Loop` contexts.
 
 ---
 
@@ -497,7 +538,7 @@ builder.From("direct:start").
         // Split by comma
         return strings.Split(body, ","), nil
     }).
-    Log("Processing part: ${body}").
+    LogSimple("Processing part: ${body}").
     To("direct:process").
     End() // End Split
 ```
@@ -520,7 +561,7 @@ func (s *StringJoinStrategy) Aggregate(oldEx, newEx *gocamel.Exchange) *gocamel.
 strategy := &StringJoinStrategy{}
 
 builder.From("direct:start").
-    Split(splitter).Strategy(strategy).
+    Split(splitter).AggregationStrategy(strategy).
         To("direct:process").
     End()
 ```
@@ -528,6 +569,7 @@ builder.From("direct:start").
 **Parallel processing:**
 
 ```go
+// requires: ctx.AddComponent("file", file.NewFileComponent())
 builder.From("file:/data/in").
     Split(lines).ParallelProcessing(true).MaxConcurrency(20). // default 10
         To("http://api/items").
@@ -576,19 +618,24 @@ returns an error instead of buffering forever.
 
 ```go
 // Define correlation expression and completion condition
-correlationExpr := "${header.orderId}"
+correlationExpr := func(e *gocamel.Exchange) string {
+    orderId, _ := e.GetHeaderAsString("orderId")
+    return orderId
+}
 strategy := &OrderAggregationStrategy{}
 repo := gocamel.NewMemoryAggregationRepository()
 
 aggregator := gocamel.NewAggregator(correlationExpr, strategy, repo).
-    SetCompletionSize(3).    // Complete when 3 messages received
-    SetCompletionTimeout(5000) // Or after 5 seconds
+    SetCompletionSize(3).             // Complete when 3 messages received
+    SetCompletionTimeout(5 * time.Second) // Or after 5 seconds
 
 builder.From("direct:start").
     Aggregate(aggregator).
-        Log("Aggregated: ${body}").
-    End()
+    LogSimple("Aggregated: ${body}")
 ```
+
+`Aggregate` returns the `*RouteBuilder` itself (there is no `End()` for it:
+the aggregator is a standalone processor configured upfront).
 
 **Aggregation Strategy:**
 
@@ -618,11 +665,11 @@ func (s *OrderAggregationStrategy) Aggregate(
 
 **Completion Conditions:**
 
-| Method                       | Description                          |
-|------------------------------|--------------------------------------|
-| `SetCompletionSize(n)`       | Complete after n messages            |
-| `SetCompletionTimeout(ms)`   | Complete after timeout               |
-| `SetCompletionPredicate(fn)` | Complete when predicate returns true |
+| Method                         | Description                          |
+|--------------------------------|--------------------------------------|
+| `SetCompletionSize(n)`         | Complete after n messages            |
+| `SetCompletionTimeout(d)`      | Complete after `d` (`time.Duration`) |
+| `SetCompletionPredicate(fn)`   | Complete when predicate returns true |
 
 **Storage Options:**
 
@@ -631,7 +678,7 @@ func (s *OrderAggregationStrategy) Aggregate(
 repo := gocamel.NewMemoryAggregationRepository()
 
 // SQLite persistence
-repo := gocamel.NewSQLAggregationRepository(db, "schema")
+repo := gocamel.NewSQLAggregationRepository(db, gocamel.SQLAggregationOptions{})
 ```
 
 When a route with a completion timeout starts, the groups already held by the
@@ -653,7 +700,7 @@ builder.From("direct:start").
 
 // Set body via function
 builder.From("direct:start").
-    SetBodyFunc(func(e *gocamel.Exchange) (any, error) {
+    Transform(func(e *gocamel.Exchange) (any, error) {
         input := e.GetIn().GetBody().(string)
         return strings.ToUpper(input), nil
     })
@@ -840,6 +887,24 @@ exchange (it sets the `CamelRouteStop` property): a route that called this one t
 
 ---
 
+### Process
+
+Execute a custom processor.
+
+```go
+// Simple function
+builder.ProcessFunc(func(e *gocamel.Exchange) error {
+    body := e.GetIn().GetBody().(string)
+    e.GetOut().SetBody(process(body))
+    return nil
+})
+
+// Struct implementing Processor
+builder.Process(&MyCustomProcessor{config: cfg})
+```
+
+---
+
 ### Loop
 
 Iterate a route segment a static or dynamic number of times.
@@ -970,7 +1035,7 @@ builder.From("direct:start").
         Log("Service is down, applying recovery").
         To("direct:recovery").
     DoCatch(""). // Catch all other errors
-        Log("Unexpected error: ${exchangeProperty.CamelExceptionCaught}").
+        LogSimple("Unexpected error: ${exchangeProperty.CamelExceptionCaught}").
         To("direct:error-handler").
     DoFinally().
         Log("Processing finished (success or failure)").

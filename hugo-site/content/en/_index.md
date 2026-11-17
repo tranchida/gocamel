@@ -23,14 +23,26 @@ Welcome to the GoCamel documentation.
 - [Features](features.md)
 - [API Reference](reference.md)
 
+## Features
+
+- **Route & Endpoint Architecture** — Fluent DSL for building integration flows
+- **Message Management** — Typed body and headers
+- **Enterprise Integration Patterns** — Split, Aggregate, Multicast, Choice, and more
+- **Simple Language** — Dynamic expressions with `${body}`, `${header.name}` and functions
+- **Multiple Components** — HTTP, File, FTP, SFTP, SMB, Mail, SQL, Telegram, OpenAI, Cron, and more
+- **Built-in Security** — Path traversal protection, SQL injection prevention, input sanitization
+
 ## Security Notice
 
 GoCamel includes built-in security utilities (`security.go`) to protect against common vulnerabilities:
 
-- Path traversal protection
-- SQL injection prevention
-- Input sanitization
-- Safe file operations
+- [🔐 Path traversal protection](features.md#security)
+- [🔐 SQL injection prevention](features.md#security)
+- [🔐 Input sanitization](features.md#security)
+- [🔐 Safe file operations](features.md#security)
+- [🔐 No credential reflection in HTTP responses](features.md#security)
+- [🔐 Bounded HTTP body reads](features.md#security)
+- [🔐 Panic containment](features.md#security)
 
 ---
 

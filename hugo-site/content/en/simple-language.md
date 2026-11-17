@@ -36,7 +36,10 @@ Expressions are enclosed in `${...}`:
 | `${date:file:format}`           | Last modified date of file | `${date:file:2006-01-02}`         |
 | `${random(max)}`                | Random number              | `${random(100)}`                  |
 | `${uuid}`                       | UUID generation            | `${uuid}`                         |
-| `${env:VAR}`                    | Environment variable       | `${env:USER}`                     |
+
+There is no `${env:...}` function. Components resolve environment variables through
+`gocamel.GetConfigValue` (exact-name and scheme-prefixed lookups) — see
+[Configuration](../configuration/).
 
 **Arithmetic Offsets:**
 
@@ -142,7 +145,7 @@ builder.From("direct:start").
 
 ```go
 builder.From("direct:start").
-    Log("Processing order ${header.orderId} with value ${body?.total}")
+    LogSimple("Processing order ${header.orderId} with value ${body?.total}")
 ```
 
 ### In ToD (Dynamic URI)
@@ -182,12 +185,16 @@ ${date:now:ISO8601}
 
 ## Complete Reference
 
-### String Functions (if available)
+### String Functions
+
+Chained on any expression (`${body.trim().uppercase()}`):
 
 ```go
-${body.toUpperCase()}
-${body.substring(0, 5)}
+${body.uppercase()}        // or ${body.upper()}
+${body.lowercase()}        // or ${body.lower()}
 ${header.name.trim()}
+${body.substring(0, 5)}
+${body.size()}             // or ${body.length()}: length of string, slice, array or map
 ```
 
 ### Math Functions

@@ -10,8 +10,8 @@ GoCamel suit une architecture modulaire inspirée d'Apache Camel mais adaptée a
 graph LR
     subgraph "Core Layer"
         A[CamelContext] --> B[Registry]
-        A --> C[RouteController]
-        A --> D[TypeConverter]
+        A --> C[Route]
+        A --> D[Exchange]
     end
     
     subgraph "Integration Layer"  
@@ -43,8 +43,7 @@ Le cœur de GoCamel, indépendant des transports:
 
 ```go
 // Création manuelle
-camelCtx := &gocamel.CamelContext{}
-camelCtx.Initialize()
+camelCtx := gocamel.NewCamelContext()
 ```
 
 ### 2. Integration Layer
@@ -83,10 +82,12 @@ From("...")
 ### Factory Pattern
 
 ```go
+import "github.com/tranchida/gocamel/components/file"
+
 // Component factory
 compFactories := map[string]func() gocamel.Component{
     "http":  gocamel.NewHTTPComponent,
-    "file":  gocamel.NewFileComponent,
+    "file":  file.NewFileComponent,
     "timer": gocamel.NewTimerComponent,
 }
 ```
@@ -95,12 +96,15 @@ compFactories := map[string]func() gocamel.Component{
 
 ```go
 // Route construction fluente
-route := builder.
+route, err := builder.
     From("direct:start").
     SetHeader("X-Id", uuid.New().String()).
     ProcessFunc(transform).
     To("direct:end").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Strategy Pattern
@@ -108,12 +112,12 @@ route := builder.
 Les EIP utilisent le Strategy Pattern:
 
 ```go
-type Splitter interface {
-    Split(*Exchange) (any, error)
-}
-
 type AggregationStrategy interface {
     Aggregate(oldExchange, newExchange *Exchange) *Exchange
+}
+
+type LoadBalancerStrategy interface {
+    Select(processors []Processor) Processor
 }
 ```
 

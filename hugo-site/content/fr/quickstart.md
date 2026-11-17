@@ -8,18 +8,24 @@ weight = 2
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
-    
-    route := ctx.CreateRouteBuilder().
-        From("timer:tick?period=5s").
+
+    // period et delay du timer sont des entiers en millisecondes (défaut 1000)
+    route, err := ctx.CreateRouteBuilder().
+        From("timer:tick?period=5000").
         SetBody("Hello World").
-        Log("${body}").
+        LogSimple("${body}").
         Build()
-    
+    if err != nil {
+        log.Fatal(err)
+    }
+
     ctx.AddRoute(route)
     ctx.Start()
     select {}
@@ -28,19 +34,32 @@ func main() {
 
 ## Traitement de Fichiers
 
+Le composant `file` vit dans son propre module (il dépend de `fsnotify`), il
+doit donc être enregistré explicitement :
+
 ```go
-route := ctx.CreateRouteBuilder().
+import "github.com/tranchida/gocamel/components/file"
+
+ctx.AddComponent("file", file.NewFileComponent())
+
+route, err := ctx.CreateRouteBuilder().
     From("file://input?delete=true").
-    Log("Traitement: ${body}").
+    LogSimple("Traitement: ${header.CamelFileName}").
     To("file://output").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ## Endpoint HTTP
 
 ```go
-route := ctx.CreateRouteBuilder().
+route, err := ctx.CreateRouteBuilder().
     From("http://localhost:8080/hello").
-    SetBody("Bonjour ${header.name}!").
+    SimpleSetBody("Bonjour ${header.name}!").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```

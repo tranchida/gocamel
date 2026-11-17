@@ -95,24 +95,31 @@ import (
     "context"
     "fmt"
     "log"
+    "net/url"
+    "os"
     "time"
 
     "github.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel/components/mail"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
 
     // Enregistrer le composant mail pour tous les protocoles
-    mailComponent := gocamel.NewMailComponent()
+    mailComponent := mail.NewMailComponent()
     mailComponent.SetDefaultFrom("notification@example.com")
     ctx.AddComponent("smtp", mailComponent)
     ctx.AddComponent("smtps", mailComponent)
     ctx.AddComponent("imap", mailComponent)
     ctx.AddComponent("imaps", mailComponent)
 
+    // Le mot de passe vient de l'environnement (pas d'interpolation ${env:...} :
+    // il faut lire la variable en Go et construire l'URI)
+    password := os.Getenv("GMAIL_PASSWORD")
+
     // Route 1: Envoi d'email
-    sendRoute := ctx.CreateRouteBuilder().
+    sendRoute, err := ctx.CreateRouteBuilder().
         From("direct:send-email").
         ProcessFunc(func(exchange *gocamel.Exchange) error {
             // Configurer l'email via les headers
@@ -120,12 +127,15 @@ func main() {
             exchange.SetHeader("To", "manager@example.com")
             return nil
         }).
-        To("smtps://smtp.gmail.com:465?username=user@gmail.com&password=${env:GMAIL_PASSWORD}").
+        To("smtps://smtp.gmail.com:465?username=user@gmail.com&password=" + url.QueryEscape(password)).
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     // Route 2: Réception d'emails IMAP
-    receiveRoute := ctx.CreateRouteBuilder().
-        From("imaps://imap.gmail.com:993?folderName=INBOX&username=user@gmail.com&password=${env:GMAIL_PASSWORD}&idle=true&unseen=true").
+    receiveRoute, err := ctx.CreateRouteBuilder().
+        From("imaps://imap.gmail.com:993?folderName=INBOX&username=user@gmail.com&password=" + url.QueryEscape(password) + "&idle=true&unseen=true").
         ProcessFunc(func(exchange *gocamel.Exchange) error {
             subject, _ := exchange.GetIn().GetHeader("Subject")
             from, _ := exchange.GetIn().GetHeader("From")
@@ -139,6 +149,9 @@ func main() {
         }).
         To("direct:processed").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(sendRoute)
     ctx.AddRoute(receiveRoute)
@@ -225,15 +238,24 @@ Le composant supporte le parsing avancé des messages MIME:
 
 ## Sécurité
 
-Il est **fortement recommandé** de passer les identifiants via les variables d'environnement plutôt que dans l'URI:
+Il est **fortement recommandé** de ne pas écrire les identifiants en clair
+dans l'URI (les URI peuvent fuiter dans les logs d'erreur de connexion). Il
+n'existe pas de syntaxe `${env:...}` : lisez la variable d'environnement en Go
+et construisez l'URI avec :
 
 ```go
-// ✅ Recommandé
-.To("smtps://smtp.gmail.com:465?username=${env:GMAIL_USER}&password=${env:GMAIL_PASSWORD}")
+// ✅ Recommandé : le mot de passe vient de l'environnement
+pw := os.Getenv("GMAIL_PASSWORD")
+builder.To("smtps://smtp.gmail.com:465?username=user@gmail.com&password=" + url.QueryEscape(pw))
 
 // ❌ Déconseillé (mot de passe visible)
-.To("smtps://smtp.gmail.com:465?username=user@gmail.com&password=monmotdepasse")
+builder.To("smtps://smtp.gmail.com:465?username=user@gmail.com&password=monmotdepasse")
 ```
+
+Note : les composants qui passent par `gocamel.GetConfigValue` (par ex. FTP,
+SFTP, Telegram, OpenAI) récupèrent aussi automatiquement une variable
+d'environnement préfixée par le scheme (`FTP_PASSWORD`, ...) ou portant le nom
+exact de la clé — voir la page Configuration de la documentation.
 
 ## Voir aussi
 

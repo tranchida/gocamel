@@ -106,11 +106,14 @@ context.GetComponentRegistry().Bind("myProcessor", &MyProcessor{})
 A chain of processors that handles a message:
 
 ```go
-route := context.CreateRouteBuilder().
+route, err := context.CreateRouteBuilder().
     From("direct:start").
     Process(processor).
     To("direct:end").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ## Endpoint
@@ -262,7 +265,9 @@ route, _ := context.CreateRouteBuilder().
 Factory for endpoints of a specific type:
 
 ```go
-context.AddComponent("ftp", gocamel.NewFTPComponent())
+import "github.com/tranchida/gocamel/components/ftp"
+
+context.AddComponent("ftp", ftp.NewFTPComponent())
 context.AddComponent("http", gocamel.NewHTTPComponent())
 ```
 
@@ -282,6 +287,8 @@ successfully.
   deletion or movement of the source file until the route completes.
 
 ```go
+// requires the file component: ctx.AddComponent("file", file.NewFileComponent())
+// (module github.com/tranchida/gocamel/components/file)
 context.CreateRouteBuilder().
     From("file:///data/in?move=.done&moveFailed=.error").
     Transacted(). // Enable transactional behavior

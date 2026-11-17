@@ -86,8 +86,10 @@ cfg := ctx.Config()
 // ❌ BAD
 endpoint := "ftp://user:secret@host"
 
-// ✅ GOOD
-endpoint := "ftp://host?username=${env:FTP_USER}"
+// ✅ GOOD — nothing in the URI: GetConfigValue picks up the
+// FTP_USERNAME / FTP_PASSWORD environment variables automatically
+// (there is no ${env:...} interpolation syntax)
+endpoint := "ftp://host"
 ```
 
 ## Proxy
@@ -103,7 +105,9 @@ os.Setenv("NO_PROXY", "localhost,127.0.0.1")
 ### Standard Components
 
 ```go
-ctx.AddComponent("ftp", gocamel.NewFTPComponent())
+import "github.com/tranchida/gocamel/components/ftp"
+
+ctx.AddComponent("ftp", ftp.NewFTPComponent())
 ctx.AddComponent("http", gocamel.NewHTTPComponent())
 ctx.AddComponent("timer", gocamel.NewTimerComponent())
 ctx.AddComponent("direct", gocamel.NewDirectComponent())
@@ -112,19 +116,25 @@ ctx.AddComponent("direct", gocamel.NewDirectComponent())
 ### Scheduled Components
 
 ```go
-ctx.AddComponent("cron", gocamel.NewCronComponent())
+import "github.com/tranchida/gocamel/components/cron"
+
+ctx.AddComponent("cron", cron.NewCronComponent())
 ```
 
 ### Messaging Components
 
 ```go
-ctx.AddComponent("telegram", gocamel.NewTelegramComponent())
+import "github.com/tranchida/gocamel/components/telegram"
+
+ctx.AddComponent("telegram", telegram.NewTelegramComponent())
 ```
 
 ### AI Components
 
 ```go
-ctx.AddComponent("openai", gocamel.NewOpenAIComponent())
+import "github.com/tranchida/gocamel/components/openai"
+
+ctx.AddComponent("openai", openai.NewOpenAIComponent())
 ```
 
 ### Database Components
@@ -166,17 +176,20 @@ ctx.AddComponent("sql-stored", sqlStored)
 ### Setting Route ID
 
 ```go
-route := context.CreateRouteBuilder().
+route, err := context.CreateRouteBuilder().
     From("timer:tick").
     SetID("timer-route-1").
     To("direct:output").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Common Options
 
 ```go
-// Polling delay
+// Polling delay (requires: ctx.AddComponent("file", file.NewFileComponent()))
 builder.From("file://input?delay=10s&delete=true")
 
 // HTTP method

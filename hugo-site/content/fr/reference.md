@@ -15,8 +15,8 @@ func NewCamelContext() *CamelContext
 | `AddRoute(route *Route)`        | Enregistrer une route      |
 | `AddComponent(name, component)` | Enregistrer un composant   |
 | `CreateEndpoint(uri)`           | Créer un endpoint          |
-| `Start()`                       | Démarrer toutes les routes (valide après `Stop()`) |
-| `Stop()`                        | Arrêter toutes les routes ; installe un nouveau contexte racine |
+| `Start() error`               | Démarrer toutes les routes (valide après `Stop()`) |
+| `Stop() error`                | Arrêter toutes les routes ; installe un nouveau contexte racine |
 | `CreateRouteBuilder()`          | Créer un route builder     |
 
 ## RouteBuilder
@@ -64,10 +64,10 @@ Accessible via `ctx.GetComponentRegistry()` :
 
 | Méthode                                | Description            |
 |----------------------------------------|------------------------|
-| `Choice()`                             | Routeur par contenu    |
-| `Split(fn)`                            | Séparateur de messages |
-| `Aggregate(a)`                         | Agrégateur de messages |
-| `Multicast()`                          | Multi-destinations     |
+| `Choice() *ChoiceBuilder`                      | Routeur par contenu    |
+| `Split(fn) *SplitDefinition`                   | Séparateur de messages |
+| `Aggregate(aggregator *Aggregator)`            | Agrégateur de messages |
+| `Multicast() *MulticastDefinition`             | Multi-destinations     |
 | `Enrich(uri, strategy)`                | Enrichisseur de contenu via producteur |
 | `PollEnrich(uri, strategy, timeout)`   | Enrichisseur à la demande via consommateur |
 | `Validate(predicate)`                  | Valider le message selon un prédicat |
@@ -105,6 +105,9 @@ Accessible via `ctx.GetComponentRegistry()` :
 | `MarshalTarGz(opts...)` | Créer une archive tar.gz à partir du corps                                        |
 | `UnmarshalTarGz(opts...)`| Extraire une archive tar.gz                                                       |
 
+Les flux RSS n'ont pas de méthode dédiée : utilisez `Marshal(gocamel.NewRSSDataFormat())` et
+`Unmarshal(gocamel.NewRSSDataFormat())`.
+
 Options CSV principales : `CSVDelimiter`, `CSVHeader`, `CSVSkipHeaderRecord`, `CSVCaptureHeaderRecord`, `CSVUseMaps`,
 `CSVTrim`, `CSVIgnoreEmptyLines`.
 Options JSON principales : `JSONPrettyPrint`, `JSONIndent`, `JSONUnmarshalType`, `JSONUseNumber`.
@@ -118,4 +121,4 @@ Options tar.gz principales : `TarGzEntryName`, `TarGzFlat`, `TarGzCompressionLev
 | Méthode     | Description              |
 |-------------|--------------------------|
 | `SetID(id)` | Définir l'ID de la route |
-| `Build()`   | Construire la route      |
+| `Build() (*Route, error)` | Construire la route      |

@@ -14,7 +14,7 @@ builder.From("direct:start").
         body := e.GetIn().GetBody().(string)
         return strings.Split(body, ","), nil
     }).
-    Log("Partie: ${body}").
+    LogSimple("Partie: ${body}").
     To("direct:process").
     End()
 ```
@@ -22,6 +22,7 @@ builder.From("direct:start").
 **Traitement parallèle :**
 
 ```go
+// nécessite : ctx.AddComponent("file", file.NewFileComponent())
 builder.From("file:/data/in").
     Split(lines).ParallelProcessing(true).MaxConcurrency(20). // 10 par défaut
         To("http://api/items").
@@ -75,7 +76,7 @@ func (s *StringJoinStrategy) Aggregate(oldEx, newEx *gocamel.Exchange) *gocamel.
 strategy := &StringJoinStrategy{}
 
 builder.From("direct:start").
-    Split(splitter).Strategy(strategy).
+    Split(splitter).AggregationStrategy(strategy).
         To("direct:process").
     End()
 ```
@@ -91,14 +92,21 @@ Au moins une condition de complétion est obligatoire : `SetCompletionSize`,
 retourne une erreur au lieu de bufferiser indéfiniment.
 
 ```go
+correlationExpr := func(e *gocamel.Exchange) string {
+    orderId, _ := e.GetHeaderAsString("orderId")
+    return orderId
+}
 strategy := &MyAggregationStrategy{}
 repo := gocamel.NewMemoryAggregationRepository()
 
 builder.From("direct:start").
     Aggregate(gocamel.NewAggregator(correlationExpr, strategy, repo).
-        SetCompletionSize(3)). // Completer après 3 messages
-    Log("Agrégation terminée: ${body}")
+        SetCompletionSize(3)). // Compléter après 3 messages
+    LogSimple("Agrégation terminée: ${body}")
 ```
+
+`Aggregate` renvoie le `*RouteBuilder` lui-même (pas de `End()` : l'agrégateur
+est un processeur autonome configuré en amont).
 
 **Stratégie personnalisée:**
 
@@ -116,11 +124,11 @@ func (s *MyAggregationStrategy) Aggregate(
 
 **Conditions de complétion :**
 
-| Méthode                      | Description                                    |
-|------------------------------|------------------------------------------------|
-| `SetCompletionSize(n)`       | Compléter après n messages                     |
-| `SetCompletionTimeout(ms)`   | Compléter après un délai (timeout)             |
-| `SetCompletionPredicate(fn)` | Compléter quand le prédicat retourne vrai      |
+| Méthode                        | Description                                    |
+|--------------------------------|------------------------------------------------|
+| `SetCompletionSize(n)`         | Compléter après n messages                     |
+| `SetCompletionTimeout(d)`      | Compléter après `d` (`time.Duration`)          |
+| `SetCompletionPredicate(fn)`   | Compléter quand le prédicat retourne vrai      |
 
 **Options de stockage :**
 
@@ -129,7 +137,7 @@ func (s *MyAggregationStrategy) Aggregate(
 repo := gocamel.NewMemoryAggregationRepository()
 
 // Persistance SQLite
-repo := gocamel.NewSQLAggregationRepository(db, "schema")
+repo := gocamel.NewSQLAggregationRepository(db, gocamel.SQLAggregationOptions{})
 ```
 
 Au démarrage d'une route avec un timeout de complétion, les groupes déjà
@@ -149,11 +157,11 @@ Envoie une copie à plusieurs destinations.
 builder.From("direct:start").
     Multicast().
         Pipeline().
-            Log("Branche 1: ${body}").
+            LogSimple("Branche 1: ${body}").
             To("direct:out1").
         End().
         Pipeline().
-            Log("Branche 2: ${body}").
+            LogSimple("Branche 2: ${body}").
             To("direct:out2").
         End().
     End()
@@ -455,6 +463,18 @@ builder.From("direct:start").
     To("direct:process")
 ```
 
+**URI dynamiques.** L'URI peut contenir toute expression du Simple Language
+en `${...}` (par ex. `${header.x}`, `${exchangeProperty.x}`, fonctions et
+opérations sur chaînes). Les expressions sont évaluées pour chaque exchange
+et les valeurs sont échappées selon leur position dans l'URI, exactement
+comme `ToD` : une valeur placée dans la query string est échappée comme
+valeur de requête, et `?` et `#` sont échappés dans les valeurs placées dans
+le chemin, de sorte qu'une valeur de l'exchange ne peut pas injecter d'option
+d'endpoint comme `?bufferSize=...`. Un placeholder placé avant le scheme (par
+ex. `PollEnrich("${header.uri}", ...)`) est inséré tel quel et doit provenir
+d'une source de confiance. Une expression malformée ou en échec fait renvoyer
+une erreur à l'étape au lieu de consommer avec l'URI non résolue.
+
 ---
 
 ## Message Validator
@@ -510,7 +530,9 @@ builder.From("direct:start").
 **Dépôts (Repositories) :**
 
 - `NewMemoryIdempotentRepository()` : Stockage en mémoire vive (par défaut).
-- `NewRedisIdempotentRepository()` : Stockage distribué via Redis.
+- `redis.NewRedisIdempotentRepository(rdb, prefix, ttl)` : Stockage distribué via Redis
+  (module `github.com/tranchida/gocamel/components/redis` ; `rdb` est un `*redis.Client` de
+  `github.com/redis/go-redis/v9`).
 - Des dépôts basés sur SQL peuvent être implémentés via l'interface `IdempotentRepository`.
 
 ---
@@ -527,7 +549,10 @@ builder.From("direct:start").
         SuccessThreshold(2).           // Ferme après 2 succès en état Half-Open
         Process(unstableProcessor).
         OnFallback().
-            Log("Circuit ouvert ou échec, appel du fallback").
+            ProcessFunc(func(e *gocamel.Exchange) error {
+                log.Println("circuit ouvert ou en échec, appel du fallback")
+                return nil
+            }).
             To("direct:fallback").
         End().
     End().
@@ -578,7 +603,7 @@ channel).
 ```go
 // Consommateur avec workers concurrents
 builder.From("seda:traitement?concurrentConsumers=5&size=1000").
-    Log("Traitement asynchrone : ${body}").
+    LogSimple("Traitement asynchrone : ${body}").
     To("direct:suivant")
 
 // Producteur
@@ -626,7 +651,7 @@ Remet dans l'ordre les messages arrivés de manière désordonnée en se basant 
 builder.From("direct:start").
     Resequence("${header.seq}", 1). // Commence à la séquence 1
         Timeout(500 * time.Millisecond).
-        Log("Traitement dans l'ordre : ${header.seq}").
+        LogSimple("Traitement dans l'ordre : ${header.seq}").
         To("direct:suivant").
     End()
 ```
@@ -866,7 +891,7 @@ builder.From("direct:start").
         Log("Le service est hors ligne, application du mode dégradé").
         To("direct:recovery").
     DoCatch(""). // Rattrape toutes les autres erreurs
-        Log("Erreur inattendue : ${exchangeProperty.CamelExceptionCaught}").
+        LogSimple("Erreur inattendue : ${exchangeProperty.CamelExceptionCaught}").
         To("direct:error-handler").
     DoFinally().
         Log("Traitement terminé (succès ou échec)").
@@ -1132,7 +1157,7 @@ builder.From("direct:start").
 
 // Définir le corps via une fonction
 builder.From("direct:start").
-    SetBodyFunc(func(e *gocamel.Exchange) (any, error) {
+    Transform(func(e *gocamel.Exchange) (any, error) {
         input := e.GetIn().GetBody().(string)
         return strings.ToUpper(input), nil
     })

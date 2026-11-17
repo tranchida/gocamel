@@ -18,11 +18,14 @@ GoCamel is a lightweight, Go-native integration framework inspired by Apache Cam
 ```go
 context := gocamel.NewCamelContext()
 
-route := context.CreateRouteBuilder().
+route, err := context.CreateRouteBuilder().
     From("direct:input").      // Consumer endpoint
     Process(myProcessor).      // Custom processor
     To("direct:output").       // Producer endpoint
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 
 context.AddRoute(route)
 context.Start()
@@ -71,8 +74,17 @@ When("${date:now:yyyy-MM-dd}")
 
 #### Core (Built-in)
 
-- **Direct** — In-memory routing
+- **Direct** — In-memory synchronous routing
+- **SEDA** — In-memory asynchronous queues
+- **Chan** — Native Go channel integration
 - **Timer** — Scheduled execution
+- **HTTP** — HTTP server/client
+- **Exec** — System command execution
+- **Template** — Go text/html template processing
+- **SQL** — Query execution via `database/sql`
+- **SQL-Stored** — Stored procedure calls
+- **Net** — Raw TCP/UDP sockets
+- **Mock** — Test endpoint recording exchanges, with expectations
 
 #### Security
 
@@ -98,8 +110,6 @@ When("${date:now:yyyy-MM-dd}")
 
 #### Network
 
-- **HTTP** — HTTP server/client
-- **Net** — Raw TCP/UDP sockets
 - **gRPC** — High-performance RPC client/server
 
 #### Messaging
@@ -110,27 +120,21 @@ When("${date:now:yyyy-MM-dd}")
 - **Redis** — Commands and Pub/Sub
 - **Telegram** — Bot API
 - **Mail** — SMTP/IMAP/POP3
-- **Go Channel** — In-memory buffered channels
 
 #### AI
 
-- **OpenAI** — GPT models
+- **OpenAI** — GPT models and OpenAI-compatible providers
+- **Anthropic** — Claude Messages API (native)
+- **Ollama** — Local LLMs (chat/generate/embed)
+- **Jev** — Typed decisions via the OpenRouter Decisions API
 
 #### Database
 
-- **SQL** — Query execution
-- **SQL-Stored** — Stored procedures
+- **MongoDB** — MongoDB CRUD operations
 
 #### Scheduling
 
 - **Cron** — Cron expressions
-
-#### Transformation
-
-- **XSLT** — XML transformation
-- **XSD** — Schema validation
-- **Template** — Go templates
-- **Exec** — Command execution
 
 ### Enterprise Integration Patterns
 
@@ -198,7 +202,7 @@ Multiple credential sources:
 3. **Environment variables** — `FTP_PASSWORD` (recommended)
 
 ```go
-builder.From("ftp://host?username=${env:FTP_USER}")
+builder.From("ftp://host") // FTP_USERNAME / FTP_PASSWORD are read from the environment
 ```
 
 ### Testing Support
@@ -210,11 +214,14 @@ func TestRoute(t *testing.T) {
     ctx := gocamel.NewCamelContext()
     
     // Build test route
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("direct:test").
         SetBody("processed").
         To("direct:result").
         Build()
+    if err != nil {
+        t.Fatal(err)
+    }
     
     ctx.AddRoute(route)
     ctx.Start()

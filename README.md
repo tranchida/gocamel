@@ -42,7 +42,7 @@ Release **v0.20.0** lets several HTTP routes share one port, fixes nine code-rev
 Go **1.27.0 or later** is required for the core, components and examples. The workspace and `.go-version` default to Go 1.27.0.
 
 The core module (routing engine, EIPs, Simple Language and all stdlib-only
-components: direct, seda, chan, timer, http, exec, template, sql, mock) has **zero
+components: direct, seda, chan, timer, http, exec, template, sql, sql-stored, net, mock) has **zero
 external runtime dependencies** and builds without CGO (tests use the pure-Go
 `modernc.org/sqlite` driver):
 
@@ -95,7 +95,7 @@ import (
 )
 
 ctx.CreateRouteBuilder().
-	From("timer:tick?period=5s").
+	From("timer:tick?period=5000").
 	Intercept(gocamelprom.Metrics()).
 	Intercept(gocamelotel.Tracing()).
 	...
@@ -107,18 +107,24 @@ ctx.CreateRouteBuilder().
 package main
 
 import (
+	"log"
+
 	"github.com/tranchida/gocamel"
 )
 
 func main() {
 	context := gocamel.NewCamelContext()
 
-	route := context.CreateRouteBuilder().
-		From("timer:tick?period=5s").
+	// timer period and delay are integer milliseconds (default 1000)
+	route, err := context.CreateRouteBuilder().
+		From("timer:tick?period=5000").
 		SetBody("Hello World").
-		Log("${body}").
+		LogSimple("${body}").
 		To("direct:output").
 		Build()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	context.AddRoute(route)
 	context.Start()
@@ -160,6 +166,7 @@ EndChoice()
 | **FTP/SFTP**   | File transfer via FTP/SSH     |
 | **SMB**        | Windows/Samba shares          |
 | **Direct**     | In-memory synchronous routing |
+| **SEDA**       | In-memory asynchronous queue  |
 | **NATS**       | Asynchronous event messaging  |
 | **Redis**      | Commands & Pub/Sub messaging  |
 | **Go Channel** | Native Go channel integration |
@@ -171,8 +178,8 @@ EndChoice()
 | **Jev**        | Typed decisions (yes/no, choice, score) via OpenRouter |
 | **Mail**       | SMTP/IMAP/POP3 email          |
 | **SQL**        | Database queries              |
+| **SQL-Stored** | Stored procedure calls (IN/OUT/INOUT parameters) |
 | **MongoDB**    | MongoDB CRUD operations       |
-| **XSLT/XSD**   | XML transformation/validation |
 | **Template**   | Go template processing        |
 | **Exec**       | System command execution      |
 | **Mock**       | Test endpoint recording exchanges, with expectations and `Route.AdviceWith` endpoint substitution |

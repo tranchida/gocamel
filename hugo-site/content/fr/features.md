@@ -18,11 +18,14 @@ GoCamel est un framework d'intégration léger et natif à Go, inspiré d'Apache
 ```go
 context := gocamel.NewCamelContext()
 
-route := context.CreateRouteBuilder().
+route, err := context.CreateRouteBuilder().
     From("direct:input").      // Endpoint consommateur
     Process(myProcessor).      // Processeur personnalisé
     To("direct:output").       // Endpoint producteur
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 
 context.AddRoute(route)
 context.Start()
@@ -71,8 +74,17 @@ When("${date:now:yyyy-MM-dd}")
 
 #### Noyau (Intégré)
 
-- **Direct** — Routage en mémoire
+- **Direct** — Routage synchrone en mémoire
+- **SEDA** — Files asynchrones en mémoire
+- **Chan** — Intégration des canaux Go natifs
 - **Timer** — Exécution planifiée
+- **HTTP** — Serveur/client HTTP
+- **Exec** — Exécution de commandes système
+- **Template** — Templates Go text/html
+- **SQL** — Exécution de requêtes via `database/sql`
+- **SQL-Stored** — Appels de procédures stockées
+- **Net** — Sockets TCP/UDP brutes
+- **Mock** — Endpoint de test qui enregistre les exchanges, avec attentes
 
 #### Sécurité
 
@@ -99,8 +111,6 @@ When("${date:now:yyyy-MM-dd}")
 
 #### Réseau
 
-- **HTTP** — Serveur/client HTTP
-- **Net** — Sockets TCP/UDP brutes
 - **gRPC** — Client/serveur RPC haute performance
 
 #### Messagerie
@@ -111,27 +121,21 @@ When("${date:now:yyyy-MM-dd}")
 - **Redis** — Commandes et Pub/Sub
 - **Telegram** — Bot API
 - **Mail** — SMTP/IMAP/POP3
-- **Go Channel** — Canaux bufferisés en mémoire
 
 #### IA
 
-- **OpenAI** — Modèles GPT
+- **OpenAI** — Modèles GPT et fournisseurs compatibles OpenAI
+- **Anthropic** — API Messages Claude (native)
+- **Ollama** — LLMs locaux (chat/generate/embed)
+- **Jev** — Décisions typées via l'API OpenRouter Decisions
 
 #### Base de Données
 
-- **SQL** — Exécution de requêtes
-- **SQL-Stored** — Procédures stockées
+- **MongoDB** — Opérations CRUD MongoDB
 
 #### Planification
 
 - **Cron** — Expressions cron
-
-#### Transformation
-
-- **XSLT** — Transformation XML
-- **XSD** — Validation de schéma
-- **Template** — Templates Go
-- **Exec** — Exécution de commandes
 
 ### Enterprise Integration Patterns
 
@@ -199,7 +203,7 @@ Plusieurs sources d'identification :
 3. **Variables d'environnement** — `FTP_PASSWORD` (recommandé)
 
 ```go
-builder.From("ftp://host?username=${env:FTP_USER}")
+builder.From("ftp://host") // FTP_USERNAME / FTP_PASSWORD sont lues depuis l'environnement
 ```
 
 ### Support de Test
@@ -211,11 +215,14 @@ func TestRoute(t *testing.T) {
     ctx := gocamel.NewCamelContext()
 
     // Construire la route de test
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("direct:test").
         SetBody("traité").
         To("direct:result").
         Build()
+    if err != nil {
+        t.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()

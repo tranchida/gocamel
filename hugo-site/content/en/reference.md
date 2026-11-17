@@ -15,8 +15,8 @@ func NewCamelContext() *CamelContext
 | `AddRoute(route *Route)`                         | Register a route     |
 | `AddComponent(name string, component Component)` | Register a component |
 | `CreateEndpoint(uri string) (Endpoint, error)`   | Create endpoint      |
-| `Start()`                                        | Start all routes (safe after `Stop()`) |
-| `Stop()`                                         | Stop all routes; installs a fresh root context |
+| `Start() error`                               | Start all routes (safe after `Stop()`) |
+| `Stop() error`                                | Stop all routes; installs a fresh root context |
 | `CreateRouteBuilder() *RouteBuilder`             | Create route builder |
 
 ## RouteBuilder
@@ -64,10 +64,10 @@ Accessible via `ctx.GetComponentRegistry()`:
 
 | Method                                         | Description        |
 |------------------------------------------------|--------------------|
-| `Choice() *ChoiceBuilder`                      | Content router     |
-| `Split(fn) *SplitBuilder`                      | Message splitter   |
-| `Aggregate(a) *RouteBuilder`                   | Message aggregator |
-| `Multicast() *MulticastBuilder`                | Multi-destination  |
+| `Choice() *ChoiceBuilder`                         | Content router     |
+| `Split(fn) *SplitDefinition`                      | Message splitter   |
+| `Aggregate(aggregator *Aggregator) *RouteBuilder` | Message aggregator |
+| `Multicast() *MulticastDefinition`                | Multi-destination  |
 | `Enrich(uri, strategy) *RouteBuilder`          | Content enricher via producer |
 | `PollEnrich(uri, strategy, timeout) *RouteBuilder` | On-demand content enricher via consumer |
 | `Validate(predicate) *RouteBuilder`            | Validate message against predicate |
@@ -105,6 +105,9 @@ Accessible via `ctx.GetComponentRegistry()`:
 | `MarshalTarGz(opts...) *RouteBuilder` | Build a gzipped tar archive from the body                                         |
 | `UnmarshalTarGz(opts...) *RouteBuilder`| Extract a gzipped tar archive                                                     |
 
+RSS feeds have no dedicated builder method: use `Marshal(gocamel.NewRSSDataFormat())` and
+`Unmarshal(gocamel.NewRSSDataFormat())`.
+
 Main CSV options: `CSVDelimiter`, `CSVHeader`, `CSVSkipHeaderRecord`, `CSVCaptureHeaderRecord`, `CSVUseMaps`, `CSVTrim`,
 `CSVIgnoreEmptyLines`.
 Main JSON options: `JSONPrettyPrint`, `JSONIndent`, `JSONUnmarshalType`, `JSONUseNumber`.
@@ -118,4 +121,4 @@ Main tar.gz options: `TarGzEntryName`, `TarGzFlat`, `TarGzCompressionLevel`, `Ta
 | Method                    | Description  |
 |---------------------------|--------------|
 | `SetID(id) *RouteBuilder` | Set route ID |
-| `Build() *Route`          | Build route  |
+| `Build() (*Route, error)` | Build route  |

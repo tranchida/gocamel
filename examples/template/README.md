@@ -109,15 +109,19 @@ Code Go :
 camelCtx := gocamel.NewCamelContext()
 camelCtx.AddComponent("template", gocamel.NewTemplateComponent())
 
-builder := camelCtx.CreateRouteBuilder()
-builder.From("direct:greet").
-    SetHeader("name", gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
+route, err := camelCtx.CreateRouteBuilder().
+    From("direct:greet").
+    ProcessFunc(func(e *gocamel.Exchange) error {
         e.SetHeader("name", "Alice")
         return nil
-    })).
+    }).
     SetBody("Votre commande est prête").
-    To("template:templates/greeting.tmpl")
-builder.Build()
+    To("template:templates/greeting.tmpl").
+    Build()
+if err != nil {
+    log.Fatal(err)
+}
+_ = route
 ```
 
 ### Template avec cache

@@ -29,14 +29,19 @@ endpoint is allowed.
 Simple periodic triggering.
 
 ```go
-builder.From("timer:tick?period=5s")
+builder.From("timer:tick?period=5000")
 ```
 
-| Option        | Type     | Default | Description                        |
-|---------------|----------|---------|------------------------------------|
-| `period`      | Duration | `1s`    | Period between triggers            |
-| `repeatCount` | int      | `0`     | Number of repetitions (0=infinite) |
-| `fixedRate`   | bool     | `false` | Fixed-rate vs fixed-delay mode     |
+| Option        | Type     | Default | Description                                       |
+|---------------|----------|---------|---------------------------------------------------|
+| `period`      | int (ms) | `1000`  | Period between triggers, in milliseconds          |
+| `delay`       | int (ms) | `1000`  | Initial delay before the first trigger, in ms     |
+| `repeatCount` | int      | `0`     | Number of repetitions (0=infinite)                |
+| `fixedRate`   | bool     | `false` | Fixed-rate vs fixed-delay mode                    |
+
+`period` and `delay` are plain integer milliseconds, not Go durations:
+`period=5000` fires every 5 seconds. A value such as `period=5s` fails
+parsing and the option silently keeps its default.
 
 ---
 
@@ -91,7 +96,15 @@ pass. It returns an error while the route is started (it is allowed again after 
 
 ### File
 
-Local file system operations.
+Local file system operations. Lives in its own module
+(`github.com/tranchida/gocamel/components/file`, depends on `fsnotify`) and
+must be registered explicitly:
+
+```go
+import "github.com/tranchida/gocamel/components/file"
+
+ctx.AddComponent("file", file.NewFileComponent())
+```
 
 ```go
 // Consumer (read)
@@ -114,6 +127,9 @@ builder.To("file://output")
 | `readLockTimeout`       | Duration | `10s`      | Timeout waiting to acquire read lock                                          |
 | `readLockCheckInterval` | Duration | `100ms`    | Interval between read lock checks                                             |
 | `readLockMinLength`     | int64    | `0`        | Minimum file size in bytes                                                    |
+| `readLockMinAge`        | Duration | `0`        | Minimum file age                                                              |
+| `maxSeenEntries`        | int      | `100000`   | Files remembered to skip duplicate events; oldest evicted first (`0` = unlimited) |
+| `fileExist`             | string   | `Override` | Behavior if destination file exists (`Override`, `Append`, `Fail`, `Ignore`) |
 
 A relative `move` / `moveFailed` directory is resolved next to the consumed
 file: with `From("file:///data/in?move=.done")`, `/data/in/a.txt` ends up in
@@ -122,9 +138,6 @@ those directories are never consumed again, including with `recursive=true`.
 
 Files already present when the route starts are consumed in the background:
 `Start()` does not wait for the backlog.
-| `readLockMinAge`        | Duration | `0`        | Minimum file age                                                              |
-| `maxSeenEntries`        | int      | `100000`   | Files remembered to skip duplicate events; oldest evicted first (`0` = unlimited) |
-| `fileExist`             | string   | `Override` | Behavior if destination file exists (`Override`, `Append`, `Fail`, `Ignore`) |
 
 #### Headers
 
@@ -540,11 +553,13 @@ builder.From("net:tcp://localhost:9090").
 Telegram Bot API integration for receiving and sending messages.
 
 ```go
+import "github.com/tranchida/gocamel/components/telegram"
+
 // Required: Set TELEGRAM_AUTHORIZATIONTOKEN env variable
-ctx.AddComponent("telegram", gocamel.NewTelegramComponent())
+ctx.AddComponent("telegram", telegram.NewTelegramComponent())
 
 // Consumer (webhook/polling mode)
-builder.From("telegram:bots").Log("${body}")
+builder.From("telegram:bots").LogSimple("${body}")
 
 // Producer (send messages)
 builder.To("telegram:bots")
@@ -565,7 +580,9 @@ builder.To("telegram:bots")
 Asynchronous event-driven messaging with NATS. High performance publisher and subscriber with Go NATS client.
 
 ```go
-ctx.AddComponent("nats", gocamel.NewNATSComponent())
+import "github.com/tranchida/gocamel/components/nats"
+
+ctx.AddComponent("nats", nats.NewNATSComponent())
 
 // Consumer: reactive asynchronous subscription
 builder.From("nats://orders?servers=nats://localhost:4222").
@@ -580,7 +597,7 @@ builder.From("nats://orders?servers=nats://localhost:4222").
 builder.To("nats://orders?servers=nats://localhost:4222")
 
 // Dynamically override subject in header
-exchange.In.SetHeader(gocamel.CamelNATSSubject, "urgent-orders")
+exchange.In.SetHeader(nats.CamelNATSSubject, "urgent-orders")
 ```
 
 > [!WARNING]
@@ -606,7 +623,7 @@ ctx.AddComponent("kafka", kafka.NewKafkaComponent())
 
 // Consumer with consumer group
 builder.From("kafka:orders?brokers=localhost:9092&groupId=billing-service").
-    Log("Received message: ${body}")
+    LogSimple("Received message: ${body}")
 
 // Producer with dynamic partition key (requires allowHeaderOverride=true)
 builder.From("direct:publish").
@@ -668,7 +685,7 @@ ctx.AddComponent("stomp", stomp.NewStompComponent())
 
 // Consumer: subscribe to an ActiveMQ queue
 builder.From("stomp://queue/orders?host=localhost:61613&ack=client-individual").
-    Log("Received message: ${body}")
+    LogSimple("Received message: ${body}")
 
 // Consumer on a topic
 builder.From("stomp://topic/prices?host=localhost:61613")
@@ -794,11 +811,13 @@ builder.From("direct:invoke").
 Send commands (SET, GET, DEL, PUBLISH) or subscribe to Redis Pub/Sub channels.
 
 ```go
-ctx.AddComponent("redis", gocamel.NewRedisComponent())
+import "github.com/tranchida/gocamel/components/redis"
+
+ctx.AddComponent("redis", redis.NewRedisComponent())
 
 // Consumer: Subscribe to Pub/Sub channel
 builder.From("redis://localhost:6379?subscribe=true&channel=mychannel").
-    Log("Received Pub/Sub message: ${body}")
+    LogSimple("Received Pub/Sub message: ${body}")
 
 // Producer: Execute commands
 builder.To("redis://localhost:6379?command=SET&key=mykey")
@@ -833,12 +852,14 @@ The Redis Idempotent Repository provides a distributed implementation of the `Id
 ```go
 import (
     "time"
-    "github.com/redis/go-redis/v9"
+
+    goredis "github.com/redis/go-redis/v9"
+    "github.com/tranchida/gocamel/components/redis"
 )
 
-rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+rdb := goredis.NewClient(&goredis.Options{Addr: "localhost:6379"})
 // Key prefix "idempotent:" with 24-hour expiration TTL
-repo := gocamel.NewRedisIdempotentRepository(rdb, "idempotent:", 24*time.Hour)
+repo := redis.NewRedisIdempotentRepository(rdb, "idempotent:", 24*time.Hour)
 
 builder.From("direct:start").
     IdempotentConsumer("${header.MessageId}", repo).
@@ -890,7 +911,9 @@ supported via the `baseURL` option (OpenRouter, Groq, Together, Mistral,
 vLLM, LM Studio, Ollama's OpenAI compatibility layer, ...).
 
 ```go
-ctx.AddComponent("openai", gocamel.NewOpenAIComponent())
+import "github.com/tranchida/gocamel/components/openai"
+
+ctx.AddComponent("openai", openai.NewOpenAIComponent())
 
 // Producer only - send chat completion request
 endpoint, _ := ctx.CreateEndpoint("openai:chat?model=gpt-4")
@@ -934,7 +957,9 @@ shape — separate `system` parameter, content blocks, prompt caching
 headers, and stop reasons.
 
 ```go
-ctx.AddComponent("anthropic", gocamel.NewAnthropicComponent())
+import "github.com/tranchida/gocamel/components/anthropic"
+
+ctx.AddComponent("anthropic", anthropic.NewAnthropicComponent())
 
 // Producer only - send a Messages request
 endpoint, _ := ctx.CreateEndpoint(
@@ -1057,7 +1082,9 @@ URI path:
 - `ollama:embed` — embeddings (`/api/embed`)
 
 ```go
-ctx.AddComponent("ollama", gocamel.NewOllamaComponent())
+import "github.com/tranchida/gocamel/components/ollama"
+
+ctx.AddComponent("ollama", ollama.NewOllamaComponent())
 
 // Chat with a local model
 endpoint, _ := ctx.CreateEndpoint(
@@ -1129,7 +1156,9 @@ endpoint, _ := ctx.CreateEndpoint(
 Advanced scheduling with cron expressions or simple intervals.
 
 ```go
-ctx.AddComponent("cron", gocamel.NewCronComponent())
+import "github.com/tranchida/gocamel/components/cron"
+
+ctx.AddComponent("cron", cron.NewCronComponent())
 
 // Cron trigger (6 fields, including seconds)
 builder.From("cron://group/job?cron=0+*+*+*+*+*")
@@ -1247,7 +1276,7 @@ ctx.AddComponent("sql", sqlComp)
 // SELECT -> Out.Body = []map[string]any
 builder.From("direct:list").
     To("sql://appdb?query=SELECT+id,name+FROM+users").
-    Log("${body}")
+    LogSimple("${body}")
 
 // SELECT single row -> Out.Body = map[string]any
 builder.From("direct:one").
@@ -1357,7 +1386,7 @@ builder.From("direct:call").
         {Name: "userId", Direction: gocamel.ParamDirectionIn, Value: 42},
     }).
     To("sql-stored://mydb?procedure=GET_USER_BY_ID").
-    Log("${body}")
+    LogSimple("${body}")
 ```
 
 **URI Format:**
@@ -1465,63 +1494,37 @@ document. Set `allowUpdateAll=true` explicitly only when that is intentional.
 ```go
 import (
     "context"
+
     "go.mongodb.org/mongo-driver/mongo"
     "go.mongodb.org/mongo-driver/mongo/options"
+    "github.com/tranchida/gocamel/components/mongodb"
 )
 
 // Create component
-mongoComp := gocamel.NewMongoDBComponent()
+mongoComp := mongodb.NewMongoDBComponent()
 
 // Connect
 client, _ := mongo.Connect(context.Background(), options.Client().ApplyURI("mongodb://localhost:27017"))
-conn := gocamel.CreateMongoDBConnection(client, "mongodb://localhost:27017", "mydb")
+conn := mongodb.CreateMongoDBConnection(client, "mongodb://localhost:27017", "mydb")
 mongoComp.RegisterConnection("myconn", conn)
 
-builder.WithComponent("mongodb", mongoComp)
+ctx.AddComponent("mongodb", mongoComp)
 
-// Insert
-builder.From("timer:tick?period=5s").
+// Insert (timer period is in milliseconds)
+builder.From("timer:tick?period=5000").
     SetBody(map[string]any{"name": "test", "value": 123}).
     To("mongodb://myconn?database=mydb&collection=items&operation=insert")
 
 // Query with filter
 builder.From("direct:search").
-    SetHeader(gocamel.CamelMongoDbCriteria, map[string]any{"status": "active"}).
-    SetHeader(gocamel.CamelMongoDbLimit, 10).
+    SetHeader(mongodb.CamelMongoDbCriteria, map[string]any{"status": "active"}).
+    SetHeader(mongodb.CamelMongoDbLimit, 10).
     To("mongodb://myconn?database=mydb&collection=items&operation=find")
 ```
 
 ---
 
 ## Transformation Components
-
-### XSLT
-
-XML transformation using XSL stylesheets.
-
-```go
-builder.To("xslt:file://transform.xsl")
-```
-
-| Option               | Type   | Default | Description              |
-|----------------------|--------|---------|--------------------------|
-| `transformerFactory` | string | `""`    | Custom transformer class |
-
----
-
-### XSD
-
-XML Schema validation.
-
-```go
-builder.To("xsd:file://schema.xsd")
-```
-
-| Option           | Type   | Default  | Description     |
-|------------------|--------|----------|-----------------|
-| `schemaResource` | string | required | XSD schema path |
-
----
 
 ### Template
 
@@ -1640,15 +1643,25 @@ When `allowHeaderOverride=true`, these headers override the URI settings for a s
 
 ### Authentication
 
-Credentials can be provided via environment variables:
+Credentials are resolved by `gocamel.GetConfigValue`, which every component
+uses. For a URI such as `ftp://host` and the key `password`, it checks, in
+order: the exact environment variable `password` (uppercase keys such as an
+API key name work verbatim), then the scheme-prefixed variable
+`FTP_PASSWORD`, then the `password` query parameter, then the URI userinfo
+(`user:pass@host`). The first non-empty value wins, so exporting
+`FTP_USERNAME` / `FTP_PASSWORD` is enough — nothing goes into the URI:
 
 ```go
-// FTP with env var
-builder.From("ftp://host?username=${env:FTP_USER}")
+// Credentials come from the FTP_USERNAME / FTP_PASSWORD env vars
+builder.From("ftp://host/incoming")
 
-// Or parameter  
-builder.From("ftp://host?username=admin&password=${env:FTP_PASS}")
+// Or passed explicitly as query parameters (least secure: URIs leak into
+// connection-error logs, and a WARN is emitted for credential-like keys)
+builder.From("ftp://host/incoming?username=admin&password=s3cret")
 ```
+
+There is no `${env:...}` interpolation: a literal `${env:FTP_USER}` in a URI
+would be sent to the server as the username.
 
 ### Common Options
 
@@ -1696,8 +1709,6 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | SQL        | Database   | ❌        | ✅        | `sql://datasource`        |
 | SQL-Stored | Database   | ❌        | ✅        | `sql-stored://datasource` |
 | MongoDB    | Database   | ❌        | ✅        | `mongodb:connectionName`  |
-| XSLT       | Transform  | ❌        | ✅        | `xslt:template`           |
-| XSD        | Transform  | ❌        | ✅        | `xsd:schema`              |
 | Template   | Transform  | ❌        | ✅        | `template:template`       |
 | Exec       | Execution  | ❌        | ✅        | `exec:command`            |
 | NATS       | Messaging  | ✅        | ✅        | `nats://subject`          |

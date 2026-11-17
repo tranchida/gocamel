@@ -89,8 +89,10 @@ cfg := ctx.Config()
 // ❌ MAUVAIS
 endpoint := "ftp://user:secret@host"
 
-// ✅ BON
-endpoint := "ftp://host?username=${env:FTP_USER}"
+// ✅ BON — rien dans l'URI : GetConfigValue récupère automatiquement
+// les variables d'environnement FTP_USERNAME / FTP_PASSWORD
+// (il n'existe pas de syntaxe d'interpolation ${env:...})
+endpoint := "ftp://host"
 ```
 
 ## Proxy
@@ -106,7 +108,9 @@ os.Setenv("NO_PROXY", "localhost,127.0.0.1")
 ### Composants standards
 
 ```go
-ctx.AddComponent("ftp", gocamel.NewFTPComponent())
+import "github.com/tranchida/gocamel/components/ftp"
+
+ctx.AddComponent("ftp", ftp.NewFTPComponent())
 ctx.AddComponent("http", gocamel.NewHTTPComponent())
 ctx.AddComponent("timer", gocamel.NewTimerComponent())
 ctx.AddComponent("direct", gocamel.NewDirectComponent())
@@ -115,19 +119,25 @@ ctx.AddComponent("direct", gocamel.NewDirectComponent())
 ### Composants planifiés
 
 ```go
-ctx.AddComponent("cron", gocamel.NewCronComponent())
+import "github.com/tranchida/gocamel/components/cron"
+
+ctx.AddComponent("cron", cron.NewCronComponent())
 ```
 
 ### Composants de messagerie
 
 ```go
-ctx.AddComponent("telegram", gocamel.NewTelegramComponent())
+import "github.com/tranchida/gocamel/components/telegram"
+
+ctx.AddComponent("telegram", telegram.NewTelegramComponent())
 ```
 
 ### Composants IA
 
 ```go
-ctx.AddComponent("openai", gocamel.NewOpenAIComponent())
+import "github.com/tranchida/gocamel/components/openai"
+
+ctx.AddComponent("openai", openai.NewOpenAIComponent())
 ```
 
 ### Composants de base de données
@@ -169,17 +179,20 @@ ctx.AddComponent("sql-stored", sqlStored)
 ### Définir l'ID de route
 
 ```go
-route := context.CreateRouteBuilder().
+route, err := context.CreateRouteBuilder().
     From("timer:tick").
     SetID("timer-route-1").
     To("direct:output").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Options courantes
 
 ```go
-// Délai de polling
+// Délai de polling (nécessite : ctx.AddComponent("file", file.NewFileComponent()))
 builder.From("file://input?delay=10s&delete=true")
 
 // Méthode HTTP

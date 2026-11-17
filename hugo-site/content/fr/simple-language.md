@@ -37,7 +37,10 @@ Les expressions sont encadrées par `${...}` :
 | `${date:file:format}`           | Date de modif. du fichier | `${date:file:2006-01-02}`         |
 | `${random(max)}`                | Nombre aléatoire          | `${random(100)}`                  |
 | `${uuid}`                       | Génération UUID           | `${uuid}`                         |
-| `${env:VAR}`                    | Variable d'environnement  | `${env:USER}`                     |
+
+Il n'existe pas de fonction `${env:...}`. Les composants résolvent les variables
+d'environnement via `gocamel.GetConfigValue` (recherche par nom exact et préfixée
+par le scheme) — voir [Configuration](../configuration/).
 
 **Décalages Arithmétiques :**
 
@@ -143,7 +146,7 @@ builder.From("direct:start").
 
 ```go
 builder.From("direct:start").
-    Log("Traitement commande ${header.orderId} avec valeur ${body?.total}")
+    LogSimple("Traitement commande ${header.orderId} avec valeur ${body?.total}")
 ```
 
 ### Dans ToD (URI Dynamique)
@@ -183,12 +186,16 @@ ${date:now:ISO8601}
 
 ## Référence Complète
 
-### Fonctions de Chaîne (si disponibles)
+### Fonctions de Chaîne
+
+Chaînables sur toute expression (`${body.trim().uppercase()}`) :
 
 ```go
-${body.toUpperCase()}
-${body.substring(0, 5)}
+${body.uppercase()}        // ou ${body.upper()}
+${body.lowercase()}        // ou ${body.lower()}
 ${header.name.trim()}
+${body.substring(0, 5)}
+${body.size()}             // ou ${body.length()} : taille d'une chaîne, slice, array ou map
 ```
 
 ### Fonctions Mathématiques

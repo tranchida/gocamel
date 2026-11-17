@@ -12,17 +12,23 @@ Collection of practical examples demonstrating GoCamel features.
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
 
-    route := ctx.CreateRouteBuilder().
-        From("timer:tick?period=5s").
+    // timer period and delay are integer milliseconds (default 1000)
+    route, err := ctx.CreateRouteBuilder().
+        From("timer:tick?period=5000").
         SetBody("Hello GoCamel!").
-        Log("${body}").
+        LogSimple("${body}").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()
@@ -37,12 +43,14 @@ package main
 
 import (
     "fmt"
+
     "github.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel/components/openai"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
-    ctx.AddComponent("openai", gocamel.NewOpenAIComponent())
+    ctx.AddComponent("openai", openai.NewOpenAIComponent())
 
     // Manual producer usage
     endpoint, _ := ctx.CreateEndpoint("openai:chat?model=gpt-3.5-turbo")
@@ -66,18 +74,26 @@ func main() {
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel/components/file"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
+    // file is an external module (fsnotify) and must be registered
+    ctx.AddComponent("file", file.NewFileComponent())
 
     // Move files from input to output
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("file://input?delete=true").
-        Log("Processing: ${header.CamelFileName}").
+        LogSimple("Processing: ${header.CamelFileName}").
         To("file://output").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()
@@ -88,7 +104,8 @@ func main() {
 ### File to File with Transformation
 
 ```go
-route := ctx.CreateRouteBuilder().
+// requires: ctx.AddComponent("file", file.NewFileComponent())
+route, err := ctx.CreateRouteBuilder().
     From("file://input?include=*.txt&delete=true").
     ProcessFunc(func(e *gocamel.Exchange) error {
         content := e.GetIn().GetBody().(string)
@@ -96,9 +113,12 @@ route := ctx.CreateRouteBuilder().
         e.GetOut().SetBody(strings.ToUpper(content))
         return nil
     }).
-    SetHeader("CamelFileName", "${header.CamelFileName}.processed").
+    SimpleSetHeader("CamelFileName", "${header.CamelFileName}.processed").
     To("file://output").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ---
@@ -111,6 +131,8 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
@@ -118,10 +140,13 @@ func main() {
     ctx := gocamel.NewCamelContext()
     ctx.AddComponent("http", gocamel.NewHTTPComponent())
 
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("http://localhost:8080/hello").
-        SetBody("Hello ${header.name}!").
+        SimpleSetBody("Hello ${header.name}!").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
 
@@ -137,7 +162,7 @@ func main() {
 ### HTTP Consumer with Processing
 
 ```go
-route := ctx.CreateRouteBuilder().
+route, err := ctx.CreateRouteBuilder().
     From("http://localhost:8080/api/process").
     Choice().
         When("${header.Content-Type} == 'application/json'").
@@ -151,6 +176,9 @@ route := ctx.CreateRouteBuilder().
             SetBody("Unsupported content type").
     EndChoice().
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ---
@@ -163,19 +191,27 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel/components/file"
+    "github.com/tranchida/gocamel/components/ftp"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
-    ctx.AddComponent("ftp", gocamel.NewFTPComponent())
+    ctx.AddComponent("ftp", ftp.NewFTPComponent())
+    ctx.AddComponent("file", file.NewFileComponent())
 
-    // Download from FTP
-    route := ctx.CreateRouteBuilder().
+    // Download from FTP — FTP_USERNAME / FTP_PASSWORD are read from the environment
+    route, err := ctx.CreateRouteBuilder().
         From("ftp://ftp.example.com/incoming?delete=true&passiveMode=true").
-        Log("Downloaded: ${header.CamelFileName}").
+        LogSimple("Downloaded: ${header.CamelFileName}").
         To("file://downloads").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()
@@ -186,11 +222,16 @@ func main() {
 ### SFTP with Key Auth
 
 ```go
-route := ctx.CreateRouteBuilder().
+// requires: ctx.AddComponent("sftp", sftp.NewSFTPComponent())
+//           ctx.AddComponent("file", file.NewFileComponent())
+route, err := ctx.CreateRouteBuilder().
     From("sftp://secure.example.com/data?username=admin").
-    SetHeader("CamelFileName", "${header.CamelFileName}.secure").
+    SimpleSetHeader("CamelFileName", "${header.CamelFileName}.secure").
     To("file://secure-downloads").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ---
@@ -203,13 +244,15 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
 
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("direct:start").
         Choice().
             When("${header.priority == 'high'}").
@@ -227,6 +270,9 @@ func main() {
                 To("direct:low-queue").
         EndChoice().
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()
@@ -244,21 +290,25 @@ func main() {
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
 
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("direct:start").
         SimpleSetBody("📨 Message: ${body}").
         SimpleSetHeader("X-Timestamp", "${date:now}").
         SimpleSetHeader("X-Request-ID", "${uuid}").
-        Log("Processing at ${header.X-Timestamp}").
+        LogSimple("Processing at ${header.X-Timestamp}").
         To("direct:output").
         Build()
-
+    if err != nil {
+        log.Fatal(err)
+    }
     ctx.AddRoute(route)
     ctx.Start()
     select {}
@@ -271,6 +321,8 @@ func main() {
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
@@ -278,14 +330,14 @@ func main() {
     ctx := gocamel.NewCamelContext()
 
     // Expected body: {"user": {"name": "John", "email": "john@example.com"}}
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("direct:api").
         Choice().
             When("${header.Content-Type == 'application/json'}").
                 SimpleSetHeader("X-User-Name", "${body['user']['name']}").
                 SimpleSetHeader("X-User-Email", "${body['user']['email']}").
                 SimpleSetBody("👤 User ${body['user']['name']} registered").
-                Log("📝 User registration: ${body}").
+                LogSimple("📝 User registration: ${body}").
                 To("direct:process-json").
             When("${header.Content-Type == 'text/plain'}").
                 SimpleSetBody("📝 Message received: ${body}").
@@ -295,7 +347,9 @@ func main() {
                 To("direct:error").
         EndChoice().
         Build()
-
+    if err != nil {
+        log.Fatal(err)
+    }
     ctx.AddRoute(route)
     ctx.Start()
     select {}
@@ -308,6 +362,8 @@ func main() {
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
@@ -315,16 +371,18 @@ func main() {
     ctx := gocamel.NewCamelContext()
 
     // Body: [{"name": "A"}, {"name": "B"}, {"name": "C"}]
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("direct:start").
-        Log("First: ${body[0]['name']}").
-        Log("Last: ${body[last]['name']}").
-        Log("User (null-safe): ${body?.user?.name}").
+        LogSimple("First: ${body[0]['name']}").
+        LogSimple("Last: ${body[last]['name']}").
+        LogSimple("User (null-safe): ${body?.user?.name}").
         SimpleSetHeader("X-First-Item", "${body[0]['name']}").
         SimpleSetHeader("X-Last-Item", "${body[last]['name']}").
         To("direct:output").
         Build()
-
+    if err != nil {
+        log.Fatal(err)
+    }
     ctx.AddRoute(route)
     ctx.Start()
     select {}
@@ -338,14 +396,16 @@ func main() {
 ### CSV Processing
 
 ```go
-route := ctx.CreateRouteBuilder().
+// requires: ctx.AddComponent("file", file.NewFileComponent())
+route, err := ctx.CreateRouteBuilder().
     From("file://csv-input").
     Split(func(e *gocamel.Exchange) (any, error) {
         body := e.GetIn().GetBody().(string)
         // Split CSV into lines
         return strings.Split(body, "\n"), nil
     }).
-    Log("Processing line ${in.header.CamelSplitIndex}/${in.header.CamelSplitSize}").
+    // CamelSplitIndex/CamelSplitSize are exchange properties, not headers
+    LogSimple("Processing line ${exchangeProperty.CamelSplitIndex}/${exchangeProperty.CamelSplitSize}").
     ProcessFunc(func(e *gocamel.Exchange) error {
         // Process each line
         return nil
@@ -354,6 +414,9 @@ route := ctx.CreateRouteBuilder().
     End(). // End split
     Log("All lines processed").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ---
@@ -366,7 +429,9 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
+    "log"
     "strings"
+
     "github.com/tranchida/gocamel"
 )
 
@@ -391,7 +456,7 @@ func main() {
     strategy := &StringConcatStrategy{}
     repo := gocamel.NewMemoryAggregationRepository()
 
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("direct:start").
         Split(func(e *gocamel.Exchange) (any, error) {
             body := e.GetIn().GetBody().(string)
@@ -405,6 +470,9 @@ func main() {
             repo,
         ).SetCompletionSize(3)).
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()
@@ -437,17 +505,26 @@ func (s *OrderAggregationStrategy) Aggregate(
 strategy := &OrderAggregationStrategy{}
 repo := gocamel.NewMemoryAggregationRepository()
 
-aggregator := gocamel.NewAggregator("${header.orderId}", strategy, repo).
+aggregator := gocamel.NewAggregator(
+    func(e *gocamel.Exchange) string {
+        orderId, _ := e.GetHeaderAsString("orderId")
+        return orderId
+    },
+    strategy,
+    repo,
+).
     SetCompletionSize(3).
-    SetCompletionTimeout(30000)
+    SetCompletionTimeout(30 * time.Second)
 
-route := ctx.CreateRouteBuilder().
+route, err := ctx.CreateRouteBuilder().
     From("direct:line-items").
     Aggregate(aggregator).
-        Log("Order complete: ${body}").
-        To("direct:fulfillment").
-        End().
+    LogSimple("Order complete: ${body}").
+    To("direct:fulfillment").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ---
@@ -457,7 +534,7 @@ route := ctx.CreateRouteBuilder().
 ### Parallel Processing
 
 ```go
-route := ctx.CreateRouteBuilder().
+route, err := ctx.CreateRouteBuilder().
     From("direct:incoming").
     Multicast().ParallelProcessing().
         To("direct:archive").
@@ -466,6 +543,9 @@ route := ctx.CreateRouteBuilder().
     End().
     Log("Multicast complete").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ---
@@ -478,17 +558,22 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
 
-    // Run every 5 seconds
-    route := ctx.CreateRouteBuilder().
-        From("timer:tick?period=5s").
-        Log("Tick at ${date:now}").
+    // Run every 5 seconds (timer period is in milliseconds)
+    route, err := ctx.CreateRouteBuilder().
+        From("timer:tick?period=5000").
+        LogSimple("Tick at ${date:now}").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()
@@ -499,13 +584,18 @@ func main() {
 ### Cron Expression
 
 ```go
-ctx.AddComponent("cron", gocamel.NewCronComponent())
+import "github.com/tranchida/gocamel/components/cron"
+
+ctx.AddComponent("cron", cron.NewCronComponent())
 
 // Run every minute
-route := ctx.CreateRouteBuilder().
+route, err := ctx.CreateRouteBuilder().
     From("cron://group/minutely?cron=0+*+*+*+*+*").
-    Log("Cron trigger at ${header.fireTime}").
+    LogSimple("Cron trigger at ${header.fireTime}").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ---
@@ -517,6 +607,8 @@ route := ctx.CreateRouteBuilder().
 ```go
 import (
     "database/sql"
+    "log"
+
     _ "modernc.org/sqlite"
     "github.com/tranchida/gocamel"
 )
@@ -531,14 +623,20 @@ func main() {
     sqlComp.RegisterDataSource("appdb", db)
     ctx.AddComponent("sql", sqlComp)
 
-    route := ctx.CreateRouteBuilder().
-        From("timer:poll?period=60s").
+    route, err := ctx.CreateRouteBuilder().
+        From("timer:poll?period=60000"). // period in ms: every minute
         To("sql://appdb?query=SELECT+*+FROM+events+WHERE+processed=false").
-        Split().
-            Log("Event: ${body}").
+        Split(func(e *gocamel.Exchange) (any, error) {
+            // Out.Body is []map[string]any (SelectList)
+            return e.GetIn().GetBody(), nil
+        }).
+            LogSimple("Event: ${body}").
             To("direct:process-event").
         End().
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()
@@ -549,15 +647,21 @@ func main() {
 ### SQL Insert
 
 ```go
-route := ctx.CreateRouteBuilder().
+route, err := ctx.CreateRouteBuilder().
     From("direct:new-user").
-    SetHeader("CamelSqlParameters", []any{
-        "${header.name}",
-        "${header.email}",
+    ProcessFunc(func(e *gocamel.Exchange) error {
+        // Bind message values as positional parameters (never interpolate them)
+        name, _ := e.GetHeaderAsString("name")
+        email, _ := e.GetHeaderAsString("email")
+        e.GetIn().SetHeader(gocamel.SqlParameters, []any{name, email})
+        return nil
     }).
     To("sql://appdb?query=INSERT+INTO+users(name,email)+VALUES(?,?)").
-    Log("User created, rows affected: ${header.CamelSqlRowCount}").
+    LogSimple("User created, rows affected: ${header.CamelSqlRowCount}").
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ---
@@ -568,20 +672,26 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel/components/telegram"
 )
 
 func main() {
     // Set TELEGRAM_AUTHORIZATIONTOKEN env var
     ctx := gocamel.NewCamelContext()
-    ctx.AddComponent("telegram", gocamel.NewTelegramComponent())
+    ctx.AddComponent("telegram", telegram.NewTelegramComponent())
 
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("telegram:bots").
-        Log("Message from ${header.chatId}: ${body}").
-        SetBody("Echo: ${body}").
+        LogSimple("Message from ${header.chatId}: ${body}").
+        SimpleSetBody("Echo: ${body}").
         To("telegram:bots").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()
@@ -599,6 +709,8 @@ Generating formatted messages with native Go templates (inspired by Apache Camel
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
 )
 
@@ -613,13 +725,16 @@ func main() {
     ctx := gocamel.NewCamelContext()
     ctx.AddComponent("template", gocamel.NewTemplateComponent())
 
-    route := ctx.CreateRouteBuilder().
+    route, err := ctx.CreateRouteBuilder().
         From("direct:notify").
         SetHeader("name", "Alice").
         SetBody("Your order is ready!").
         To("template:templates/email.tmpl").
-        Log("Generated email: ${body}").
+        LogSimple("Generated email: ${body}").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     ctx.AddRoute(route)
     ctx.Start()
@@ -645,25 +760,29 @@ To("template:templates/email.tmpl?contentCache=true")
 | `toString`   | Convert to string   | `{{.Body  | toString}}` |
 | `safeHTML`   | Unescaped HTML      | `{{.Body  | safeHTML}}` |
 
-```
-
 ---
 
 ## Error Handling
 
 ```go
-route := ctx.CreateRouteBuilder().
+route, err := ctx.CreateRouteBuilder().
     From("direct:process").
     DoTry().
         ProcessFunc(func(e *gocamel.Exchange) error {
             // Risky operation
             return riskyOperation(e)
         }).
-    DoCatch(Exception.class).
-        Log("Error: ${exception.message}").
+    DoCatch("connection refused"). // matches on the error text
+        Log("Service unreachable, applying recovery").
+        To("direct:recovery").
+    DoCatch(""). // catch all other errors
+        LogSimple("Error: ${exchangeProperty.CamelExceptionCaught}").
         To("direct:error-handler").
-    EndDoTry().
+    End().
     Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ---
@@ -676,17 +795,21 @@ route := ctx.CreateRouteBuilder().
 package main
 
 import (
+    "log"
+
     "github.com/tranchida/gocamel"
+    "github.com/tranchida/gocamel/components/file"
 )
 
 func main() {
     ctx := gocamel.NewCamelContext()
+    ctx.AddComponent("file", file.NewFileComponent())
 
     // Main processing route
-    mainRoute := ctx.CreateRouteBuilder().
+    mainRoute, err := ctx.CreateRouteBuilder().
         SetID("file-processor").
         From("file://input?include=*.json&delete=true").
-        Log("Processing: ${header.CamelFileName}").
+        LogSimple("Processing: ${header.CamelFileName}").
 
         // Parse JSON
         ProcessFunc(func(e *gocamel.Exchange) error {
@@ -705,22 +828,31 @@ func main() {
         EndChoice().
 
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     // Order processing
-    orderRoute := ctx.CreateRouteBuilder().
+    orderRoute, err := ctx.CreateRouteBuilder().
         SetID("order-processor").
         From("direct:process-order").
-        Log("Processing order: ${body.id}").
+        LogSimple("Processing order: ${body.id}").
         To("file://output/orders").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     // Refund processing
-    refundRoute := ctx.CreateRouteBuilder().
+    refundRoute, err := ctx.CreateRouteBuilder().
         SetID("refund-processor").
         From("direct:process-refund").
-        Log("Processing refund: ${body.id}").
+        LogSimple("Processing refund: ${body.id}").
         To("file://output/refunds").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     // Add routes
     ctx.AddRoute(mainRoute)
