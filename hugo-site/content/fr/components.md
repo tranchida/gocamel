@@ -1169,7 +1169,10 @@ endpoint, _ := ctx.CreateEndpoint(
 **Ollama Cloud :** définissez la variable d'environnement `OLLAMA_API_KEY` et
 pointez `host` vers `https://ollama.com`. Les requêtes sont alors authentifiées
 par un jeton Bearer. La clé n'est lue que depuis l'environnement (jamais depuis
-l'URI) et est refusée en HTTP clair, sauf vers des hôtes de boucle locale.
+l'URI) et n'est envoyée qu'à `ollama.com` et à ses sous-domaines, en HTTPS
+(`http://ollama.com` échoue au `Start`). Tout autre hôte, par exemple un serveur
+Ollama local ou du réseau local, utilise le client standard et ne reçoit jamais
+la clé, même si la variable est définie.
 
 ```go
 // export OLLAMA_API_KEY=...

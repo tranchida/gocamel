@@ -27,7 +27,16 @@ func newAuthStubServer(t *testing.T, respBody string, gotAuth *string) *httptest
 	return s
 }
 
+// treatAllHostsAsCloud lets the cloud client target a local httptest server.
+func treatAllHostsAsCloud(t *testing.T) {
+	t.Helper()
+	orig := isCloudHost
+	isCloudHost = func(string) bool { return true }
+	t.Cleanup(func() { isCloudHost = orig })
+}
+
 func TestOllamaCloud_Chat_SendsBearerKey(t *testing.T) {
+	treatAllHostsAsCloud(t)
 	t.Setenv(cloudAPIKeyEnv, "secret-key")
 	var auth string
 	srv := newAuthStubServer(t, `{"model":"gpt-oss:120b","message":{"role":"assistant","content":"hi"},"done":true}`, &auth)
@@ -46,6 +55,7 @@ func TestOllamaCloud_Chat_SendsBearerKey(t *testing.T) {
 }
 
 func TestOllamaCloud_Generate_And_Embed(t *testing.T) {
+	treatAllHostsAsCloud(t)
 	t.Setenv(cloudAPIKeyEnv, "k")
 	var auth string
 	srv := newAuthStubServer(t, `{"model":"m","response":"gen","done":true}`, &auth)
@@ -69,6 +79,7 @@ func TestOllamaCloud_Generate_And_Embed(t *testing.T) {
 }
 
 func TestOllamaCloud_APIError(t *testing.T) {
+	treatAllHostsAsCloud(t)
 	t.Setenv(cloudAPIKeyEnv, "bad")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -97,10 +108,65 @@ func TestOllamaCloud_NoKey_UsesStandardClient(t *testing.T) {
 
 func TestOllamaCloud_RefusesKeyOverPlainHTTP(t *testing.T) {
 	t.Setenv(cloudAPIKeyEnv, "secret")
-	p := producerForTest(t, "ollama:chat?model=m&host=http://ollama.example.com")
+	p := producerForTest(t, "ollama:chat?model=m&host=http://ollama.com")
 	err := p.Start(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), cloudAPIKeyEnv)
+}
+
+func TestOllamaCloud_UsesCloudClientForOllamaCom(t *testing.T) {
+	t.Setenv(cloudAPIKeyEnv, "secret")
+	p := producerForTest(t, "ollama:chat?model=m&host="+CloudHost)
+	require.NoError(t, p.Start(context.Background()))
+	t.Cleanup(func() { _ = p.Stop() })
+	_, ok := p.client.(*cloudClient)
+	assert.True(t, ok)
+}
+
+// A key exported for the ollama CLI must neither be sent to, nor break, a
+// local or LAN server reached over plain HTTP.
+func TestOllamaCloud_KeyNotSentToOtherHosts(t *testing.T) {
+	t.Setenv(cloudAPIKeyEnv, "secret")
+	var auth string
+	srv := newAuthStubServer(t, `{"model":"m","message":{"role":"assistant","content":"hi"},"done":true}`, &auth)
+
+	for _, host := range []string{srv.URL, "http://192.168.1.10:11434", "https://ollama.example.com", ""} {
+		uri := "ollama:chat?model=m"
+		if host != "" {
+			uri += "&host=" + host
+		}
+		p := producerForTest(t, uri)
+		require.NoError(t, p.Start(context.Background()), host)
+		_, isCloud := p.client.(*cloudClient)
+		assert.False(t, isCloud, host)
+		_ = p.Stop()
+	}
+
+	p := producerForTest(t, "ollama:chat?model=m&host="+srv.URL)
+	require.NoError(t, p.Start(context.Background()))
+	t.Cleanup(func() { _ = p.Stop() })
+	ex := gocamel.NewExchange(context.Background())
+	ex.GetIn().SetBody("hello")
+	require.NoError(t, p.Send(ex))
+	assert.Empty(t, auth, "the API key must not reach a non-cloud host")
+}
+
+func TestIsOllamaCloudHost(t *testing.T) {
+	cases := map[string]bool{
+		"ollama.com":         true,
+		"OLLAMA.COM":         true,
+		"ollama.com.":        true,
+		"api.ollama.com":     true,
+		"localhost":          false,
+		"127.0.0.1":          false,
+		"192.168.1.10":       false,
+		"ollama.example.com": false,
+		"evilollama.com":     false,
+		"ollama.com.evil.io": false,
+	}
+	for host, want := range cases {
+		assert.Equal(t, want, isOllamaCloudHost(host), host)
+	}
 }
 
 func TestRequireSecureKeyTransport(t *testing.T) {

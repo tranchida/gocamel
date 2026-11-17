@@ -1146,7 +1146,9 @@ endpoint, _ := ctx.CreateEndpoint(
 **Ollama Cloud:** set the `OLLAMA_API_KEY` environment variable and point
 `host` to `https://ollama.com`. Requests are then authenticated with a Bearer
 token. The key is read from the environment only (never from the URI) and is
-refused over plain HTTP, except towards loopback hosts.
+sent only to `ollama.com` and its subdomains, over HTTPS (`http://ollama.com`
+fails at `Start`). Any other host, such as a local or LAN Ollama server, uses
+the standard client and never receives the key, even when the variable is set.
 
 ```go
 // export OLLAMA_API_KEY=...

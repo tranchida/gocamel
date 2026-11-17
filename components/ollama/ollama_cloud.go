@@ -126,6 +126,19 @@ func (c *cloudClient) post(ctx context.Context, path string, reqBody, respBody a
 // maxResponseBytes bounds the size of a single Ollama Cloud response (DoS guard).
 const maxResponseBytes = 32 << 20
 
+// isCloudHost reports whether the API key may be sent to host. It is a
+// variable so that tests can point the cloud client at a local httptest server.
+var isCloudHost = isOllamaCloudHost
+
+// isOllamaCloudHost reports whether host is ollama.com or one of its
+// subdomains. OLLAMA_API_KEY is sent to these hosts only: any other host,
+// including a local or LAN Ollama server, uses the standard client and never
+// receives the key.
+func isOllamaCloudHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	return host == "ollama.com" || strings.HasSuffix(host, ".ollama.com")
+}
+
 // requireSecureKeyTransport ensures the API key is never sent in cleartext.
 // Plain HTTP is tolerated only towards loopback addresses (local test servers).
 func requireSecureKeyTransport(base *url.URL) error {

@@ -37,8 +37,8 @@ func NewOllamaComponent() *OllamaComponent {
 //   - host       (default http://localhost:11434) Ollama server base URL.
 //     Use https://ollama.com for Ollama Cloud (requires OLLAMA_API_KEY).
 //   - OLLAMA_API_KEY (environment variable, not a URI option) Ollama Cloud
-//     API key. When set, requests are authenticated with a Bearer token.
-//     The key is refused over plain HTTP except towards loopback hosts.
+//     API key. It is sent, as a Bearer token over HTTPS, only when host is
+//     ollama.com or one of its subdomains; other hosts never receive it.
 //   - model      (required in chat/generate, optional in embed) Model name.
 //   - system     (optional, generate) System prompt.
 //   - stream     (default false) Streaming responses. Disabled for pipeline
@@ -159,7 +159,9 @@ func (p *OllamaProducer) Start(ctx context.Context) error {
 		}
 	}
 	p.httpClient = &http.Client{Timeout: 60 * time.Second}
-	if apiKey := os.Getenv(cloudAPIKeyEnv); apiKey != "" {
+	// The API key is sent to Ollama Cloud hosts only, so a key exported for
+	// the ollama CLI never reaches (nor breaks) a local or LAN server.
+	if apiKey := os.Getenv(cloudAPIKeyEnv); apiKey != "" && isCloudHost(base.Hostname()) {
 		if err := requireSecureKeyTransport(base); err != nil {
 			return err
 		}

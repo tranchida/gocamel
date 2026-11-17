@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- **`ollama`**: Ollama Cloud support. When the `OLLAMA_API_KEY` environment variable is set, the producer authenticates with a Bearer token, so `host=https://ollama.com` works without an `ollama signin` setup. The key is read from the environment only, never from the URI, and is refused over plain HTTP except towards loopback hosts.
+- **`ollama`**: Ollama Cloud support. When the `OLLAMA_API_KEY` environment variable is set, the producer authenticates with a Bearer token, so `host=https://ollama.com` works without an `ollama signin` setup. The key is read from the environment only, never from the URI, and is sent only to `ollama.com` and its subdomains, over HTTPS. Other hosts, such as a local or LAN server, use the standard client and never receive it, so a key exported for the `ollama` CLI does not affect them.
 
 ### Fixed
 
