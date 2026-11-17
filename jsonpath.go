@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -252,7 +253,9 @@ func evalPath(path string, data any) (any, error) {
 
 		if tok.isRecursive {
 			for _, item := range current {
-				findRecursive(item, tok.field, tok.isWildcard, &next)
+				if err := findRecursive(item, tok.field, tok.isWildcard, &next, 0, make(map[containerID]struct{})); err != nil {
+					return nil, err
+				}
 			}
 			current = next
 			continue
@@ -332,24 +335,68 @@ func evalPath(path string, data any) (any, error) {
 	return current, nil
 }
 
-func findRecursive(node any, field string, isWildcard bool, results *[]any) {
-	if node == nil {
-		return
-	}
+// maxJSONPathDepth bounds the nesting depth explored by recursive descent
+// (`$..field`). Exceeding it is reported as an error instead of exhausting the
+// goroutine stack, which the Go runtime cannot recover from.
+const maxJSONPathDepth = 1000
 
+// containerID identifies a map or slice by identity. For slices, len is part
+// of the identity because the same backing array can be viewed through
+// headers of different lengths; maps use len = -1.
+type containerID struct {
+	ptr uintptr
+	len int
+}
+
+// findRecursive collects the values matching field (or every value when
+// isWildcard is set) across node and all of its nested containers.
+//
+// Cycles: a container that is already being visited on the current path
+// (an ancestor of node) is skipped, so self-referencing bodies produce a
+// finite result. Containers that are merely shared between sibling branches
+// (a DAG) are still visited on each path, so non-cyclic results are unchanged.
+//
+// Depth: descending more than maxJSONPathDepth container levels returns an
+// error and the results collected so far are discarded by the caller.
+func findRecursive(node any, field string, isWildcard bool, results *[]any, depth int, path map[containerID]struct{}) error {
 	switch v := node.(type) {
 	case map[string]any:
+		if depth > maxJSONPathDepth {
+			return fmt.Errorf("jsonpath: recursive descent exceeded maximum depth %d", maxJSONPathDepth)
+		}
+		id := containerID{ptr: reflect.ValueOf(v).Pointer(), len: -1}
+		if _, onPath := path[id]; onPath {
+			return nil
+		}
+		path[id] = struct{}{}
+		defer delete(path, id)
+
 		for k, val := range v {
 			if isWildcard || k == field {
 				*results = append(*results, val)
 			}
-			findRecursive(val, field, isWildcard, results)
+			if err := findRecursive(val, field, isWildcard, results, depth+1, path); err != nil {
+				return err
+			}
 		}
 	case []any:
+		if depth > maxJSONPathDepth {
+			return fmt.Errorf("jsonpath: recursive descent exceeded maximum depth %d", maxJSONPathDepth)
+		}
+		id := containerID{ptr: reflect.ValueOf(v).Pointer(), len: len(v)}
+		if _, onPath := path[id]; onPath {
+			return nil
+		}
+		path[id] = struct{}{}
+		defer delete(path, id)
+
 		for _, elem := range v {
-			findRecursive(elem, field, isWildcard, results)
+			if err := findRecursive(elem, field, isWildcard, results, depth+1, path); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 // evaluateJSONPathFunction handles Simple Language ${jsonpath:...} calls.

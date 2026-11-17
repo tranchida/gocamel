@@ -133,39 +133,63 @@ func InterpolateURI(text string, exchange *Exchange) string {
 	}
 
 	var sb strings.Builder
-	sawScheme, inQuery := false, false
+	var escaper uriValueEscaper
 	last := 0
-	scanLiteral := func(literal string) {
-		if !sawScheme && strings.Contains(literal, ":") {
-			sawScheme = true
-		}
-		if strings.ContainsAny(literal, "?#") {
-			inQuery = true
-		}
-	}
 	for _, m := range matches {
 		literal := text[last:m[0]]
 		sb.WriteString(literal)
-		scanLiteral(literal)
+		escaper.observeLiteral(literal)
 
 		key := ""
 		if m[4] >= 0 {
 			key = text[m[4]:m[5]]
 		}
 		value := resolvePlaceholder(text[m[2]:m[3]], key, exchange)
-		switch {
-		case !sawScheme:
-			// Whole-URI or scheme placeholder: trusted by construction.
-		case inQuery:
-			value = url.QueryEscape(value)
-		default:
-			value = uriPathEscaper.Replace(value)
-		}
-		sb.WriteString(value)
+		sb.WriteString(escaper.escape(value))
 		last = m[1]
 	}
 	sb.WriteString(text[last:])
 	return sb.String()
+}
+
+// uriValueEscaper escapes exchange values substituted into an endpoint URI
+// template. Its position is derived from the literal parts of the template,
+// never from the values themselves, and is updated by observeLiteral as the
+// template is walked left to right:
+//
+//   - before the scheme ':' has been seen, values are inserted verbatim (a
+//     whole-URI or scheme placeholder is a deliberate delegation of the
+//     endpoint choice to trusted data);
+//   - once a literal '?' or '#' has been seen (query part), values are
+//     url.QueryEscape'd;
+//   - otherwise (path or opaque part), only '?' and '#' are escaped.
+type uriValueEscaper struct {
+	sawScheme bool
+	inQuery   bool
+}
+
+// observeLiteral records the scheme and query delimiters found in a literal
+// template part. Call it for every literal, in template order, before escaping
+// the values that follow it.
+func (e *uriValueEscaper) observeLiteral(literal string) {
+	if !e.sawScheme && strings.Contains(literal, ":") {
+		e.sawScheme = true
+	}
+	if strings.ContainsAny(literal, "?#") {
+		e.inQuery = true
+	}
+}
+
+// escape returns value escaped for the position reached so far.
+func (e *uriValueEscaper) escape(value string) string {
+	switch {
+	case !e.sawScheme:
+		return value
+	case e.inQuery:
+		return url.QueryEscape(value)
+	default:
+		return uriPathEscaper.Replace(value)
+	}
 }
 
 // patternToRegex converts a pattern with '*' wildcards into a Regexp.

@@ -40,10 +40,15 @@ type TemplateData struct {
 	Body any
 }
 
+// maxTemplateCacheEntries caps the number of compiled templates kept by
+// TemplateComponent. Cache keys can derive from the CamelTemplatePath header,
+// so the cache must not grow without bound.
+const maxTemplateCacheEntries = 1024
+
 // TemplateComponent represents the template component
 type TemplateComponent struct {
-	mu    sync.RWMutex
-	cache map[string]*template.Template // Cache of parsed templates.
+	mu    sync.RWMutex                  // Guards cache.
+	cache map[string]*template.Template // Cache of parsed templates, at most maxTemplateCacheEntries entries.
 }
 
 // NewTemplateComponent creates a new TemplateComponent
@@ -305,10 +310,16 @@ func (c *TemplateComponent) getCachedTemplate(name string) *template.Template {
 	return c.cache[name]
 }
 
-// cacheTemplate stores a template in the cache.
+// cacheTemplate stores a template in the cache. When the cache already holds
+// maxTemplateCacheEntries entries, a new key is not stored: the caller still
+// executes the freshly parsed template, it is just recompiled on the next use.
+// Existing keys are always updated in place.
 func (c *TemplateComponent) cacheTemplate(name string, tmpl *template.Template) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, exists := c.cache[name]; !exists && len(c.cache) >= maxTemplateCacheEntries {
+		return
+	}
 	c.cache[name] = tmpl
 }
 

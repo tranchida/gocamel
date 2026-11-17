@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **JSONPath**: recursive descent (`$..field`) on a body holding a cycle (a `map[string]any` or `[]any` that contains itself) recursed until the goroutine stack overflowed, a fatal error that `ProcessSafely` cannot recover and that killed the process. A container already on the current path is now skipped, and descending more than 1000 levels returns an error.
+- **Security**: `PollEnrich` inserted exchange values into its endpoint URI unescaped, so a header such as `x?bufferSize=1000000000` could add endpoint options (an eagerly allocated `chan`/`seda` buffer). Values are now escaped for their position in the URI, as `ToD` does, while the URI keeps being evaluated with the full Simple language and evaluation errors are still returned. `ToD`, `RecipientList` and `RoutingSlip` share the same escaping code, unchanged.
+- **`template`**: the compiled-template cache of a `TemplateComponent` had no bound, and its keys can come from the `CamelTemplatePath` header (`allowTemplateFromHeader=true` with `contentCache=true`). It now keeps at most 1024 templates; a template that does not fit is compiled and run without being cached.
+
 ## [v0.20.0] - 2026-11-16
 
 Code review release: several HTTP routes can share one port, and nine findings are fixed in the core routing engine and the `file` component. A few visible behaviours change (see Changed). Every component and observability module at v0.20.0 requires core v0.20.0.

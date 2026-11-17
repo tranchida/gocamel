@@ -271,6 +271,33 @@ func (t *SimpleTemplate) EvaluateAsString(exchange *Exchange) (string, error) {
 	return fmt.Sprintf("%v", result), nil
 }
 
+// EvaluateURI evaluates the template as an endpoint URI. Each placeholder is
+// evaluated with the full Simple language, and the resulting value is escaped
+// for its position in the URI (see uriValueEscaper), so an exchange value
+// cannot inject endpoint options such as "?bufferSize=...". Evaluation errors
+// are returned to the caller.
+func (t *SimpleTemplate) EvaluateURI(exchange *Exchange) (string, error) {
+	if t.isLiteral {
+		return t.parts[0].content, nil
+	}
+
+	var sb strings.Builder
+	var escaper uriValueEscaper
+	for _, part := range t.parts {
+		if !part.isVariable {
+			sb.WriteString(part.content)
+			escaper.observeLiteral(part.content)
+			continue
+		}
+		value, err := evaluateVariable(part.content, exchange)
+		if err != nil {
+			return "", fmt.Errorf("simple expression ${%s}: %w", part.content, err)
+		}
+		sb.WriteString(escaper.escape(fmt.Sprintf("%v", value)))
+	}
+	return sb.String(), nil
+}
+
 // EvaluateAsInt evaluates the template and returns an integer
 func (t *SimpleTemplate) EvaluateAsInt(exchange *Exchange) (int, bool) {
 	result, err := t.Evaluate(exchange)

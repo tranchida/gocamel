@@ -12,6 +12,16 @@ import (
 //
 // If no AggregationStrategy is provided, the polled exchange body replaces the current exchange body.
 //
+// The URI may contain any Simple language expression in ${...} placeholders
+// (e.g. ${header.x}, ${exchangeProperty.x}, functions and string operations).
+// They are evaluated per exchange and the values are escaped for their position
+// in the URI, like ToD does: values placed in the query string are query-escaped,
+// and '?' and '#' in values placed in the path are escaped, so an exchange value
+// cannot inject endpoint options such as "?bufferSize=...". A placeholder before
+// the scheme (e.g. "${header.uri}") is inserted verbatim and must come from a
+// trusted source. A malformed or failing expression makes Process return an error
+// instead of polling with the unresolved URI.
+//
 // Example DSL usage:
 //
 //	// Poll with timeout and strategy
@@ -51,13 +61,16 @@ func (p *PollEnricher) Process(exchange *Exchange) (resultErr error) {
 		ctx = context.Background()
 	}
 
+	// Evaluate the URI with the full Simple language. Exchange values are
+	// escaped by position so they cannot inject endpoint options. A URI
+	// without placeholders is used as-is.
 	targetURI := p.uri
-	if stringsContainsPlaceholder(targetURI) {
-		template, err := ParseSimpleTemplate(targetURI)
+	if placeholderRegex.MatchString(p.uri) {
+		template, err := ParseSimpleTemplate(p.uri)
 		if err != nil {
 			return fmt.Errorf("pollEnrich: failed to parse URI expression: %w", err)
 		}
-		resolved, err := template.EvaluateAsString(exchange)
+		resolved, err := template.EvaluateURI(exchange)
 		if err != nil {
 			return fmt.Errorf("pollEnrich: failed to evaluate URI expression: %w", err)
 		}
@@ -105,10 +118,6 @@ func (p *PollEnricher) Process(exchange *Exchange) (resultErr error) {
 	}
 
 	return nil
-}
-
-func stringsContainsPlaceholder(s string) bool {
-	return placeholderRegex.MatchString(s)
 }
 
 // PollEnrich adds a PollEnrich step to the route with an optional AggregationStrategy and timeout.
