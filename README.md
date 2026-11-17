@@ -174,7 +174,7 @@ EndChoice()
 | **Telegram**   | Bot integration               |
 | **OpenAI**     | ChatGPT/GPT-4 & OpenAI-compatible providers (OpenRouter, Groq, ...) |
 | **Anthropic**  | Claude Messages API (native)  |
-| **Ollama**     | Local LLMs (chat/generate/embed, native API) |
+| **Ollama**     | Local LLMs and Ollama Cloud (chat/generate/embed, native API) |
 | **Jev**        | Typed decisions (yes/no, choice, score) via OpenRouter |
 | **Mail**       | SMTP/IMAP/POP3 email          |
 | **SQL**        | Database queries              |

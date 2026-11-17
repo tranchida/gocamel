@@ -177,7 +177,7 @@ builder.From("direct:start").
 | **OpenAI**     | ChatGPT/GPT-4 & fournisseurs compatibles OpenAI (OpenRouter, Groq, ...) |
 | **Anthropic**  | API Messages Claude (native)  |
 | **Jev**        | Décisions typées (oui/non, choix, score) via OpenRouter |
-| **Ollama**     | LLMs locaux (chat/generate/embed, API native) |
+| **Ollama**     | LLMs locaux et Ollama Cloud (chat/generate/embed, API native) |
 | **Mail**       | Email SMTP/IMAP/POP3           |
 | **SQL**        | Requêtes base de données       |
 | **SQL-Stored** | Appels de procédures stockées (paramètres IN/OUT/INOUT) |

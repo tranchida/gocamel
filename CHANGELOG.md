@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`ollama`**: Ollama Cloud support. When the `OLLAMA_API_KEY` environment variable is set, the producer authenticates with a Bearer token, so `host=https://ollama.com` works without an `ollama signin` setup. The key is read from the environment only, never from the URI, and is refused over plain HTTP except towards loopback hosts.
+
 ### Fixed
 
 - **JSONPath**: recursive descent (`$..field`) on a body holding a cycle (a `map[string]any` or `[]any` that contains itself) recursed until the goroutine stack overflowed, a fatal error that `ProcessSafely` cannot recover and that killed the process. A container already on the current path is now skipped, and descending more than 1000 levels returns an error.

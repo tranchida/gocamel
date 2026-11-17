@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -34,6 +35,10 @@ func NewOllamaComponent() *OllamaComponent {
 //
 // Common options (via gocamel.GetConfigValue):
 //   - host       (default http://localhost:11434) Ollama server base URL.
+//     Use https://ollama.com for Ollama Cloud (requires OLLAMA_API_KEY).
+//   - OLLAMA_API_KEY (environment variable, not a URI option) Ollama Cloud
+//     API key. When set, requests are authenticated with a Bearer token.
+//     The key is refused over plain HTTP except towards loopback hosts.
 //   - model      (required in chat/generate, optional in embed) Model name.
 //   - system     (optional, generate) System prompt.
 //   - stream     (default false) Streaming responses. Disabled for pipeline
@@ -110,7 +115,7 @@ type OllamaProducer struct {
 	endpoint   *OllamaEndpoint
 	mu         sync.RWMutex
 	httpClient *http.Client
-	client     *api.Client
+	client     ollamaAPI
 	model      string
 	mode       string
 	system     string
@@ -154,7 +159,14 @@ func (p *OllamaProducer) Start(ctx context.Context) error {
 		}
 	}
 	p.httpClient = &http.Client{Timeout: 60 * time.Second}
-	p.client = api.NewClient(base, p.httpClient)
+	if apiKey := os.Getenv(cloudAPIKeyEnv); apiKey != "" {
+		if err := requireSecureKeyTransport(base); err != nil {
+			return err
+		}
+		p.client = newCloudClient(base, p.httpClient, apiKey)
+	} else {
+		p.client = api.NewClient(base, p.httpClient)
+	}
 
 	p.system = gocamel.GetConfigValue(u, "system")
 	p.keepAlive = gocamel.GetConfigValue(u, "keepAlive")
@@ -199,7 +211,7 @@ func (p *OllamaProducer) Send(exchange *gocamel.Exchange) error {
 	}
 }
 
-func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange, client *api.Client) error {
+func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange, client ollamaAPI) error {
 	prompt := bodyAsString(exchange.GetIn().GetBody())
 	model := p.resolveModel(exchange)
 
@@ -238,7 +250,7 @@ func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange, client *api.Client
 	return nil
 }
 
-func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange, client *api.Client) error {
+func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange, client ollamaAPI) error {
 	prompt := bodyAsString(exchange.GetIn().GetBody())
 	model := p.resolveModel(exchange)
 	p.mu.RLock()
@@ -283,7 +295,7 @@ func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange, client *api.Cl
 	return nil
 }
 
-func (p *OllamaProducer) sendEmbed(exchange *gocamel.Exchange, client *api.Client) error {
+func (p *OllamaProducer) sendEmbed(exchange *gocamel.Exchange, client ollamaAPI) error {
 	input := bodyAsString(exchange.GetIn().GetBody())
 	model := p.resolveModel(exchange)
 

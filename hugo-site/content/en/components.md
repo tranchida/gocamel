@@ -1143,6 +1143,17 @@ endpoint, _ := ctx.CreateEndpoint(
 | `OllamaPromptEvalCount` | int    | Input tokens evaluated            |
 | `OllamaEvalCount`       | int    | Output tokens generated           |
 
+**Ollama Cloud:** set the `OLLAMA_API_KEY` environment variable and point
+`host` to `https://ollama.com`. Requests are then authenticated with a Bearer
+token. The key is read from the environment only (never from the URI) and is
+refused over plain HTTP, except towards loopback hosts.
+
+```go
+// export OLLAMA_API_KEY=...
+endpoint, _ := ctx.CreateEndpoint(
+    "ollama:chat?model=gpt-oss:120b&host=https://ollama.com")
+```
+
 > The Ollama component does **not** expose model lifecycle operations
 > (Pull/List/Delete). Use the `ollama` CLI or HTTP API directly for model
 > management; the GoCamel producer is scoped to inference.
