@@ -37,7 +37,7 @@ provides a powerful DSL for creating integration routes to connect different sys
 
 ## 📦 Installation
 
-Release **v0.20.0** lets several HTTP routes share one port, fixes nine code-review findings in the core routing engine and the `file` component, and changes a few visible behaviours (`file` `move` resolution, route start order, HTTP `Content-Type`). See the [CHANGELOG](CHANGELOG.md) and the [v0.20.0 release notes](hugo-site/content/en/releases/v0.20.0.md). Releases up to v0.16.0 remain available under the old `gitlab.com/tranchida/gocamel` path.
+Release **v0.20.0** lets several HTTP routes share one port, fixes nine code-review findings in the core routing engine and the `file` component (listed under both Changed and Fixed in the CHANGELOG), and changes a few visible behaviours (`file` `move` resolution, route start order, HTTP `Content-Type`). See the [CHANGELOG](CHANGELOG.md) and the [v0.20.0 release notes](hugo-site/content/en/releases/v0.20.0.md). Releases up to v0.16.0 remain available under the old `gitlab.com/tranchida/gocamel` path.
 
 Go **1.27.0 or later** is required for the core, components and examples. The workspace and `.go-version` default to Go 1.27.0.
 

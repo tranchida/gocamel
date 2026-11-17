@@ -38,7 +38,7 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 
 ## 📦 Installation
 
-La version **v0.20.0** permet à plusieurs routes HTTP de partager un même port, corrige neuf constats de revue de code dans le moteur de routage et le composant `file`, et modifie quelques comportements visibles (résolution de `move` pour `file`, ordre de démarrage des routes, `Content-Type` HTTP). Voir le [CHANGELOG](CHANGELOG.md) et les [notes de version v0.20.0](hugo-site/content/fr/releases/v0.20.0.md). Les versions jusqu'à v0.16.0 restent disponibles sous l'ancien chemin `gitlab.com/tranchida/gocamel`.
+La version **v0.20.0** permet à plusieurs routes HTTP de partager un même port, corrige neuf constats de revue de code dans le moteur de routage et le composant `file` (répartis entre les rubriques Changed et Fixed du CHANGELOG), et modifie quelques comportements visibles (résolution de `move` pour `file`, ordre de démarrage des routes, `Content-Type` HTTP). Voir le [CHANGELOG](CHANGELOG.md) et les [notes de version v0.20.0](hugo-site/content/fr/releases/v0.20.0.md). Les versions jusqu'à v0.16.0 restent disponibles sous l'ancien chemin `gitlab.com/tranchida/gocamel`.
 
 Go **1.27.0 ou ultérieur** est requis pour le cœur, les composants et les exemples. Le workspace et `.go-version` utilisent Go 1.27.0 par défaut.
 

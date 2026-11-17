@@ -16,7 +16,7 @@ All notable changes to this project are documented in this file.
 
 ## [v0.20.0] - 2026-11-16
 
-Code review release: several HTTP routes can share one port, and nine findings are fixed in the core routing engine and the `file` component. A few visible behaviours change (see Changed). Every component and observability module at v0.20.0 requires core v0.20.0.
+Code review release: several HTTP routes can share one port, and nine findings are fixed in the core routing engine and the `file` component. The fixes that change a visible behaviour are listed under Changed, the others under Fixed. Every component and observability module at v0.20.0 requires core v0.20.0.
 
 ### Changed
 
