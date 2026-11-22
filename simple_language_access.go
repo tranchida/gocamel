@@ -704,9 +704,9 @@ func accessProperty(container interface{}, propName string) (interface{}, error)
 
 	case reflect.Struct:
 		// Struct field access: only exported, interfaceable fields are accessible.
-		field := findExportedStructField(v, propName)
-		if !field.IsValid() || !field.CanInterface() {
-			return nil, nil // Field not found or unexported
+		field, ok := findExportedStructField(v, propName)
+		if !ok || !field.IsValid() || !field.CanInterface() {
+			return nil, nil // Field not found, unexported, or behind nil embedded pointer
 		}
 		return field.Interface(), nil
 
@@ -722,42 +722,84 @@ func accessProperty(container interface{}, propName string) (interface{}, error)
 	}
 }
 
+// safeStructFieldByIndex walks a struct field index path without panicking on
+// nil embedded struct pointers or unexported intermediate fields.
+func safeStructFieldByIndex(v reflect.Value, index []int) (reflect.Value, bool) {
+	cur := v
+	for _, idx := range index {
+		for cur.Kind() == reflect.Pointer {
+			if cur.IsNil() {
+				return reflect.Value{}, false
+			}
+			cur = cur.Elem()
+		}
+		if cur.Kind() != reflect.Struct || !cur.CanInterface() {
+			return reflect.Value{}, false
+		}
+		cur = cur.Field(idx)
+	}
+	if !cur.IsValid() || !cur.CanInterface() {
+		return reflect.Value{}, false
+	}
+	return cur, true
+}
+
 // findExportedStructField looks up an exported struct field by exact name or
-// case-insensitive fallback, traversing only exported embedded struct fields.
-func findExportedStructField(v reflect.Value, propName string) reflect.Value {
-	field := v.FieldByName(propName)
-	if field.IsValid() && field.CanInterface() {
-		return field
+// case-insensitive BFS fallback, traversing only exported embedded struct fields
+// and guarding against nil intermediate embedded pointers.
+func findExportedStructField(v reflect.Value, propName string) (reflect.Value, bool) {
+	if sf, ok := v.Type().FieldByName(propName); ok && sf.IsExported() {
+		return safeStructFieldByIndex(v, sf.Index)
 	}
 
-	queue := []reflect.Value{v}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		t := cur.Type()
-		for i := 0; i < t.NumField(); i++ {
-			sf := t.Field(i)
-			if !sf.IsExported() {
-				continue
+	level := []reflect.Value{v}
+	for len(level) > 0 {
+		var nextLevel []reflect.Value
+
+		// Pass 1: non-anonymous exported fields at this depth take precedence over
+		// case-insensitive matches on anonymous embedded struct type names.
+		for _, cur := range level {
+			t := cur.Type()
+			for i := 0; i < t.NumField(); i++ {
+				sf := t.Field(i)
+				if !sf.IsExported() || sf.Anonymous {
+					continue
+				}
+				fv := cur.Field(i)
+				if strings.EqualFold(sf.Name, propName) && fv.CanInterface() {
+					return fv, true
+				}
 			}
-			fv := cur.Field(i)
-			if strings.EqualFold(sf.Name, propName) && fv.CanInterface() {
-				return fv
-			}
-			if sf.Anonymous {
-				for fv.Kind() == reflect.Ptr {
+		}
+
+		// Pass 2: anonymous exported fields at this depth, plus enqueueing non-nil
+		// embedded structs for the next BFS depth level.
+		for _, cur := range level {
+			t := cur.Type()
+			for i := 0; i < t.NumField(); i++ {
+				sf := t.Field(i)
+				if !sf.IsExported() || !sf.Anonymous {
+					continue
+				}
+				fv := cur.Field(i)
+				if strings.EqualFold(sf.Name, propName) && fv.CanInterface() {
+					return fv, true
+				}
+				for fv.Kind() == reflect.Pointer {
 					if fv.IsNil() {
 						break
 					}
 					fv = fv.Elem()
 				}
 				if fv.Kind() == reflect.Struct && fv.CanInterface() {
-					queue = append(queue, fv)
+					nextLevel = append(nextLevel, fv)
 				}
 			}
 		}
+
+		level = nextLevel
 	}
-	return reflect.Value{}
+	return reflect.Value{}, false
 }
 
 // mapLookup looks up keyStr in a reflect.Value of a map without panicking when

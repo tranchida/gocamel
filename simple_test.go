@@ -1998,4 +1998,48 @@ func TestSimple_ReflectionAndChainSafety(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "<nil>", s)
 	})
+
+	t.Run("nil exported embedded struct pointer does not panic", func(t *testing.T) {
+		type Embedded struct {
+			InnerField string
+		}
+		type Outer struct {
+			*Embedded
+			EMBEDDED string
+		}
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(Outer{Embedded: nil, EMBEDDED: "own"})
+
+		for _, expr := range []string{"${body.InnerField}", "${body?.InnerField}", "${body.innerfield}"} {
+			tmpl, err := ParseSimpleTemplate(expr)
+			require.NoError(t, err, expr)
+			require.NotPanics(t, func() {
+				s, evalErr := tmpl.EvaluateAsString(ex)
+				require.NoError(t, evalErr, expr)
+				assert.Equal(t, "<nil>", s, expr)
+			}, expr)
+		}
+
+		// Own non-anonymous field takes precedence over case-insensitive anonymous embed name at the same BFS depth.
+		tmplOwn, err := ParseSimpleTemplate("${body.embedded}")
+		require.NoError(t, err)
+		s, err := tmplOwn.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "own", s)
+
+		// Non-nil embedded struct resolves normally via exact and case-insensitive lookup.
+		ex.GetIn().SetBody(Outer{Embedded: &Embedded{InnerField: "resolved"}, EMBEDDED: "own"})
+		tmplNonNil, err := ParseSimpleTemplate("${body.InnerField}")
+		require.NoError(t, err)
+		s, err = tmplNonNil.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "resolved", s)
+
+		tmplNonNilCI, err := ParseSimpleTemplate("${body.innerfield}")
+		require.NoError(t, err)
+		s, err = tmplNonNilCI.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "resolved", s)
+	})
 }
