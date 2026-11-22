@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/stretchr/testify v1.12.1
-	github.com/tranchida/gocamel v0.20.0
+	github.com/tranchida/gocamel v1.0.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )

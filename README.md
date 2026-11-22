@@ -4,7 +4,7 @@
 
 **Enterprise Integration Framework for Go**
 
-[![Release](https://img.shields.io/badge/version-v0.20.0-blue)](https://github.com/tranchida/gocamel/releases/tag/v0.20.0)
+[![Release](https://img.shields.io/badge/version-v1.0.0-blue)](https://github.com/tranchida/gocamel/releases/tag/v1.0.0)
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -37,7 +37,7 @@ provides a powerful DSL for creating integration routes to connect different sys
 
 ## 📦 Installation
 
-Release **v0.20.0** lets several HTTP routes share one port, fixes nine code-review findings in the core routing engine and the `file` component (listed under both Changed and Fixed in the CHANGELOG), and changes a few visible behaviours (`file` `move` resolution, route start order, HTTP `Content-Type`). See the [CHANGELOG](CHANGELOG.md) and the [v0.20.0 release notes](hugo-site/content/en/releases/v0.20.0.md). Releases up to v0.16.0 remain available under the old `gitlab.com/tranchida/gocamel` path.
+Release **v1.0.0** is the first stable release of GoCamel, following a full security, concurrency, and correctness audit across the core routing engine, Simple Language, JSONPath, DataFormats, observability modules, and all 17 optional components (plus Ollama Cloud support and CVE dependency upgrades). See the [CHANGELOG](CHANGELOG.md) and the [v1.0.0 release notes](hugo-site/content/en/releases/v1.0.0.md). Releases up to v0.16.0 remain available under the old `gitlab.com/tranchida/gocamel` path.
 
 Go **1.27.0 or later** is required for the core, components and examples. The workspace and `.go-version` default to Go 1.27.0.
 
@@ -47,32 +47,32 @@ external runtime dependencies** and builds without CGO (tests use the pure-Go
 `modernc.org/sqlite` driver):
 
 ```bash
-go get github.com/tranchida/gocamel@v0.20.0
+go get github.com/tranchida/gocamel@v1.0.0
 ```
 
 Components that rely on third-party libraries live in their own Go modules —
 you only pull the dependencies of what you actually use:
 
 ```bash
-go get github.com/tranchida/gocamel/components/kafka@v0.20.0     # segmentio/kafka-go
-go get github.com/tranchida/gocamel/components/grpc@v0.20.0      # google.golang.org/grpc
-go get github.com/tranchida/gocamel/components/redis@v0.20.0    # go-redis
-go get github.com/tranchida/gocamel/components/nats@v0.20.0     # nats.go
-go get github.com/tranchida/gocamel/components/mongodb@v0.20.0  # mongo-driver
-go get github.com/tranchida/gocamel/components/mail@v0.20.0     # SMTP/IMAP/POP3
-go get github.com/tranchida/gocamel/components/ftp@v0.20.0
-go get github.com/tranchida/gocamel/components/sftp@v0.20.0
-go get github.com/tranchida/gocamel/components/smb@v0.20.0
-go get github.com/tranchida/gocamel/components/telegram@v0.20.0
-go get github.com/tranchida/gocamel/components/openai@v0.20.0
-go get github.com/tranchida/gocamel/components/anthropic@v0.20.0
-go get github.com/tranchida/gocamel/components/ollama@v0.20.0
-go get github.com/tranchida/gocamel/components/jev@v0.20.0       # Jev (OpenRouter Decisions API)
-go get github.com/tranchida/gocamel/components/cron@v0.20.0     # robfig/cron
-go get github.com/tranchida/gocamel/components/file@v0.20.0     # fsnotify watcher
-go get github.com/tranchida/gocamel/components/stomp@v0.20.0    # go-stomp (ActiveMQ/JMS)
-go get github.com/tranchida/gocamel/observability/prometheus@v0.20.0
-go get github.com/tranchida/gocamel/observability/otel@v0.20.0
+go get github.com/tranchida/gocamel/components/kafka@v1.0.0     # segmentio/kafka-go
+go get github.com/tranchida/gocamel/components/grpc@v1.0.0      # google.golang.org/grpc
+go get github.com/tranchida/gocamel/components/redis@v1.0.0    # go-redis
+go get github.com/tranchida/gocamel/components/nats@v1.0.0     # nats.go
+go get github.com/tranchida/gocamel/components/mongodb@v1.0.0  # mongo-driver
+go get github.com/tranchida/gocamel/components/mail@v1.0.0     # SMTP/IMAP/POP3
+go get github.com/tranchida/gocamel/components/ftp@v1.0.0
+go get github.com/tranchida/gocamel/components/sftp@v1.0.0
+go get github.com/tranchida/gocamel/components/smb@v1.0.0
+go get github.com/tranchida/gocamel/components/telegram@v1.0.0
+go get github.com/tranchida/gocamel/components/openai@v1.0.0
+go get github.com/tranchida/gocamel/components/anthropic@v1.0.0
+go get github.com/tranchida/gocamel/components/ollama@v1.0.0
+go get github.com/tranchida/gocamel/components/jev@v1.0.0       # Jev (OpenRouter Decisions API)
+go get github.com/tranchida/gocamel/components/cron@v1.0.0     # robfig/cron
+go get github.com/tranchida/gocamel/components/file@v1.0.0     # fsnotify watcher
+go get github.com/tranchida/gocamel/components/stomp@v1.0.0    # go-stomp (ActiveMQ/JMS)
+go get github.com/tranchida/gocamel/observability/prometheus@v1.0.0
+go get github.com/tranchida/gocamel/observability/otel@v1.0.0
 ```
 
 ```go
@@ -293,7 +293,7 @@ Two further behaviour changes are unlikely to need action: splitting a
 the HTTP consumer no longer echoes unchanged inbound request headers in its
 response.
 
-**Upcoming v0.21.0 remediation changes (unreleased).** These security, concurrency, and semantic fixes introduce breaking or visible behaviour changes:
+**v1.0.0 release changes.** These security, concurrency, and semantic fixes introduce breaking or visible behaviour changes:
 
 - **`sql-stored` parameters:** unordered `map[string]any` bodies are rejected (pass `[]gocamel.StoredProcedureParam` in deterministic positional order), and `ParamDirectionOut` / `ParamDirectionInOut` parameters return an error instead of being bound silently as plain `IN` values.
 - **`sql` and `sql-stored` URI options:** endpoint options (`query`, `procedure`, `allowHeaderOverride`, etc.) are read strictly from URI query parameters, ignoring environment variables.

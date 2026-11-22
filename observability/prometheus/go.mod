@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.12.1
-	github.com/tranchida/gocamel v0.20.0
+	github.com/tranchida/gocamel v1.0.0
 )
 
 require (

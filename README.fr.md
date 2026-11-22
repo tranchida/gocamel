@@ -4,7 +4,7 @@
 
 **Framework d'Intégration d'Entreprise pour Go**
 
-[![Release](https://img.shields.io/badge/version-v0.20.0-blue)](https://github.com/tranchida/gocamel/releases/tag/v0.20.0)
+[![Release](https://img.shields.io/badge/version-v1.0.0-blue)](https://github.com/tranchida/gocamel/releases/tag/v1.0.0)
 [![Go Version](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -38,7 +38,7 @@ Go. Elle fournit un puissant DSL pour créer des routes d'intégration connectan
 
 ## 📦 Installation
 
-La version **v0.20.0** permet à plusieurs routes HTTP de partager un même port, corrige neuf constats de revue de code dans le moteur de routage et le composant `file` (répartis entre les rubriques Changed et Fixed du CHANGELOG), et modifie quelques comportements visibles (résolution de `move` pour `file`, ordre de démarrage des routes, `Content-Type` HTTP). Voir le [CHANGELOG](CHANGELOG.md) et les [notes de version v0.20.0](hugo-site/content/fr/releases/v0.20.0.md). Les versions jusqu'à v0.16.0 restent disponibles sous l'ancien chemin `gitlab.com/tranchida/gocamel`.
+La version **v1.0.0** est la première version stable de GoCamel, issue d'un audit complet de sécurité, de concurrence et de fiabilité couvrant le moteur de routage, Simple Language, JSONPath, les DataFormats, les modules d'observabilité et les 17 composants optionnels (avec support d'Ollama Cloud et mises à jour CVE). Voir le [CHANGELOG](CHANGELOG.md) et les [notes de version v1.0.0](hugo-site/content/fr/releases/v1.0.0.md). Les versions jusqu'à v0.16.0 restent disponibles sous l'ancien chemin `gitlab.com/tranchida/gocamel`.
 
 Go **1.27.0 ou ultérieur** est requis pour le cœur, les composants et les exemples. Le workspace et `.go-version` utilisent Go 1.27.0 par défaut.
 
@@ -48,7 +48,7 @@ template, sql, sql-stored, net, mock) n'a **aucune dépendance externe à l'exé
 CGO (les tests utilisent le driver pure-Go `modernc.org/sqlite`) :
 
 ```bash
-go get github.com/tranchida/gocamel@v0.20.0
+go get github.com/tranchida/gocamel@v1.0.0
 ```
 
 Les composants qui s'appuient sur des bibliothèques tierces vivent dans leurs
@@ -56,25 +56,25 @@ propres modules Go — vous ne récupérez que les dépendances de ce que vous
 utilisez réellement :
 
 ```bash
-go get github.com/tranchida/gocamel/components/kafka@v0.20.0     # segmentio/kafka-go
-go get github.com/tranchida/gocamel/components/grpc@v0.20.0      # google.golang.org/grpc
-go get github.com/tranchida/gocamel/components/redis@v0.20.0    # go-redis
-go get github.com/tranchida/gocamel/components/nats@v0.20.0     # nats.go
-go get github.com/tranchida/gocamel/components/mongodb@v0.20.0  # mongo-driver
-go get github.com/tranchida/gocamel/components/mail@v0.20.0     # SMTP/IMAP/POP3
-go get github.com/tranchida/gocamel/components/ftp@v0.20.0
-go get github.com/tranchida/gocamel/components/sftp@v0.20.0
-go get github.com/tranchida/gocamel/components/smb@v0.20.0
-go get github.com/tranchida/gocamel/components/telegram@v0.20.0
-go get github.com/tranchida/gocamel/components/openai@v0.20.0
-go get github.com/tranchida/gocamel/components/anthropic@v0.20.0
-go get github.com/tranchida/gocamel/components/ollama@v0.20.0
-go get github.com/tranchida/gocamel/components/jev@v0.20.0       # Jev (OpenRouter Decisions API)
-go get github.com/tranchida/gocamel/components/cron@v0.20.0     # robfig/cron
-go get github.com/tranchida/gocamel/components/file@v0.20.0     # watcher fsnotify
-go get github.com/tranchida/gocamel/components/stomp@v0.20.0    # go-stomp (ActiveMQ/JMS)
-go get github.com/tranchida/gocamel/observability/prometheus@v0.20.0
-go get github.com/tranchida/gocamel/observability/otel@v0.20.0
+go get github.com/tranchida/gocamel/components/kafka@v1.0.0     # segmentio/kafka-go
+go get github.com/tranchida/gocamel/components/grpc@v1.0.0      # google.golang.org/grpc
+go get github.com/tranchida/gocamel/components/redis@v1.0.0    # go-redis
+go get github.com/tranchida/gocamel/components/nats@v1.0.0     # nats.go
+go get github.com/tranchida/gocamel/components/mongodb@v1.0.0  # mongo-driver
+go get github.com/tranchida/gocamel/components/mail@v1.0.0     # SMTP/IMAP/POP3
+go get github.com/tranchida/gocamel/components/ftp@v1.0.0
+go get github.com/tranchida/gocamel/components/sftp@v1.0.0
+go get github.com/tranchida/gocamel/components/smb@v1.0.0
+go get github.com/tranchida/gocamel/components/telegram@v1.0.0
+go get github.com/tranchida/gocamel/components/openai@v1.0.0
+go get github.com/tranchida/gocamel/components/anthropic@v1.0.0
+go get github.com/tranchida/gocamel/components/ollama@v1.0.0
+go get github.com/tranchida/gocamel/components/jev@v1.0.0       # Jev (OpenRouter Decisions API)
+go get github.com/tranchida/gocamel/components/cron@v1.0.0     # robfig/cron
+go get github.com/tranchida/gocamel/components/file@v1.0.0     # watcher fsnotify
+go get github.com/tranchida/gocamel/components/stomp@v1.0.0    # go-stomp (ActiveMQ/JMS)
+go get github.com/tranchida/gocamel/observability/prometheus@v1.0.0
+go get github.com/tranchida/gocamel/observability/otel@v1.0.0
 ```
 
 ```go
@@ -295,7 +295,7 @@ corps `[]byte` produit désormais une seule part au lieu d'un exchange par
 octet, et le consommateur HTTP ne renvoie plus les en-têtes entrants inchangés
 dans sa réponse.
 
-**Changements à venir pour la remédiation v0.21.0 (non publiés).** Ces correctifs de sécurité, concurrence et sémantique introduisent des changements visibles ou incompatibles :
+**Changements de la version v1.0.0.** Ces correctifs de sécurité, concurrence et sémantique introduisent des changements visibles ou incompatibles :
 
 - **Paramètres `sql-stored` :** les corps `map[string]any` non ordonnés sont rejetés (passez une slice ordonnée `[]gocamel.StoredProcedureParam`), et les paramètres `ParamDirectionOut` / `ParamDirectionInOut` retournent une erreur au lieu d'être liés silencieusement en `IN`.
 - **Options URI `sql` et `sql-stored` :** les options (`query`, `procedure`, `allowHeaderOverride`, etc.) sont lues uniquement depuis la query string de l'URI, en ignorant les variables d'environnement.

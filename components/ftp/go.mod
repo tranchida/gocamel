@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/stretchr/testify v1.12.1
-	github.com/tranchida/gocamel v0.20.0
+	github.com/tranchida/gocamel v1.0.0
 )
 
 require (

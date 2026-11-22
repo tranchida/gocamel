@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.0] - 2026-11-23
+
+First stable release following a full codebase security, concurrency, and correctness audit across the core routing engine, Simple Language, JSONPath, DataFormats, all 17 optional components, and observability modules. Includes Ollama Cloud support, CVE dependency upgrades, and breaking or visible hardening changes listed under Changed and Security. Every component and observability module at v1.0.0 requires core v1.0.0.
+
 ### Added
 
 - **`ollama`**: Ollama Cloud support. When the `OLLAMA_API_KEY` environment variable is set, the producer authenticates with a Bearer token, so `host=https://ollama.com` works without an `ollama signin` setup. The key is read from the environment only, never from the URI, and is sent only to `ollama.com` and its subdomains, over HTTPS. Other hosts, such as a local or LAN server, use the standard client and never receive it, so a key exported for the `ollama` CLI does not affect them.

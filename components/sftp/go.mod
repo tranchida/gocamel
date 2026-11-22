@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/pkg/sftp v1.13.12
 	github.com/stretchr/testify v1.12.1
-	github.com/tranchida/gocamel v0.20.0
+	github.com/tranchida/gocamel v1.0.0
 	golang.org/x/crypto v0.59.0
 )
 
