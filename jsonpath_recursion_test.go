@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -76,4 +77,56 @@ func TestJSONPathRecursiveDescent_SharedNonCyclicContainerIsVisitedPerBranch(t *
 	values, ok := res.([]any)
 	require.True(t, ok, "expected two matches, got %T", res)
 	assert.Equal(t, []any{"x", "x"}, values)
+}
+
+func TestJSONPath_BoundedChainedRecursiveAndDAG(t *testing.T) {
+	t.Run("chained_recursive_wildcard_on_20_deep_object", func(t *testing.T) {
+		deep := map[string]any{"leaf": 1}
+		for i := 0; i < 20; i++ {
+			deep = map[string]any{"child": deep}
+		}
+
+		start := time.Now()
+		res, err := EvaluateJSONPath("$..*..*..*..*..*..*..*..*", deep)
+		require.Error(t, err)
+		assert.Nil(t, res)
+		assert.Contains(t, err.Error(), "maximum")
+		assert.Less(t, time.Since(start), 2*time.Second)
+	})
+
+	t.Run("35_level_shared_dag_visit_limit", func(t *testing.T) {
+		dag := map[string]any{"leaf": 1}
+		for i := 0; i < 35; i++ {
+			dag = map[string]any{"left": dag, "right": dag}
+		}
+
+		start := time.Now()
+		res, err := EvaluateJSONPath("$..x", dag)
+		require.Error(t, err)
+		assert.Nil(t, res)
+		assert.Contains(t, err.Error(), "maximum")
+		assert.Less(t, time.Since(start), 2*time.Second)
+	})
+
+	t.Run("35_level_shared_dag_result_limit", func(t *testing.T) {
+		dag := map[string]any{"x": 1}
+		for i := 0; i < 35; i++ {
+			dag = map[string]any{"left": dag, "right": dag}
+		}
+
+		start := time.Now()
+		res, err := EvaluateJSONPath("$..x", dag)
+		require.Error(t, err)
+		assert.Nil(t, res)
+		assert.Contains(t, err.Error(), "maximum")
+		assert.Less(t, time.Since(start), 2*time.Second)
+	})
+
+	t.Run("non_recursive_wildcard_result_limit", func(t *testing.T) {
+		large := make([]any, maxJSONPathResults+1)
+		res, err := EvaluateJSONPath("$[*]", large)
+		require.Error(t, err)
+		assert.Nil(t, res)
+		assert.Contains(t, err.Error(), "maximum results")
+	})
 }

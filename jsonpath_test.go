@@ -128,3 +128,126 @@ func TestJSONPath_ChoiceAndPredicate(t *testing.T) {
 	require.NoError(t, producer.Send(ex2))
 	assert.Equal(t, "user", captured)
 }
+
+func TestJSONPath_SingleQuoteBracketNoPanic(t *testing.T) {
+	doc := `{"a]b": "ok", "a'b": "quote", "": "empty", "foo:bar": "colon", " a ": "spaced"}`
+
+	for _, malformed := range []string{"$[']", `$["]`, `$['a\']`, `$['a' 'b']`, "$..", "$..[']"} {
+		t.Run("malformed_"+malformed, func(t *testing.T) {
+			var res any
+			var err error
+			require.NotPanics(t, func() {
+				res, err = EvaluateJSONPath(malformed, doc)
+			})
+			require.Error(t, err)
+			assert.Nil(t, res)
+		})
+	}
+
+	val, err := EvaluateJSONPath("$['a]b']", doc)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", val)
+
+	val, err = EvaluateJSONPath(`$["a]b"]`, doc)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", val)
+
+	val, err = EvaluateJSONPath(`$['a\'b']`, doc)
+	require.NoError(t, err)
+	assert.Equal(t, "quote", val)
+
+	val, err = EvaluateJSONPath(`$['']`, doc)
+	require.NoError(t, err)
+	assert.Equal(t, "empty", val)
+
+	val, err = EvaluateJSONPath(`$['foo:bar']`, doc)
+	require.NoError(t, err)
+	assert.Equal(t, "colon", val)
+
+	val, err = EvaluateJSONPath(`$[' a ']`, doc)
+	require.NoError(t, err)
+	assert.Equal(t, "spaced", val)
+
+	tmpl, err := ParseSimpleTemplate("${jsonpath:$['a]b']}")
+	require.NoError(t, err)
+	ex := NewExchange(context.Background())
+	ex.In.SetBody(doc)
+	s, err := tmpl.EvaluateAsString(ex)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", s)
+}
+
+func TestJSONPath_NegativeSlicesAndRecursiveBracketsAndWildcardArrays(t *testing.T) {
+	arr := `[1,2,3]`
+
+	val, err := EvaluateJSONPath("$[0:-1]", arr)
+	require.NoError(t, err)
+	assert.Equal(t, []any{float64(1), float64(2)}, val)
+
+	val, err = EvaluateJSONPath("$[0:-2]", arr)
+	require.NoError(t, err)
+	assert.Equal(t, float64(1), val)
+
+	val, err = EvaluateJSONPath("$[0:-2]", `[1,2,3,4]`)
+	require.NoError(t, err)
+	assert.Equal(t, []any{float64(1), float64(2)}, val)
+
+	val, err = EvaluateJSONPath("$[-2:]", arr)
+	require.NoError(t, err)
+	assert.Equal(t, []any{float64(2), float64(3)}, val)
+
+	val, err = EvaluateJSONPath("$[-2:-1]", arr)
+	require.NoError(t, err)
+	assert.Equal(t, float64(2), val)
+
+	val, err = EvaluateJSONPath("$[:]", arr)
+	require.NoError(t, err)
+	assert.Equal(t, []any{float64(1), float64(2), float64(3)}, val)
+
+	val, err = EvaluateJSONPath("$[0:-10]", arr)
+	require.NoError(t, err)
+	assert.Nil(t, val)
+
+	for _, badSlice := range []string{"$[foo:bar]", "$[0:bar]", "$[foo:1]", "$[1:2:3]"} {
+		res, err := EvaluateJSONPath(badSlice, arr)
+		require.Error(t, err, "expected error for %s", badSlice)
+		assert.Nil(t, res)
+	}
+
+	nested := `{"store":{"book":[{"author":"Nigel Rees"},{"author":"Evelyn Waugh"}],"editor":{"author":"Bob"}}}`
+	val, err = EvaluateJSONPath("$..['author']", nested)
+	require.NoError(t, err)
+	authors, ok := val.([]any)
+	require.True(t, ok, "expected slice of authors, got %T", val)
+	assert.ElementsMatch(t, []any{"Nigel Rees", "Evelyn Waugh", "Bob"}, authors)
+
+	val, err = EvaluateJSONPath(`$..["author"]`, nested)
+	require.NoError(t, err)
+	authors, ok = val.([]any)
+	require.True(t, ok, "expected slice of authors, got %T", val)
+	assert.ElementsMatch(t, []any{"Nigel Rees", "Evelyn Waugh", "Bob"}, authors)
+
+	val, err = EvaluateJSONPath("$..[0]", `{"a":[10,20],"b":{"c":[30,40]}}`)
+	require.NoError(t, err)
+	firsts, ok := val.([]any)
+	require.True(t, ok, "expected slice of first elements, got %T", val)
+	assert.ElementsMatch(t, []any{float64(10), float64(30)}, firsts)
+
+	val, err = EvaluateJSONPath("$..[0:-1]", `{"a":[10,20,30],"b":[40,50]}`)
+	require.NoError(t, err)
+	sliced, ok := val.([]any)
+	require.True(t, ok, "expected slice of elements, got %T", val)
+	assert.ElementsMatch(t, []any{float64(10), float64(20), float64(40)}, sliced)
+
+	val, err = EvaluateJSONPath("$..['*']", `{"*":"literal","nested":[1,2]}`)
+	require.NoError(t, err)
+	assert.Equal(t, "literal", val)
+
+	val, err = EvaluateJSONPath("$..*", arr)
+	require.NoError(t, err)
+	assert.Equal(t, []any{float64(1), float64(2), float64(3)}, val)
+
+	val, err = EvaluateJSONPath("$..[*]", arr)
+	require.NoError(t, err)
+	assert.Equal(t, []any{float64(1), float64(2), float64(3)}, val)
+}
