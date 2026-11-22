@@ -1,13 +1,17 @@
 package jev
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -234,4 +238,100 @@ func TestSend_AfterStop(t *testing.T) {
 	require.NoError(t, p.Start(context.Background()))
 	require.NoError(t, p.Stop())
 	require.Error(t, p.Send(gocamel.NewExchange(context.Background())))
+}
+
+func TestJev_BlocksRedirectAndRejectsHostlessBaseURL(t *testing.T) {
+	t.Run("blocks 307 redirect without leaking Authorization", func(t *testing.T) {
+		var targetHits atomic.Int32
+		var leakedAuth string
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			targetHits.Add(1)
+			leakedAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(okResponse))
+		}))
+		t.Cleanup(target.Close)
+
+		redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/decisions", http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(redirector.Close)
+
+		p := producer(t, uriFor(redirector.URL, ""))
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hello")
+		err := p.Send(ex)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "307")
+		assert.Zero(t, targetHits.Load(), "redirect target must not be contacted")
+		assert.Empty(t, leakedAuth, "Authorization must not be leaked on redirect")
+	})
+
+	t.Run("rejects hostless and opaque baseURL", func(t *testing.T) {
+		c := NewJevComponent()
+		for _, bad := range []string{"http:///alpha", "https://", "http:opaque"} {
+			_, err := c.CreateEndpoint(uriFor(bad, ""))
+			assert.Error(t, err, "should reject baseURL=%q", bad)
+		}
+	})
+
+	t.Run("rejects oversized response over 32 MiB", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"answers":{"q":{"type":"choice","choice":"`))
+			chunk := bytes.Repeat([]byte("a"), 1<<20)
+			for i := 0; i < 33; i++ {
+				if _, err := w.Write(chunk); err != nil {
+					return
+				}
+			}
+			_, _ = w.Write([]byte(`"}}}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		p := producer(t, uriFor(srv.URL, ""))
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hello")
+		err := p.Send(ex)
+		require.Error(t, err)
+	})
+
+	t.Run("rejects Content-Length over 32 MiB and enforces limitedReadCloser boundaries", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Length", strconv.FormatInt(maxResponseBodyBytes+1, 10))
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
+
+		p := producer(t, uriFor(srv.URL, ""))
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hello")
+		require.Error(t, p.Send(ex))
+
+		rcExact := &limitedReadCloser{rc: io.NopCloser(strings.NewReader("exact")), remaining: 5, limit: 5}
+		n, err := rcExact.Read(nil)
+		require.NoError(t, err)
+		assert.Zero(t, n)
+		data, err := io.ReadAll(rcExact)
+		require.NoError(t, err)
+		assert.Equal(t, "exact", string(data))
+
+		rcOver := &limitedReadCloser{rc: io.NopCloser(strings.NewReader("exceeds")), remaining: 5, limit: 5}
+		_, err = io.ReadAll(rcOver)
+		require.Error(t, err)
+		_, err = rcOver.Read(make([]byte, 4))
+		require.Error(t, err)
+	})
 }

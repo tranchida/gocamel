@@ -1,13 +1,18 @@
 package ollama
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -186,4 +191,53 @@ func TestRequireSecureKeyTransport(t *testing.T) {
 			assert.Error(t, err, raw)
 		}
 	}
+}
+
+func TestOllamaCloud_RejectsPaddedOversizedJSONAndTruncatesUTF8Errors(t *testing.T) {
+	treatAllHostsAsCloud(t)
+	t.Setenv(cloudAPIKeyEnv, "secret")
+
+	// Valid JSON followed by >32 MiB of whitespace must fail rather than silently truncating.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}`))
+		pad := bytes.Repeat([]byte(" "), 1<<20)
+		for i := 0; i < 33; i++ {
+			if _, err := w.Write(pad); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	p := producerForTest(t, "ollama:chat?model=m&host="+srv.URL)
+	require.NoError(t, p.Start(context.Background()))
+	t.Cleanup(func() { _ = p.Stop() })
+
+	ex := gocamel.NewExchange(context.Background())
+	ex.SetBody("hi")
+	err := p.Send(ex)
+	require.Error(t, err)
+
+	// Multi-byte UTF-8 error JSON truncation must stay valid UTF-8 and <= 512 bytes.
+	utf8Msg := strings.Repeat("é", 400) // 800 bytes
+	errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"` + utf8Msg + `"}`))
+	}))
+	t.Cleanup(errSrv.Close)
+
+	pErr := producerForTest(t, "ollama:chat?model=m&host="+errSrv.URL)
+	require.NoError(t, pErr.Start(context.Background()))
+	t.Cleanup(func() { _ = pErr.Stop() })
+
+	err2 := pErr.Send(ex)
+	require.Error(t, err2)
+	var statusErr api.StatusError
+	require.True(t, errors.As(err2, &statusErr))
+	assert.LessOrEqual(t, len(statusErr.ErrorMessage), maxErrorBytes)
+	assert.True(t, utf8.ValidString(statusErr.ErrorMessage))
 }

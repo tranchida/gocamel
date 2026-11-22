@@ -5,13 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/api"
+
+	gocamel "github.com/tranchida/gocamel"
 )
 
 // CloudHost is the base URL of the Ollama Cloud API.
@@ -97,24 +99,24 @@ func (c *cloudClient) post(ctx context.Context, path string, reqBody, respBody a
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	body, err := gocamel.ReadLimited(resp.Body, maxResponseBytes)
 	if err != nil {
 		return fmt.Errorf("read ollama response: %w", err)
 	}
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		var apiErr struct {
 			Error string `json:"error"`
 		}
-		msg := strings.TrimSpace(string(body))
+		msg := string(body)
 		if json.Unmarshal(body, &apiErr) == nil && apiErr.Error != "" {
 			msg = apiErr.Error
 		}
 		return api.StatusError{
 			StatusCode:   resp.StatusCode,
 			Status:       resp.Status,
-			ErrorMessage: msg,
+			ErrorMessage: truncateErrorSnippet(msg, maxErrorBytes),
 		}
 	}
 	if err := json.Unmarshal(body, respBody); err != nil {
@@ -123,8 +125,23 @@ func (c *cloudClient) post(ctx context.Context, path string, reqBody, respBody a
 	return nil
 }
 
-// maxResponseBytes bounds the size of a single Ollama Cloud response (DoS guard).
-const maxResponseBytes = 32 << 20
+const (
+	// maxResponseBytes bounds the size of a single Ollama Cloud response (DoS guard).
+	maxResponseBytes = gocamel.DefaultMaxBodySize
+	// maxErrorBytes caps upstream error snippets included in StatusError.
+	maxErrorBytes = 512
+)
+
+func truncateErrorSnippet(s string, maxBytes int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxBytes {
+		return s
+	}
+	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes]
+}
 
 // isCloudHost reports whether the API key may be sent to host. It is a
 // variable so that tests can point the cloud client at a local httptest server.

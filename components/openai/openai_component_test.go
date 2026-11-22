@@ -1,13 +1,16 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	sdkopenai "github.com/sashabaranov/go-openai"
@@ -248,4 +251,223 @@ func TestOpenAICreateEndpoint_BaseURLValidation(t *testing.T) {
 			t.Errorf("expected error for invalid baseURL %q, got nil", invalid)
 		}
 	}
+}
+
+func TestOpenAI_ReadsOpenAIAPIKeyEnvAndBlocksRedirectAndRejectsNilBody(t *testing.T) {
+	t.Run("reads OPENAI_API_KEY env", func(t *testing.T) {
+		var gotAuth string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			gotAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-1","choices":[{"message":{"content":"ok"}}]}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		t.Setenv("OPENAI_API_KEY", "env-openai-secret")
+		ep, err := NewOpenAIComponent().CreateEndpoint("openai:chat?model=gpt-4&baseURL=" + url.QueryEscape(srv.URL+"/v1"))
+		if err != nil {
+			t.Fatalf("CreateEndpoint failed: %v", err)
+		}
+		prod, err := ep.CreateProducer()
+		if err != nil {
+			t.Fatalf("CreateProducer failed: %v", err)
+		}
+		if err := prod.Start(context.Background()); err != nil {
+			t.Fatalf("Start failed: %v", err)
+		}
+		t.Cleanup(func() { _ = prod.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hello")
+		if err := prod.(*OpenAIProducer).Send(ex); err != nil {
+			t.Fatalf("Send failed: %v", err)
+		}
+		if gotAuth != "Bearer env-openai-secret" {
+			t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer env-openai-secret")
+		}
+	})
+
+	t.Run("blocks 307 redirect without leaking Authorization", func(t *testing.T) {
+		var targetHits atomic.Int32
+		var leakedAuth string
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			targetHits.Add(1)
+			leakedAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-1","choices":[{"message":{"content":"leaked"}}]}`))
+		}))
+		t.Cleanup(target.Close)
+
+		redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/v1/chat/completions", http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(redirector.Close)
+
+		ep, err := NewOpenAIComponent().CreateEndpoint("openai:chat?model=gpt-4&apiKey=secret-openai-key&baseURL=" + url.QueryEscape(redirector.URL+"/v1"))
+		if err != nil {
+			t.Fatalf("CreateEndpoint failed: %v", err)
+		}
+		prod, err := ep.CreateProducer()
+		if err != nil {
+			t.Fatalf("CreateProducer failed: %v", err)
+		}
+		if err := prod.Start(context.Background()); err != nil {
+			t.Fatalf("Start failed: %v", err)
+		}
+		t.Cleanup(func() { _ = prod.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hello")
+		if err := prod.(*OpenAIProducer).Send(ex); err == nil {
+			t.Fatal("expected error on 307 redirect, got nil")
+		}
+		if targetHits.Load() != 0 {
+			t.Fatalf("redirect target was contacted %d times (leaked auth=%q)", targetHits.Load(), leakedAuth)
+		}
+	})
+
+	t.Run("rejects nil body", func(t *testing.T) {
+		var hits atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-1","choices":[{"message":{"content":"ok"}}]}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		ep, err := NewOpenAIComponent().CreateEndpoint("openai:chat?model=gpt-4&apiKey=k&baseURL=" + url.QueryEscape(srv.URL+"/v1"))
+		if err != nil {
+			t.Fatalf("CreateEndpoint failed: %v", err)
+		}
+		prod, err := ep.CreateProducer()
+		if err != nil {
+			t.Fatalf("CreateProducer failed: %v", err)
+		}
+		if err := prod.Start(context.Background()); err != nil {
+			t.Fatalf("Start failed: %v", err)
+		}
+		t.Cleanup(func() { _ = prod.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		if err := prod.(*OpenAIProducer).Send(ex); err == nil {
+			t.Fatal("expected error for nil body, got nil")
+		}
+		if hits.Load() != 0 {
+			t.Fatalf("HTTP server should not be called for nil body, got %d hits", hits.Load())
+		}
+	})
+
+	t.Run("rejects oversized response over 32 MiB", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-1","choices":[{"message":{"content":"`))
+			chunk := bytes.Repeat([]byte("a"), 1<<20)
+			for i := 0; i < 33; i++ {
+				if _, err := w.Write(chunk); err != nil {
+					return
+				}
+			}
+			_, _ = w.Write([]byte(`"}}]}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		ep, err := NewOpenAIComponent().CreateEndpoint("openai:chat?model=gpt-4&apiKey=k&baseURL=" + url.QueryEscape(srv.URL+"/v1"))
+		if err != nil {
+			t.Fatalf("CreateEndpoint failed: %v", err)
+		}
+		prod, err := ep.CreateProducer()
+		if err != nil {
+			t.Fatalf("CreateProducer failed: %v", err)
+		}
+		if err := prod.Start(context.Background()); err != nil {
+			t.Fatalf("Start failed: %v", err)
+		}
+		t.Cleanup(func() { _ = prod.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hello")
+		if err := prod.(*OpenAIProducer).Send(ex); err == nil {
+			t.Fatal("expected error for oversized response, got nil")
+		}
+	})
+
+	t.Run("rejects hostless and opaque baseURL", func(t *testing.T) {
+		comp := NewOpenAIComponent()
+		for _, bad := range []string{"http:///v1", "https://", "http:opaque"} {
+			if _, err := comp.CreateEndpoint("openai:chat?model=gpt-4&baseURL=" + url.QueryEscape(bad)); err == nil {
+				t.Errorf("expected error for baseURL=%q", bad)
+			}
+		}
+	})
+
+	t.Run("requires API key when OPENAI_API_KEY is unset and rejects CreateConsumer", func(t *testing.T) {
+		t.Setenv("OPENAI_API_KEY", "")
+		ep, err := NewOpenAIComponent().CreateEndpoint("openai:chat?model=gpt-4")
+		if err != nil {
+			t.Fatalf("CreateEndpoint failed: %v", err)
+		}
+		if _, err := ep.CreateConsumer(nil); err == nil {
+			t.Fatal("expected CreateConsumer error, got nil")
+		}
+		prod, err := ep.CreateProducer()
+		if err != nil {
+			t.Fatalf("CreateProducer failed: %v", err)
+		}
+		if err := prod.Start(context.Background()); err == nil {
+			t.Fatal("expected Start error when API key is missing, got nil")
+		}
+	})
+
+	t.Run("rejects invalid Content-Length and direct endpoint bad baseURL", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Length", strconv.FormatInt(maxResponseBodyBytes+1, 10))
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
+
+		ep, err := NewOpenAIComponent().CreateEndpoint("openai:chat?model=gpt-4&apiKey=k&baseURL=" + url.QueryEscape(srv.URL+"/v1"))
+		if err != nil {
+			t.Fatalf("CreateEndpoint failed: %v", err)
+		}
+		prod, err := ep.CreateProducer()
+		if err != nil {
+			t.Fatalf("CreateProducer failed: %v", err)
+		}
+		if err := prod.Start(context.Background()); err != nil {
+			t.Fatalf("Start failed: %v", err)
+		}
+		t.Cleanup(func() { _ = prod.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hello")
+		if err := prod.(*OpenAIProducer).Send(ex); err == nil {
+			t.Fatal("expected error for Content-Length > 32 MiB")
+		}
+
+		badU, _ := url.Parse("openai:chat?apiKey=k&baseURL=" + url.QueryEscape("http:///bad"))
+		pBad := &OpenAIProducer{endpoint: &OpenAIEndpoint{uri: badU.String(), url: badU}}
+		if err := pBad.Start(context.Background()); err == nil {
+			t.Fatal("expected error for direct endpoint with hostless baseURL")
+		}
+
+		rcExact := &limitedReadCloser{rc: io.NopCloser(strings.NewReader("ok")), remaining: 2, limit: 2}
+		if n, err := rcExact.Read(nil); err != nil || n != 0 {
+			t.Fatalf("zero-len Read = (%d, %v), want (0, nil)", n, err)
+		}
+		b, err := io.ReadAll(rcExact)
+		if err != nil || string(b) != "ok" {
+			t.Fatalf("exact ReadAll = (%q, %v), want (\"ok\", nil)", b, err)
+		}
+		rcOver := &limitedReadCloser{rc: io.NopCloser(strings.NewReader("ok!")), remaining: 2, limit: 2}
+		if _, err := io.ReadAll(rcOver); err == nil {
+			t.Fatal("expected error on over-limit read")
+		}
+		if _, err := rcOver.Read(make([]byte, 2)); err == nil {
+			t.Fatal("expected repeated error after limit exceeded")
+		}
+	})
 }

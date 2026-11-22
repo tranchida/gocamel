@@ -28,10 +28,11 @@ const (
 	// DefaultModel is the Jev model requested when the URI sets no model.
 	DefaultModel = "typesafe/jev-1.13"
 
-	decisionsPath    = "/decisions"
-	defaultTimeout   = 30 * time.Second
-	maxResponseBytes = 4 << 20 // 4 MiB
-	maxErrorBytes    = 512
+	decisionsPath        = "/decisions"
+	defaultTimeout       = 30 * time.Second
+	maxResponseBytes     = 4 << 20 // 4 MiB
+	maxResponseBodyBytes = gocamel.DefaultMaxBodySize
+	maxErrorBytes        = 512
 
 	// HeaderQuestions overrides the endpoint questions (JSON object or map).
 	HeaderQuestions = "JevQuestions"
@@ -199,7 +200,7 @@ func (p *JevProducer) Start(ctx context.Context) error {
 	}
 
 	p.apiKey = token
-	p.client = &http.Client{Timeout: p.endpoint.timeout}
+	p.client = newSafeHTTPClient(p.endpoint.timeout)
 	p.started = true
 	return nil
 }
@@ -365,7 +366,7 @@ func stringHeader(exchange *gocamel.Exchange, key string) (string, bool) {
 	return "", false
 }
 
-// validateBaseURL rejects relative URLs and non-http(s) schemes.
+// validateBaseURL rejects relative URLs, hostless/opaque URLs, and non-http(s) schemes.
 func validateBaseURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -377,5 +378,102 @@ func validateBaseURL(raw string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("baseURL scheme must be http or https, got %q", u.Scheme)
 	}
+	if u.Hostname() == "" || u.Opaque != "" {
+		return fmt.Errorf("baseURL must include a host: %s", raw)
+	}
 	return nil
+}
+
+func newSafeHTTPClient(timeout time.Duration) *http.Client {
+	var base http.RoundTripper
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		base = dt.Clone()
+	} else if http.DefaultTransport != nil {
+		base = http.DefaultTransport
+	} else {
+		base = &http.Transport{}
+	}
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &limitedResponseTransport{
+			base:     base,
+			maxBytes: maxResponseBodyBytes,
+		},
+	}
+}
+
+type limitedResponseTransport struct {
+	base     http.RoundTripper
+	maxBytes int64
+}
+
+func (t *limitedResponseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.ContentLength > t.maxBytes {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		return nil, fmt.Errorf("response body exceeds the %d byte limit", t.maxBytes)
+	}
+	if resp.Body != nil && resp.Body != http.NoBody {
+		resp.Body = &limitedReadCloser{
+			rc:        resp.Body,
+			remaining: t.maxBytes,
+			limit:     t.maxBytes,
+		}
+	}
+	return resp, nil
+}
+
+func (t *limitedResponseTransport) CloseIdleConnections() {
+	type idleCloser interface {
+		CloseIdleConnections()
+	}
+	if ic, ok := t.base.(idleCloser); ok {
+		ic.CloseIdleConnections()
+	}
+}
+
+type limitedReadCloser struct {
+	rc        io.ReadCloser
+	remaining int64
+	limit     int64
+	exceeded  bool
+}
+
+func (l *limitedReadCloser) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if l.exceeded {
+		return 0, fmt.Errorf("response body exceeds the %d byte limit", l.limit)
+	}
+	if l.remaining <= 0 {
+		var probe [1]byte
+		n, err := l.rc.Read(probe[:])
+		if n > 0 {
+			l.exceeded = true
+			return 0, fmt.Errorf("response body exceeds the %d byte limit", l.limit)
+		}
+		if err != nil {
+			return 0, err
+		}
+		return 0, io.EOF
+	}
+	if int64(len(p)) > l.remaining {
+		p = p[:l.remaining]
+	}
+	n, err := l.rc.Read(p)
+	l.remaining -= int64(n)
+	return n, err
+}
+
+func (l *limitedReadCloser) Close() error {
+	return l.rc.Close()
 }

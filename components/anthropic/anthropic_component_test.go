@@ -1,14 +1,18 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,6 +105,7 @@ func producerForTest(t *testing.T, uri string) *AnthropicProducer {
 }
 
 func TestAnthropicProducer_Start_RequiresApiKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	p := producerForTest(t, "anthropic:messages?model=claude-sonnet-4-5")
 	err := p.Start(context.Background())
 	require.Error(t, err)
@@ -353,3 +358,284 @@ func TestAnthropicComponent_CreateEndpoint_Valid(t *testing.T) {
 	_, err = NewAnthropicComponent().CreateEndpoint("anthropic:messages?model=m&apiKey=k")
 	require.NoError(t, err)
 }
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestAnthropic_RefusesRedirectAndIgnoresAmbientEnvAndAppliesTemperatureAndRejectsNilBodyAndNilResp(t *testing.T) {
+	t.Run("ignores ambient ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL and reads ANTHROPIC_API_KEY", func(t *testing.T) {
+		var ambientHits atomic.Int32
+		ambientSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ambientHits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(validResponseJSON("ambient")))
+		}))
+		t.Cleanup(ambientSrv.Close)
+
+		t.Setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
+		t.Setenv("ANTHROPIC_AUTH_TOKEN", "ambient-bearer-token")
+		t.Setenv("ANTHROPIC_BASE_URL", ambientSrv.URL)
+
+		p := producerForTest(t, "anthropic:messages?model=claude-sonnet-4-5")
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		var capturedURL string
+		var capturedAPIKey string
+		var capturedAuth string
+		p.httpClient.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			capturedURL = req.URL.String()
+			capturedAPIKey = req.Header.Get("X-Api-Key")
+			capturedAuth = req.Header.Get("Authorization")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(validResponseJSON("ok"))),
+			}, nil
+		})
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		require.NoError(t, p.Send(ex))
+
+		assert.Equal(t, "ok", ex.GetOut().GetBody())
+		assert.Equal(t, "https://api.anthropic.com/v1/messages", capturedURL)
+		assert.Equal(t, "env-anthropic-key", capturedAPIKey)
+		assert.Empty(t, capturedAuth, "ambient ANTHROPIC_AUTH_TOKEN must be ignored")
+		assert.Zero(t, ambientHits.Load(), "ambient ANTHROPIC_BASE_URL must be ignored")
+	})
+
+	t.Run("refuses 307 redirect without leaking X-Api-Key", func(t *testing.T) {
+		var targetHits atomic.Int32
+		var leakedKey string
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			targetHits.Add(1)
+			leakedKey = r.Header.Get("x-api-key")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(validResponseJSON("leaked")))
+		}))
+		t.Cleanup(target.Close)
+
+		redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/v1/messages", http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(redirector.Close)
+
+		p := producerForTest(t, "anthropic:messages?apiKey=secret-api-key&model=m&baseURL="+redirector.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		err := p.Send(ex)
+		require.Error(t, err)
+		assert.Zero(t, targetHits.Load(), "redirect target must not be contacted")
+		assert.Empty(t, leakedKey, "X-Api-Key must not be leaked on redirect")
+	})
+
+	t.Run("applies temperature=0 URI option and rejects invalid URI and header temperature", func(t *testing.T) {
+		stub := newStubServer(t, http.StatusOK, validResponseJSON("ok"))
+		p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&temperature=0&baseURL="+stub.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		require.NoError(t, p.Send(ex))
+
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(stub.body(), &got))
+		tempVal, hasTemp := got["temperature"]
+		require.True(t, hasTemp, "temperature=0 must be serialized in request JSON")
+		assert.EqualValues(t, 0, tempVal)
+
+		for _, badTemp := range []string{"NaN", "Inf", "-Inf", "-0.1", "1.1", "abc"} {
+			_, err := NewAnthropicComponent().CreateEndpoint("anthropic:messages?apiKey=k&model=m&temperature=" + url.QueryEscape(badTemp))
+			assert.Error(t, err, "CreateEndpoint should reject temperature=%s", badTemp)
+		}
+
+		pOverride := producerForTest(t, "anthropic:messages?apiKey=k&model=m&allowHeaderOverride=true&baseURL="+stub.URL)
+		require.NoError(t, pOverride.Start(context.Background()))
+		t.Cleanup(func() { _ = pOverride.Stop() })
+
+		for _, badHeader := range []any{"NaN", "Inf", "-0.1", "1.5", "abc", math.NaN(), math.Inf(1)} {
+			exBad := gocamel.NewExchange(context.Background())
+			exBad.SetBody("hi")
+			exBad.GetIn().SetHeader("AnthropicTemperature", badHeader)
+			err := pOverride.Send(exBad)
+			assert.Error(t, err, "Send should reject AnthropicTemperature=%v", badHeader)
+		}
+	})
+
+	t.Run("rejects nil body", func(t *testing.T) {
+		var hits atomic.Int32
+		stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(validResponseJSON("ok")))
+		}))
+		t.Cleanup(stub.Close)
+
+		p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&baseURL="+stub.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		err := p.Send(ex)
+		require.Error(t, err)
+		assert.Zero(t, hits.Load(), "must not send HTTP request for nil body")
+	})
+
+	t.Run("handles HTTP 200 null body without panic", func(t *testing.T) {
+		stub := newStubServer(t, http.StatusOK, "null")
+		p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&baseURL="+stub.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		err := p.Send(ex)
+		require.Error(t, err)
+	})
+
+	t.Run("rejects oversized response over 32 MiB cleanly", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"msg","type":"message","role":"assistant","model":"m","stop_reason":"end_turn","content":[{"type":"text","text":"`))
+			chunk := bytes.Repeat([]byte("a"), 1<<20)
+			for i := 0; i < 33; i++ {
+				if _, err := w.Write(chunk); err != nil {
+					return
+				}
+			}
+			_, _ = w.Write([]byte(`"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&baseURL="+srv.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		err := p.Send(ex)
+		require.Error(t, err)
+	})
+
+	t.Run("rejects hostless and opaque baseURL", func(t *testing.T) {
+		for _, bad := range []string{"http:///v1", "https://", "http:opaque"} {
+			_, err := NewAnthropicComponent().CreateEndpoint("anthropic:messages?apiKey=k&model=m&baseURL=" + url.QueryEscape(bad))
+			assert.Error(t, err, "should reject baseURL=%q", bad)
+		}
+	})
+
+	t.Run("disables SDK retries via WithMaxRetries(0)", func(t *testing.T) {
+		var attempts atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts.Add(1)
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"server_error","message":"boom"}}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&baseURL="+srv.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		err := p.Send(ex)
+		require.Error(t, err)
+		assert.EqualValues(t, 1, attempts.Load(), "SDK must not retry when WithMaxRetries(0) is configured")
+	})
+
+	t.Run("rejects invalid allowHeaderOverride and invalid AnthropicMaxTokens override", func(t *testing.T) {
+		_, err := NewAnthropicComponent().CreateEndpoint("anthropic:messages?apiKey=k&model=m&allowHeaderOverride=bogus")
+		require.Error(t, err)
+
+		stub := newStubServer(t, http.StatusOK, validResponseJSON("ok"))
+		p := producerForTest(t, "anthropic:messages?apiKey=k&model=m&allowHeaderOverride=true&baseURL="+stub.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		for _, badMax := range []string{"-1", "0", "notanint"} {
+			ex := gocamel.NewExchange(context.Background())
+			ex.SetBody("hi")
+			ex.GetIn().SetHeader("AnthropicMaxTokens", badMax)
+			require.Error(t, p.Send(ex))
+		}
+	})
+
+	t.Run("parses valid temperature header types and rejects invalid types", func(t *testing.T) {
+		for _, good := range []any{[]byte("0.25"), float64(0.5), float32(0.5), int(1), int64(0), stringerVal("0.75")} {
+			v, err := parseTemperatureHeader(good)
+			require.NoError(t, err, "value=%v", good)
+			require.NotNil(t, v)
+		}
+		for _, empty := range []any{nil, "", []byte(nil), stringerVal("")} {
+			v, err := parseTemperatureHeader(empty)
+			require.NoError(t, err)
+			assert.Nil(t, v)
+		}
+		_, err := parseTemperatureHeader(struct{}{})
+		require.Error(t, err)
+	})
+
+	t.Run("handles Content-Length over 32 MiB and exact boundary in limitedReadCloser", func(t *testing.T) {
+		rt := &limitedResponseTransport{
+			base: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode:    http.StatusOK,
+					ContentLength: maxResponseBodyBytes + 1,
+					Body:          io.NopCloser(strings.NewReader("x")),
+				}, nil
+			}),
+			maxBytes: maxResponseBodyBytes,
+		}
+		req, err := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		require.NoError(t, err)
+		_, err = rt.RoundTrip(req)
+		require.Error(t, err)
+
+		rcExact := &limitedReadCloser{rc: io.NopCloser(strings.NewReader("hello")), remaining: 5, limit: 5}
+		n, err := rcExact.Read(nil)
+		require.NoError(t, err)
+		assert.Zero(t, n)
+		got, err := io.ReadAll(rcExact)
+		require.NoError(t, err)
+		assert.Equal(t, "hello", string(got))
+
+		rcOver := &limitedReadCloser{rc: io.NopCloser(strings.NewReader("hello!")), remaining: 5, limit: 5}
+		_, err = io.ReadAll(rcOver)
+		require.Error(t, err)
+		_, err = rcOver.Read(make([]byte, 4))
+		require.Error(t, err)
+	})
+
+	t.Run("direct endpoint struct fallback works in Start", func(t *testing.T) {
+		u, err := url.Parse("anthropic:messages?apiKey=k&model=m&temperature=0.5&maxTokens=128")
+		require.NoError(t, err)
+		p := &AnthropicProducer{endpoint: &AnthropicEndpoint{uri: u.String(), url: u}}
+		require.NoError(t, p.Start(context.Background()))
+		assert.True(t, p.hasTemperature)
+		assert.InDelta(t, 0.5, p.temperature, 1e-9)
+		assert.EqualValues(t, 128, p.maxTokens)
+		_ = p.Stop()
+
+		badU, err := url.Parse("anthropic:messages?apiKey=k&model=m&baseURL=" + url.QueryEscape("http:///bad") + "&" + strconv.Itoa(1))
+		require.NoError(t, err)
+		pBad := &AnthropicProducer{endpoint: &AnthropicEndpoint{uri: badU.String(), url: badU}}
+		require.Error(t, pBad.Start(context.Background()))
+	})
+}
+
+type stringerVal string
+
+func (s stringerVal) String() string { return string(s) }

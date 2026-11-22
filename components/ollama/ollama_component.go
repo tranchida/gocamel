@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +17,8 @@ import (
 
 	gocamel "github.com/tranchida/gocamel"
 )
+
+const maxResponseBodyBytes = gocamel.DefaultMaxBodySize
 
 // OllamaComponent represents the Ollama component (local LLM server).
 type OllamaComponent struct{}
@@ -48,39 +52,115 @@ func NewOllamaComponent() *OllamaComponent {
 //   - format     (optional, e.g. "json") Structured output format.
 //   - allowHeaderOverride (default false) true to let the OllamaModel and
 //     OllamaSystem headers replace the configured model and system prompt.
+type ollamaOptions struct {
+	mode                string
+	baseURL             *url.URL
+	model               string
+	system              string
+	keepAlive           time.Duration
+	hasKeepAlive        bool
+	think               *api.ThinkValue
+	format              string
+	allowHeaderOverride bool
+}
+
+func parseOllamaOptions(u *url.URL) (ollamaOptions, error) {
+	if u == nil {
+		return ollamaOptions{}, fmt.Errorf("invalid ollama endpoint: missing URL")
+	}
+	mode := resolveMode(u)
+	switch mode {
+	case "chat", "generate", "embed":
+	default:
+		return ollamaOptions{}, fmt.Errorf("invalid ollama mode %q: must be chat, generate or embed", mode)
+	}
+
+	var baseURL *url.URL
+	var err error
+	if host := gocamel.GetConfigValue(u, "host"); host != "" {
+		if err := validateHostURL(host); err != nil {
+			return ollamaOptions{}, fmt.Errorf("invalid ollama host: %w", err)
+		}
+		baseURL, err = url.Parse(host)
+		if err != nil {
+			return ollamaOptions{}, fmt.Errorf("invalid ollama host: %w", err)
+		}
+	} else {
+		// Default to the standard local server; ClientFromEnvironment would
+		// also honor OLLAMA_HOST but an explicit URL keeps tests deterministic.
+		baseURL, err = url.Parse("http://localhost:11434")
+		if err != nil {
+			return ollamaOptions{}, fmt.Errorf("invalid default host: %w", err)
+		}
+	}
+
+	var keepAlive time.Duration
+	var hasKeepAlive bool
+	if ka := gocamel.GetConfigValue(u, "keepAlive"); ka != "" {
+		d, err := time.ParseDuration(ka)
+		if err != nil {
+			return ollamaOptions{}, fmt.Errorf("invalid keepAlive %q: %w", ka, err)
+		}
+		keepAlive = d
+		hasKeepAlive = true
+	}
+
+	var thinkVal *api.ThinkValue
+	if t := gocamel.GetConfigValue(u, "think"); t != "" {
+		tv, err := parseThinkValue(t)
+		if err != nil {
+			return ollamaOptions{}, err
+		}
+		thinkVal = &tv
+	}
+
+	allowHeaderOverride := false
+	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return ollamaOptions{}, fmt.Errorf("invalid allowHeaderOverride %q: %w", v, err)
+		}
+		allowHeaderOverride = b
+	}
+
+	return ollamaOptions{
+		mode:                mode,
+		baseURL:             baseURL,
+		model:               gocamel.GetConfigValue(u, "model"),
+		system:              gocamel.GetConfigValue(u, "system"),
+		keepAlive:           keepAlive,
+		hasKeepAlive:        hasKeepAlive,
+		think:               thinkVal,
+		format:              gocamel.GetConfigValue(u, "format"),
+		allowHeaderOverride: allowHeaderOverride,
+	}, nil
+}
+
 func (c *OllamaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ollama URI: %w", err)
 	}
-	mode := u.Opaque
-	if mode == "" {
-		mode = "chat"
-	}
-	switch mode {
-	case "chat", "generate", "embed":
-	default:
-		return nil, fmt.Errorf("invalid ollama mode %q: must be chat, generate or embed", mode)
-	}
-	if host := gocamel.GetConfigValue(u, "host"); host != "" {
-		if err := validateHostURL(host); err != nil {
-			return nil, fmt.Errorf("invalid ollama host: %w", err)
-		}
-	}
-	if ka := gocamel.GetConfigValue(u, "keepAlive"); ka != "" {
-		if _, err := time.ParseDuration(ka); err != nil {
-			return nil, fmt.Errorf("invalid keepAlive %q: %w", ka, err)
-		}
+	opts, err := parseOllamaOptions(u)
+	if err != nil {
+		return nil, err
 	}
 
-	allowHeaderOverride := false
-	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			allowHeaderOverride = b
-		}
-	}
-
-	return &OllamaEndpoint{uri: uri, url: u, comp: c, allowHeaderOverride: allowHeaderOverride}, nil
+	return &OllamaEndpoint{
+		uri:                 uri,
+		url:                 u,
+		comp:                c,
+		mode:                opts.mode,
+		baseURL:             opts.baseURL,
+		model:               opts.model,
+		system:              opts.system,
+		keepAlive:           opts.keepAlive,
+		hasKeepAlive:        opts.hasKeepAlive,
+		think:               opts.think,
+		format:              opts.format,
+		allowHeaderOverride: opts.allowHeaderOverride,
+		optionsResolved:     true,
+	}, nil
 }
 
 // OllamaEndpoint represents an Ollama endpoint.
@@ -88,7 +168,33 @@ type OllamaEndpoint struct {
 	uri                 string
 	url                 *url.URL
 	comp                *OllamaComponent
+	mode                string
+	baseURL             *url.URL
+	model               string
+	system              string
+	keepAlive           time.Duration
+	hasKeepAlive        bool
+	think               *api.ThinkValue
+	format              string
 	allowHeaderOverride bool // opt-in: OllamaModel/OllamaSystem headers may override URI settings
+	optionsResolved     bool
+}
+
+func (e *OllamaEndpoint) resolvedOptions() (ollamaOptions, error) {
+	if e.optionsResolved {
+		return ollamaOptions{
+			mode:                e.mode,
+			baseURL:             e.baseURL,
+			model:               e.model,
+			system:              e.system,
+			keepAlive:           e.keepAlive,
+			hasKeepAlive:        e.hasKeepAlive,
+			think:               e.think,
+			format:              e.format,
+			allowHeaderOverride: e.allowHeaderOverride,
+		}, nil
+	}
+	return parseOllamaOptions(e.url)
 }
 
 // URI returns the endpoint URI. Ollama URIs carry no credentials, so no
@@ -112,68 +218,53 @@ func (e *OllamaEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Co
 
 // OllamaProducer represents an Ollama producer.
 type OllamaProducer struct {
-	endpoint   *OllamaEndpoint
-	mu         sync.RWMutex
-	httpClient *http.Client
-	client     ollamaAPI
-	model      string
-	mode       string
-	system     string
-	keepAlive  string
-	think      string
-	format     string
-	started    bool
+	endpoint     *OllamaEndpoint
+	mu           sync.RWMutex
+	httpClient   *http.Client
+	client       ollamaAPI
+	model        string
+	mode         string
+	system       string
+	keepAlive    time.Duration
+	hasKeepAlive bool
+	think        *api.ThinkValue
+	format       string
+	started      bool
 }
 
 func (p *OllamaProducer) Start(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	u := p.endpoint.url
-
-	mode := u.Opaque
-	if mode == "" {
-		mode = "chat"
-	}
-	p.mode = mode
-
-	p.model = gocamel.GetConfigValue(u, "model")
-	if p.model == "" && mode != "embed" {
-		return fmt.Errorf("model is required for ollama in %s mode", mode)
+	opts, err := p.endpoint.resolvedOptions()
+	if err != nil {
+		return err
 	}
 
-	host := gocamel.GetConfigValue(u, "host")
-	var base *url.URL
-	var err error
-	if host != "" {
-		base, err = url.Parse(host)
-		if err != nil {
-			return fmt.Errorf("invalid ollama host: %w", err)
-		}
-	} else {
-		// Default to the standard local server; ClientFromEnvironment would
-		// also honor OLLAMA_HOST but an explicit URL keeps tests deterministic.
-		base, err = url.Parse("http://localhost:11434")
-		if err != nil {
-			return fmt.Errorf("invalid default host: %w", err)
-		}
+	if opts.model == "" && opts.mode != "embed" {
+		return fmt.Errorf("model is required for ollama in %s mode", opts.mode)
 	}
-	p.httpClient = &http.Client{Timeout: 60 * time.Second}
+
+	p.mode = opts.mode
+	p.model = opts.model
+	p.system = opts.system
+	p.keepAlive = opts.keepAlive
+	p.hasKeepAlive = opts.hasKeepAlive
+	p.think = opts.think
+	p.format = opts.format
+
+	p.httpClient = newSafeHTTPClient(60 * time.Second)
 	// The API key is sent to Ollama Cloud hosts only, so a key exported for
 	// the ollama CLI never reaches (nor breaks) a local or LAN server.
-	if apiKey := os.Getenv(cloudAPIKeyEnv); apiKey != "" && isCloudHost(base.Hostname()) {
-		if err := requireSecureKeyTransport(base); err != nil {
+	if apiKey := os.Getenv(cloudAPIKeyEnv); apiKey != "" && isCloudHost(opts.baseURL.Hostname()) {
+		if err := requireSecureKeyTransport(opts.baseURL); err != nil {
 			return err
 		}
-		p.client = newCloudClient(base, p.httpClient, apiKey)
+		p.client = newCloudClient(opts.baseURL, p.httpClient, apiKey)
 	} else {
-		p.client = api.NewClient(base, p.httpClient)
+		p.client = api.NewClient(opts.baseURL, p.httpClient)
 	}
 
-	p.system = gocamel.GetConfigValue(u, "system")
-	p.keepAlive = gocamel.GetConfigValue(u, "keepAlive")
-	p.think = gocamel.GetConfigValue(u, "think")
-	p.format = gocamel.GetConfigValue(u, "format")
 	p.started = true
 	return nil
 }
@@ -214,7 +305,10 @@ func (p *OllamaProducer) Send(exchange *gocamel.Exchange) error {
 }
 
 func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange, client ollamaAPI) error {
-	prompt := bodyAsString(exchange.GetIn().GetBody())
+	prompt, err := bodyAsString(exchange.GetIn().GetBody())
+	if err != nil {
+		return err
+	}
 	model := p.resolveModel(exchange)
 
 	req := &api.ChatRequest{
@@ -232,7 +326,7 @@ func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange, client ollamaAPI) 
 		ctx = context.Background()
 	}
 	var resp api.ChatResponse
-	err := client.Chat(ctx, req, func(r api.ChatResponse) error {
+	err = client.Chat(ctx, req, func(r api.ChatResponse) error {
 		resp = r
 		return nil
 	})
@@ -253,7 +347,10 @@ func (p *OllamaProducer) sendChat(exchange *gocamel.Exchange, client ollamaAPI) 
 }
 
 func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange, client ollamaAPI) error {
-	prompt := bodyAsString(exchange.GetIn().GetBody())
+	prompt, err := bodyAsString(exchange.GetIn().GetBody())
+	if err != nil {
+		return err
+	}
 	model := p.resolveModel(exchange)
 	p.mu.RLock()
 	system := p.system
@@ -277,7 +374,7 @@ func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange, client ollamaA
 		ctx = context.Background()
 	}
 	var resp api.GenerateResponse
-	err := client.Generate(ctx, req, func(r api.GenerateResponse) error {
+	err = client.Generate(ctx, req, func(r api.GenerateResponse) error {
 		resp = r
 		return nil
 	})
@@ -298,7 +395,10 @@ func (p *OllamaProducer) sendGenerate(exchange *gocamel.Exchange, client ollamaA
 }
 
 func (p *OllamaProducer) sendEmbed(exchange *gocamel.Exchange, client ollamaAPI) error {
-	input := bodyAsString(exchange.GetIn().GetBody())
+	input, err := bodyAsString(exchange.GetIn().GetBody())
+	if err != nil {
+		return err
+	}
 	model := p.resolveModel(exchange)
 
 	req := &api.EmbedRequest{
@@ -351,24 +451,25 @@ func (p *OllamaProducer) overrideHeader(exchange *gocamel.Exchange, key string) 
 func (p *OllamaProducer) applyOptions(req any) {
 	p.mu.RLock()
 	keepAlive := p.keepAlive
+	hasKeepAlive := p.hasKeepAlive
 	think := p.think
 	format := p.format
 	p.mu.RUnlock()
-	if keepAlive == "" && think == "" && format == "" {
+	if !hasKeepAlive && think == nil && format == "" {
 		return
 	}
-	if ka, err := time.ParseDuration(keepAlive); err == nil {
+	if hasKeepAlive {
 		switch r := req.(type) {
 		case *api.ChatRequest:
-			d := api.Duration{Duration: ka}
+			d := api.Duration{Duration: keepAlive}
 			r.KeepAlive = &d
 		case *api.GenerateRequest:
-			d := api.Duration{Duration: ka}
+			d := api.Duration{Duration: keepAlive}
 			r.KeepAlive = &d
 		}
 	}
-	if think != "" {
-		tv := parseThinkValue(think)
+	if think != nil {
+		tv := *think
 		switch r := req.(type) {
 		case *api.ChatRequest:
 			r.Think = &tv
@@ -387,14 +488,17 @@ func (p *OllamaProducer) applyOptions(req any) {
 }
 
 // bodyAsString converts the exchange body to a prompt string.
-func bodyAsString(body any) string {
+func bodyAsString(body any) (string, error) {
+	if body == nil {
+		return "", fmt.Errorf("exchange body cannot be nil")
+	}
 	switch v := body.(type) {
 	case string:
-		return v
+		return v, nil
 	case []byte:
-		return string(v)
+		return string(v), nil
 	default:
-		return fmt.Sprintf("%v", v)
+		return fmt.Sprintf("%v", v), nil
 	}
 }
 
@@ -415,22 +519,39 @@ func getStringHeader(exchange *gocamel.Exchange, key string) (string, bool) {
 
 func boolPtr(b bool) *bool { return &b }
 
+func resolveMode(u *url.URL) string {
+	if u.Opaque != "" {
+		return u.Opaque
+	}
+	if u.Host != "" {
+		if u.Path != "" && u.Path != "/" {
+			return u.Host + u.Path
+		}
+		return u.Host
+	}
+	if p := strings.TrimPrefix(u.Path, "/"); p != "" {
+		return p
+	}
+	return "chat"
+}
+
 // parseThinkValue maps the URI string to the Ollama ThinkValue.
 // Accepted values: "true", "false", "low", "medium", "high", "max".
-func parseThinkValue(s string) api.ThinkValue {
+func parseThinkValue(s string) (api.ThinkValue, error) {
 	switch s {
 	case "true":
-		return api.ThinkValue{Value: true}
+		return api.ThinkValue{Value: true}, nil
 	case "false":
-		return api.ThinkValue{Value: false}
+		return api.ThinkValue{Value: false}, nil
 	case "low", "medium", "high", "max":
-		return api.ThinkValue{Value: s}
+		return api.ThinkValue{Value: s}, nil
 	default:
-		return api.ThinkValue{Value: true}
+		return api.ThinkValue{}, fmt.Errorf("invalid think value %q: must be true, false, low, medium, high or max", s)
 	}
 }
 
-// validateHostURL rejects non-absolute URLs and non-http(s) schemes.
+// validateHostURL rejects non-absolute URLs, hostless/opaque URLs, and
+// non-http(s) schemes.
 func validateHostURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -442,5 +563,102 @@ func validateHostURL(raw string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("host scheme must be http or https, got %q", u.Scheme)
 	}
+	if u.Hostname() == "" || u.Opaque != "" {
+		return fmt.Errorf("host must include a hostname: %s", raw)
+	}
 	return nil
+}
+
+func newSafeHTTPClient(timeout time.Duration) *http.Client {
+	var base http.RoundTripper
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		base = dt.Clone()
+	} else if http.DefaultTransport != nil {
+		base = http.DefaultTransport
+	} else {
+		base = &http.Transport{}
+	}
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &limitedResponseTransport{
+			base:     base,
+			maxBytes: maxResponseBodyBytes,
+		},
+	}
+}
+
+type limitedResponseTransport struct {
+	base     http.RoundTripper
+	maxBytes int64
+}
+
+func (t *limitedResponseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.ContentLength > t.maxBytes {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		return nil, fmt.Errorf("response body exceeds the %d byte limit", t.maxBytes)
+	}
+	if resp.Body != nil && resp.Body != http.NoBody {
+		resp.Body = &limitedReadCloser{
+			rc:        resp.Body,
+			remaining: t.maxBytes,
+			limit:     t.maxBytes,
+		}
+	}
+	return resp, nil
+}
+
+func (t *limitedResponseTransport) CloseIdleConnections() {
+	type idleCloser interface {
+		CloseIdleConnections()
+	}
+	if ic, ok := t.base.(idleCloser); ok {
+		ic.CloseIdleConnections()
+	}
+}
+
+type limitedReadCloser struct {
+	rc        io.ReadCloser
+	remaining int64
+	limit     int64
+	exceeded  bool
+}
+
+func (l *limitedReadCloser) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if l.exceeded {
+		return 0, fmt.Errorf("response body exceeds the %d byte limit", l.limit)
+	}
+	if l.remaining <= 0 {
+		var probe [1]byte
+		n, err := l.rc.Read(probe[:])
+		if n > 0 {
+			l.exceeded = true
+			return 0, fmt.Errorf("response body exceeds the %d byte limit", l.limit)
+		}
+		if err != nil {
+			return 0, err
+		}
+		return 0, io.EOF
+	}
+	if int64(len(p)) > l.remaining {
+		p = p[:l.remaining]
+	}
+	n, err := l.rc.Read(p)
+	l.remaining -= int64(n)
+	return n, err
+}
+
+func (l *limitedReadCloser) Close() error {
+	return l.rc.Close()
 }

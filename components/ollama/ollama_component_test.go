@@ -1,15 +1,20 @@
 package ollama
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -344,3 +349,248 @@ func mustGetHeader(t *testing.T, ex *gocamel.Exchange, key string) any {
 type noopProcessor struct{}
 
 func (noopProcessor) Process(*gocamel.Exchange) error { return nil }
+
+func TestOllama_HierarchicalURIAndThinkValidationAndCloudBlocksRedirectAndTruncatesErrorAndRejectsNilBody(t *testing.T) {
+	t.Run("hierarchical URI selects mode from Host", func(t *testing.T) {
+		genStub := newStubServer(t, http.StatusOK, `{"model":"m","response":"gen-ok","done":true}`)
+		pGen := producerForTest(t, "ollama://generate?model=m&host="+genStub.URL)
+		require.NoError(t, pGen.Start(context.Background()))
+		t.Cleanup(func() { _ = pGen.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		require.NoError(t, pGen.Send(ex))
+		assert.Equal(t, "/api/generate", genStub.path())
+		assert.Equal(t, "gen-ok", ex.GetOut().GetBody())
+
+		embStub := newStubServer(t, http.StatusOK, `{"model":"m","embeddings":[[0.5,0.6]]}`)
+		pEmb := producerForTest(t, "ollama://embed?model=m&host="+embStub.URL)
+		require.NoError(t, pEmb.Start(context.Background()))
+		t.Cleanup(func() { _ = pEmb.Stop() })
+
+		exEmb := gocamel.NewExchange(context.Background())
+		exEmb.SetBody("embed")
+		require.NoError(t, pEmb.Send(exEmb))
+		assert.Equal(t, "/api/embed", embStub.path())
+
+		_, err := NewOllamaComponent().CreateEndpoint("ollama://bogus?model=m")
+		require.Error(t, err)
+	})
+
+	t.Run("think validation rejects unrecognized values in CreateEndpoint", func(t *testing.T) {
+		for _, valid := range []string{"true", "false", "low", "medium", "high", "max"} {
+			_, err := NewOllamaComponent().CreateEndpoint("ollama:chat?model=m&think=" + valid)
+			assert.NoError(t, err, "think=%q should be accepted", valid)
+		}
+		for _, invalid := range []string{"bogus", "1", "extreme", "TRUE"} {
+			_, err := NewOllamaComponent().CreateEndpoint("ollama:chat?model=m&think=" + invalid)
+			assert.Error(t, err, "think=%q should be rejected", invalid)
+		}
+	})
+
+	t.Run("cloud blocks 307 redirect without leaking OLLAMA_API_KEY", func(t *testing.T) {
+		treatAllHostsAsCloud(t)
+		t.Setenv(cloudAPIKeyEnv, "cloud-secret-key")
+
+		var targetHits atomic.Int32
+		var leakedAuth string
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			targetHits.Add(1)
+			leakedAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"model":"m","message":{"role":"assistant","content":"leaked"},"done":true}`))
+		}))
+		t.Cleanup(target.Close)
+
+		redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/api/chat", http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(redirector.Close)
+
+		p := producerForTest(t, "ollama:chat?model=m&host="+redirector.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		err := p.Send(ex)
+		require.Error(t, err)
+		assert.Zero(t, targetHits.Load(), "redirect target must not be contacted")
+		assert.Empty(t, leakedAuth, "Authorization must not be leaked on redirect")
+
+		var statusErr api.StatusError
+		require.True(t, errors.As(err, &statusErr), "expected api.StatusError, got %T: %v", err, err)
+		assert.Equal(t, http.StatusTemporaryRedirect, statusErr.StatusCode)
+	})
+
+	t.Run("cloud rejects non-2xx and truncates error snippets to 512 bytes", func(t *testing.T) {
+		treatAllHostsAsCloud(t)
+		t.Setenv(cloudAPIKeyEnv, "cloud-secret-key")
+
+		longErr := strings.Repeat("E", 2048)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(longErr))
+		}))
+		t.Cleanup(srv.Close)
+
+		p := producerForTest(t, "ollama:chat?model=m&host="+srv.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		err := p.Send(ex)
+		require.Error(t, err)
+
+		var statusErr api.StatusError
+		require.True(t, errors.As(err, &statusErr), "expected api.StatusError, got %T: %v", err, err)
+		assert.LessOrEqual(t, len(statusErr.ErrorMessage), 512)
+		assert.NotEmpty(t, statusErr.ErrorMessage)
+
+		// 204 No Content is also rejected as non-2xx (< 200 || >= 300).
+		noContentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		t.Cleanup(noContentSrv.Close)
+
+		p204 := producerForTest(t, "ollama:chat?model=m&host="+noContentSrv.URL)
+		require.NoError(t, p204.Start(context.Background()))
+		t.Cleanup(func() { _ = p204.Stop() })
+		err204 := p204.Send(ex)
+		require.Error(t, err204)
+	})
+
+	t.Run("cloud and local reject oversized response over 32 MiB", func(t *testing.T) {
+		treatAllHostsAsCloud(t)
+		t.Setenv(cloudAPIKeyEnv, "cloud-secret-key")
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"model":"m","message":{"role":"assistant","content":"`))
+			chunk := bytes.Repeat([]byte("a"), 1<<20)
+			for i := 0; i < 33; i++ {
+				if _, err := w.Write(chunk); err != nil {
+					return
+				}
+			}
+			_, _ = w.Write([]byte(`"},"done":true}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		p := producerForTest(t, "ollama:chat?model=m&host="+srv.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		err := p.Send(ex)
+		require.Error(t, err)
+	})
+
+	t.Run("rejects nil body across all modes", func(t *testing.T) {
+		var hits atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
+
+		for _, mode := range []string{"chat", "generate", "embed"} {
+			p := producerForTest(t, "ollama:"+mode+"?model=m&host="+srv.URL)
+			require.NoError(t, p.Start(context.Background()))
+			ex := gocamel.NewExchange(context.Background())
+			err := p.Send(ex)
+			require.Error(t, err, "mode=%s should reject nil body", mode)
+			_ = p.Stop()
+		}
+		assert.Zero(t, hits.Load(), "must not send HTTP request for nil body")
+	})
+
+	t.Run("rejects hostless and opaque host URL", func(t *testing.T) {
+		for _, bad := range []string{"http:///api", "https://", "http:opaque"} {
+			_, err := NewOllamaComponent().CreateEndpoint("ollama:chat?model=m&host=" + url.QueryEscape(bad))
+			assert.Error(t, err, "should reject host=%q", bad)
+		}
+	})
+
+	t.Run("applies keepAlive, think and format options in chat and generate", func(t *testing.T) {
+		chatStub := newStubServer(t, http.StatusOK, `{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}`)
+		pChat := producerForTest(t, "ollama:chat?model=m&keepAlive=5m&think=high&format=json&host="+chatStub.URL)
+		require.NoError(t, pChat.Start(context.Background()))
+		t.Cleanup(func() { _ = pChat.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		require.NoError(t, pChat.Send(ex))
+
+		var chatGot map[string]any
+		require.NoError(t, json.Unmarshal(chatStub.body(), &chatGot))
+		assert.Equal(t, "5m0s", chatGot["keep_alive"])
+		assert.Equal(t, "high", chatGot["think"])
+		assert.Equal(t, "json", chatGot["format"])
+
+		genStub := newStubServer(t, http.StatusOK, `{"model":"m","response":"ok","done":true}`)
+		pGen := producerForTest(t, "ollama:generate?model=m&keepAlive=30s&think=false&format=json&host="+genStub.URL)
+		require.NoError(t, pGen.Start(context.Background()))
+		t.Cleanup(func() { _ = pGen.Stop() })
+
+		ex2 := gocamel.NewExchange(context.Background())
+		ex2.SetBody("hi")
+		require.NoError(t, pGen.Send(ex2))
+
+		var genGot map[string]any
+		require.NoError(t, json.Unmarshal(genStub.body(), &genGot))
+		assert.Equal(t, "30s", genGot["keep_alive"])
+		assert.Equal(t, false, genGot["think"])
+		assert.Equal(t, "json", genGot["format"])
+	})
+
+	t.Run("blocks local 307 redirect and validates URI edge cases", func(t *testing.T) {
+		var targetHits atomic.Int32
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			targetHits.Add(1)
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(target.Close)
+
+		redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/api/chat", http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(redirector.Close)
+
+		p := producerForTest(t, "ollama:chat?model=m&host="+redirector.URL)
+		require.NoError(t, p.Start(context.Background()))
+		t.Cleanup(func() { _ = p.Stop() })
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hi")
+		require.Error(t, p.Send(ex))
+		assert.Zero(t, targetHits.Load())
+
+		_, err := NewOllamaComponent().CreateEndpoint("ollama:chat?model=m&allowHeaderOverride=bogus")
+		require.Error(t, err)
+		_, err = NewOllamaComponent().CreateEndpoint("ollama://chat/extra?model=m")
+		require.Error(t, err)
+		epPath, err := NewOllamaComponent().CreateEndpoint("ollama:/generate?model=m")
+		require.NoError(t, err)
+		prodPath, err := epPath.CreateProducer()
+		require.NoError(t, err)
+		require.NoError(t, prodPath.Start(context.Background()))
+		assert.Equal(t, "generate", prodPath.(*OllamaProducer).mode)
+		_ = prodPath.Stop()
+
+		// Direct struct fallback (!optionsResolved)
+		u, err := url.Parse("ollama:chat?model=m&keepAlive=10s&think=true")
+		require.NoError(t, err)
+		pDirect := &OllamaProducer{endpoint: &OllamaEndpoint{uri: u.String(), url: u}}
+		require.NoError(t, pDirect.Start(context.Background()))
+		assert.True(t, pDirect.hasKeepAlive)
+		require.NotNil(t, pDirect.think)
+		_ = pDirect.Stop()
+	})
+}
