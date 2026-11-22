@@ -3,9 +3,13 @@ package gocamel
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -73,13 +77,35 @@ func validateExecWorkingDir(dir string) error {
 // enough: with header-controlled args, "sh -c ..." or "python3 -c ..." would
 // turn allowHeaderOverride into arbitrary command execution.
 func validateExecOverride(executable, endpointExecutable string, allowed []string) error {
-	if strings.ContainsAny(executable, "/\\") {
+	if strings.ContainsAny(executable, "/\\") || hasWindowsDrivePrefix(executable) {
 		return fmt.Errorf("executable from header must be a bare command name (no path): %s", executable)
 	}
 	if executable == endpointExecutable || slices.Contains(allowed, executable) {
 		return nil
 	}
 	return fmt.Errorf("executable from header is not in allowedExecutables: %s", executable)
+}
+
+func isRelativePathExecutable(executable string) bool {
+	return (strings.ContainsAny(executable, "/\\") || hasWindowsDrivePrefix(executable)) && !filepath.IsAbs(executable)
+}
+
+func isPureRelativePath(p string) bool {
+	return !filepath.IsAbs(p) && filepath.VolumeName(p) == "" && !hasWindowsDrivePrefix(p) && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "\\")
+}
+
+func confineExecWorkingDir(dir, baseDir string) (string, error) {
+	if err := validateExecWorkingDir(dir); err != nil {
+		return "", err
+	}
+	candidate := dir
+	if isPureRelativePath(dir) {
+		candidate = joinRawPath(baseDir, dir)
+	}
+	if err := ValidatePathInDir(candidate, baseDir); err != nil {
+		return "", fmt.Errorf("exec: working directory escapes endpoint workingDir: %w", err)
+	}
+	return filepath.Clean(candidate), nil
 }
 
 // validateExecArgs validates command arguments.
@@ -135,10 +161,13 @@ func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 	executable := parsedURL.Opaque
 	if executable == "" {
-		executable = parsedURL.Host
+		executable = parsedURL.Host + parsedURL.Path
 	}
 	if executable == "" {
-		return nil, fmt.Errorf("executable is required in exec URI: %s", uri)
+		return nil, fmt.Errorf("executable is required in exec URI: %s", RedactURI(uri))
+	}
+	if err := validateExecPath(executable); err != nil {
+		return nil, fmt.Errorf("exec: invalid executable: %w", err)
 	}
 
 	endpoint := &ExecEndpoint{
@@ -155,29 +184,41 @@ func (c *ExecComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	if val := query.Get("workingDir"); val != "" {
+		if err := validateExecWorkingDir(val); err != nil {
+			return nil, err
+		}
 		endpoint.workingDir = val
 	}
 
 	if val := query.Get("timeout"); val != "" {
-		if v, err := strconv.ParseInt(val, 10, 64); err == nil {
-			endpoint.timeoutMs = v
+		v, err := strconv.ParseInt(val, 10, 64)
+		if err != nil || v < 0 {
+			return nil, fmt.Errorf("invalid timeout %q: must be a non-negative integer", val)
 		}
+		endpoint.timeoutMs = v
 	}
 
 	if val := query.Get("outFile"); val != "" {
+		if err := ValidatePath(val); err != nil {
+			return nil, fmt.Errorf("exec: invalid outFile: %w", err)
+		}
 		endpoint.outFile = val
 	}
 
 	if val := query.Get("useStderrOnEmpty"); val != "" {
-		if v, err := strconv.ParseBool(val); err == nil {
-			endpoint.useStderrOnEmpty = v
+		v, err := strconv.ParseBool(val)
+		if err != nil {
+			return nil, fmt.Errorf("invalid useStderrOnEmpty %q: %w", val, err)
 		}
+		endpoint.useStderrOnEmpty = v
 	}
 
 	if val := query.Get("allowHeaderOverride"); val != "" {
-		if v, err := strconv.ParseBool(val); err == nil {
-			endpoint.allowHeaderOverride = v
+		v, err := strconv.ParseBool(val)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowHeaderOverride %q: %w", val, err)
 		}
+		endpoint.allowHeaderOverride = v
 	}
 
 	if val := query.Get("maxOutputSize"); val != "" {
@@ -308,18 +349,49 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		return fmt.Errorf("exec: invalid arguments: %w", err)
 	}
 
-	// Working directory resolution (header > URI, when allowHeaderOverride is set)
+	// Working directory validation and relative executable confinement.
+	// Resolve any relative path executable against the endpoint workingDir
+	// BEFORE applying a CamelExecCommandWorkingDir header override so a header
+	// cannot redirect ./worker to an attacker-controlled binary.
 	workingDir := p.endpoint.workingDir
+	if err := validateExecWorkingDir(workingDir); err != nil {
+		return err
+	}
+	if p.endpoint.workingDir != "" && isRelativePathExecutable(executable) {
+		execCandidate := executable
+		if isPureRelativePath(executable) {
+			execCandidate = joinRawPath(p.endpoint.workingDir, executable)
+		}
+		if err := ValidatePathInDir(execCandidate, p.endpoint.workingDir); err != nil {
+			return fmt.Errorf("exec: executable escapes workingDir: %w", err)
+		}
+		absExec, err := filepath.Abs(filepath.Clean(execCandidate))
+		if err != nil {
+			return fmt.Errorf("exec: resolving executable path: %w", err)
+		}
+		executable = absExec
+	}
+
 	if p.endpoint.allowHeaderOverride {
 		if v, ok := exchange.GetHeader(CamelExecCommandWorkingDir); ok {
 			if s, ok := v.(string); ok && s != "" {
-				workingDir = s
+				if p.endpoint.workingDir == "" && isRelativePathExecutable(executable) {
+					return fmt.Errorf("exec: cannot override workingDir when executable %q is a relative path without endpoint workingDir", executable)
+				}
+				if p.endpoint.workingDir != "" {
+					confined, err := confineExecWorkingDir(s, p.endpoint.workingDir)
+					if err != nil {
+						return err
+					}
+					workingDir = confined
+				} else {
+					if err := validateExecWorkingDir(s); err != nil {
+						return err
+					}
+					workingDir = s
+				}
 			}
 		}
-	}
-
-	if err := validateExecWorkingDir(workingDir); err != nil {
-		return err
 	}
 
 	// Timeout resolution (header > URI, when allowHeaderOverride is set)
@@ -336,6 +408,9 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 			}
 		}
 	}
+	if timeoutMs < 0 {
+		return fmt.Errorf("exec: invalid negative timeout: %d", timeoutMs)
+	}
 
 	// Build context with optional timeout. The exchange context may be nil
 	// when the exchange was built by hand; context.WithTimeout and
@@ -345,6 +420,10 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		ctx = context.Background()
 	}
 	if timeoutMs > 0 {
+		const maxTimeoutMs = math.MaxInt64 / int64(time.Millisecond)
+		if timeoutMs > maxTimeoutMs {
+			timeoutMs = maxTimeoutMs
+		}
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 		defer cancel()
@@ -352,8 +431,8 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 
 	// The executable, args and working dir are resolved from the trusted
 	// endpoint URI config (header overrides only when allowHeaderOverride is
-	// set) and each is validated above — validateExecPath, validateExecArgs
-	// and validateExecWorkingDir (gosec G204).
+	// set) and each is validated above — validateExecPath, validateExecArgs,
+	// validateExecWorkingDir and confineExecWorkingDir (gosec G204).
 	cmd := exec.CommandContext(ctx, executable, args...) // #nosec G204
 
 	if workingDir != "" {
@@ -377,6 +456,22 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 
 	runErr := cmd.Run()
 
+	// Check execution and context failure BEFORE reading outFile or mutating
+	// exchange In/Out. Context cancellation/timeout must take precedence over
+	// *exec.ExitError (killed child processes exit with -1).
+	if runErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				return fmt.Errorf("exec: timeout exceeded for command %q: %w", executable, ctxErr)
+			}
+			return fmt.Errorf("exec: command %q canceled: %w", executable, ctxErr)
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(runErr, &exitErr) {
+			return fmt.Errorf("exec: error during execution of %q: %w", executable, runErr)
+		}
+	}
+
 	exitValue := 0
 	if cmd.ProcessState != nil {
 		exitValue = cmd.ProcessState.ExitCode()
@@ -386,18 +481,14 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 	stderrStr := stderrBuf.buf.String()
 	truncated := stdoutBuf.truncated || stderrBuf.truncated
 
-	// If outFile is defined, read the results from this file.
-	// outFile is trusted URI configuration; ValidatePath still rejects
-	// traversal and null bytes before the read (gosec G304).
+	// If outFile is defined, read the results from this file (bounded by maxOutputSize).
 	if p.endpoint.outFile != "" {
-		if err := ValidatePath(p.endpoint.outFile); err != nil {
-			return fmt.Errorf("exec: invalid outFile: %w", err)
-		}
-		data, err := os.ReadFile(p.endpoint.outFile) // #nosec G304
+		fileContent, fileTruncated, err := readExecOutFile(p.endpoint.outFile, workingDir, p.endpoint.maxOutputSize)
 		if err != nil {
-			return fmt.Errorf("error reading output file %s: %w", p.endpoint.outFile, err)
+			return err
 		}
-		stdoutStr = string(data)
+		stdoutStr = fileContent
+		truncated = truncated || fileTruncated
 	}
 
 	// Setting body: stdout, or stderr if stdout is empty and useStderrOnEmpty
@@ -419,19 +510,51 @@ func (p *ExecProducer) Send(exchange *Exchange) error {
 		message.SetBody(resultBody)
 	}
 
-	// Only return an error if the command failed AND it is not
-	// just a non-zero exit code (Camel behavior: exitValue is
-	// exposed in the header; the caller decides what to do with it).
-	if runErr != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("exec: timeout exceeded for command %q: %w", executable, ctx.Err())
+	return nil
+}
+
+func readExecOutFile(outFile, workingDir string, maxOutputSize int64) (string, bool, error) {
+	if err := ValidatePath(outFile); err != nil {
+		return "", false, fmt.Errorf("exec: invalid outFile: %w", err)
+	}
+	outPath := outFile
+	if workingDir != "" && isPureRelativePath(outFile) {
+		outPath = joinRawPath(workingDir, outFile)
+		if err := ValidatePathInDir(outPath, workingDir); err != nil {
+			return "", false, fmt.Errorf("exec: invalid outFile: %w", err)
 		}
-		// ExitError = non-zero exit code -> not a fatal error, let
-		// the caller inspect CamelExecExitValue
-		if _, isExitErr := runErr.(*exec.ExitError); !isExitErr {
-			return fmt.Errorf("exec: error during execution of %q: %w", executable, runErr)
+	}
+	outPath = filepath.Clean(outPath)
+
+	// outFile is validated by ValidatePath (and ValidatePathInDir when relative
+	// to workingDir) before opening (gosec G304).
+	f, err := os.Open(outPath) // #nosec G304
+	if err != nil {
+		return "", false, fmt.Errorf("error reading output file %s: %w", outFile, err)
+	}
+	defer f.Close()
+
+	var data []byte
+	var truncated bool
+	if maxOutputSize > 0 {
+		limit := maxOutputSize + 1
+		if maxOutputSize == math.MaxInt64 {
+			limit = math.MaxInt64
+		}
+		data, err = io.ReadAll(io.LimitReader(f, limit))
+		if err != nil {
+			return "", false, fmt.Errorf("error reading output file %s: %w", outFile, err)
+		}
+		if int64(len(data)) > maxOutputSize {
+			data = data[:maxOutputSize]
+			truncated = true
+		}
+	} else {
+		data, err = io.ReadAll(f)
+		if err != nil {
+			return "", false, fmt.Errorf("error reading output file %s: %w", outFile, err)
 		}
 	}
 
-	return nil
+	return string(data), truncated, nil
 }

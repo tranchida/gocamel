@@ -2,8 +2,10 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -413,4 +415,205 @@ func TestExecComponent_MaxOutputSizeOption(t *testing.T) {
 	endpoint, err = NewExecComponent().CreateEndpoint("exec:cat?maxOutputSize=0")
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), endpoint.(*ExecEndpoint).maxOutputSize)
+}
+
+func TestExecProducer_WorkingDirConfinement(t *testing.T) {
+	sandbox := t.TempDir()
+	outside := t.TempDir()
+	sub := filepath.Join(sandbox, "sub")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+
+	realSandbox, err := filepath.EvalSymlinks(sandbox)
+	require.NoError(t, err)
+	realSub, err := filepath.EvalSymlinks(sub)
+	require.NoError(t, err)
+
+	comp := NewExecComponent()
+	ep, err := comp.CreateEndpoint("exec:pwd?workingDir=" + sandbox + "&allowHeaderOverride=true")
+	require.NoError(t, err)
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+
+	// Escaping sandbox via header must be rejected.
+	ex := NewExchange(context.Background())
+	ex.GetIn().SetHeader(CamelExecCommandWorkingDir, "/tmp")
+	err = prod.Send(ex)
+	require.Error(t, err)
+
+	exOutside := NewExchange(context.Background())
+	exOutside.GetIn().SetHeader(CamelExecCommandWorkingDir, outside)
+	err = prod.Send(exOutside)
+	require.Error(t, err)
+
+	exTraversal := NewExchange(context.Background())
+	exTraversal.GetIn().SetHeader(CamelExecCommandWorkingDir, filepath.Join(sandbox, ".."))
+	err = prod.Send(exTraversal)
+	require.Error(t, err)
+
+	if runtime.GOOS != "windows" {
+		link := filepath.Join(sandbox, "link")
+		require.NoError(t, os.Symlink(outside, link))
+
+		exSymlink := NewExchange(context.Background())
+		exSymlink.GetIn().SetHeader(CamelExecCommandWorkingDir, link)
+		err = prod.Send(exSymlink)
+		require.Error(t, err)
+
+		// Symlink/../sub escape must also be rejected.
+		exSymlinkDotDot := NewExchange(context.Background())
+		exSymlinkDotDot.GetIn().SetHeader(CamelExecCommandWorkingDir, link+"/../"+filepath.Base(outside))
+		err = prod.Send(exSymlinkDotDot)
+		require.Error(t, err)
+
+		// Relative executable ./worker must remain confined to workingDir.
+		sandboxWorker := filepath.Join(sandbox, "worker")
+		subWorker := filepath.Join(sub, "worker")
+		outsideWorker := filepath.Join(outside, "worker")
+		require.NoError(t, os.WriteFile(sandboxWorker, []byte("#!/bin/sh\necho sandbox-worker\n"), 0o755))
+		require.NoError(t, os.WriteFile(subWorker, []byte("#!/bin/sh\necho sub-worker\n"), 0o755))
+		require.NoError(t, os.WriteFile(outsideWorker, []byte("#!/bin/sh\necho outside-worker\n"), 0o755))
+
+		relEp, err := comp.CreateEndpoint("exec:./worker?workingDir=" + sandbox + "&allowHeaderOverride=true")
+		require.NoError(t, err)
+		relProd, err := relEp.CreateProducer()
+		require.NoError(t, err)
+
+		// Cannot escape sandbox via CamelExecCommandWorkingDir.
+		exRelEscape := NewExchange(context.Background())
+		exRelEscape.GetIn().SetHeader(CamelExecCommandWorkingDir, outside)
+		require.Error(t, relProd.Send(exRelEscape))
+
+		// Even with an allowed subdirectory workingDir override, ./worker resolves against endpoint workingDir.
+		exRelSub := NewExchange(context.Background())
+		exRelSub.GetIn().SetHeader(CamelExecCommandWorkingDir, sub)
+		require.NoError(t, relProd.Send(exRelSub))
+		assert.Equal(t, "sandbox-worker\n", exRelSub.GetOut().GetBody())
+
+		// Symlinked relative executable escaping workingDir must be rejected.
+		symlinkExecEp, err := comp.CreateEndpoint("exec:./link/worker?workingDir=" + sandbox)
+		require.NoError(t, err)
+		symlinkExecProd, err := symlinkExecEp.CreateProducer()
+		require.NoError(t, err)
+		require.Error(t, symlinkExecProd.Send(NewExchange(context.Background())))
+
+		// Relative executable without endpoint workingDir cannot use CamelExecCommandWorkingDir to pick an outside binary.
+		noSandboxEp, err := comp.CreateEndpoint("exec:./worker?allowHeaderOverride=true")
+		require.NoError(t, err)
+		noSandboxProd, err := noSandboxEp.CreateProducer()
+		require.NoError(t, err)
+		exNoSandbox := NewExchange(context.Background())
+		exNoSandbox.GetIn().SetHeader(CamelExecCommandWorkingDir, outside)
+		require.Error(t, noSandboxProd.Send(exNoSandbox))
+	}
+
+	// Subdirectory inside sandbox must be accepted (both absolute and relative).
+	exSubAbs := NewExchange(context.Background())
+	exSubAbs.GetIn().SetHeader(CamelExecCommandWorkingDir, sub)
+	require.NoError(t, prod.Send(exSubAbs))
+	gotAbs, err := filepath.EvalSymlinks(strings.TrimSpace(exSubAbs.GetOut().GetBody().(string)))
+	require.NoError(t, err)
+	assert.Equal(t, realSub, gotAbs)
+
+	exSubRel := NewExchange(context.Background())
+	exSubRel.GetIn().SetHeader(CamelExecCommandWorkingDir, "sub")
+	require.NoError(t, prod.Send(exSubRel))
+	gotRel, err := filepath.EvalSymlinks(strings.TrimSpace(exSubRel.GetOut().GetBody().(string)))
+	require.NoError(t, err)
+	assert.Equal(t, realSub, gotRel)
+
+	// Default workingDir stays confined.
+	exDefault := NewExchange(context.Background())
+	require.NoError(t, prod.Send(exDefault))
+	gotDefault, err := filepath.EvalSymlinks(strings.TrimSpace(exDefault.GetOut().GetBody().(string)))
+	require.NoError(t, err)
+	assert.Equal(t, realSandbox, gotDefault)
+}
+
+func TestExecProducer_ContextCanceledReturnsError(t *testing.T) {
+	ep, err := NewExecComponent().CreateEndpoint("exec:sleep?args=10")
+	require.NoError(t, err)
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, prod.Start(context.Background()))
+	defer prod.Stop()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ex := NewExchange(ctx)
+	ex.GetIn().SetBody("original-body")
+
+	timer := time.AfterFunc(50*time.Millisecond, cancel)
+	defer timer.Stop()
+
+	err = prod.Send(ex)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.Canceled), "expected error wrapping context.Canceled, got: %v", err)
+	assert.Equal(t, "original-body", ex.GetIn().GetBody())
+	assert.False(t, ex.HasOut())
+}
+
+func TestExecProducer_AbsolutePathAndInvalidTimeoutAndOutFile(t *testing.T) {
+	comp := NewExecComponent()
+
+	// Absolute path URI (single and triple slash) and //path must not truncate.
+	epAbs, err := comp.CreateEndpoint("exec:/bin/echo?args=abs-ok")
+	require.NoError(t, err)
+	assert.Equal(t, "/bin/echo", epAbs.(*ExecEndpoint).executable)
+	prodAbs, err := epAbs.CreateProducer()
+	require.NoError(t, err)
+	exAbs := NewExchange(context.Background())
+	require.NoError(t, prodAbs.Send(exAbs))
+	assert.Equal(t, "abs-ok\n", exAbs.GetOut().GetBody())
+
+	epDoubleSlash, err := comp.CreateEndpoint("exec://usr/bin/echo?args=ok")
+	require.NoError(t, err)
+	assert.Equal(t, "usr/bin/echo", epDoubleSlash.(*ExecEndpoint).executable)
+
+	// Invalid/negative timeouts and invalid booleans/outFile must fail CreateEndpoint.
+	_, err = comp.CreateEndpoint("exec:echo?timeout=5s")
+	require.Error(t, err)
+	_, err = comp.CreateEndpoint("exec:echo?timeout=-10")
+	require.Error(t, err)
+	_, err = comp.CreateEndpoint("exec:echo?useStderrOnEmpty=maybe")
+	require.Error(t, err)
+	_, err = comp.CreateEndpoint("exec:echo?allowHeaderOverride=maybe")
+	require.Error(t, err)
+	_, err = comp.CreateEndpoint("exec:echo?outFile=../evil.txt")
+	require.Error(t, err)
+
+	// Relative outFile resolves against workingDir and respects maxOutputSize.
+	sandbox := t.TempDir()
+	outPath := filepath.Join(sandbox, "result.txt")
+	require.NoError(t, os.WriteFile(outPath, []byte(strings.Repeat("x", 256)), 0o600))
+
+	epOut, err := comp.CreateEndpoint("exec:/bin/echo?args=ignored&workingDir=" + sandbox + "&outFile=result.txt&maxOutputSize=128")
+	require.NoError(t, err)
+	prodOut, err := epOut.CreateProducer()
+	require.NoError(t, err)
+	exOut := NewExchange(context.Background())
+	require.NoError(t, prodOut.Send(exOut))
+	assert.Equal(t, strings.Repeat("x", 128), exOut.GetOut().GetBody())
+	truncated, _ := exOut.GetOut().GetHeader(CamelExecOutputTruncated)
+	assert.Equal(t, true, truncated)
+
+	// Exact maxOutputSize must not report truncated.
+	require.NoError(t, os.WriteFile(outPath, []byte(strings.Repeat("y", 128)), 0o600))
+	exExact := NewExchange(context.Background())
+	require.NoError(t, prodOut.Send(exExact))
+	assert.Equal(t, strings.Repeat("y", 128), exExact.GetOut().GetBody())
+	truncatedExact, _ := exExact.GetOut().GetHeader(CamelExecOutputTruncated)
+	assert.Equal(t, false, truncatedExact)
+
+	// Failed cmd.Run() must not read outFile or overwrite In/Out.
+	require.NoError(t, os.WriteFile(outPath, []byte("stale-file-data"), 0o600))
+	epFail, err := comp.CreateEndpoint("exec:commande_inexistante_xyz?workingDir=" + sandbox + "&outFile=result.txt")
+	require.NoError(t, err)
+	prodFail, err := epFail.CreateProducer()
+	require.NoError(t, err)
+	exFail := NewExchange(context.Background())
+	exFail.GetIn().SetBody("keep-body")
+	err = prodFail.Send(exFail)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "output file")
+	assert.Equal(t, "keep-body", exFail.GetIn().GetBody())
+	assert.False(t, exFail.HasOut())
 }

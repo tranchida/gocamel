@@ -5,7 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPrepareTemplateData_UsesExchangeID(t *testing.T) {
@@ -80,9 +84,9 @@ func TestTemplateComponent_CreateEndpointWithOptions(t *testing.T) {
 			expectedEncoding:    "UTF-8",
 		},
 		{
-			name:             "with custom encoding",
-			uri:              "template:templates/hello.tmpl?encoding=ISO-8859-1",
-			expectedEncoding: "ISO-8859-1",
+			name:             "with utf-8 encoding",
+			uri:              "template:templates/hello.tmpl?encoding=utf-8",
+			expectedEncoding: "UTF-8",
 		},
 		{
 			name:                 "with all parameters",
@@ -482,5 +486,76 @@ func TestTemplateEndpoint_CreateConsumer(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "does not support consumers") {
 		t.Errorf("Error message should indicate consumers are not supported, got: %v", err)
+	}
+}
+
+func TestTemplateComponent_CreateEndpoint_RejectsUnsupportedEncodingAndInvalidBooleans(t *testing.T) {
+	comp := NewTemplateComponent()
+
+	_, err := comp.CreateEndpoint("template:templates/hello.tmpl?encoding=ISO-8859-1")
+	require.Error(t, err)
+
+	_, err = comp.CreateEndpoint("template:templates/hello.tmpl?contentCache=maybe")
+	require.Error(t, err)
+
+	_, err = comp.CreateEndpoint("template:templates/hello.tmpl?allowTemplateFromHeader=maybe")
+	require.Error(t, err)
+}
+
+func TestTemplateProducer_ConcurrentSendAndStop_NoRace(t *testing.T) {
+	tempDir := t.TempDir()
+	tmplPath := filepath.Join(tempDir, "concurrent.tmpl")
+	require.NoError(t, os.WriteFile(tmplPath, []byte("Hello {{.Body}}"), 0o600))
+
+	comp := NewTemplateComponent()
+	ep, err := comp.CreateEndpoint("template:" + tmplPath + "?contentCache=true")
+	require.NoError(t, err)
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, prod.Start(context.Background()))
+
+	const workers = 12
+	const sendsPerWorker = 40
+	var wg sync.WaitGroup
+	errs := make(chan error, workers*sendsPerWorker+workers)
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < sendsPerWorker; j++ {
+				ex := NewExchange(context.Background())
+				ex.GetIn().SetBody("Camel")
+				if sendErr := prod.Send(ex); sendErr != nil {
+					errs <- sendErr
+					return
+				}
+				if ex.GetIn().GetBody() != "Hello Camel" {
+					errs <- assert.AnError
+					return
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				if stopErr := prod.Stop(); stopErr != nil {
+					errs <- stopErr
+				}
+				if startErr := prod.Start(context.Background()); startErr != nil {
+					errs <- startErr
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
 	}
 }

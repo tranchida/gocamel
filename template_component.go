@@ -16,9 +16,9 @@ import (
 // Header constants for the template component.
 const (
 	CamelTemplatePath     = "CamelTemplatePath"     // Template file path (override)
-	CamelTemplateEncoding = "CamelTemplateEncoding" // Template encoding (default: UTF-8)
-	CamelTemplateLocale   = "CamelTemplateLocale"   // Locale for the template
-	CamelTemplatelocal    = "CamelTemplatelocal"    // Deprecated: typo alias of CamelTemplateLocale.
+	CamelTemplateEncoding = "CamelTemplateEncoding" // Reserved: template encoding header (only UTF-8 is supported)
+	CamelTemplateLocale   = "CamelTemplateLocale"   // Reserved: template locale header (unused by Go html/template)
+	CamelTemplatelocal    = "CamelTemplatelocal"    // Deprecated: typo alias of CamelTemplateLocale (unused).
 )
 
 // TemplateData groups all data available within a template.
@@ -77,8 +77,12 @@ func (c *TemplateComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	if path == "" {
-		return nil, fmt.Errorf("template path missing in URI: %s", uri)
+		return nil, fmt.Errorf("template path missing in URI: %s", RedactURI(uri))
 	}
+	if err := ValidatePath(path); err != nil {
+		return nil, fmt.Errorf("invalid template path: %w", err)
+	}
+	path = filepath.Clean(path)
 
 	endpoint := &TemplateEndpoint{
 		uri:       uri,
@@ -90,24 +94,29 @@ func (c *TemplateComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 	// Option contentCache: cache the template in memory.
 	if val := query.Get("contentCache"); val != "" {
-		if v, err := parseBool(val); err == nil {
-			endpoint.contentCache = v
+		v, err := parseBool(val)
+		if err != nil {
+			return nil, fmt.Errorf("invalid contentCache %q: %w", val, err)
 		}
+		endpoint.contentCache = v
 	}
 
 	// Option allowTemplateFromHeader: allow changing the template via header.
 	if val := query.Get("allowTemplateFromHeader"); val != "" {
-		if v, err := parseBool(val); err == nil {
-			endpoint.allowTemplateFromHeader = v
+		v, err := parseBool(val)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowTemplateFromHeader %q: %w", val, err)
 		}
+		endpoint.allowTemplateFromHeader = v
 	}
 
-	// Option encoding: specify the encoding (default UTF-8).
+	// Option encoding: only UTF-8 is supported by Go's html/template parser.
 	if val := query.Get("encoding"); val != "" {
-		endpoint.encoding = val
-	} else {
-		endpoint.encoding = "UTF-8"
+		if !isUTF8Encoding(val) {
+			return nil, fmt.Errorf("unsupported template encoding %q: only UTF-8 is supported", val)
+		}
 	}
+	endpoint.encoding = "UTF-8"
 
 	// Option startDelimiter/endDelimiter: custom delimiters.
 	if val := query.Get("startDelimiter"); val != "" {
@@ -118,6 +127,10 @@ func (c *TemplateComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	return endpoint, nil
+}
+
+func isUTF8Encoding(encoding string) bool {
+	return strings.EqualFold(encoding, "UTF-8") || strings.EqualFold(encoding, "UTF8")
 }
 
 // parseBool parses a string as a boolean.
@@ -162,30 +175,34 @@ func (e *TemplateEndpoint) CreateConsumer(processor Processor) (Consumer, error)
 
 // TemplateProducer represents a template producer.
 type TemplateProducer struct {
-	endpoint     *TemplateEndpoint
-	templateText string // Template loaded into memory when contentCache=true.
+	endpoint *TemplateEndpoint
 }
 
 // Start starts the template producer.
 func (p *TemplateProducer) Start(ctx context.Context) error {
-	// If contentCache is enabled, load the template into memory.
+	// If contentCache is enabled, precompile the endpoint template into the
+	// thread-safe component cache.
 	if p.endpoint.contentCache {
 		if err := ValidatePath(p.endpoint.path); err != nil {
 			return fmt.Errorf("invalid template path: %w", err)
 		}
-		content, err := os.ReadFile(p.endpoint.path)
+		content, err := os.ReadFile(p.endpoint.path) // #nosec G304 -- validated by ValidatePath
 		if err != nil {
 			return fmt.Errorf("error reading template %s: %w", p.endpoint.path, err)
 		}
-		p.templateText = string(content)
+		tmpl, err := p.parseTemplate(string(content), p.endpoint.path)
+		if err != nil {
+			return err
+		}
+		if p.endpoint.component != nil {
+			p.endpoint.component.cacheTemplate(p.cacheKey(p.endpoint.path), tmpl)
+		}
 	}
 	return nil
 }
 
 // Stop stops the template producer.
 func (p *TemplateProducer) Stop() error {
-	// Clear the in-memory cache if needed.
-	p.templateText = ""
 	return nil
 }
 
@@ -205,32 +222,35 @@ func (p *TemplateProducer) Send(exchange *Exchange) error {
 		}
 	}
 
-	// Retrieve the template content.
-	var templateContent string
-	var err error
-
-	if p.endpoint.contentCache && templatePath == p.endpoint.path && p.templateText != "" {
-		// Use the cached template.
-		templateContent = p.templateText
-	} else {
-		// Load from file. The path is validated regardless of source:
-		// header-supplied paths get the traversal/null-byte checks above, and
-		// ValidatePath covers the endpoint URI path too (gosec G304).
-		if err := ValidatePath(templatePath); err != nil {
-			return fmt.Errorf("invalid template path: %w", err)
-		}
-		content, err := os.ReadFile(templatePath) // #nosec G304
-		if err != nil {
-			return fmt.Errorf("error reading template %s: %w", templatePath, err)
-		}
-		templateContent = string(content)
+	if err := ValidatePath(templatePath); err != nil {
+		return fmt.Errorf("invalid template path: %w", err)
 	}
 
 	// Prepare the template data.
 	data := prepareTemplateData(exchange)
 
-	// Parse and execute the template.
-	result, err := p.executeTemplate(templateContent, data, templatePath)
+	// Check the compiled template cache BEFORE reading from disk so repeated
+	// Sends with contentCache=true (including header-selected templates)
+	// never incur redundant os.ReadFile calls.
+	if p.endpoint.contentCache && p.endpoint.component != nil {
+		if tmpl := p.endpoint.component.getCachedTemplate(p.cacheKey(templatePath)); tmpl != nil {
+			result, err := executeParsedTemplate(tmpl, data)
+			if err != nil {
+				return err
+			}
+			exchange.GetIn().SetBody(result)
+			return nil
+		}
+	}
+
+	// Cache miss or caching disabled: load from file (gosec G304).
+	content, err := os.ReadFile(templatePath) // #nosec G304
+	if err != nil {
+		return fmt.Errorf("error reading template %s: %w", templatePath, err)
+	}
+
+	// Parse, optionally cache, and execute the template.
+	result, err := p.executeTemplate(string(content), data, templatePath)
 	if err != nil {
 		return fmt.Errorf("error executing template: %w", err)
 	}
@@ -243,25 +263,34 @@ func (p *TemplateProducer) Send(exchange *Exchange) error {
 // executeTemplate parses and executes a template.
 func (p *TemplateProducer) executeTemplate(content string, data any, name string) (string, error) {
 	// Check the cache if contentCache is enabled.
-	if p.endpoint.contentCache {
+	if p.endpoint.contentCache && p.endpoint.component != nil {
 		if tmpl := p.endpoint.component.getCachedTemplate(p.cacheKey(name)); tmpl != nil {
-			var buf bytes.Buffer
-			if err := tmpl.Execute(&buf, data); err != nil {
-				return "", err
-			}
-			return buf.String(), nil
+			return executeParsedTemplate(tmpl, data)
 		}
 	}
 
-	// Create the parsing options.
-	var tmpl *template.Template
-	var err error
+	tmpl, err := p.parseTemplate(content, name)
+	if err != nil {
+		return "", err
+	}
 
+	// Cache the template if enabled.
+	if p.endpoint.contentCache && p.endpoint.component != nil {
+		p.endpoint.component.cacheTemplate(p.cacheKey(name), tmpl)
+	}
+
+	return executeParsedTemplate(tmpl, data)
+}
+
+func (p *TemplateProducer) parseTemplate(content, name string) (*template.Template, error) {
 	// Use the base filename as the template name.
 	templateName := filepath.Base(name)
 	if templateName == "" {
 		templateName = "template"
 	}
+
+	var tmpl *template.Template
+	var err error
 
 	// If custom delimiters are specified, use them.
 	if p.endpoint.startDelimiter != "" || p.endpoint.endDelimiter != "" {
@@ -280,27 +309,29 @@ func (p *TemplateProducer) executeTemplate(content string, data any, name string
 	}
 
 	if err != nil {
-		return "", fmt.Errorf("error parsing template: %w", err)
+		return nil, fmt.Errorf("error parsing template: %w", err)
 	}
+	return tmpl, nil
+}
 
-	// Cache the template if enabled.
-	if p.endpoint.contentCache {
-		p.endpoint.component.cacheTemplate(p.cacheKey(name), tmpl)
-	}
-
+func executeParsedTemplate(tmpl *template.Template, data any) (string, error) {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("error executing template: %w", err)
 	}
-
 	return buf.String(), nil
 }
 
 // cacheKey identifies a compiled template in the component-wide cache. The
-// delimiters are part of the key: two endpoints reading the same file with
-// different delimiters compile different templates.
+// delimiters and canonicalized path form the key: two endpoints reading the
+// same file with different delimiters compile different templates, while
+// non-canonical path aliases share a single entry.
 func (p *TemplateProducer) cacheKey(name string) string {
-	return p.endpoint.startDelimiter + "\x00" + p.endpoint.endDelimiter + "\x00" + name
+	clean := filepath.Clean(name)
+	if abs, err := filepath.Abs(clean); err == nil {
+		clean = abs
+	}
+	return p.endpoint.startDelimiter + "\x00" + p.endpoint.endDelimiter + "\x00" + clean
 }
 
 // getCachedTemplate retrieves a template from the cache.
@@ -472,11 +503,11 @@ func confineTemplatePath(name, endpointPath string) (string, error) {
 		baseDir = "."
 	}
 	target := name
-	if !filepath.IsAbs(name) {
-		target = filepath.Join(baseDir, name)
+	if isPureRelativePath(name) {
+		target = joinRawPath(baseDir, name)
 	}
 	if err := ValidatePathInDir(target, baseDir); err != nil {
 		return "", fmt.Errorf("template: %w", err)
 	}
-	return target, nil
+	return filepath.Clean(target), nil
 }
