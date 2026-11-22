@@ -20,7 +20,7 @@ const CloudHost = "https://ollama.com"
 // cloudAPIKeyEnv is the environment variable holding the Ollama Cloud API key.
 // The key is read from the environment only (never from the URI) so that it
 // cannot leak through endpoint URIs, logs or route dumps.
-const cloudAPIKeyEnv = "OLLAMA_API_KEY"
+const cloudAPIKeyEnv = "OLLAMA_API_KEY" // #nosec G101 -- environment variable name, not a credential
 
 // ollamaAPI is the subset of the Ollama API used by the producer. It is
 // satisfied both by the official *api.Client (local servers) and by

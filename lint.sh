@@ -1,22 +1,35 @@
 #!/usr/bin/env bash
 set -e
 
+cd "$(dirname "$0")"
+
 # Use Go 1.27+ from PATH; go.mod and .go-version select the project default.
 export GOPATH="$(pwd)/.cache/go"
 export PATH="$GOPATH/bin:$PATH"
+
+hash_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
 
 # staticcheck and gosec are built from .tools/lint/go.mod, which pins the
 # golang.org/x/tools they use to read the compiler's export data. A linter can
 # only read export data written by a Go no newer than its x/tools supports, so
 # bump x/tools there when a new Go release breaks the linters, and rebuild the
-# binaries whenever the Go version changes.
+# binaries whenever the Go version or .tools/lint/go.{mod,sum} changes.
 GO_VERSION="$(go env GOVERSION)"
+MOD_HASH="$(hash_file .tools/lint/go.mod)"
+SUM_HASH="$(hash_file .tools/lint/go.sum)"
+WANT_STAMP="${GO_VERSION}:${MOD_HASH}:${SUM_HASH}"
 STAMP="$GOPATH/bin/.built-with-go"
-if [ "$(cat "$STAMP" 2>/dev/null)" != "$GO_VERSION" ] ||
+if [ "$(cat "$STAMP" 2>/dev/null)" != "$WANT_STAMP" ] ||
   [ ! -x "$GOPATH/bin/staticcheck" ] || [ ! -x "$GOPATH/bin/gosec" ]; then
   echo "Installing staticcheck and gosec with ${GO_VERSION}..."
   (cd .tools/lint && GOWORK=off GOBIN="$GOPATH/bin" go install tool)
-  echo "$GO_VERSION" > "$STAMP"
+  echo "$WANT_STAMP" > "$STAMP"
 fi
 
 has_errors=0
@@ -27,11 +40,19 @@ for mod in $(find . -name go.mod -not -path '*/.*' -not -path './hugo-site/*' | 
   (cd "$dir" && staticcheck ./...) || has_errors=1
 
   echo "== gosec $dir =="
-  gosec_opts="-exclude-dir=_test"
+  gosec_opts=(-exclude-dir=_test)
   if [ "$dir" = "." ]; then
-    gosec_opts="$gosec_opts -exclude-dir=components -exclude-dir=examples -exclude-dir=observability -exclude-dir=.cache -exclude-dir=.claude -exclude-dir=.tools"
+    gosec_opts+=(
+      -exclude-dir=components
+      -exclude-dir=examples
+      -exclude-dir=hugo-site
+      -exclude-dir=observability
+      -exclude-dir=.cache
+      -exclude-dir=.claude
+      -exclude-dir=.tools
+    )
   fi
-  (cd "$dir" && gosec $gosec_opts -severity medium ./...) || has_errors=1
+  (cd "$dir" && gosec "${gosec_opts[@]}" -severity medium ./...) || has_errors=1
 done
 
 if [ $has_errors -eq 0 ]; then

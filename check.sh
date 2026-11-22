@@ -46,29 +46,49 @@ default_jobs=$((cpus / 2))
 [ "$default_jobs" -lt 1 ] && default_jobs=1
 jobs="${JOBS:-$default_jobs}"
 
+tmpdir=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmpdir"' EXIT
+export tmpdir
+
 check_module() {
-  dir="$1"
+  idx="$1"
+  dir="$2"
   start=$(date +%s)
   out=$(cd "$dir" && go build ./... 2>&1 && go vet ./... 2>&1 && go test -race ./... 2>&1)
   status=$?
   elapsed=$(($(date +%s) - start))
   if [ $status -eq 0 ]; then
-    printf 'ok    %-28s %3ss\n' "$dir" "$elapsed"
+    printf 'ok    %-28s %3ss\n' "$dir" "$elapsed" >"$tmpdir/$idx.out"
   else
-    printf 'FAIL  %-28s %3ss\n%s\n\n' "$dir" "$elapsed" "$out"
+    printf 'FAIL  %-28s %3ss\n%s\n\n' "$dir" "$elapsed" "$out" >"$tmpdir/$idx.out"
   fi
-  return $status
+  printf '%d\n' "$status" >"$tmpdir/$idx.rc"
+  return 0
 }
 export -f check_module
 
 echo "Checking ${#modules[@]} module(s), $jobs at a time..."
-results=$(printf '%s\n' "${modules[@]}" | xargs -P "$jobs" -I{} bash -c 'check_module "$1"' _ {})
-printf '%s\n' "$results"
+for i in "${!modules[@]}"; do
+  printf '%s\0%s\0' "$i" "${modules[$i]}"
+done | xargs -0 -n 2 -P "$jobs" bash -c 'check_module "$1" "$2"' _
+xargs_status=$?
 
-# Count module result lines only: failed modules also print their test output,
-# which contains bare "FAIL" lines that must not be counted.
-failed=$(printf '%s\n' "$results" | grep -c '^FAIL  ')
-if [ "$failed" -ne 0 ]; then
+succeeded=0
+for i in "${!modules[@]}"; do
+  if [ -f "$tmpdir/$i.out" ]; then
+    cat "$tmpdir/$i.out"
+  fi
+  if [ -f "$tmpdir/$i.rc" ] && [ "$(cat "$tmpdir/$i.rc" 2>/dev/null)" = "0" ]; then
+    succeeded=$((succeeded + 1))
+  fi
+done
+
+if [ "$xargs_status" -ne 0 ]; then
+  echo "❌ check execution failed (xargs exit $xargs_status)."
+  exit 1
+fi
+if [ "$succeeded" -ne "${#modules[@]}" ]; then
+  failed=$((${#modules[@]} - succeeded))
   echo "❌ $failed module(s) failed."
   exit 1
 fi
