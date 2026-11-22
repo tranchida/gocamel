@@ -99,6 +99,9 @@ func (cp *ChoiceProcessor) Process(exchange *Exchange) error { // Evaluate When 
 		}
 
 		if result {
+			if when.processor == nil {
+				return nil
+			}
 			// Execute the processor for this when clause
 			return when.processor.Process(exchange)
 		}
@@ -120,6 +123,9 @@ type compositeProcessor struct {
 
 func (cp *compositeProcessor) Process(exchange *Exchange) error {
 	for _, p := range cp.processors {
+		if p == nil {
+			continue
+		}
 		propagateOutToInAndReset(exchange)
 		if err := p.Process(exchange); err != nil {
 			return err
@@ -160,7 +166,7 @@ func (b *RouteBuilder) Choice() *ChoiceBuilder {
 
 // finalizeActiveWhen finalizes the currently building When clause
 func (cb *ChoiceBuilder) finalizeActiveWhen() {
-	if cb.activeExpression != "" && len(cb.activeProcessors) > 0 {
+	if cb.activeExpression != "" {
 		cb.choice.When(cb.activeExpression, &compositeProcessor{processors: cb.activeProcessors})
 		cb.activeExpression = ""
 		cb.activeProcessors = make([]Processor, 0)
@@ -174,6 +180,7 @@ func (cb *ChoiceBuilder) recordErr(err error) {
 	if cb.err == nil {
 		cb.err = err
 	}
+	cb.routeBuilder.recordErr(err)
 }
 
 // When adds a When condition to the Choice
@@ -190,18 +197,26 @@ func (cb *ChoiceBuilder) When(expression string) *ChoiceBuilder {
 
 // Process adds a processor to the current When clause
 func (cb *ChoiceBuilder) Process(processor Processor) *ChoiceBuilder {
-	if cb.activeExpression != "" {
-		// We're in a When clause
-		cb.activeProcessors = append(cb.activeProcessors, processor)
-	} else {
+	if cb.activeExpression == "" {
 		// We're not in a When clause - record error with helpful message
 		cb.recordErr(fmt.Errorf("Process called without a When clause. Call When() first, or use EndChoice to complete the Choice"))
+		return cb
 	}
+	if isNilValue(processor) {
+		cb.recordErr(fmt.Errorf("Choice.Process: processor must not be nil"))
+		return cb
+	}
+	// We're in a When clause
+	cb.activeProcessors = append(cb.activeProcessors, processor)
 	return cb
 }
 
 // ProcessFunc adds a function processor to the current When clause
 func (cb *ChoiceBuilder) ProcessFunc(f func(*Exchange) error) *ChoiceBuilder {
+	if f == nil {
+		cb.recordErr(fmt.Errorf("Choice.ProcessFunc: function must not be nil"))
+		return cb
+	}
 	return cb.Process(ProcessorFunc(f))
 }
 
@@ -294,12 +309,20 @@ type OtherwiseBuilder struct {
 
 // Process adds a processor to the Otherwise clause
 func (ob *OtherwiseBuilder) Process(processor Processor) *OtherwiseBuilder {
+	if isNilValue(processor) {
+		ob.choiceBuilder.recordErr(fmt.Errorf("Otherwise.Process: processor must not be nil"))
+		return ob
+	}
 	ob.choiceBuilder.otherwiseProcessors = append(ob.choiceBuilder.otherwiseProcessors, processor)
 	return ob
 }
 
 // ProcessFunc adds a function processor to the Otherwise clause
 func (ob *OtherwiseBuilder) ProcessFunc(f func(*Exchange) error) *OtherwiseBuilder {
+	if f == nil {
+		ob.choiceBuilder.recordErr(fmt.Errorf("Otherwise.ProcessFunc: function must not be nil"))
+		return ob
+	}
 	return ob.Process(ProcessorFunc(f))
 }
 
@@ -317,7 +340,7 @@ func (ob *OtherwiseBuilder) SetHeader(key string, value interface{}) *OtherwiseB
 func (ob *OtherwiseBuilder) SimpleSetBody(expression string) *OtherwiseBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		ob.choiceBuilder.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		ob.choiceBuilder.recordErr(fmt.Errorf("failed to parse simple expression: %w", err))
 		return ob
 	}
 	return ob.Process(&SimpleLanguageProcessor{Template: template})
@@ -327,7 +350,7 @@ func (ob *OtherwiseBuilder) SimpleSetBody(expression string) *OtherwiseBuilder {
 func (ob *OtherwiseBuilder) SimpleSetHeader(headerName string, expression string) *OtherwiseBuilder {
 	template, err := ParseSimpleTemplate(expression)
 	if err != nil {
-		ob.choiceBuilder.err = fmt.Errorf("failed to parse simple expression: %w", err)
+		ob.choiceBuilder.recordErr(fmt.Errorf("failed to parse simple expression: %w", err))
 		return ob
 	}
 	return ob.Process(&SimpleSetHeaderProcessor{

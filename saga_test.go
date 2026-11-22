@@ -251,3 +251,75 @@ func TestSagaProcessor_PanickingCompensationDoesNotAbortRemaining(t *testing.T) 
 		t.Error("expected first compensation to execute even if second compensation panicked")
 	}
 }
+
+func TestSagaProcessor_DSLRejectsNilActionAndHandlesEmptyCompensation(t *testing.T) {
+	ctx := NewCamelContext()
+
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:saga-nil-fn").
+		Saga().
+		ActionFunc(nil, nil).
+		End().
+		Build()
+	if err == nil {
+		t.Fatal("expected build error for ActionFunc(nil, nil)")
+	}
+
+	_, err = ctx.CreateRouteBuilder().
+		From("direct:saga-empty-action").
+		Saga().
+		Action("", "direct:comp").
+		End().
+		Build()
+	if err == nil {
+		t.Fatal("expected build error for empty actionURI")
+	}
+
+	repo := NewMemorySagaRepository()
+	var step1Executed bool
+	_, err = ctx.CreateRouteBuilder().
+		From("direct:saga-step1").
+		ProcessFunc(func(e *Exchange) error {
+			step1Executed = true
+			return nil
+		}).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build step1 route: %v", err)
+	}
+
+	_, err = ctx.CreateRouteBuilder().
+		From("direct:saga-main").
+		Saga().
+		Repository(repo).
+		Action("direct:saga-step1", "").
+		ActionFunc(func(e *Exchange) error { return errors.New("boom") }, nil).
+		End().
+		Build()
+	if err != nil {
+		t.Fatalf("expected valid route with empty compensationURI, got: %v", err)
+	}
+
+	if err := ctx.Start(); err != nil {
+		t.Fatalf("failed to start context: %v", err)
+	}
+	defer ctx.Stop()
+
+	p, err := ctx.GetProducer("direct:saga-main")
+	if err != nil {
+		t.Fatalf("failed to get producer: %v", err)
+	}
+	if err := p.Send(NewExchange(context.Background())); err == nil {
+		t.Fatal("expected saga error")
+	}
+	if !step1Executed {
+		t.Error("expected step1 to execute")
+	}
+	incomplete, err := repo.ListIncomplete(context.Background())
+	if err != nil {
+		t.Fatalf("failed to list incomplete sagas: %v", err)
+	}
+	if len(incomplete) != 0 {
+		t.Errorf("expected no incomplete saga checkpoint for empty compensationURI, got %v", incomplete)
+	}
+}

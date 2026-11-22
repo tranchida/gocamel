@@ -25,10 +25,20 @@ type SagaDefinition struct {
 }
 
 // Action adds a new action endpoint and its corresponding compensation endpoint by URI.
+// An empty compensationURI creates a non-compensated step (no compensation endpoint or checkpoint).
 func (d *SagaDefinition) Action(actionURI string, compensationURI string) *SagaDefinition {
+	if actionURI == "" {
+		d.fail(fmt.Errorf("saga: action URI must not be empty"))
+		return d
+	}
 	action := newLazyProducer(d.parent.context, actionURI)
-	comp := newLazyProducer(d.parent.context, compensationURI)
-	d.parent.route.lazyProducers = append(d.parent.route.lazyProducers, action, comp)
+	d.parent.route.lazyProducers = append(d.parent.route.lazyProducers, action)
+	var comp Processor
+	if compensationURI != "" {
+		compLP := newLazyProducer(d.parent.context, compensationURI)
+		d.parent.route.lazyProducers = append(d.parent.route.lazyProducers, compLP)
+		comp = compLP
+	}
 	d.saga.AddStep(action, comp)
 	return d
 }
@@ -40,6 +50,10 @@ func (d *SagaDefinition) Action(actionURI string, compensationURI string) *SagaD
 // but cannot be rebuilt by recovery after a process restart. Use Action with
 // a compensation URI for steps that must be recoverable.
 func (d *SagaDefinition) ActionFunc(action func(*Exchange) error, compensation func(*Exchange) error) *SagaDefinition {
+	if action == nil {
+		d.fail(fmt.Errorf("saga: action function must not be nil"))
+		return d
+	}
 	var comp Processor
 	if compensation != nil {
 		comp = ProcessorFunc(compensation)
@@ -83,9 +97,10 @@ func (d *SagaDefinition) RecoverIncomplete(enabled bool) *SagaDefinition {
 }
 
 func (d *SagaDefinition) fail(err error) {
-	if d.parent.err == nil {
-		d.parent.err = err
+	if d == nil || d.parent == nil {
+		return
 	}
+	d.parent.recordErr(err)
 }
 
 // End terminates the Saga block and returns to the parent builder.

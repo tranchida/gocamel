@@ -6,7 +6,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -870,4 +872,482 @@ func TestRemoveHeadersAndProperties_MatchesNewlines(t *testing.T) {
 	assert.True(t, ex.GetIn().HasHeader("CamelHttp\nKeep"), "RemoveHeaders exclusion '*' must match across newlines")
 	assert.False(t, ex.HasProperty("Camel\nProp"), "RemoveProperties '*' must match across newlines")
 	assert.True(t, ex.HasProperty("CamelHttp\nPropKeep"), "RemoveProperties exclusion '*' must match across newlines")
+}
+
+func TestRouteBuilder_FailedBuildDetachesRouteFromContext(t *testing.T) {
+	ctx := NewCamelContext()
+	_, buildErr := ctx.CreateRouteBuilder().
+		From("direct:broken-filter").
+		SetID("broken-route").
+		Filter("${header.x").
+		To("mock:never").
+		Build()
+	require.Error(t, buildErr)
+
+	// Even if caller ignores buildErr and starts ctx, the broken route must be detached and not start.
+	assert.Empty(t, ctx.GetRoutes())
+	assert.Nil(t, ctx.GetRoute("broken-route"))
+	require.NoError(t, ctx.Start())
+	t.Cleanup(func() { _ = ctx.Stop() })
+	assert.Equal(t, 0, ctx.GetStartedRouteCount())
+
+	// The failed route's ID must have been released so it can be reused without duplicate warnings.
+	validRoute, err := ctx.CreateRouteBuilder().
+		From("direct:reused-id").
+		SetID("broken-route").
+		To("mock:ok").
+		Build()
+	require.NoError(t, err)
+	assert.Equal(t, "broken-route", validRoute.ID)
+	assert.Len(t, ctx.GetRoutes(), 1)
+
+	// Even if Build() is never called on a broken RouteBuilder, recordErr propagates onto route.err
+	// so ctx.Start() fails instead of silently starting a partial route without the Filter.
+	unbuiltCtx := NewCamelContext()
+	unbuiltCtx.CreateRouteBuilder().
+		From("direct:unbuilt-broken").
+		Filter("${header.x")
+	startErr := unbuiltCtx.Start()
+	require.Error(t, startErr)
+	assert.Contains(t, startErr.Error(), "malformed simple template")
+}
+
+func TestRouteBuilder_NilInputsAndPreservesFirstError(t *testing.T) {
+	t.Run("nil DSL inputs fail safely at Build without panics", func(t *testing.T) {
+		var nilFilterFn func(*Exchange) (bool, error)
+		var nilIDFn func(*Exchange) (string, error)
+		var nilDRFn func(*Exchange) (string, error)
+		var nilRLFn func(*Exchange) ([]string, error)
+		var nilProcFn ProcessorFunc
+
+		cases := []struct {
+			name  string
+			build func(*CamelContext) (*Route, error)
+		}{
+			{"Aggregate(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Aggregate(nil).Build()
+			}},
+			{"Process(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Process(nil).Build()
+			}},
+			{"Process(ProcessorFunc(nil))", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Process(nilProcFn).Build()
+			}},
+			{"ProcessFunc(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").ProcessFunc(nil).Build()
+			}},
+			{"SetHeadersFunc(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").SetHeadersFunc(nil).Build()
+			}},
+			{"SetPropertyFunc(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").SetPropertyFunc("k", nil).Build()
+			}},
+			{"Filter(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Filter(nil).Build()
+			}},
+			{"Filter(typed nil func)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Filter(nilFilterFn).Build()
+			}},
+			{"IdempotentConsumer(x, nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").IdempotentConsumer("x", nil).Build()
+			}},
+			{"IdempotentConsumer(typed nil func)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").IdempotentConsumer(nilIDFn, NewMemoryIdempotentRepository()).Build()
+			}},
+			{"Split(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Split(nil).SetBody("x").End().Build()
+			}},
+			{"LoopFunc(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").LoopFunc(nil).SetBody("x").End().Build()
+			}},
+			{"DynamicRouter(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").DynamicRouter(nil).Build()
+			}},
+			{"DynamicRouter(typed nil func)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").DynamicRouter(nilDRFn).Build()
+			}},
+			{"RecipientList(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").RecipientList(nil).End().Build()
+			}},
+			{"RecipientList(typed nil func)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").RecipientList(nilRLFn).End().Build()
+			}},
+			{"RoutingSlip(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").RoutingSlip(nil).Build()
+			}},
+			{"RoutingSlip(typed nil func)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").RoutingSlip(nilRLFn).Build()
+			}},
+			{"Transform(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Transform(nil).Build()
+			}},
+			{"Intercept(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Intercept(nil).Build()
+			}},
+			{"Marshal(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Marshal(nil).Build()
+			}},
+			{"Unmarshal(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Unmarshal(nil).Build()
+			}},
+			{"Choice.Process(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Choice().When("${body} == 'a'").Process(nil).EndChoice().Build()
+			}},
+			{"Choice.ProcessFunc(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Choice().When("${body} == 'a'").ProcessFunc(nil).EndChoice().Build()
+			}},
+			{"Otherwise.Process(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Choice().When("${body} == 'a'").SetBody("ok").Otherwise().Process(nil).EndChoice().Build()
+			}},
+			{"Otherwise.ProcessFunc(nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Choice().When("${body} == 'a'").SetBody("ok").Otherwise().ProcessFunc(nil).EndChoice().Build()
+			}},
+			{"Saga().ActionFunc(nil, nil)", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Saga().ActionFunc(nil, nil).End().Build()
+			}},
+			{"Saga().Action('', 'direct:c')", func(c *CamelContext) (*Route, error) {
+				return c.CreateRouteBuilder().From("direct:a").Saga().Action("", "direct:c").End().Build()
+			}},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				c := NewCamelContext()
+				require.NotPanics(t, func() {
+					r, err := tc.build(c)
+					require.Error(t, err)
+					assert.Nil(t, r)
+					assert.Empty(t, c.GetRoutes())
+				})
+			})
+		}
+
+		t.Run("NewRouteBuilder(nil) does not panic", func(t *testing.T) {
+			require.NotPanics(t, func() {
+				_, err := NewRouteBuilder(nil).From("direct:a").Build()
+				require.Error(t, err)
+			})
+		})
+
+		t.Run("Saga Action with empty compensationURI is valid non-compensated step", func(t *testing.T) {
+			c := NewCamelContext()
+			repo := NewMemorySagaRepository()
+			var step1Ran bool
+			_, err := c.CreateRouteBuilder().From("direct:saga-ok").ProcessFunc(func(*Exchange) error {
+				step1Ran = true
+				return nil
+			}).Build()
+			require.NoError(t, err)
+
+			route, err := c.CreateRouteBuilder().
+				From("direct:saga-main").
+				Saga().
+				Repository(repo).
+				Action("direct:saga-ok", "").
+				ActionFunc(func(*Exchange) error { return errors.New("step2 failed") }, nil).
+				End().
+				Build()
+			require.NoError(t, err)
+			require.NoError(t, c.Start())
+			t.Cleanup(func() { _ = c.Stop() })
+
+			err = route.Process(NewExchange(context.Background()))
+			require.Error(t, err)
+			assert.True(t, step1Ran)
+			incomplete, err := repo.ListIncomplete(context.Background())
+			require.NoError(t, err)
+			assert.Empty(t, incomplete, "non-compensated step must not record empty checkpoint")
+		})
+	})
+
+	t.Run("direct nil processor guards in route.go and choice.go", func(t *testing.T) {
+		c := NewCamelContext()
+		r := c.CreateRoute().From("direct:nil-guards").EnableMessageHistory()
+		r.AddProcessor(nil)
+		r.AddProcessor((*Aggregator)(nil))
+		cp := NewChoiceProcessor().When("${body} == 'a'", nil)
+		r.AddProcessor(cp)
+
+		require.NotPanics(t, func() {
+			require.NoError(t, c.Start())
+		})
+		t.Cleanup(func() { _ = c.Stop() })
+
+		ex := NewExchange(context.Background())
+		ex.SetBody("a")
+		require.NotPanics(t, func() {
+			_ = r.Process(ex)
+			_ = cp.Process(ex)
+		})
+	})
+
+	t.Run("sub-DSL errors preserve the first build error", func(t *testing.T) {
+		oversized := strings.Repeat("a", MaxSimpleInputBytes+1)
+
+		t.Run("LoopSimple preserves prior error and isolates body", func(t *testing.T) {
+			c := NewCamelContext()
+			rb := c.CreateRouteBuilder().
+				From("direct:loop-err").
+				Filter(123).
+				LoopSimple("${second_bad").
+				SetBody("leaked").
+				End()
+			assert.Empty(t, rb.route.processors, "failed LoopSimple must not leak chained processors onto parent route")
+			_, err := rb.Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unsupported expression type int")
+			assert.NotContains(t, err.Error(), "loop count")
+		})
+
+		t.Run("LoopSimple first error preserved over subsequent nested and outer errors", func(t *testing.T) {
+			c := NewCamelContext()
+			_, err := c.CreateRouteBuilder().
+				From("direct:loop-first").
+				LoopSimple("${first_bad").
+				SimpleSetBody(oversized).
+				End().
+				Filter(123).
+				Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "loop count")
+			assert.NotContains(t, err.Error(), "MaxSimpleInputBytes")
+			assert.NotContains(t, err.Error(), "unsupported expression type")
+		})
+
+		t.Run("RecipientList preserves first error", func(t *testing.T) {
+			c := NewCamelContext()
+			_, err := c.CreateRouteBuilder().
+				From("direct:rl-first").
+				RecipientList("${first_bad").
+				End().
+				RecipientList(123).
+				End().
+				Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "recipient list")
+			assert.NotContains(t, err.Error(), "unsupported RecipientList")
+
+			_, err = c.CreateRouteBuilder().
+				From("direct:rl-multicast").
+				Multicast().
+				RecipientList("${first_bad").
+				RecipientList(123).
+				End().
+				Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "recipient list")
+			assert.NotContains(t, err.Error(), "unsupported RecipientList")
+
+			_, err = c.CreateRouteBuilder().
+				From("direct:rl-pipeline").
+				Multicast().
+				Pipeline().
+				RecipientList("${first_bad").
+				RecipientList(123).
+				End().
+				End().
+				Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "recipient list")
+			assert.NotContains(t, err.Error(), "unsupported RecipientList")
+
+			_, err = c.CreateRouteBuilder().
+				From("direct:rl-split").
+				Split(func(*Exchange) (any, error) { return []string{"a"}, nil }).
+				RecipientList("${first_bad").
+				RecipientList(123).
+				End().
+				Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "recipient list")
+			assert.NotContains(t, err.Error(), "unsupported RecipientList")
+		})
+
+		t.Run("Choice empty When before Otherwise stays matched", func(t *testing.T) {
+			c := NewCamelContext()
+			route, err := c.CreateRouteBuilder().
+				From("direct:choice-empty-when").
+				Choice().
+				When("${body} == 'a'").
+				Otherwise().
+				SetBody("otherwise").
+				EndChoice().
+				Build()
+			require.NoError(t, err)
+
+			ex := NewExchange(context.Background())
+			ex.SetBody("a")
+			require.NoError(t, route.Process(ex))
+			assert.Equal(t, "a", ex.GetResponse().GetBody(), "empty When match must not fall through to Otherwise")
+		})
+
+		t.Run("Choice.Otherwise preserves first error", func(t *testing.T) {
+			c := NewCamelContext()
+			_, err := c.CreateRouteBuilder().
+				From("direct:choice-first").
+				Choice().
+				When("${first_bad").
+				Otherwise().
+				SimpleSetBody(oversized).
+				SimpleSetHeader("h", "${third_bad").
+				EndChoice().
+				Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "choice When")
+			assert.NotContains(t, err.Error(), "MaxSimpleInputBytes")
+
+			_, err = c.CreateRouteBuilder().
+				From("direct:otherwise-first").
+				Choice().
+				When("${body} == 'a'").
+				SetBody("ok").
+				Otherwise().
+				SimpleSetBody(oversized).
+				SimpleSetHeader("h", "${second_bad").
+				EndChoice().
+				Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "MaxSimpleInputBytes")
+			assert.NotContains(t, err.Error(), "unclosed or empty")
+
+			_, err = c.CreateRouteBuilder().
+				From("direct:otherwise-header-first").
+				Choice().
+				When("${body} == 'a'").
+				SetBody("ok").
+				Otherwise().
+				SimpleSetHeader("h", oversized).
+				SimpleSetBody("${second_bad").
+				EndChoice().
+				Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "MaxSimpleInputBytes")
+			assert.NotContains(t, err.Error(), "unclosed or empty")
+		})
+
+		t.Run("DynamicRouter preserves first error", func(t *testing.T) {
+			c := NewCamelContext()
+			_, err := c.CreateRouteBuilder().
+				From("direct:dr-first").
+				DynamicRouter("${first_bad").
+				DynamicRouter(123).
+				Build()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "dynamic router: invalid simple expression")
+			assert.NotContains(t, err.Error(), "unsupported expression type int")
+		})
+	})
+}
+
+func TestRouteBuilder_LogUsesFinalRouteIDAfterSetID(t *testing.T) {
+	buf := withCapturedLogger(t)
+	ctx := NewCamelContext()
+
+	route, err := ctx.CreateRouteBuilder().
+		From("direct:log-setid").
+		Log("hi").
+		LogBody("body-log").
+		LogHeaders("hdr-log").
+		LogSimple("simple-${body}").
+		Split(func(*Exchange) (any, error) { return []string{"part"}, nil }).
+		Log("split-log").
+		End().
+		SetID("orders").
+		Build()
+	require.NoError(t, err)
+
+	ex := NewExchange(context.Background())
+	ex.SetBody("payload")
+	ex.SetHeader("k", "v")
+	require.NoError(t, route.Process(ex))
+
+	logs := buf.String()
+	assert.Contains(t, logs, "route_id=orders")
+	assert.NotContains(t, logs, "route_id=route-1")
+	assert.Equal(t, 5, strings.Count(logs, "route_id=orders"))
+
+	// Concurrent SetID vs Log/LogBody/LogHeaders must be race-free under -race.
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func(n int) {
+			defer wg.Done()
+			if n%2 == 0 {
+				route.SetID("orders-a")
+			} else {
+				route.SetID("orders-b")
+			}
+		}(i)
+		go func() {
+			defer wg.Done()
+			_ = route.Process(NewExchange(context.Background()))
+		}()
+	}
+	wg.Wait()
+}
+
+func TestRouteBuilder_SubBuildersDoNotEmbedRouteBuilder(t *testing.T) {
+	disallowed := []string{
+		"Build", "From", "SetID", "SetDescription", "Transacted",
+		"Intercept", "EnableMessageHistory", "ErrorHandler",
+		"DeadLetterChannel", "OnException",
+	}
+	for _, typ := range []reflect.Type{
+		reflect.TypeFor[SplitDefinition](),
+		reflect.TypeFor[MulticastDefinition](),
+		reflect.TypeFor[PipelineDefinition](),
+		reflect.TypeFor[LoopDefinition](),
+	} {
+		t.Run(typ.Name(), func(t *testing.T) {
+			for i := 0; i < typ.NumField(); i++ {
+				f := typ.Field(i)
+				assert.Falsef(t, f.Anonymous, "%s must not embed %s anonymously", typ.Name(), f.Type)
+			}
+			ptrType := reflect.PointerTo(typ)
+			for _, method := range disallowed {
+				_, ok := ptrType.MethodByName(method)
+				assert.Falsef(t, ok, "*%s must not expose %s()", typ.Name(), method)
+			}
+		})
+	}
+
+	// Verify forwarded step-level verbs on all four definitions keep compiling and preserve errors.
+	c := NewCamelContext()
+	_, err := c.CreateRouteBuilder().
+		From("direct:subdsl-forward").
+		Split(func(*Exchange) (any, error) { return []string{"a"}, nil }).
+		DelayFunc(nil).
+		SetBody("x").
+		End().
+		Build()
+	require.Error(t, err)
+
+	_, err = c.CreateRouteBuilder().
+		From("direct:multicast-forward").
+		Multicast().
+		Filter("${bad").
+		SetBody("x").
+		End().
+		Build()
+	require.Error(t, err)
+
+	_, err = c.CreateRouteBuilder().
+		From("direct:pipeline-forward").
+		Multicast().
+		Pipeline().
+		Filter("${bad").
+		SetBody("x").
+		End().
+		End().
+		Build()
+	require.Error(t, err)
+
+	_, err = c.CreateRouteBuilder().
+		From("direct:loop-forward").
+		Loop(2).
+		Filter("${bad").
+		SetBody("x").
+		End().
+		Build()
+	require.Error(t, err)
 }

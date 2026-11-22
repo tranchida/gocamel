@@ -114,6 +114,9 @@ type RouteInterceptor func(route *Route, next func(*Exchange) error) func(*Excha
 // run in registration order: the first added is the outermost. Like the rest
 // of the route DSL, Intercept must be called before the route starts.
 func (r *Route) Intercept(interceptor RouteInterceptor) *Route {
+	if interceptor == nil {
+		return r
+	}
 	r.interceptors = append(r.interceptors, interceptor)
 	chain := r.doProcess
 	for i := len(r.interceptors) - 1; i >= 0; i-- {
@@ -322,7 +325,7 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 			elapsed := time.Since(stepStart)
 			entry := MessageHistoryEntry{
 				NodeID:    r.nodeIDFor(i, processor),
-				RouteID:   r.ID,
+				RouteID:   r.getID(),
 				Timestamp: stepStart,
 				Elapsed:   elapsed,
 			}
@@ -362,7 +365,7 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 				// error cannot spin on this step forever.
 				retries++
 				if retries > MaxErrorHandlerRetries {
-					return fmt.Errorf("route %s: %w (%d) at processor[%d]: %w", r.ID, ErrTooManyRetries, MaxErrorHandlerRetries, i, err)
+					return fmt.Errorf("route %s: %w (%d) at processor[%d]: %w", r.getID(), ErrTooManyRetries, MaxErrorHandlerRetries, i, err)
 				}
 				continue
 			}
@@ -384,7 +387,10 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 // itself cannot key a map, since ProcessorFunc is a func type and func values
 // are not hashable.
 func (r *Route) nodeIDFor(i int, processor Processor) string {
-	if named, ok := processor.(interface{ ID() string }); ok {
+	if processor == nil {
+		return "<nil>"
+	}
+	if named, ok := processor.(interface{ ID() string }); ok && !isNilValue(processor) {
 		return named.ID() // may legitimately change; never cached
 	}
 
@@ -397,7 +403,11 @@ func (r *Route) nodeIDFor(i int, processor Processor) string {
 	}
 	r.nodeIDMu.RUnlock()
 
-	id := reflect.TypeOf(processor).String()
+	t := reflect.TypeOf(processor)
+	if t == nil {
+		return "<nil>"
+	}
+	id := t.String()
 
 	r.nodeIDMu.Lock()
 	if len(r.nodeIDCache) < len(r.processors) {
@@ -507,9 +517,13 @@ func (r *Route) Start(ctx context.Context) error {
 	r.forEachProcessor(func(p Processor) {
 		switch started := p.(type) {
 		case *WireTap:
-			started.Start()
+			if started != nil {
+				started.Start()
+			}
 		case *Resequencer:
-			started.start(ctx)
+			if started != nil {
+				started.start(ctx)
+			}
 		}
 	})
 	r.configureAggregatorTimeouts(ctx)
@@ -576,7 +590,7 @@ func (r *Route) stopProcessorsAndProducers() []error {
 		case *Aggregator, *lazyProducer:
 			return // stopped above / below
 		}
-		if stoppable, ok := p.(interface{ Stop() error }); ok {
+		if stoppable, ok := p.(interface{ Stop() error }); ok && !isNilValue(p) {
 			if err := stoppable.Stop(); err != nil {
 				errs = append(errs, err)
 			}
@@ -613,8 +627,11 @@ type childProcessorContainer interface {
 // top-level container that holds it, so a group that times out is emitted
 // downstream rather than silently dropped.
 func (r *Route) wireAggregatorTimeouts(ctx context.Context, processor Processor, topIndex int) {
+	if processor == nil {
+		return
+	}
 	if aggregator, ok := processor.(*Aggregator); ok {
-		if aggregator.CompletionTimeout <= 0 {
+		if aggregator == nil || aggregator.CompletionTimeout <= 0 {
 			return
 		}
 		next := topIndex + 1
@@ -625,7 +642,7 @@ func (r *Route) wireAggregatorTimeouts(ctx context.Context, processor Processor,
 	}
 
 	container, ok := processor.(childProcessorContainer)
-	if !ok {
+	if !ok || isNilValue(processor) {
 		return
 	}
 	for _, child := range container.childProcessors() {
@@ -647,7 +664,7 @@ func (r *Route) stopAggregatorTimeouts() error {
 // nested inside containers, so that Stop() joins their timeout goroutines.
 func (r *Route) forEachAggregator(visit func(*Aggregator)) {
 	r.forEachProcessor(func(p Processor) {
-		if aggregator, ok := p.(*Aggregator); ok {
+		if aggregator, ok := p.(*Aggregator); ok && aggregator != nil {
 			visit(aggregator)
 		}
 	})
@@ -668,7 +685,7 @@ func (r *Route) forEachProcessor(visit func(Processor)) {
 }
 
 func walkProcessors(processor Processor, visit func(Processor)) {
-	if processor == nil {
+	if processor == nil || isNilValue(processor) {
 		return
 	}
 	visit(processor)
@@ -679,10 +696,32 @@ func walkProcessors(processor Processor, visit func(Processor)) {
 	}
 }
 
+func isNilValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Func, reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan:
+		return rv.IsNil()
+	}
+	return false
+}
+
 func (r *Route) IsStarted() bool {
 	r.startLock.RLock()
 	defer r.startLock.RUnlock()
 	return r.started
+}
+
+func (r *Route) getID() string {
+	if r == nil {
+		return ""
+	}
+	if r.context != nil {
+		return r.context.routeID(r)
+	}
+	return r.ID
 }
 
 func (r *Route) SetID(id string) *Route {

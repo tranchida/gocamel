@@ -57,6 +57,10 @@ func (b *RouteBuilder) buildRecipientList(expression any) (*RecipientList, bool)
 			rl.SetStaticURIs(expr)
 		}
 	case func(*Exchange) ([]string, error):
+		if expr == nil {
+			b.recordErr(fmt.Errorf("RecipientList: URI function must not be nil"))
+			return rl, false
+		}
 		rl.SetURIFunc(expr)
 	default:
 		b.recordErr(fmt.Errorf("unsupported RecipientList expression type: %T", expression))

@@ -122,11 +122,11 @@ func removeHeadersProcessor(pattern string, excludePatterns []string) Processor 
 
 // logProcessor returns a Processor that logs a structured info entry tagged
 // with the exchange pointer and the route ID.
-func logProcessor(message, routeID string) Processor {
+func logProcessor(message string, route *Route) Processor {
 	return ProcessorFunc(func(exchange *Exchange) error {
 		LogInfo(message,
 			"exchange_id", exchange.ID,
-			"route_id", routeID,
+			"route_id", route.getID(),
 		)
 		return nil
 	})
@@ -134,11 +134,11 @@ func logProcessor(message, routeID string) Processor {
 
 // logBodyProcessor returns a Processor that logs the In body alongside a
 // structured message and the route ID.
-func logBodyProcessor(message, routeID string) Processor {
+func logBodyProcessor(message string, route *Route) Processor {
 	return ProcessorFunc(func(exchange *Exchange) error {
 		LogInfo(message,
 			"body", exchange.GetIn().GetBody(),
-			"route_id", routeID,
+			"route_id", route.getID(),
 		)
 		return nil
 	})
@@ -146,11 +146,11 @@ func logBodyProcessor(message, routeID string) Processor {
 
 // logHeadersProcessor returns a Processor that logs the In headers alongside
 // a structured message and the route ID.
-func logHeadersProcessor(message, routeID string) Processor {
+func logHeadersProcessor(message string, route *Route) Processor {
 	return ProcessorFunc(func(exchange *Exchange) error {
 		LogInfo(message,
 			"headers", exchange.GetIn().GetHeaders(),
-			"route_id", routeID,
+			"route_id", route.getID(),
 		)
 		return nil
 	})

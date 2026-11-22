@@ -157,6 +157,10 @@ func (e *MockEndpoint) ExpectedMessageCount(n int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.expected = max(n, 0)
+	if e.changed != nil {
+		close(e.changed)
+	}
+	e.changed = make(chan struct{})
 }
 
 // Wait blocks until the expectation set by ExpectedMessageCount is met or

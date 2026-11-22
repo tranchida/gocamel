@@ -18,6 +18,16 @@ type RouteBuilder struct {
 
 // NewRouteBuilder creates a new RouteBuilder instance.
 func NewRouteBuilder(context *CamelContext) *RouteBuilder {
+	if context == nil {
+		route := NewRoute()
+		err := fmt.Errorf("RouteBuilder: CamelContext must not be nil")
+		route.err = err
+		return &RouteBuilder{
+			route:     route,
+			container: route,
+			err:       err,
+		}
+	}
 	route := context.CreateRoute()
 	return &RouteBuilder{
 		context:   context,
@@ -35,13 +45,17 @@ func (b *RouteBuilder) adoptErr(child *RouteBuilder) {
 	b.recordErr(child.err)
 }
 
-// recordErr records the first error encountered during route building.
+// recordErr records the first error encountered during route building and
+// propagates it onto the underlying route if it has none yet.
 func (b *RouteBuilder) recordErr(err error) {
 	if b == nil || err == nil {
 		return
 	}
 	if b.err == nil {
 		b.err = err
+	}
+	if b.route != nil && b.route.err == nil {
+		b.route.err = err
 	}
 }
 
@@ -57,12 +71,20 @@ func (b *RouteBuilder) From(uri string) *RouteBuilder {
 
 // Process adds a processor to the current container.
 func (b *RouteBuilder) Process(processor Processor) *RouteBuilder {
+	if isNilValue(processor) {
+		b.recordErr(fmt.Errorf("Process: processor must not be nil"))
+		return b
+	}
 	b.container.AddProcessor(processor)
 	return b
 }
 
 // ProcessRef adds a processor looked up by name from the registry.
 func (b *RouteBuilder) ProcessRef(name string) *RouteBuilder {
+	if b.context == nil {
+		b.recordErr(fmt.Errorf("ProcessRef: CamelContext must not be nil"))
+		return b
+	}
 	return b.ProcessFunc(func(exchange *Exchange) error {
 		val, exists := b.context.GetComponentRegistry().Lookup(name)
 		if !exists {
@@ -78,6 +100,10 @@ func (b *RouteBuilder) ProcessRef(name string) *RouteBuilder {
 
 // ProcessFunc adds a processing function to the current container.
 func (b *RouteBuilder) ProcessFunc(f func(*Exchange) error) *RouteBuilder {
+	if f == nil {
+		b.recordErr(fmt.Errorf("ProcessFunc: function must not be nil"))
+		return b
+	}
 	b.container.AddProcessor(ProcessorFunc(f))
 	return b
 }
@@ -102,6 +128,10 @@ func (b *RouteBuilder) SetHeaders(headers map[string]any) *RouteBuilder {
 
 // SetHeadersFunc sets multiple headers via a function.
 func (b *RouteBuilder) SetHeadersFunc(f func(*Exchange) (map[string]any, error)) *RouteBuilder {
+	if f == nil {
+		b.recordErr(fmt.Errorf("SetHeadersFunc: function must not be nil"))
+		return b
+	}
 	b.container.AddProcessor(setHeadersFuncProcessor(f))
 	return b
 }
@@ -114,6 +144,10 @@ func (b *RouteBuilder) SetProperty(key string, value any) *RouteBuilder {
 
 // SetPropertyFunc sets a property on the exchange via a function.
 func (b *RouteBuilder) SetPropertyFunc(key string, f func(*Exchange) (any, error)) *RouteBuilder {
+	if f == nil {
+		b.recordErr(fmt.Errorf("SetPropertyFunc: function must not be nil"))
+		return b
+	}
 	b.container.AddProcessor(setPropertyFuncProcessor(key, f))
 	return b
 }
@@ -166,25 +200,29 @@ func (b *RouteBuilder) Transacted() *RouteBuilder {
 
 // Aggregate adds an Aggregator processor to the current container.
 func (b *RouteBuilder) Aggregate(aggregator *Aggregator) *RouteBuilder {
+	if aggregator == nil {
+		b.recordErr(fmt.Errorf("Aggregate: aggregator must not be nil"))
+		return b
+	}
 	b.container.AddProcessor(aggregator)
 	return b
 }
 
 // Log adds a processor that logs the message (structured).
 func (b *RouteBuilder) Log(message string) *RouteBuilder {
-	b.container.AddProcessor(logProcessor(message, b.route.ID))
+	b.container.AddProcessor(logProcessor(message, b.route))
 	return b
 }
 
 // LogBody adds a processor that logs the message body (structured).
 func (b *RouteBuilder) LogBody(message string) *RouteBuilder {
-	b.container.AddProcessor(logBodyProcessor(message, b.route.ID))
+	b.container.AddProcessor(logBodyProcessor(message, b.route))
 	return b
 }
 
 // LogHeaders adds a processor that logs the message headers (structured).
 func (b *RouteBuilder) LogHeaders(message string) *RouteBuilder {
-	b.container.AddProcessor(logHeadersProcessor(message, b.route.ID))
+	b.container.AddProcessor(logHeadersProcessor(message, b.route))
 	return b
 }
 
@@ -201,11 +239,11 @@ func (b *RouteBuilder) LogSimple(expression string) *RouteBuilder {
 			LogError("Error evaluating log expression",
 				"error", err,
 				"expression", expression,
-				"route_id", b.route.ID,
+				"route_id", b.route.getID(),
 			)
 			return nil // Don't fail the exchange just because logging failed
 		}
-		LogInfo("LogSimple", "message", result, "route_id", b.route.ID)
+		LogInfo("LogSimple", "message", result, "route_id", b.route.getID())
 		return nil
 	})
 }
@@ -215,6 +253,10 @@ func (b *RouteBuilder) LogSimple(expression string) *RouteBuilder {
 // metrics or tracing (see the observability/prometheus and observability/otel
 // modules).
 func (b *RouteBuilder) Intercept(interceptor RouteInterceptor) *RouteBuilder {
+	if interceptor == nil {
+		b.recordErr(fmt.Errorf("Intercept: interceptor must not be nil"))
+		return b
+	}
 	b.route.Intercept(interceptor)
 	return b
 }
@@ -320,12 +362,29 @@ func (b *RouteBuilder) OnException(targets ...any) *OnExceptionDefinition {
 // Build finalizes route construction.
 // Returns the route or an error accumulated during DSL construction,
 // including From() endpoint resolution failures stored on the route.
+// On failure, the broken route is detached from its CamelContext.
 func (b *RouteBuilder) Build() (*Route, error) {
-	if b.err != nil {
-		return nil, b.err
+	if b == nil {
+		return nil, fmt.Errorf("route builder is nil")
 	}
-	if b.route.err != nil {
-		return nil, b.route.err
+	if b.route == nil {
+		if b.err != nil {
+			return nil, b.err
+		}
+		return nil, fmt.Errorf("route builder has nil route")
+	}
+	err := b.err
+	if err == nil {
+		err = b.route.err
+	}
+	if err != nil {
+		if b.route.err == nil {
+			b.route.err = err
+		}
+		if b.context != nil {
+			_ = b.context.RemoveRoute(b.route)
+		}
+		return nil, err
 	}
 	return b.route, nil
 }
@@ -359,6 +418,10 @@ func (b *RouteBuilder) SimpleSetHeader(headerName string, expression string) *Ro
 
 // Marshal adds a dataformat marshal step to the current route.
 func (b *RouteBuilder) Marshal(dataFormat DataFormat) *RouteBuilder {
+	if isNilValue(dataFormat) {
+		b.recordErr(fmt.Errorf("Marshal: dataFormat must not be nil"))
+		return b
+	}
 	b.container.AddProcessor(&MarshalProcessor{DataFormat: dataFormat})
 	return b
 }
@@ -366,6 +429,10 @@ func (b *RouteBuilder) Marshal(dataFormat DataFormat) *RouteBuilder {
 // Transform adds a Transform/Content Filter EIP step.
 // The transformFn function takes the current exchange and returns a new body.
 func (b *RouteBuilder) Transform(transformFn func(*Exchange) (any, error)) *RouteBuilder {
+	if transformFn == nil {
+		b.recordErr(fmt.Errorf("Transform: transform function must not be nil"))
+		return b
+	}
 	b.container.AddProcessor(NewTransformer(transformFn))
 	return b
 }
@@ -383,6 +450,10 @@ func (b *RouteBuilder) TransformSimple(expression string) *RouteBuilder {
 
 // Unmarshal adds a dataformat unmarshal step to the current route.
 func (b *RouteBuilder) Unmarshal(dataFormat DataFormat) *RouteBuilder {
+	if isNilValue(dataFormat) {
+		b.recordErr(fmt.Errorf("Unmarshal: dataFormat must not be nil"))
+		return b
+	}
 	b.container.AddProcessor(&UnmarshalProcessor{DataFormat: dataFormat})
 	return b
 }
@@ -420,6 +491,10 @@ func (b *RouteBuilder) Stop() *RouteBuilder {
 func (b *RouteBuilder) Filter(expression any) *RouteBuilder {
 	switch expr := expression.(type) {
 	case func(*Exchange) (bool, error):
+		if expr == nil {
+			b.recordErr(fmt.Errorf("Filter: predicate function must not be nil"))
+			return b
+		}
 		b.container.AddProcessor(NewMessageFilter(expr))
 	case string:
 		f, err := NewSimpleMessageFilter(expr)
@@ -447,8 +522,16 @@ func (b *RouteBuilder) Filter(expression any) *RouteBuilder {
 //	    To("direct:next").
 //	    Build()
 func (b *RouteBuilder) IdempotentConsumer(expression any, repo IdempotentRepository) *RouteBuilder {
+	if isNilValue(repo) {
+		b.recordErr(fmt.Errorf("IdempotentConsumer: repository must not be nil"))
+		return b
+	}
 	switch expr := expression.(type) {
 	case func(*Exchange) (string, error):
+		if expr == nil {
+			b.recordErr(fmt.Errorf("IdempotentConsumer: expression function must not be nil"))
+			return b
+		}
 		b.container.AddProcessor(NewIdempotentConsumer(expr, repo))
 	case string:
 		p, err := NewSimpleIdempotentConsumer(expr, repo)
@@ -660,6 +743,10 @@ func (b *RouteBuilder) RoutingSlip(expression any) *RouteBuilder {
 			rs.SetStaticURIs(expr)
 		}
 	case func(*Exchange) ([]string, error):
+		if expr == nil {
+			b.recordErr(fmt.Errorf("RoutingSlip: URI function must not be nil"))
+			return b
+		}
 		rs.SetURIFunc(expr)
 	default:
 		b.recordErr(fmt.Errorf("unsupported RoutingSlip expression type: %T", expression))

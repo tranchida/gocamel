@@ -247,3 +247,28 @@ func TestMockEndpoint_MulticastParallel(t *testing.T) {
 	assert.NoError(t, a.Wait(time.Second))
 	assert.NoError(t, b.Wait(time.Second))
 }
+
+func TestMockEndpoint_ExpectedMessageCountWakesWait(t *testing.T) {
+	ctx := NewCamelContext()
+	mock, err := ctx.GetMockEndpoint("mock:wake")
+	require.NoError(t, err)
+	mock.ExpectedMessageCount(5)
+	sendToMock(t, ctx, "mock:wake", "one", nil)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mock.Wait(5 * time.Second)
+	}()
+
+	// Give the waiter goroutine a brief moment to block on e.changed,
+	// then lower ExpectedMessageCount to the already-received count.
+	time.Sleep(20 * time.Millisecond)
+	mock.ExpectedMessageCount(1)
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Wait did not wake when ExpectedMessageCount was lowered")
+	}
+}

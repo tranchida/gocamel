@@ -114,6 +114,10 @@ func (b *RouteBuilder) DynamicRouter(expression any) *RouteBuilder {
 
 	switch expr := expression.(type) {
 	case func(*Exchange) (string, error):
+		if expr == nil {
+			b.recordErr(fmt.Errorf("DynamicRouter: control function must not be nil"))
+			return b
+		}
 		dr = NewDynamicRouter(b.context, expr)
 	case string:
 		if _, err := ParseSimpleTemplate(expr); err != nil {
