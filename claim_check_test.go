@@ -167,4 +167,22 @@ func TestMemoryClaimCheckRepository_BoundedCapacity(t *testing.T) {
 	_, ok3, _ = repo.Lookup(ctx, "k3")
 	assert.False(t, ok1)
 	assert.True(t, ok3)
+
+	// Inserting at capacity 1 after SetMaxSize(1) must evict k3 and retain only k4.
+	require.NoError(t, repo.Set(ctx, "k4", "v4"))
+	_, ok3, _ = repo.Lookup(ctx, "k3")
+	_, ok4, _ := repo.Lookup(ctx, "k4")
+	assert.False(t, ok3, "k3 must be evicted when inserting k4 at capacity 1")
+	assert.True(t, ok4)
+
+	// Direct WithCapacity(1) must also cap at 1 entry across Add/Set.
+	capOne := NewMemoryClaimCheckRepositoryWithCapacity(1)
+	keyA, err := capOne.Add(ctx, "va")
+	require.NoError(t, err)
+	keyB, err := capOne.Add(ctx, "vb")
+	require.NoError(t, err)
+	_, okA, _ := capOne.Lookup(ctx, keyA)
+	_, okB, _ := capOne.Lookup(ctx, keyB)
+	assert.False(t, okA, "WithCapacity(1) must evict first entry when second is added")
+	assert.True(t, okB)
 }

@@ -249,4 +249,26 @@ func TestMemoryIdempotentRepository_BoundedCapacity(t *testing.T) {
 	hasK3, _ = repo.Contains(ctx, "k3")
 	assert.False(t, hasK1)
 	assert.True(t, hasK3)
+
+	// Inserting at capacity 1 after SetMaxSize(1) must evict k3 and retain only k4.
+	added, err = repo.Add(ctx, "k4")
+	require.NoError(t, err)
+	assert.True(t, added)
+	hasK3, _ = repo.Contains(ctx, "k3")
+	hasK4, _ := repo.Contains(ctx, "k4")
+	assert.False(t, hasK3, "k3 must be evicted when inserting k4 at capacity 1")
+	assert.True(t, hasK4)
+
+	// Direct WithCapacity(1) must also cap at 1 entry across consecutive inserts.
+	capOne := NewMemoryIdempotentRepositoryWithCapacity(1)
+	added, err = capOne.Add(ctx, "a")
+	require.NoError(t, err)
+	assert.True(t, added)
+	added, err = capOne.Add(ctx, "b")
+	require.NoError(t, err)
+	assert.True(t, added)
+	hasA, _ := capOne.Contains(ctx, "a")
+	hasB, _ := capOne.Contains(ctx, "b")
+	assert.False(t, hasA, "WithCapacity(1) must evict a when b is added")
+	assert.True(t, hasB)
 }

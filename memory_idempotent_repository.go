@@ -47,12 +47,14 @@ func (r *MemoryIdempotentRepository) SetMaxSize(n int) *MemoryIdempotentReposito
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.maxSize = n
-	r.evictOverflowLocked(n)
+	if r.maxSize > 0 {
+		r.evictOverflowLocked(r.maxSize)
+	}
 	return r
 }
 
 func (r *MemoryIdempotentRepository) evictOverflowLocked(limit int) {
-	if limit <= 0 || r.order == nil {
+	if limit < 0 || r.order == nil {
 		return
 	}
 	for len(r.store) > limit && r.order.Len() > 0 {
