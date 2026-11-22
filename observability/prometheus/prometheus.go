@@ -54,24 +54,32 @@ func Metrics() gocamel.RouteInterceptor {
 }
 
 // MetricsWith is like Metrics but registers the metric families on the given
-// prometheus.Registerer instead of the default registry. Use it to embed the
-// interceptor in an application that already owns a registry (custom
-// collectors, push gateway setups) or to isolate test registrations.
+// prometheus.Registerer instead of the default registry. If reg is nil,
+// prometheus.DefaultRegisterer is used. Use it to embed the interceptor in an
+// application that already owns a registry (custom collectors, push gateway
+// setups) or to isolate test registrations.
 //
 // Calls using the same registry reuse its compatible metric families; each
 // route still gets its own route_id label value.
 func MetricsWith(reg prometheus.Registerer) gocamel.RouteInterceptor {
+	if reg == nil {
+		reg = prometheus.DefaultRegisterer
+	}
 	families := newMetricFamilies(reg)
 
 	return func(route *gocamel.Route, next func(*gocamel.Exchange) error) func(*gocamel.Exchange) error {
 		return func(exchange *gocamel.Exchange) error {
+			routeID := ""
+			if route != nil {
+				routeID = route.ID
+			}
 			start := time.Now()
-			families.exchangesInFlight.WithLabelValues(route.ID).Inc()
-			defer families.exchangesInFlight.WithLabelValues(route.ID).Dec()
+			families.exchangesInFlight.WithLabelValues(routeID).Inc()
+			defer families.exchangesInFlight.WithLabelValues(routeID).Dec()
 
 			err := next(exchange)
 
-			families.exchangesDuration.WithLabelValues(route.ID).Observe(time.Since(start).Seconds())
+			families.exchangesDuration.WithLabelValues(routeID).Observe(time.Since(start).Seconds())
 
 			status := "success"
 			// ErrStopRouting is a control signal, not a failure — and it may
@@ -80,7 +88,7 @@ func MetricsWith(reg prometheus.Registerer) gocamel.RouteInterceptor {
 			if err != nil && !errors.Is(err, gocamel.ErrStopRouting) {
 				status = "failure"
 			}
-			families.exchangesTotal.WithLabelValues(route.ID, status).Inc()
+			families.exchangesTotal.WithLabelValues(routeID, status).Inc()
 			return err
 		}
 	}

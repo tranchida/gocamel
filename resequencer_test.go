@@ -131,3 +131,108 @@ func TestResequencer_BufferCapacity(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "buffer full")
 }
+
+func TestResequencer_RaceAndFullBufferAcceptsExpectedNextSeqAndRestart(t *testing.T) {
+	t.Run("concurrent outdated and valid messages under race", func(t *testing.T) {
+		r := NewResequencer(func(e *Exchange) (int64, error) {
+			v, _ := e.GetHeaderAsInt("seq")
+			return int64(v), nil
+		}, 10, 50*time.Millisecond)
+		var mu sync.Mutex
+		var delivered []int64
+		r.SetProcessor(ProcessorFunc(func(e *Exchange) error {
+			v, _ := e.GetHeaderAsInt("seq")
+			mu.Lock()
+			delivered = append(delivered, int64(v))
+			mu.Unlock()
+			return nil
+		}))
+		t.Cleanup(func() { _ = r.Stop() })
+
+		var wg sync.WaitGroup
+		for g := 0; g < 4; g++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for i := 0; i < 30; i++ {
+					ex := NewExchange(context.Background())
+					ex.SetHeader("seq", (i%12)+id) // includes outdated <10 and valid >=10
+					_ = r.Process(ex)
+				}
+			}(g)
+		}
+		wg.Wait()
+	})
+
+	t.Run("full buffer accepts expected nextSeq", func(t *testing.T) {
+		r := NewResequencer(func(e *Exchange) (int64, error) {
+			v, _ := e.GetHeaderAsInt("seq")
+			return int64(v), nil
+		}, 1, time.Second)
+		r.SetCapacity(2)
+		var mu sync.Mutex
+		var delivered []int
+		r.SetProcessor(ProcessorFunc(func(e *Exchange) error {
+			v, _ := e.GetHeaderAsInt("seq")
+			mu.Lock()
+			delivered = append(delivered, v)
+			mu.Unlock()
+			return nil
+		}))
+		t.Cleanup(func() { _ = r.Stop() })
+
+		send := func(seq int) error {
+			ex := NewExchange(context.Background())
+			ex.SetHeader("seq", seq)
+			return r.Process(ex)
+		}
+
+		require.ErrorIs(t, send(2), ErrStopRouting)
+		require.ErrorIs(t, send(3), ErrStopRouting)
+		// Buffer is full (2/2), but seq=1 IS nextSeq so accepting it drains [1,2,3].
+		require.ErrorIs(t, send(1), ErrStopRouting)
+
+		mu.Lock()
+		assert.Equal(t, []int{1, 2, 3}, delivered)
+		mu.Unlock()
+	})
+
+	t.Run("route restart delivers buffered entries under new live context", func(t *testing.T) {
+		c := NewCamelContext()
+		delivered := make(chan context.Context, 2)
+		route, err := c.CreateRouteBuilder().
+			From("direct:reseq-restart").
+			Resequence("${header.seq}", 1).
+			Timeout(40 * time.Millisecond).
+			ProcessFunc(func(e *Exchange) error {
+				delivered <- e.Context
+				return nil
+			}).
+			End().
+			Build()
+		require.NoError(t, err)
+
+		ctx1, cancel1 := context.WithCancel(context.Background())
+		require.NoError(t, route.Start(ctx1))
+
+		ex2 := NewExchange(context.Background())
+		ex2.In.SetHeader("seq", 2)
+		require.ErrorIs(t, route.Process(ex2), ErrStopRouting)
+
+		require.NoError(t, route.Stop())
+		cancel1()
+
+		ctx2, cancel2 := context.WithCancel(context.Background())
+		defer cancel2()
+		require.NoError(t, route.Start(ctx2))
+		t.Cleanup(func() { _ = route.Stop() })
+
+		select {
+		case gotCtx := <-delivered:
+			require.NotNil(t, gotCtx)
+			assert.NoError(t, gotCtx.Err(), "delivered context after restart must be the new live context")
+		case <-time.After(time.Second):
+			t.Fatal("buffered entry was not delivered after route restart")
+		}
+	})
+}

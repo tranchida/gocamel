@@ -125,3 +125,29 @@ func TestValidate_BuildTimeValidation(t *testing.T) {
 	vp := &ValidateProcessor{predicate: nil}
 	assert.Error(t, vp.Validate())
 }
+
+type failingValidationExpr struct{ err error }
+
+func (f failingValidationExpr) Evaluate(*Exchange) (any, error)            { return nil, f.err }
+func (f failingValidationExpr) EvaluateAsString(*Exchange) (string, error) { return "", f.err }
+
+func TestValidateProcessor_TypedNilUnsupportedAndWrappedEvalError(t *testing.T) {
+	var typedNilFn func(*Exchange) bool
+	var typedNilExpr Expression = (*failingValidationExpr)(nil)
+
+	for _, pred := range []any{typedNilFn, typedNilExpr, 42} {
+		vp := NewValidateProcessor(pred)
+		require.Error(t, vp.Validate(), "Validate must reject %T", pred)
+		require.NotPanics(t, func() {
+			err := vp.Process(NewExchange(context.Background()))
+			require.Error(t, err)
+		})
+	}
+
+	sentinel := errors.New("expression failed")
+	vp := NewValidateProcessor(failingValidationExpr{err: sentinel})
+	err := vp.Process(NewExchange(context.Background()))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrValidationFailed)
+	assert.ErrorIs(t, err, sentinel, "evaluation error must be wrapped with %%w")
+}

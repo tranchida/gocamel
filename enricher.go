@@ -46,7 +46,10 @@ func NewContentEnricher(camelContext *CamelContext, uri string, strategy Aggrega
 }
 
 // Process implements the Processor interface.
-func (e *ContentEnricher) Process(exchange *Exchange) error {
+func (e *ContentEnricher) Process(exchange *Exchange) (resultErr error) {
+	if e == nil || e.context == nil {
+		return fmt.Errorf("enrich: CamelContext must not be nil")
+	}
 	// Send a copy so the enrichment endpoint cannot corrupt the original.
 	enrichExchange := exchange.Copy()
 	enrichExchange.Out = NewMessage()
@@ -56,11 +59,14 @@ func (e *ContentEnricher) Process(exchange *Exchange) error {
 		_ = CompleteExchange(enrichExchange, err)
 		return fmt.Errorf("enrich: failed to get producer for %q: %w", RedactURI(e.uri), err)
 	}
-	err = producer.Send(enrichExchange)
-	release()
-	if err != nil {
-		_ = CompleteExchange(enrichExchange, err)
-		return fmt.Errorf("enrich: failed to send to %q: %w", RedactURI(e.uri), err)
+	defer release()
+	defer func() {
+		_ = CompleteExchange(enrichExchange, resultErr)
+	}()
+
+	if err := safeProcess(func() error { return producer.Send(enrichExchange) }); err != nil {
+		resultErr = fmt.Errorf("enrich: failed to send to %q: %w", RedactURI(e.uri), err)
+		return resultErr
 	}
 
 	// The enrichment response is in enrichExchange.Out (or In if Out is empty).
@@ -68,7 +74,14 @@ func (e *ContentEnricher) Process(exchange *Exchange) error {
 	responseExchange.PropagateOutToIn()
 
 	if e.strategy != nil {
-		merged := e.strategy.Aggregate(exchange, responseExchange)
+		var merged *Exchange
+		if err := safeProcess(func() error {
+			merged = e.strategy.Aggregate(exchange, responseExchange)
+			return nil
+		}); err != nil {
+			resultErr = err
+			return resultErr
+		}
 		if merged != nil {
 			exchange.In = merged.In
 			exchange.Out = merged.Out
@@ -81,6 +94,5 @@ func (e *ContentEnricher) Process(exchange *Exchange) error {
 		}
 	}
 
-	_ = CompleteExchange(enrichExchange, nil)
 	return nil
 }

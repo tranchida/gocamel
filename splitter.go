@@ -55,8 +55,30 @@ func (s *Splitter) SetMaxConcurrency(n int) *Splitter {
 	return s
 }
 
+// Validate implements the Validator interface for build-time validation.
+func (s *Splitter) Validate() error {
+	if s == nil {
+		return fmt.Errorf("splitter: processor is nil")
+	}
+	if s.Expression == nil {
+		return fmt.Errorf("splitter: expression must not be nil")
+	}
+	for i, p := range s.processors {
+		if isNilValue(p) {
+			return fmt.Errorf("splitter: processor[%d] must not be nil", i)
+		}
+	}
+	return nil
+}
+
 // Process executes the split on the provided exchange
 func (s *Splitter) Process(exchange *Exchange) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	if exchange == nil {
+		return fmt.Errorf("splitter: exchange must not be nil")
+	}
 	propagateOutToInAndReset(exchange)
 	parts, err := s.Expression(exchange)
 	if err != nil {
@@ -105,6 +127,10 @@ func (s *Splitter) Process(exchange *Exchange) error {
 		// Fallback to reflection
 		v := reflect.ValueOf(parts)
 		if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+			isList = false
+		} else if v.Type().Elem().Kind() == reflect.Uint8 {
+			// Named byte slice/array types (e.g. json.RawMessage) are binary
+			// payloads just like []byte and must not be split byte-by-byte.
 			isList = false
 		} else {
 			length := v.Len()

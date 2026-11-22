@@ -2,11 +2,13 @@ package gocamel
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSplit_SimpleSlice(t *testing.T) {
@@ -198,4 +200,30 @@ func TestSplit_ParallelProcessing(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.ElementsMatch(t, []string{"a", "b", "c"}, processed)
+}
+
+func TestSplit_DoesNotSplitNamedByteSliceAndImplementsValidator(t *testing.T) {
+	t.Run("json.RawMessage is treated as single indivisible part", func(t *testing.T) {
+		var parts []any
+		raw := json.RawMessage(`{"a":1}`)
+		s := NewSplitter(func(*Exchange) (any, error) { return raw, nil })
+		s.AddProcessor(ProcessorFunc(func(e *Exchange) error {
+			parts = append(parts, e.GetIn().GetBody())
+			return nil
+		}))
+
+		require.NoError(t, s.Process(NewExchange(context.Background())))
+		require.Len(t, parts, 1, "json.RawMessage must not be split byte-by-byte")
+		assert.Equal(t, raw, parts[0])
+	})
+
+	t.Run("implements Validator and guards nil expression", func(t *testing.T) {
+		s := NewSplitter(nil)
+		v, ok := any(s).(Validator)
+		require.True(t, ok, "Splitter must implement Validator")
+		require.Error(t, v.Validate())
+		require.NotPanics(t, func() {
+			require.Error(t, s.Process(NewExchange(context.Background())))
+		})
+	})
 }

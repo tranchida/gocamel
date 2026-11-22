@@ -29,21 +29,31 @@ func NewValidateProcessor(predicate any) *ValidateProcessor {
 
 // Validate implements the Validator interface for build-time validation.
 func (vp *ValidateProcessor) Validate() error {
-	if vp == nil || vp.predicate == nil {
+	if vp == nil || isNilValue(vp.predicate) {
 		return fmt.Errorf("validate: predicate is nil")
 	}
-	if exprStr, ok := vp.predicate.(string); ok {
-		if _, err := ParseSimpleTemplate(exprStr); err != nil {
-			return fmt.Errorf("validate: invalid simple expression %q: %w", exprStr, err)
+	switch p := vp.predicate.(type) {
+	case func(*Exchange) bool:
+		return nil
+	case Expression:
+		return nil
+	case string:
+		if _, err := ParseSimpleTemplate(p); err != nil {
+			return fmt.Errorf("validate: invalid simple expression %q: %w", p, err)
 		}
+		return nil
+	default:
+		return fmt.Errorf("validate: unsupported predicate type %T", vp.predicate)
 	}
-	return nil
 }
 
 // Process implements Processor.
 func (vp *ValidateProcessor) Process(exchange *Exchange) error {
-	if vp == nil || vp.predicate == nil {
+	if vp == nil || isNilValue(vp.predicate) {
 		return fmt.Errorf("validate: predicate is nil")
+	}
+	if exchange == nil {
+		return fmt.Errorf("validate: exchange is nil")
 	}
 
 	var valid bool
@@ -79,7 +89,7 @@ func (vp *ValidateProcessor) Process(exchange *Exchange) error {
 	}
 
 	if evalErr != nil {
-		return fmt.Errorf("%w: evaluation error: %v", ErrValidationFailed, evalErr)
+		return fmt.Errorf("%w: evaluation error: %w", ErrValidationFailed, evalErr)
 	}
 
 	if !valid {

@@ -518,7 +518,7 @@ func (r *Route) Start(ctx context.Context) error {
 		switch started := p.(type) {
 		case *WireTap:
 			if started != nil {
-				started.Start()
+				started.start(ctx)
 			}
 		case *Resequencer:
 			if started != nil {

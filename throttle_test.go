@@ -127,3 +127,24 @@ func TestRouteBuilder_Throttle(t *testing.T) {
 	assert.Equal(t, int64(4), count.Load())
 	assert.GreaterOrEqual(t, time.Since(start), 80*time.Millisecond)
 }
+
+func TestThrottler_ImplementsValidator(t *testing.T) {
+	for _, th := range []*Throttler{
+		nil,
+		NewThrottler(0, time.Second),
+		NewThrottler(1, 0),
+		NewThrottler(-1, -time.Second),
+	} {
+		v, ok := any(th).(Validator)
+		require.True(t, ok, "Throttler must implement Validator")
+		require.Error(t, v.Validate())
+	}
+
+	valid := NewThrottler(5, time.Second)
+	require.NoError(t, any(valid).(Validator).Validate())
+
+	c := NewCamelContext()
+	r, err := c.CreateRouteBuilder().From("direct:th-invalid").Throttle(0, time.Second).Build()
+	require.NoError(t, err)
+	require.Error(t, r.Validate())
+}

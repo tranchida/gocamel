@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestWireTap_Basic verifies that the wiretap delivers a copy of the exchange
@@ -444,4 +445,122 @@ func TestWireTap_ChainedInSplit(t *testing.T) {
 		defer mu.Unlock()
 		return tapCount == 3
 	}, time.Second, 10*time.Millisecond, "expected 3 taps for 3 split parts")
+}
+
+func TestWireTap_GracefulStopCancelsStalledTap(t *testing.T) {
+	camel := NewCamelContext()
+	tapStarted := make(chan struct{})
+	tapCancelled := make(chan struct{})
+
+	_, err := camel.CreateRouteBuilder().
+		From("direct:stalled-tap").
+		ProcessFunc(func(e *Exchange) error {
+			close(tapStarted)
+			<-e.Context.Done()
+			close(tapCancelled)
+			return e.Context.Err()
+		}).
+		Build()
+	require.NoError(t, err)
+
+	mainRoute, err := camel.CreateRouteBuilder().
+		From("direct:main-stalled").
+		WireTap("direct:stalled-tap").
+		SetBody("main-done").
+		Build()
+	require.NoError(t, err)
+
+	require.NoError(t, camel.Start())
+	t.Cleanup(func() { _ = camel.Stop() })
+
+	require.NoError(t, mainRoute.Process(NewExchange(context.Background())))
+	<-tapStarted
+
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- mainRoute.Stop()
+	}()
+
+	select {
+	case err := <-stopDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("route.Stop() hung waiting for stalled WireTap")
+	}
+
+	select {
+	case <-tapCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("stalled WireTap did not observe context cancellation on Stop()")
+	}
+}
+
+func TestWireTap_BoundsConcurrency(t *testing.T) {
+	camel := NewCamelContext()
+	var active atomic.Int32
+	var maxActive atomic.Int32
+	var doneCount atomic.Int32
+
+	_, err := camel.CreateRouteBuilder().
+		From("direct:bounded-tap").
+		ProcessFunc(func(e *Exchange) error {
+			cur := active.Add(1)
+			for {
+				prev := maxActive.Load()
+				if cur <= prev || maxActive.CompareAndSwap(prev, cur) {
+					break
+				}
+			}
+			// time.Sleep is intentional: holds concurrency slots briefly to measure peak concurrency.
+			time.Sleep(15 * time.Millisecond)
+			active.Add(-1)
+			doneCount.Add(1)
+			return nil
+		}).
+		Build()
+	require.NoError(t, err)
+
+	mainRoute, err := camel.CreateRouteBuilder().
+		From("direct:main-bounded").
+		WireTap("direct:bounded-tap").
+		Build()
+	require.NoError(t, err)
+
+	require.NoError(t, camel.Start())
+	t.Cleanup(func() { _ = camel.Stop() })
+
+	const total = 30
+	var wg sync.WaitGroup
+	for i := 0; i < total; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = mainRoute.Process(NewExchange(context.Background()))
+		}()
+	}
+	wg.Wait()
+
+	assert.Eventually(t, func() bool {
+		return doneCount.Load() == total
+	}, 3*time.Second, 10*time.Millisecond)
+	assert.LessOrEqual(t, maxActive.Load(), int32(DefaultMaxConcurrency),
+		"WireTap must bound concurrent taps to DefaultMaxConcurrency")
+
+	// Configurable concurrency via SetMaxConcurrency
+	wt := NewWireTap(camel, "direct:bounded-tap").SetMaxConcurrency(2)
+	maxActive.Store(0)
+	doneCount.Store(0)
+	wt.Start()
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = wt.Process(NewExchange(context.Background()))
+		}()
+	}
+	wg.Wait()
+	require.NoError(t, wt.Stop())
+	assert.Equal(t, int32(10), doneCount.Load())
+	assert.LessOrEqual(t, maxActive.Load(), int32(2),
+		"WireTap.SetMaxConcurrency(2) must cap concurrent taps at 2")
 }

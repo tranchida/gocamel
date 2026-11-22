@@ -96,10 +96,36 @@ func (l *LoopProcessor) childProcessors() []Processor {
 	return l.processors
 }
 
+// Validate implements the Validator interface for build-time validation.
+func (l *LoopProcessor) Validate() error {
+	if l == nil {
+		return fmt.Errorf("loop: processor is nil")
+	}
+	if l.expression == nil {
+		return fmt.Errorf("loop: expression must not be nil")
+	}
+	if l.maxIterations < 0 {
+		return fmt.Errorf("loop: maxIterations must not be negative")
+	}
+	for i, p := range l.processors {
+		if isNilValue(p) {
+			return fmt.Errorf("loop: processor[%d] must not be nil", i)
+		}
+	}
+	return nil
+}
+
 // Process runs the loop pipeline for the resolved number of times.
 // In accordance with standard Camel Loop EIP, it routes the same exchange
 // sequentially through the iterations (allowing updates to body/headers to carry over).
 func (l *LoopProcessor) Process(exchange *Exchange) error {
+	if err := l.Validate(); err != nil {
+		return err
+	}
+	if exchange == nil {
+		return fmt.Errorf("loop: exchange must not be nil")
+	}
+
 	count, err := l.expression(exchange)
 	if err != nil {
 		return fmt.Errorf("loop: expression error: %w", err)
@@ -117,7 +143,24 @@ func (l *LoopProcessor) Process(exchange *Exchange) error {
 		return fmt.Errorf("loop: iteration count %d exceeds max %d", count, limit)
 	}
 
+	// Save and restore any enclosing Loop properties so nested loops do not
+	// clobber the outer loop's CamelLoop* state or leak properties afterward.
+	prevIdx, hadIdx := exchange.GetProperty(CamelLoopIndex)
+	prevSize, hadSize := exchange.GetProperty(CamelLoopSize)
+	prevComplete, hadComplete := exchange.GetProperty(CamelLoopComplete)
+	defer func() {
+		restoreLoopProperty(exchange, CamelLoopIndex, prevIdx, hadIdx)
+		restoreLoopProperty(exchange, CamelLoopSize, prevSize, hadSize)
+		restoreLoopProperty(exchange, CamelLoopComplete, prevComplete, hadComplete)
+	}()
+
 	for i := 0; i < count; i++ {
+		if exchange.Context != nil {
+			if err := exchange.Context.Err(); err != nil {
+				return fmt.Errorf("loop: context cancelled: %w", err)
+			}
+		}
+
 		// Set loop state properties
 		exchange.SetProperty(CamelLoopIndex, i)
 		exchange.SetProperty(CamelLoopSize, count)
@@ -143,4 +186,12 @@ func (l *LoopProcessor) Process(exchange *Exchange) error {
 	}
 
 	return nil
+}
+
+func restoreLoopProperty(exchange *Exchange, key string, value any, had bool) {
+	if had {
+		exchange.SetProperty(key, value)
+		return
+	}
+	exchange.RemoveProperty(key)
 }

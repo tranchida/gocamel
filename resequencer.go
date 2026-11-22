@@ -55,20 +55,41 @@ func NewResequencer(expression func(*Exchange) (int64, error), nextSeq int64, ti
 // SetCapacity bounds how many out-of-order exchanges the resequencer retains.
 // 0 means unlimited (not recommended).
 func (r *Resequencer) SetCapacity(n int) *Resequencer {
+	r.mu.Lock()
 	r.capacity = n
+	r.mu.Unlock()
 	return r
 }
 
 // SetProcessor sets the processor to be executed when a message is ready.
 func (r *Resequencer) SetProcessor(p Processor) {
+	r.mu.Lock()
 	r.processor = p
+	r.mu.Unlock()
+}
+
+// Validate implements the Validator interface for build-time validation.
+func (r *Resequencer) Validate() error {
+	if r == nil {
+		return fmt.Errorf("resequencer: processor is nil")
+	}
+	if r.expression == nil {
+		return fmt.Errorf("resequencer: expression must not be nil")
+	}
+	return nil
 }
 
 // childProcessors exposes the nested processor so the route can wire
 // completion timeouts for aggregators nested inside this resequencer.
 func (r *Resequencer) childProcessors() []Processor {
-	if r.processor != nil {
-		return []Processor{r.processor}
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	proc := r.processor
+	r.mu.Unlock()
+	if proc != nil {
+		return []Processor{proc}
 	}
 	return nil
 }
@@ -83,6 +104,12 @@ func (r *Resequencer) childProcessors() []Processor {
 // can enqueue without deadlocking. A delivering flag ensures only one
 // goroutine emits at a time, preserving order.
 func (r *Resequencer) Process(exchange *Exchange) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	if exchange == nil {
+		return fmt.Errorf("resequencer: exchange must not be nil")
+	}
 	seq, err := r.expression(exchange)
 	if err != nil {
 		return fmt.Errorf("resequencer: failed to evaluate expression: %w", err)
@@ -98,22 +125,27 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 	r.stopped = false
 
 	if seq < r.nextSeq {
+		expected := r.nextSeq
 		r.mu.Unlock()
-		LogWarn("resequencer: received outdated sequence number", "seq", seq, "expected", r.nextSeq)
+		LogWarn("resequencer: received outdated sequence number", "seq", seq, "expected", expected)
 		return ErrStopRouting
 	}
 
-	for _, e := range r.buffer {
-		if e.seq == seq {
-			r.mu.Unlock()
-			LogWarn("resequencer: duplicate sequence number received", "seq", seq)
-			return ErrStopRouting
-		}
+	idx := sort.Search(len(r.buffer), func(i int) bool {
+		return r.buffer[i].seq >= seq
+	})
+	if idx < len(r.buffer) && r.buffer[idx].seq == seq {
+		r.mu.Unlock()
+		LogWarn("resequencer: duplicate sequence number received", "seq", seq)
+		return ErrStopRouting
 	}
 
-	if r.capacity > 0 && len(r.buffer) >= r.capacity {
+	// Allow seq == r.nextSeq even when buffer is at capacity because it
+	// immediately triggers delivery and drains the head of the buffer.
+	if r.capacity > 0 && len(r.buffer) >= r.capacity && seq != r.nextSeq {
+		capLimit := r.capacity
 		r.mu.Unlock()
-		return fmt.Errorf("resequencer: buffer full (%d); dropping seq %d", r.capacity, seq)
+		return fmt.Errorf("resequencer: buffer full (%d); dropping seq %d", capLimit, seq)
 	}
 
 	// A buffered exchange is delivered later, by another message or by the
@@ -122,13 +154,12 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 	// runs under the route's lifecycle instead.
 	buffered := exchange.DeepCopy()
 	buffered.Context = r.deliveryContext(exchange.Context)
-	r.buffer = append(r.buffer, &resequencerEntry{
+	r.buffer = append(r.buffer, nil)
+	copy(r.buffer[idx+1:], r.buffer[idx:])
+	r.buffer[idx] = &resequencerEntry{
 		seq:      seq,
 		exchange: buffered,
-	})
-	sort.Slice(r.buffer, func(i, j int) bool {
-		return r.buffer[i].seq < r.buffer[j].seq
-	})
+	}
 
 	var ready []*resequencerEntry
 	if !r.delivering {
@@ -147,12 +178,28 @@ func (r *Resequencer) Process(exchange *Exchange) error {
 	return r.deliver(ready, &seq)
 }
 
-// start records the context of the route that runs this resequencer. Called
-// by Route.Start.
+// start records the context of the route that runs this resequencer, clears
+// stopped state, and re-arms the completion timer for any buffered entries.
+// Called by Route.Start.
 func (r *Resequencer) start(ctx context.Context) {
 	r.mu.Lock()
 	r.lifecycleCtx = ctx
+	r.stopped = false
+	var ready []*resequencerEntry
+	if !r.delivering {
+		ready = r.takeReady()
+		if len(ready) > 0 {
+			r.delivering = true
+			r.timeoutWG.Add(1)
+		}
+	}
+	r.updateTimer()
 	r.mu.Unlock()
+	if len(ready) > 0 {
+		go func() {
+			_ = r.deliver(ready, nil)
+		}()
+	}
 }
 
 // deliveryContext returns the context a buffered exchange is delivered with:
@@ -172,11 +219,32 @@ func (r *Resequencer) takeReady() []*resequencerEntry {
 	if r.stopped {
 		return nil
 	}
-	var ready []*resequencerEntry
-	for len(r.buffer) > 0 && r.buffer[0].seq == r.nextSeq {
-		ready = append(ready, r.buffer[0])
-		r.buffer = r.buffer[1:]
+	n := 0
+	for n < len(r.buffer) && r.buffer[n].seq == r.nextSeq {
 		r.nextSeq++
+		n++
+	}
+	if n == 0 {
+		return nil
+	}
+	ready := make([]*resequencerEntry, n)
+	for i := 0; i < n; i++ {
+		entry := r.buffer[i]
+		// Refresh context at delivery time so entries buffered before a
+		// Stop/Start cycle deliver under the current live route context.
+		entry.exchange.Context = r.deliveryContext(entry.exchange.Context)
+		ready[i] = entry
+		r.buffer[i] = nil
+	}
+	if n == len(r.buffer) {
+		r.buffer = r.buffer[:0]
+	} else {
+		rem := len(r.buffer) - n
+		copy(r.buffer, r.buffer[n:])
+		for i := rem; i < len(r.buffer); i++ {
+			r.buffer[i] = nil
+		}
+		r.buffer = r.buffer[:rem]
 	}
 	return ready
 }
@@ -197,12 +265,15 @@ func (r *Resequencer) deliver(ready []*resequencerEntry, own *int64) error {
 	}()
 	var firstErr error
 	for {
+		r.mu.Lock()
+		proc := r.processor
+		r.mu.Unlock()
 		for _, entry := range ready {
-			if r.processor == nil {
+			if proc == nil {
 				_ = CompleteExchange(entry.exchange, nil)
 				continue
 			}
-			err := safeProcess(func() error { return r.processor.Process(entry.exchange) })
+			err := safeProcess(func() error { return proc.Process(entry.exchange) })
 			if err := CompleteExchange(entry.exchange, err); err != nil {
 				if own != nil && entry.seq == *own {
 					firstErr = err

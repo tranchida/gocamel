@@ -2,7 +2,11 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoopProcessor_Static(t *testing.T) {
@@ -196,4 +200,76 @@ func TestLoopProcessor_RejectsExcessiveIterations(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected loop to reject a count above maxIterations")
 	}
+}
+
+func TestLoopProcessor_NestedPropertiesContextCancelAndValidator(t *testing.T) {
+	t.Run("nested loop saves and restores outer CamelLoop properties", func(t *testing.T) {
+		ctx := NewCamelContext()
+		var outerAfterInner [][3]any
+
+		_, err := ctx.CreateRouteBuilder().
+			From("direct:inner-loop").
+			Loop(3).
+			ProcessFunc(func(*Exchange) error { return nil }).
+			End().
+			Build()
+		require.NoError(t, err)
+
+		_, err = ctx.CreateRouteBuilder().
+			From("direct:nested-loop").
+			Loop(2).
+			To("direct:inner-loop").
+			ProcessFunc(func(e *Exchange) error {
+				idx, _ := e.GetProperty(CamelLoopIndex)
+				size, _ := e.GetProperty(CamelLoopSize)
+				comp, _ := e.GetProperty(CamelLoopComplete)
+				outerAfterInner = append(outerAfterInner, [3]any{idx, size, comp})
+				return nil
+			}).
+			End().
+			Build()
+		require.NoError(t, err)
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+
+		ex := NewExchange(context.Background())
+		prod, err := ctx.GetProducer("direct:nested-loop")
+		require.NoError(t, err)
+		require.NoError(t, prod.Send(ex))
+
+		assert.Equal(t, [][3]any{
+			{0, 2, false},
+			{1, 2, true},
+		}, outerAfterInner)
+		_, hasIdx := ex.GetProperty(CamelLoopIndex)
+		assert.False(t, hasIdx, "loop properties must not leak after loop completes")
+	})
+
+	t.Run("aborts when exchange context is cancelled", func(t *testing.T) {
+		reqCtx, cancel := context.WithCancel(context.Background())
+		l := NewStaticLoopProcessor(100)
+		var ran int
+		l.AddProcessor(ProcessorFunc(func(*Exchange) error {
+			ran++
+			if ran == 2 {
+				cancel()
+			}
+			return nil
+		}))
+
+		err := l.Process(NewExchange(reqCtx))
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, context.Canceled))
+		assert.Equal(t, 2, ran)
+	})
+
+	t.Run("implements Validator and rejects nil expression", func(t *testing.T) {
+		l := NewLoopProcessor(nil)
+		v, ok := any(l).(Validator)
+		require.True(t, ok, "LoopProcessor must implement Validator")
+		require.Error(t, v.Validate())
+		require.NotPanics(t, func() {
+			require.Error(t, l.Process(NewExchange(context.Background())))
+		})
+	})
 }

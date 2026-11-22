@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,4 +92,63 @@ func TestContentEnricher_NoStrategy_ReplacesBody(t *testing.T) {
 	prod.Stop()
 
 	assert.Equal(t, "FROM_LOOKUP", got)
+}
+
+type enricherPanicStrategy struct{}
+
+func (enricherPanicStrategy) Aggregate(*Exchange, *Exchange) *Exchange {
+	panic("boom in enrich strategy")
+}
+
+type enricherSyncTracker struct {
+	completed atomic.Int32
+	failed    atomic.Int32
+}
+
+func (s *enricherSyncTracker) OnComplete(*Exchange) { s.completed.Add(1) }
+func (s *enricherSyncTracker) OnFailure(*Exchange)  { s.failed.Add(1) }
+
+func TestContentEnricher_ReleasesProducerAndCompletesAndRecoversStrategyPanic(t *testing.T) {
+	t.Run("releases producer and marks child failed on producer panic", func(t *testing.T) {
+		ctx := NewCamelContext()
+		ctx.SetProducerCacheSize(1)
+		comp := &panicTrackerComponent{}
+		ctx.AddComponent("track", comp)
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+
+		enricher := NewContentEnricher(ctx, "track:panic", nil)
+		err := ProcessSafely(enricher, NewExchange(context.Background()))
+		require.ErrorIs(t, err, ErrProcessorPanic)
+
+		require.NoError(t, ctx.sendToURI("track:other", NewExchange(context.Background())))
+		comp.mu.Lock()
+		panicProd := comp.producers["track:panic"]
+		comp.mu.Unlock()
+		require.NotNil(t, panicProd)
+		assert.Equal(t, int32(1), panicProd.stopped.Load(), "panicking producer must have been released and evicted")
+	})
+
+	t.Run("recovers strategy panic and completes child exchange as failure", func(t *testing.T) {
+		ctx := NewCamelContext()
+		tracker := &enricherSyncTracker{}
+		_, err := ctx.CreateRouteBuilder().
+			From("direct:enrich-ok").
+			ProcessFunc(func(e *Exchange) error {
+				e.AddSynchronization(tracker)
+				e.GetOut().SetBody("enriched")
+				return nil
+			}).
+			Build()
+		require.NoError(t, err)
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+
+		enricher := NewContentEnricher(ctx, "direct:enrich-ok", enricherPanicStrategy{})
+		// Call Process directly (not wrapped in ProcessSafely) to verify Enricher itself catches strategy panics.
+		err = enricher.Process(NewExchange(context.Background()))
+		require.ErrorIs(t, err, ErrProcessorPanic)
+		assert.Equal(t, int32(1), tracker.failed.Load(), "child exchange must complete with OnFailure when strategy panics")
+		assert.Equal(t, int32(0), tracker.completed.Load())
+	})
 }

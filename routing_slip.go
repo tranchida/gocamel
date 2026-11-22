@@ -89,6 +89,9 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 
 // Process executes the routing slip on the provided exchange.
 func (r *RoutingSlip) Process(exchange *Exchange) error {
+	if r == nil || r.context == nil {
+		return fmt.Errorf("routing slip: CamelContext must not be nil")
+	}
 	uris, err := r.resolveURIs(exchange)
 	if err != nil {
 		return err
@@ -103,26 +106,33 @@ func (r *RoutingSlip) Process(exchange *Exchange) error {
 		exchange.SetProperty(CamelRoutingSlipSize, len(uris))
 		exchange.SetProperty(CamelRoutingSlipComplete, i == len(uris)-1)
 
-		// Resolve a started producer from the CamelContext producer cache
-		// (created once per URI, reused across messages, stopped with the
-		// context) instead of constructing a new lazyProducer per message, which
-		// leaked a producer (and its connection) on every slip step.
-		producer, release, err := r.context.acquireProducer(uri)
-		if err != nil {
-			return fmt.Errorf("routing slip producer error for %s: %w", RedactURI(uri), err)
+		if err := r.sendStep(uri, exchange); err != nil {
+			return err
 		}
-		propagateOutToInAndReset(exchange)
-		err = producer.Send(exchange)
-		release()
-		if err != nil {
-			if errors.Is(err, ErrStopRouting) {
-				return err
-			}
-			return fmt.Errorf("routing slip error sending to %s: %w", RedactURI(uri), err)
-		}
-		propagateOutToInAndReset(exchange)
 	}
 
+	return nil
+}
+
+func (r *RoutingSlip) sendStep(uri string, exchange *Exchange) error {
+	// Resolve a started producer from the CamelContext producer cache
+	// (created once per URI, reused across messages, stopped with the
+	// context) instead of constructing a new lazyProducer per message, which
+	// leaked a producer (and its connection) on every slip step.
+	producer, release, err := r.context.acquireProducer(uri)
+	if err != nil {
+		return fmt.Errorf("routing slip producer error for %s: %w", RedactURI(uri), err)
+	}
+	defer release()
+
+	propagateOutToInAndReset(exchange)
+	if err := producer.Send(exchange); err != nil {
+		if errors.Is(err, ErrStopRouting) {
+			return err
+		}
+		return fmt.Errorf("routing slip error sending to %s: %w", RedactURI(uri), err)
+	}
+	propagateOutToInAndReset(exchange)
 	return nil
 }
 

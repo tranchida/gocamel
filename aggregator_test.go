@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -155,4 +156,129 @@ func TestAggregator_RequiresCompletionCondition(t *testing.T) {
 	err := agg.Process(NewExchange(context.Background()))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "completion condition")
+}
+
+type nilReturningStrategy struct{}
+
+func (nilReturningStrategy) Aggregate(*Exchange, *Exchange) *Exchange { return nil }
+
+type errAggRepo struct {
+	getErr    error
+	addErr    error
+	removeErr error
+	stored    *Exchange
+}
+
+func (r *errAggRepo) Add(_ context.Context, _ string, ex *Exchange) error {
+	if r.addErr != nil {
+		return r.addErr
+	}
+	r.stored = ex
+	return nil
+}
+
+func (r *errAggRepo) Get(_ context.Context, _ string) (*Exchange, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
+	return r.stored, nil
+}
+
+func (r *errAggRepo) Remove(_ context.Context, _ string) error {
+	if r.removeErr != nil {
+		return r.removeErr
+	}
+	r.stored = nil
+	return nil
+}
+
+func TestAggregator_ValidatorNilStrategyKeyLocksCleanupAndStandaloneStop(t *testing.T) {
+	t.Run("Validate checks expression, strategy, and repository", func(t *testing.T) {
+		var typedNilStrategy AggregationStrategy = (*StringConcatStrategy)(nil)
+		var typedNilRepo AggregationRepository = (*MemoryAggregationRepository)(nil)
+
+		for _, agg := range []*Aggregator{
+			nil,
+			NewAggregator(nil, &StringConcatStrategy{}, NewMemoryAggregationRepository()).SetCompletionSize(2),
+			NewAggregator(func(*Exchange) string { return "k" }, nil, NewMemoryAggregationRepository()).SetCompletionSize(2),
+			NewAggregator(func(*Exchange) string { return "k" }, typedNilStrategy, NewMemoryAggregationRepository()).SetCompletionSize(2),
+			NewAggregator(func(*Exchange) string { return "k" }, &StringConcatStrategy{}, nil).SetCompletionSize(2),
+			NewAggregator(func(*Exchange) string { return "k" }, &StringConcatStrategy{}, typedNilRepo).SetCompletionSize(2),
+		} {
+			require.Error(t, agg.Validate())
+		}
+	})
+
+	t.Run("nil return from AggregationStrategy fails safely without panic and cleans keyLocks", func(t *testing.T) {
+		agg := NewAggregator(
+			func(*Exchange) string { return "nil-key" },
+			nilReturningStrategy{},
+			NewMemoryAggregationRepository(),
+		).SetCompletionSize(2)
+
+		var err error
+		require.NotPanics(t, func() {
+			err = agg.Process(NewExchange(context.Background()))
+		})
+		require.Error(t, err)
+		_, loaded := agg.keyLocks.Load("nil-key")
+		assert.False(t, loaded, "keyLocks entry must be cleaned up when strategy returns nil")
+	})
+
+	t.Run("repo errors and empty timeout clean keyLocks", func(t *testing.T) {
+		repoErr := errors.New("repo boom")
+		aggGetErr := NewAggregator(
+			func(*Exchange) string { return "get-err" },
+			&StringConcatStrategy{},
+			&errAggRepo{getErr: repoErr},
+		).SetCompletionSize(2)
+		require.ErrorIs(t, aggGetErr.Process(NewExchange(context.Background())), repoErr)
+		_, loaded := aggGetErr.keyLocks.Load("get-err")
+		assert.False(t, loaded, "keyLocks must not leak on Get error")
+
+		aggAddErr := NewAggregator(
+			func(*Exchange) string { return "add-err" },
+			&StringConcatStrategy{},
+			&errAggRepo{addErr: repoErr},
+		).SetCompletionSize(2)
+		require.ErrorIs(t, aggAddErr.Process(NewExchange(context.Background())), repoErr)
+		_, loaded = aggAddErr.keyLocks.Load("add-err")
+		assert.False(t, loaded, "keyLocks must not leak on Add error")
+
+		memRepo := NewMemoryAggregationRepository()
+		aggTimeout := NewAggregator(
+			func(*Exchange) string { return "empty-timeout" },
+			&StringConcatStrategy{},
+			memRepo,
+		).SetCompletionSize(2).SetCompletionTimeout(20 * time.Millisecond)
+		t.Cleanup(func() { _ = aggTimeout.Stop() })
+		require.ErrorIs(t, aggTimeout.Process(NewExchange(context.Background())), ErrStopRouting)
+		// Remove key out-of-band so timeout observes stored == nil (empty timeout).
+		require.NoError(t, memRepo.Remove(context.Background(), "empty-timeout"))
+		assert.Eventually(t, func() bool {
+			_, ok := aggTimeout.keyLocks.Load("empty-timeout")
+			return !ok
+		}, time.Second, 5*time.Millisecond, "keyLocks must be cleaned up on empty timeout")
+	})
+
+	t.Run("standalone Stop cancels pending completion timeout promptly", func(t *testing.T) {
+		agg := NewAggregator(
+			func(*Exchange) string { return "standalone-k" },
+			&StringConcatStrategy{},
+			NewMemoryAggregationRepository(),
+		).SetCompletionSize(5).SetCompletionTimeout(10 * time.Second)
+
+		require.ErrorIs(t, agg.Process(NewExchange(context.Background())), ErrStopRouting)
+
+		stopDone := make(chan error, 1)
+		go func() {
+			stopDone <- agg.Stop()
+		}()
+		select {
+		case err := <-stopDone:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("standalone agg.Stop() hung waiting for 10s completion timeout")
+		}
+	})
 }

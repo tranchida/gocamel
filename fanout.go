@@ -60,6 +60,7 @@ func processFanOut(branches []*Exchange, parallel bool, maxConcurrency int, proc
 			err = nil
 		}
 		if err == nil && strategy != nil {
+			propagateOutToInAndReset(branch)
 			err = safeProcess(func() error {
 				aggregated = strategy.Aggregate(aggregated, branch)
 				return nil

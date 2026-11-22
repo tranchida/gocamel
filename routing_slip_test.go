@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -372,4 +373,68 @@ func TestRoutingSlip_BuildAndValidateRejectMalformedTemplate(t *testing.T) {
 			require.Error(t, r.Validate())
 		})
 	}
+}
+
+type panicOnceProducer struct {
+	stopped atomic.Int32
+	panic   bool
+}
+
+func (p *panicOnceProducer) Start(context.Context) error { return nil }
+func (p *panicOnceProducer) Stop() error                 { p.stopped.Add(1); return nil }
+func (p *panicOnceProducer) Send(*Exchange) error {
+	if p.panic {
+		panic("boom in producer")
+	}
+	return nil
+}
+
+type panicTrackerComponent struct {
+	mu        sync.Mutex
+	producers map[string]*panicOnceProducer
+}
+
+func (c *panicTrackerComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &panicTrackerEndpoint{comp: c, uri: uri}, nil
+}
+
+type panicTrackerEndpoint struct {
+	comp *panicTrackerComponent
+	uri  string
+}
+
+func (e *panicTrackerEndpoint) URI() string { return e.uri }
+func (e *panicTrackerEndpoint) CreateProducer() (Producer, error) {
+	e.comp.mu.Lock()
+	defer e.comp.mu.Unlock()
+	if e.comp.producers == nil {
+		e.comp.producers = make(map[string]*panicOnceProducer)
+	}
+	p := &panicOnceProducer{panic: strings.Contains(e.uri, "panic")}
+	e.comp.producers[e.uri] = p
+	return p, nil
+}
+func (e *panicTrackerEndpoint) CreateConsumer(Processor) (Consumer, error) {
+	return &rsSpyConsumer{}, nil
+}
+
+func TestRoutingSlip_ReleasesProducerOnSendPanic(t *testing.T) {
+	ctx := NewCamelContext()
+	ctx.SetProducerCacheSize(1)
+	comp := &panicTrackerComponent{}
+	ctx.AddComponent("track", comp)
+	require.NoError(t, ctx.Start())
+	t.Cleanup(func() { _ = ctx.Stop() })
+
+	rs := NewRoutingSlip(ctx).SetStaticURIs("track:panic")
+	err := ProcessSafely(rs, NewExchange(context.Background()))
+	require.ErrorIs(t, err, ErrProcessorPanic)
+
+	// Acquiring a different URI on a size-1 cache must evict and stop track:panic (refs == 0).
+	require.NoError(t, ctx.sendToURI("track:other", NewExchange(context.Background())))
+	comp.mu.Lock()
+	panicProd := comp.producers["track:panic"]
+	comp.mu.Unlock()
+	require.NotNil(t, panicProd)
+	assert.Equal(t, int32(1), panicProd.stopped.Load(), "panicking producer must have been released and evicted")
 }

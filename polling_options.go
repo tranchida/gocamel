@@ -86,13 +86,17 @@ func ParsePollingOptions(u *url.URL) PollingOptions {
 		ReadLockMarkerFile:    true,
 	}
 	if s := GetConfigValue(u, "delay"); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
 			opts.Delay = d
+		} else {
+			LogWarn("polling options: ignoring invalid or non-positive delay; using default", "value", s)
 		}
 	}
 	if s := GetConfigValue(u, "initialDelay"); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
+		if d, err := time.ParseDuration(s); err == nil && d >= 0 {
 			opts.InitialDelay = d
+		} else {
+			LogWarn("polling options: ignoring invalid or negative initialDelay; using default", "value", s)
 		}
 	}
 	if s := GetConfigValue(u, "maxMessagesPerPoll"); s != "" {
@@ -109,17 +113,23 @@ func ParsePollingOptions(u *url.URL) PollingOptions {
 	opts.Exclude = GetConfigValue(u, "exclude")
 
 	if s := GetConfigValue(u, "readLockTimeout"); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
 			opts.ReadLockTimeout = d
+		} else {
+			LogWarn("polling options: ignoring invalid or non-positive readLockTimeout; using default", "value", s)
 		}
 	}
 	if s := GetConfigValue(u, "readLockCheckInterval"); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
 			opts.ReadLockCheckInterval = d
+		} else {
+			LogWarn("polling options: ignoring invalid or non-positive readLockCheckInterval; using default", "value", s)
 		}
 	} else if s := GetConfigValue(u, "readLockInterval"); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
 			opts.ReadLockCheckInterval = d
+		} else {
+			LogWarn("polling options: ignoring invalid or non-positive readLockInterval; using default", "value", s)
 		}
 	}
 	if s := GetConfigValue(u, "readLockMinLength"); s != "" {
@@ -128,8 +138,10 @@ func ParsePollingOptions(u *url.URL) PollingOptions {
 		}
 	}
 	if s := GetConfigValue(u, "readLockMinAge"); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
+		if d, err := time.ParseDuration(s); err == nil && d >= 0 {
 			opts.ReadLockMinAge = d
+		} else {
+			LogWarn("polling options: ignoring invalid or negative readLockMinAge; using default", "value", s)
 		}
 	}
 	if s := GetConfigValue(u, "readLockMarkerFile"); s != "" {
@@ -171,9 +183,10 @@ func ParseFileExist(u *url.URL) FileExistBehavior {
 // ParseConnectTimeout reads the connectTimeout from a parsed URI (default: 10s).
 func ParseConnectTimeout(u *url.URL) time.Duration {
 	if s := GetConfigValue(u, "connectTimeout"); s != "" {
-		if d, err := time.ParseDuration(s); err == nil {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
 			return d
 		}
+		LogWarn("polling options: ignoring invalid or non-positive connectTimeout; using default", "value", s)
 	}
 	return 10 * time.Second
 }
@@ -187,6 +200,12 @@ func WaitForStable(
 	timeout, interval, minAge time.Duration,
 	minLength int64,
 ) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return false
+	}
 	if interval <= 0 {
 		interval = 100 * time.Millisecond
 	}
@@ -215,14 +234,21 @@ func WaitForStable(
 			hasPreviousSample = false
 		}
 
-		if time.Now().After(deadline) {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
 			return false
 		}
+		sleep := interval
+		if remaining < sleep {
+			sleep = remaining
+		}
 
+		timer := time.NewTimer(sleep)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return false
-		case <-time.After(interval):
+		case <-timer.C:
 		}
 
 		size, modTime, err = statFn()

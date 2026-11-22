@@ -44,8 +44,10 @@ type Aggregator struct {
 // gen is incremented each time a new group starts; timeout goroutines compare
 // against it to avoid expiring a group that was replaced by a newer one.
 type keyState struct {
-	mu  sync.Mutex
-	gen uint64
+	mu       sync.Mutex
+	gen      uint64
+	pending  bool
+	timeouts int
 }
 
 // NewAggregator creates a new Aggregator processor.
@@ -106,6 +108,18 @@ func (a *Aggregator) lockForKey(key string) *keyState {
 }
 
 func (a *Aggregator) Validate() error {
+	if a == nil {
+		return fmt.Errorf("aggregator: processor is nil")
+	}
+	if a.CorrelationExpression == nil {
+		return fmt.Errorf("aggregator: correlation expression must not be nil")
+	}
+	if isNilValue(a.AggregationStrategy) {
+		return fmt.Errorf("aggregator: aggregation strategy must not be nil")
+	}
+	if isNilValue(a.AggregationRepository) {
+		return fmt.Errorf("aggregator: aggregation repository must not be nil")
+	}
 	if a.CompletionSize <= 0 && a.CompletionTimeout <= 0 && a.CompletionPredicate == nil {
 		return fmt.Errorf("aggregator: at least one completion condition is required (size, timeout, or predicate)")
 	}
@@ -115,6 +129,9 @@ func (a *Aggregator) Validate() error {
 func (a *Aggregator) Process(exchange *Exchange) error {
 	if err := a.Validate(); err != nil {
 		return err
+	}
+	if exchange == nil {
+		return fmt.Errorf("aggregator: exchange must not be nil")
 	}
 	ctx := exchange.Context
 	if ctx == nil {
@@ -143,15 +160,26 @@ func (a *Aggregator) Process(exchange *Exchange) error {
 func (a *Aggregator) processLocked(ctx context.Context, key string, exchange *Exchange, st *keyState) (bool, error) {
 	oldExchange, err := a.AggregationRepository.Get(ctx, key)
 	if err != nil {
+		if !st.pending && st.timeouts == 0 {
+			a.keyLocks.CompareAndDelete(key, st)
+		}
 		return false, fmt.Errorf("failed to get exchange from repository: %w", err)
 	}
 
 	isFirst := oldExchange == nil
 	if isFirst {
 		st.gen++ // new group started; invalidates any pending timeout for the previous group
+	} else {
+		st.pending = true
 	}
 
 	aggregatedExchange := a.AggregationStrategy.Aggregate(oldExchange, exchange)
+	if aggregatedExchange == nil {
+		if !st.pending && st.timeouts == 0 {
+			a.keyLocks.CompareAndDelete(key, st)
+		}
+		return isFirst, fmt.Errorf("aggregator: aggregation strategy returned nil exchange")
+	}
 
 	count := 1
 	if !isFirst {
@@ -176,8 +204,12 @@ func (a *Aggregator) processLocked(ctx context.Context, key string, exchange *Ex
 	}
 
 	if err := a.AggregationRepository.Add(ctx, key, aggregatedExchange); err != nil {
+		if !st.pending && st.timeouts == 0 {
+			a.keyLocks.CompareAndDelete(key, st)
+		}
 		return isFirst, fmt.Errorf("failed to add exchange to repository: %w", err)
 	}
+	st.pending = true
 
 	return isFirst, ErrStopRouting
 }
@@ -186,8 +218,12 @@ func (a *Aggregator) processLocked(ctx context.Context, key string, exchange *Ex
 // onto the current exchange so it continues through the route.
 func (a *Aggregator) emitLocked(ctx context.Context, key string, aggregated, current *Exchange, st *keyState) error {
 	if err := a.AggregationRepository.Remove(ctx, key); err != nil {
+		if st.timeouts == 0 {
+			a.keyLocks.CompareAndDelete(key, st)
+		}
 		return fmt.Errorf("failed to remove exchange from repository: %w", err)
 	}
+	st.pending = false
 	st.gen++ // invalidate the timeout belonging to the completed group
 	a.keyLocks.CompareAndDelete(key, st)
 
@@ -231,9 +267,10 @@ func (a *Aggregator) restoreTimeouts(ctx context.Context) {
 	}
 	for _, key := range keys {
 		st := a.lockForKey(key)
+		st.pending = true
 		gen := st.gen
-		st.mu.Unlock()
 		a.startTimeout(key, ctx, gen, st)
+		st.mu.Unlock()
 	}
 }
 
@@ -243,14 +280,16 @@ func (a *Aggregator) startTimeout(key string, fallback context.Context, gen uint
 		a.lifecycleMu.Unlock()
 		return
 	}
+	if a.timeoutContext == nil {
+		base := context.Background()
+		if fallback != nil {
+			base = context.WithoutCancel(fallback)
+		}
+		a.timeoutContext, a.timeoutCancel = context.WithCancel(base)
+	}
 	ctx := a.timeoutContext
 	processor := a.timeoutProcessor
-	if ctx == nil {
-		ctx = fallback
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	st.timeouts++
 	a.timeoutWG.Add(1)
 	a.lifecycleMu.Unlock()
 
@@ -292,32 +331,53 @@ func (a *Aggregator) runTimeout(key string, ctx context.Context, gen uint64, st 
 	select {
 	case <-timer.C:
 	case <-ctx.Done():
+		st.mu.Lock()
+		st.timeouts--
+		if !st.pending && st.timeouts == 0 {
+			a.keyLocks.CompareAndDelete(key, st)
+		}
+		st.mu.Unlock()
 		return
 	}
 
 	st.mu.Lock()
+	st.timeouts--
 
 	if st.gen != gen {
+		if !st.pending && st.timeouts == 0 {
+			a.keyLocks.CompareAndDelete(key, st)
+		}
 		st.mu.Unlock()
 		return // a newer group has started for this key; leave it alone
 	}
 
 	stored, err := a.AggregationRepository.Get(ctx, key)
 	if err != nil {
+		if st.timeouts == 0 {
+			a.keyLocks.CompareAndDelete(key, st)
+		}
 		st.mu.Unlock()
 		LogWarn("Aggregator timeout: failed to get key", "key", key, "error", err)
 		return
 	}
 	if stored == nil {
+		st.pending = false
+		if st.timeouts == 0 {
+			a.keyLocks.CompareAndDelete(key, st)
+		}
 		st.mu.Unlock()
 		return // already completed
 	}
 
 	if err := a.AggregationRepository.Remove(ctx, key); err != nil {
+		if st.timeouts == 0 {
+			a.keyLocks.CompareAndDelete(key, st)
+		}
 		st.mu.Unlock()
 		LogWarn("Aggregator timeout: failed to remove key", "key", key, "error", err)
 		return
 	}
+	st.pending = false
 	st.gen++
 	a.keyLocks.CompareAndDelete(key, st)
 	st.mu.Unlock()

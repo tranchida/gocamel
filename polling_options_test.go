@@ -195,3 +195,108 @@ func TestWaitForStable_ContextCancelled(t *testing.T) {
 		t.Error("expected false when context is cancelled")
 	}
 }
+
+func TestParsePollingOptions_RejectsNonPositiveDelay(t *testing.T) {
+	for _, raw := range []string{
+		"ftp://example.com/in?delay=0s&readLockTimeout=0s&readLockCheckInterval=0s&connectTimeout=0s",
+		"ftp://example.com/in?delay=-5s&readLockTimeout=-1s&readLockInterval=-2s&connectTimeout=-3s&initialDelay=-1s&readLockMinAge=-1s",
+	} {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("unexpected url parse error: %v", err)
+		}
+		opts := ParsePollingOptions(u)
+		if opts.Delay != 5*time.Second {
+			t.Errorf("%s: expected default Delay 5s, got %v", raw, opts.Delay)
+		}
+		if opts.ReadLockTimeout != 10*time.Second {
+			t.Errorf("%s: expected default ReadLockTimeout 10s, got %v", raw, opts.ReadLockTimeout)
+		}
+		if opts.ReadLockCheckInterval != 1*time.Second {
+			t.Errorf("%s: expected default ReadLockCheckInterval 1s, got %v", raw, opts.ReadLockCheckInterval)
+		}
+		if ct := ParseConnectTimeout(u); ct != 10*time.Second {
+			t.Errorf("%s: expected default ConnectTimeout 10s, got %v", raw, ct)
+		}
+		if opts.InitialDelay < 0 {
+			t.Errorf("%s: expected InitialDelay >= 0, got %v", raw, opts.InitialDelay)
+		}
+		if opts.ReadLockMinAge < 0 {
+			t.Errorf("%s: expected ReadLockMinAge >= 0, got %v", raw, opts.ReadLockMinAge)
+		}
+	}
+
+	// Zero is still allowed for initialDelay and readLockMinAge.
+	uZero, err := url.Parse("ftp://example.com/in?initialDelay=0s&readLockMinAge=0s")
+	if err != nil {
+		t.Fatalf("unexpected url parse error: %v", err)
+	}
+	optsZero := ParsePollingOptions(uZero)
+	if optsZero.InitialDelay != 0 {
+		t.Errorf("expected InitialDelay 0s, got %v", optsZero.InitialDelay)
+	}
+	if optsZero.ReadLockMinAge != 0 {
+		t.Errorf("expected ReadLockMinAge 0s, got %v", optsZero.ReadLockMinAge)
+	}
+}
+
+func TestWaitForStable_CapsSleepToDeadlineAndNilCtx(t *testing.T) {
+	now := time.Now().Add(-time.Minute)
+	var size atomic.Int64
+	statFn := func() (int64, time.Time, error) {
+		return size.Add(1), now, nil
+	}
+
+	start := time.Now()
+	// Nil ctx must not panic, and interval (5s) must be capped to remaining deadline (40ms).
+	var ok bool
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("WaitForStable panicked with nil ctx: %v", r)
+			}
+		}()
+		//lint:ignore SA1012 deliberately testing nil context guard in WaitForStable
+		ok = WaitForStable(nil, statFn, 40*time.Millisecond, 5*time.Second, 0, 0)
+	}()
+	elapsed := time.Since(start)
+	if ok {
+		t.Error("expected false for continuously changing file")
+	}
+	if elapsed > 300*time.Millisecond {
+		t.Errorf("WaitForStable took %v; expected sleep capped to ~40ms deadline", elapsed)
+	}
+}
+
+func TestMatchFileName_InvalidExcludeFailsClosed(t *testing.T) {
+	if MatchFileName("secret.txt", "", "[invalid-regex") {
+		t.Fatal("MatchFileName must fail closed (return false) when exclude regex is invalid")
+	}
+	if MatchFileName("secret.txt", "[invalid-include", "") {
+		t.Fatal("MatchFileName must fail closed (return false) when include regex is invalid")
+	}
+	if !MatchFileName("report.csv", `\.csv$`, `\.tmp$`) {
+		t.Fatal("MatchFileName should match valid include/exclude patterns")
+	}
+	if MatchFileName("report.tmp", "", `\.tmp$`) {
+		t.Fatal("MatchFileName should exclude matching exclude pattern")
+	}
+
+	if _, err := NewFileFilter("", "[bad"); err == nil {
+		t.Fatal("NewFileFilter should reject invalid exclude regex")
+	}
+	if _, err := NewFileFilter("[bad", ""); err == nil {
+		t.Fatal("NewFileFilter should reject invalid include regex")
+	}
+	ff, err := NewFileFilter(`^order-.*\.xml$`, `\.bak`)
+	if err != nil {
+		t.Fatalf("unexpected NewFileFilter error: %v", err)
+	}
+	if !ff.Match("order-123.xml") || ff.Match("order-123.xml.bak") || ff.Match("other.xml") {
+		t.Fatal("FileFilter.Match produced unexpected result")
+	}
+	var nilFilter *FileFilter
+	if nilFilter.Match("anything.txt") {
+		t.Fatal("nil FileFilter.Match must fail closed")
+	}
+}

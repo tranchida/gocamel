@@ -131,3 +131,25 @@ func TestMetricsInterceptor_ClassifiesRealFailures(t *testing.T) {
 	body := scrape(t, reg)
 	assert.Contains(t, body, `gocamel_exchanges_total{route_id="route-1",status="failure"} 1`)
 }
+
+func TestMetricsWith_NilFallsBackToDefaultRegisterer(t *testing.T) {
+	ctx := gocamel.NewCamelContext()
+	ctx.AddComponent("direct", gocamel.NewDirectComponent())
+
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:prom-nil-reg").
+		SetID("prom-nil-reg").
+		Intercept(MetricsWith(nil)).
+		ProcessFunc(func(*gocamel.Exchange) error { return nil }).
+		Build()
+	require.NoError(t, err)
+	require.NoError(t, ctx.Start())
+	t.Cleanup(func() { _ = ctx.Stop() })
+
+	prod, err := ctx.GetProducer("direct:prom-nil-reg")
+	require.NoError(t, err)
+	require.NoError(t, prod.Send(gocamel.NewExchange(context.Background())))
+
+	body := scrape(t, prometheus.DefaultGatherer)
+	assert.Contains(t, body, `gocamel_exchanges_total{route_id="prom-nil-reg",status="success"} 1`)
+}

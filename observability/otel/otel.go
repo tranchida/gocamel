@@ -36,33 +36,37 @@ func TracingWith(tp trace.TracerProvider) gocamel.RouteInterceptor {
 			tracer = otel.Tracer(instrumentationName)
 		}
 		return func(exchange *gocamel.Exchange) error {
+			if exchange == nil {
+				return next(exchange)
+			}
+			routeID := ""
+			if route != nil {
+				routeID = route.ID
+			}
 			prevCtx := exchange.Context
 			ctx := prevCtx
 			if ctx == nil {
 				ctx = context.Background()
 			}
 
-			ctx, span := tracer.Start(ctx, "route:"+route.ID,
+			ctx, span := tracer.Start(ctx, "route:"+routeID,
 				trace.WithAttributes(
-					attribute.String("camel.route.id", route.ID),
+					attribute.String("camel.route.id", routeID),
 					attribute.String("camel.exchange.id", exchange.ID),
 				),
 			)
 			defer span.End()
 
 			exchange.Context = ctx
+			// Every core async EIP (Aggregator, Resequencer, WireTap, parallel
+			// FanOut) deep-copies before parking or spawning goroutines, so
+			// restoring prevCtx unconditionally is race-free and keeps outer
+			// direct: routes from inheriting an ended child span on ErrStopRouting.
+			defer func() {
+				exchange.Context = prevCtx
+			}()
 
 			err := next(exchange)
-			// Do not restore prevCtx when a processor stopped the route with
-			// ErrStopRouting: an Aggregator (or a similar EIP) may have parked
-			// the exchange and another goroutine can read exchange.Context after
-			// this function returns. Writing prevCtx here would race with that
-			// reader. The span context is derived from prevCtx, so its values and
-			// cancellation semantics are preserved; the span itself is still
-			// ended by the defer above.
-			if !errors.Is(err, gocamel.ErrStopRouting) {
-				exchange.Context = prevCtx
-			}
 			// ErrStopRouting is a control signal, not a failure — and it may
 			// be wrapped by the processor that returned it, so compare with
 			// errors.Is like the core does (route.processFrom), not by value.

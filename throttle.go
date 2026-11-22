@@ -1,6 +1,7 @@
 package gocamel
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -41,14 +42,28 @@ func NewThrottler(maxRequests int64, timePeriod time.Duration) *Throttler {
 	}
 }
 
-// Process implements the Processor interface.
-// If no token is available, the call blocks until one refills.
-func (t *Throttler) Process(exchange *Exchange) error {
+// Validate implements the Validator interface for build-time validation.
+func (t *Throttler) Validate() error {
+	if t == nil {
+		return fmt.Errorf("throttle: processor is nil")
+	}
 	if t.maxRequests <= 0 {
 		return fmt.Errorf("throttle: maxRequests must be greater than 0")
 	}
 	if t.timePeriod <= 0 {
 		return fmt.Errorf("throttle: timePeriod must be greater than 0")
+	}
+	return nil
+}
+
+// Process implements the Processor interface.
+// If no token is available, the call blocks until one refills.
+func (t *Throttler) Process(exchange *Exchange) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	if exchange == nil {
+		return fmt.Errorf("throttle: exchange must not be nil")
 	}
 
 	rate := float64(t.maxRequests) / t.timePeriod.Seconds()
@@ -86,7 +101,10 @@ func (t *Throttler) Process(exchange *Exchange) error {
 // sleepWithContext sleeps for d, aborting early if the exchange context is
 // cancelled. Shared by the Throttle and DeadLetterChannel redelivery delays.
 func sleepWithContext(exchange *Exchange, d time.Duration) error {
-	ctx := exchange.Context
+	var ctx context.Context
+	if exchange != nil {
+		ctx = exchange.Context
+	}
 	if ctx == nil {
 		time.Sleep(d)
 		return nil

@@ -31,8 +31,31 @@ func NewClaimCheck(operation ClaimCheckOperation, key string, repo ClaimCheckRep
 	}
 }
 
+// Validate implements the Validator interface for build-time validation.
+func (p *ClaimCheck) Validate() error {
+	if p == nil {
+		return fmt.Errorf("claim check: processor is nil")
+	}
+	if isNilValue(p.repo) {
+		return fmt.Errorf("claim check: repository must not be nil")
+	}
+	switch p.operation {
+	case ClaimCheckPush, ClaimCheckPop, ClaimCheckGet, ClaimCheckDiscard:
+		return nil
+	default:
+		return fmt.Errorf("unsupported claim check operation: %s", p.operation)
+	}
+}
+
 // Process implements the Processor interface.
 func (p *ClaimCheck) Process(exchange *Exchange) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	if exchange == nil {
+		return fmt.Errorf("claim check: exchange must not be nil")
+	}
+
 	// A nil exchange context must not be passed to the repository: user-supplied
 	// repositories may call ctx.Done()/ctx.Err()/ctx.Value() and panic on nil.
 	ctx := exchange.Context
@@ -73,17 +96,27 @@ func (p *ClaimCheck) Process(exchange *Exchange) error {
 		}
 
 		var data any
+		var exists bool
 		var err error
-		if p.operation == ClaimCheckPop {
-			data, err = p.repo.Remove(ctx, resolvedKey)
+		if lookupRepo, ok := p.repo.(ClaimCheckLookupRepository); ok {
+			if p.operation == ClaimCheckPop {
+				data, exists, err = lookupRepo.Pop(ctx, resolvedKey)
+			} else {
+				data, exists, err = lookupRepo.Lookup(ctx, resolvedKey)
+			}
 		} else {
-			data, err = p.repo.Get(ctx, resolvedKey)
+			if p.operation == ClaimCheckPop {
+				data, err = p.repo.Remove(ctx, resolvedKey)
+			} else {
+				data, err = p.repo.Get(ctx, resolvedKey)
+			}
+			exists = data != nil
 		}
 
 		if err != nil {
 			return fmt.Errorf("claim check %s error: %w", p.operation, err)
 		}
-		if data == nil {
+		if !exists {
 			return fmt.Errorf("claim check %s error: data not found for key %s", p.operation, resolvedKey)
 		}
 		exchange.GetIn().SetBody(data)
@@ -110,6 +143,11 @@ func (p *ClaimCheck) Process(exchange *Exchange) error {
 
 // ClaimCheck adds a Claim Check EIP step.
 func (b *RouteBuilder) ClaimCheck(operation ClaimCheckOperation, key string, repo ClaimCheckRepository) *RouteBuilder {
-	b.container.AddProcessor(NewClaimCheck(operation, key, repo))
+	cc := NewClaimCheck(operation, key, repo)
+	if err := cc.Validate(); err != nil {
+		b.recordErr(err)
+		return b
+	}
+	b.container.AddProcessor(cc)
 	return b
 }

@@ -17,3 +17,11 @@ type ClaimCheckRepository interface {
 	// Remove removes the data for the given key and returns it.
 	Remove(ctx context.Context, key string) (any, error)
 }
+
+// ClaimCheckLookupRepository is an optional extension of ClaimCheckRepository
+// that distinguishes a missing key from a key whose stored payload is nil.
+type ClaimCheckLookupRepository interface {
+	ClaimCheckRepository
+	Lookup(ctx context.Context, key string) (data any, exists bool, err error)
+	Pop(ctx context.Context, key string) (data any, exists bool, err error)
+}

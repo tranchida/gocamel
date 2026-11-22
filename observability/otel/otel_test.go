@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	sdktrace "go.opentelemetry.io/otel/trace"
 
 	gocamel "github.com/tranchida/gocamel"
 )
@@ -198,6 +200,15 @@ func TestTracingWith_RestoresContext(t *testing.T) {
 	assert.Equal(t, "route:route-1", spans[0].Name)
 }
 
+type keepFirstStrategy struct{}
+
+func (keepFirstStrategy) Aggregate(oldEx, newEx *gocamel.Exchange) *gocamel.Exchange {
+	if oldEx == nil {
+		return newEx
+	}
+	return oldEx
+}
+
 func TestTracingWith_StopRoutingDoesNotRaceOnParkedExchangeContext(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	tp := trace.NewTracerProvider(
@@ -208,18 +219,21 @@ func TestTracingWith_StopRoutingDoesNotRaceOnParkedExchangeContext(t *testing.T)
 	ctx := gocamel.NewCamelContext()
 	ctx.AddComponent("direct", gocamel.NewDirectComponent())
 
-	done := make(chan struct{})
+	agg := gocamel.NewAggregator(
+		func(*gocamel.Exchange) string { return "park-key" },
+		keepFirstStrategy{},
+		gocamel.NewMemoryAggregationRepository(),
+	).SetCompletionSize(5).SetCompletionTimeout(20 * time.Millisecond)
+
+	completed := make(chan struct{})
 	_, err := ctx.CreateRouteBuilder().
 		From("direct:park").
 		Intercept(TracingWith(tp)).
+		Aggregate(agg).
 		ProcessFunc(func(e *gocamel.Exchange) error {
-			// Simulate an Aggregator parking the exchange and reading e.Context
-			// asynchronously after returning ErrStopRouting.
-			go func(parked *gocamel.Exchange) {
-				defer close(done)
-				_ = parked.Context.Err()
-			}(e)
-			return gocamel.ErrStopRouting
+			_ = e.Context.Err()
+			close(completed)
+			return nil
 		}).
 		Build()
 	require.NoError(t, err)
@@ -234,7 +248,75 @@ func TestTracingWith_StopRoutingDoesNotRaceOnParkedExchangeContext(t *testing.T)
 	require.NoError(t, producer.Start(context.Background()))
 	defer producer.Stop()
 
-	ex := gocamel.NewExchange(context.Background())
+	initialCtx := context.Background()
+	ex := gocamel.NewExchange(initialCtx)
 	require.NoError(t, producer.Send(ex))
-	<-done
+	assert.Equal(t, initialCtx, ex.Context, "caller exchange context must be restored")
+
+	select {
+	case <-completed:
+	case <-time.After(time.Second):
+		t.Fatal("parked aggregator exchange did not complete")
+	}
+}
+
+func TestOTel_RestoresContextAfterDirectErrStopRouting(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSampler(trace.AlwaysSample()),
+		trace.WithSpanProcessor(trace.NewSimpleSpanProcessor(exporter)),
+	)
+
+	type ctxKey struct{}
+	initialCtx := context.WithValue(context.Background(), ctxKey{}, "root-value")
+
+	ctx := gocamel.NewCamelContext()
+	ctx.AddComponent("direct", gocamel.NewDirectComponent())
+
+	var mainSpanID sdktrace.SpanID
+	var afterSubSpanID sdktrace.SpanID
+
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:sub").
+		SetID("sub").
+		Intercept(TracingWith(tp)).
+		Filter(func(*gocamel.Exchange) (bool, error) {
+			return false, nil // stops sub-route with ErrStopRouting
+		}).
+		Build()
+	require.NoError(t, err)
+
+	_, err = ctx.CreateRouteBuilder().
+		From("direct:main").
+		SetID("main").
+		Intercept(TracingWith(tp)).
+		ProcessFunc(func(e *gocamel.Exchange) error {
+			mainSpanID = sdktrace.SpanFromContext(e.Context).SpanContext().SpanID()
+			return nil
+		}).
+		To("direct:sub").
+		ProcessFunc(func(e *gocamel.Exchange) error {
+			afterSubSpanID = sdktrace.SpanFromContext(e.Context).SpanContext().SpanID()
+			return nil
+		}).
+		Build()
+	require.NoError(t, err)
+
+	require.NoError(t, ctx.Start())
+	defer ctx.Stop()
+
+	ep, err := ctx.CreateEndpoint("direct:main")
+	require.NoError(t, err)
+	producer, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, producer.Start(context.Background()))
+	defer producer.Stop()
+
+	ex := gocamel.NewExchange(initialCtx)
+	require.NoError(t, producer.Send(ex))
+
+	assert.Equal(t, mainSpanID, afterSubSpanID,
+		"direct:sub returning ErrStopRouting must restore parent span context on return")
+	assert.Equal(t, initialCtx, ex.Context,
+		"outer exchange context must be restored even when sub-route returned ErrStopRouting")
 }

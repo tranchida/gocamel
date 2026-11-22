@@ -3,8 +3,93 @@ package gocamel
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 )
+
+const camelIdempotentClaimsProperty = "CamelIdempotentClaims"
+
+type idempotentClaim struct {
+	exchangeID string
+	repo       IdempotentRepository
+	key        string
+}
+
+func sameIdempotentRepo(a, b IdempotentRepository) bool {
+	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
+	if ta != tb {
+		return false
+	}
+	if ta == nil {
+		return true
+	}
+	if ta.Comparable() {
+		return a == b
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+func hasActiveIdempotentClaim(exchange *Exchange, repo IdempotentRepository, key string) bool {
+	existing, ok := exchange.GetProperty(camelIdempotentClaimsProperty)
+	if !ok {
+		return false
+	}
+	claims, ok := existing.([]idempotentClaim)
+	if !ok {
+		return false
+	}
+	for _, c := range claims {
+		if c.exchangeID == exchange.ID && c.key == key && sameIdempotentRepo(c.repo, repo) {
+			return true
+		}
+	}
+	return false
+}
+
+func addActiveIdempotentClaim(exchange *Exchange, repo IdempotentRepository, key string) {
+	existing, _ := exchange.GetProperty(camelIdempotentClaimsProperty)
+	claims, _ := existing.([]idempotentClaim)
+	// Copy-on-write slice so Exchange.Copy/DeepCopy never races over a shared backing array.
+	next := make([]idempotentClaim, len(claims)+1)
+	copy(next, claims)
+	next[len(claims)] = idempotentClaim{
+		exchangeID: exchange.ID,
+		repo:       repo,
+		key:        key,
+	}
+	exchange.SetProperty(camelIdempotentClaimsProperty, next)
+}
+
+func removeActiveIdempotentClaim(exchange *Exchange, exchangeID string, repo IdempotentRepository, key string) {
+	if exchange == nil {
+		return
+	}
+	existing, ok := exchange.GetProperty(camelIdempotentClaimsProperty)
+	if !ok {
+		return
+	}
+	claims, ok := existing.([]idempotentClaim)
+	if !ok || len(claims) == 0 {
+		return
+	}
+	var kept []idempotentClaim
+	removed := false
+	for _, c := range claims {
+		if c.exchangeID == exchangeID && c.key == key && sameIdempotentRepo(c.repo, repo) {
+			removed = true
+			continue
+		}
+		kept = append(kept, c)
+	}
+	if !removed {
+		return
+	}
+	if len(kept) == 0 {
+		exchange.RemoveProperty(camelIdempotentClaimsProperty)
+		return
+	}
+	exchange.SetProperty(camelIdempotentClaimsProperty, kept)
+}
 
 // IdempotentConsumer implements the Idempotent Consumer EIP.
 //
@@ -33,14 +118,21 @@ const idempotentRollbackTimeout = 30 * time.Second
 // idempotentSynchronization removes the eagerly-added key when the exchange
 // ultimately fails, restoring at-least-once semantics.
 type idempotentSynchronization struct {
-	repo IdempotentRepository
-	key  string
+	repo       IdempotentRepository
+	key        string
+	exchangeID string
 }
 
-func (s *idempotentSynchronization) OnComplete(exchange *Exchange) {}
+func (s *idempotentSynchronization) OnComplete(exchange *Exchange) {
+	removeActiveIdempotentClaim(exchange, s.exchangeID, s.repo, s.key)
+}
 
 func (s *idempotentSynchronization) OnFailure(exchange *Exchange) {
-	ctx := exchange.Context
+	removeActiveIdempotentClaim(exchange, s.exchangeID, s.repo, s.key)
+	var ctx context.Context
+	if exchange != nil {
+		ctx = exchange.Context
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -58,11 +150,38 @@ func (s *idempotentSynchronization) OnFailure(exchange *Exchange) {
 	}
 }
 
+// Validate implements the Validator interface for build-time validation.
+func (p *IdempotentConsumer) Validate() error {
+	if p == nil {
+		return fmt.Errorf("idempotent consumer: processor is nil")
+	}
+	if p.expression == nil {
+		return fmt.Errorf("idempotent consumer: expression must not be nil")
+	}
+	if isNilValue(p.repo) {
+		return fmt.Errorf("idempotent consumer: repository must not be nil")
+	}
+	return nil
+}
+
 // Process implements the Processor interface.
 func (p *IdempotentConsumer) Process(exchange *Exchange) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	if exchange == nil {
+		return fmt.Errorf("idempotent consumer: exchange must not be nil")
+	}
 	key, err := p.expression(exchange)
 	if err != nil {
 		return fmt.Errorf("idempotent consumer: failed to evaluate expression: %w", err)
+	}
+
+	// Intra-exchange redelivery (e.g. OnException or DeadLetterChannel retrying
+	// a direct: sub-route) re-enters with the same exchange ID while the
+	// synchronization has not yet fired; skip re-adding so it is not dropped.
+	if hasActiveIdempotentClaim(exchange, p.repo, key) {
+		return nil
 	}
 
 	// A nil exchange context must not be passed to the repository: user-supplied
@@ -82,8 +201,13 @@ func (p *IdempotentConsumer) Process(exchange *Exchange) error {
 		return ErrStopRouting
 	}
 
+	addActiveIdempotentClaim(exchange, p.repo, key)
 	// Roll the key back if the exchange fails downstream (fires on Done).
-	exchange.AddSynchronization(&idempotentSynchronization{repo: p.repo, key: key})
+	exchange.AddSynchronization(&idempotentSynchronization{
+		repo:       p.repo,
+		key:        key,
+		exchangeID: exchange.ID,
+	})
 
 	return nil
 }
