@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hirochachacha/go-smb2"
+
 	"github.com/tranchida/gocamel"
 )
 
@@ -1633,6 +1635,43 @@ func TestSMBProducer_EdgeCasesReconnectAndDisconnect(t *testing.T) {
 		t.Fatalf("expected context.Canceled while lease held, got %v", err)
 	}
 	leaseProd.release()
+
+	// Trailing-slash subdir URI must reject dot CamelFileName values instead of
+	// collapsing "subdir/." to "subdir" and treating the directory as a file.
+	epSubdir, err := c.CreateEndpoint("smb://example.com/share/subdir/")
+	if err != nil {
+		t.Fatalf("CreateEndpoint subdir: %v", err)
+	}
+	var subdirDials atomic.Int32
+	epSubdir.(*SMBEndpoint).connectFn = func(_ context.Context, _ func(net.Conn)) (*smbConn, error) {
+		subdirDials.Add(1)
+		return &smbConn{share: newFakeSMBShare()}, nil
+	}
+	prodSubdir, err := epSubdir.CreateProducer()
+	if err != nil {
+		t.Fatalf("CreateProducer subdir: %v", err)
+	}
+	defer func() { _ = prodSubdir.Stop() }()
+	for _, badDotName := range []string{".", "./", "./.", `.\.`} {
+		exDot := gocamel.NewExchange(context.Background())
+		exDot.GetIn().SetHeader(gocamel.CamelFileName, badDotName)
+		exDot.SetBody("bad")
+		if err := prodSubdir.Send(exDot); err == nil {
+			t.Fatalf("expected error for subdir trailing-slash URI with CamelFileName=%q", badDotName)
+		}
+	}
+	if subdirDials.Load() != 0 {
+		t.Fatalf("expected zero dials on invalid dot CamelFileName, got %d", subdirDials.Load())
+	}
+
+	// realSMBShare must return an untyped nil smbFileHandle on error, never (*smb2.File)(nil).
+	realShare := realSMBShare{Share: &smb2.Share{}}
+	if f, err := realShare.Open(`\leading`); err == nil || f != nil {
+		t.Fatalf("realSMBShare.Open error must return untyped nil handle, got f=%#v (%T), err=%v", f, f, err)
+	}
+	if f, err := realShare.OpenFile(`\leading`, os.O_RDONLY, 0); err == nil || f != nil {
+		t.Fatalf("realSMBShare.OpenFile error must return untyped nil handle, got f=%#v (%T), err=%v", f, f, err)
+	}
 }
 
 func TestSMBConsumer_ReadLocksAndPostProcessingEdgeCases(t *testing.T) {

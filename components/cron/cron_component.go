@@ -39,6 +39,7 @@ type CronComponent struct {
 	scheduler  *cron.Cron
 	started    bool
 	activeJobs int
+	draining   map[chan struct{}]struct{} // closed when rotated schedulers finish draining
 }
 
 // NewCronComponent creates a CronComponent with a shared scheduler.
@@ -107,17 +108,27 @@ func (c *CronComponent) removeJob(sched *cron.Cron, id cron.EntryID) {
 		c.activeJobs--
 	}
 	var stopCtx context.Context
+	var done chan struct{}
 	if c.activeJobs == 0 && c.started {
 		// Rotate to a fresh scheduler and stop the idle one so no background
 		// goroutine remains running once all jobs have been removed.
 		c.scheduler = cron.New(cron.WithSeconds())
 		c.started = false
 		stopCtx = sched.Stop()
+		done = make(chan struct{})
+		if c.draining == nil {
+			c.draining = make(map[chan struct{}]struct{})
+		}
+		c.draining[done] = struct{}{}
 	}
 	c.mu.Unlock()
 
 	if stopCtx != nil {
 		<-stopCtx.Done()
+		c.mu.Lock()
+		delete(c.draining, done)
+		c.mu.Unlock()
+		close(done)
 	}
 }
 
@@ -128,21 +139,42 @@ func (c *CronComponent) entry(sched *cron.Cron, id cron.EntryID) cron.Entry {
 	return sched.Entry(id)
 }
 
-// Stop stops the shared scheduler if it was started.
+// Stop stops the shared scheduler if it was started and waits for any
+// concurrently draining rotated schedulers to finish.
 func (c *CronComponent) Stop() error {
 	c.mu.Lock()
-	if !c.started {
-		c.mu.Unlock()
-		return nil
+	var stopCtx context.Context
+	var selfDone chan struct{}
+	if c.started {
+		sched := c.scheduler
+		c.scheduler = cron.New(cron.WithSeconds())
+		c.started = false
+		c.activeJobs = 0
+		stopCtx = sched.Stop()
+		selfDone = make(chan struct{})
+		if c.draining == nil {
+			c.draining = make(map[chan struct{}]struct{})
+		}
+		c.draining[selfDone] = struct{}{}
 	}
-	sched := c.scheduler
-	c.scheduler = cron.New(cron.WithSeconds())
-	c.started = false
-	c.activeJobs = 0
-	stopCtx := sched.Stop()
+	pending := make([]chan struct{}, 0, len(c.draining))
+	for done := range c.draining {
+		if done != selfDone {
+			pending = append(pending, done)
+		}
+	}
 	c.mu.Unlock()
 
-	<-stopCtx.Done()
+	if stopCtx != nil {
+		<-stopCtx.Done()
+		c.mu.Lock()
+		delete(c.draining, selfDone)
+		c.mu.Unlock()
+		close(selfDone)
+	}
+	for _, done := range pending {
+		<-done
+	}
 	return nil
 }
 

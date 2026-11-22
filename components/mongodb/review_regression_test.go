@@ -471,3 +471,209 @@ func TestMongoDB_OperationsAndHeaderOverridesCoverage(t *testing.T) {
 		assert.Error(t, p2.Send(nil))
 	})
 }
+
+func TestMongoDB_UpdateRejectsInvalidOrUnmarshalableFilterEvenWithAllowUpdateAll(t *testing.T) {
+	srv, client := startMockMongoServer(t, func(cmdName string, cmd bson.M) bson.D {
+		if cmdName == "update" {
+			return bson.D{
+				{Key: "n", Value: int32(1)},
+				{Key: "nModified", Value: int32(1)},
+				{Key: "ok", Value: float64(1)},
+			}
+		}
+		return bson.D{{Key: "ok", Value: float64(1)}}
+	})
+
+	comp := NewMongoDBComponent()
+	comp.RegisterConnection("mock", CreateMongoDBConnection(client, "mongodb://mock", "db"))
+
+	ep, err := comp.CreateEndpoint("mongodb://mock?collection=items&operation=update&allowUpdateAll=true&allowHeaderOverride=true")
+	require.NoError(t, err)
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, prod.Start(context.Background()))
+	defer func() { _ = prod.Stop() }()
+
+	invalidFilters := []struct {
+		name   string
+		filter interface{}
+	}{
+		{"int", 123},
+		{"float64", 3.14},
+		{"slice", []interface{}{"a"}},
+		{"unmarshalable map", map[string]interface{}{"fn": func() {}}},
+		{"unmarshalable bson.M", bson.M{"fn": func() {}}},
+		{"unmarshalable bson.D", bson.D{{Key: "fn", Value: func() {}}}},
+		{"malformed bson.Raw", bson.Raw{1, 2, 3}},
+		{"invalid JSON string", "{bad-json"},
+	}
+
+	for _, tc := range invalidFilters {
+		t.Run("body_filter/"+tc.name, func(t *testing.T) {
+			beforeCmds := len(srv.Commands())
+			ex := gocamel.NewExchange(context.Background())
+			ex.SetBody(map[string]interface{}{
+				"filter": tc.filter,
+				"update": bson.M{"$set": bson.M{"updated": true}},
+			})
+			err := prod.Send(ex)
+			require.Error(t, err, "invalid body filter %T must fail even with allowUpdateAll=true", tc.filter)
+			assert.Len(t, srv.Commands(), beforeCmds, "must not send UpdateMany to MongoDB on invalid filter")
+		})
+
+		t.Run("header_criteria/"+tc.name, func(t *testing.T) {
+			beforeCmds := len(srv.Commands())
+			ex := gocamel.NewExchange(context.Background())
+			ex.GetIn().SetHeader(CamelMongoDbCriteria, tc.filter)
+			ex.SetBody(bson.M{"$set": bson.M{"updated": true}})
+			err := prod.Send(ex)
+			require.Error(t, err, "invalid criteria header %T must fail even with allowUpdateAll=true", tc.filter)
+			assert.Len(t, srv.Commands(), beforeCmds, "must not send UpdateMany to MongoDB on invalid criteria")
+		})
+	}
+
+	validEmptyFilters := []struct {
+		name   string
+		filter interface{}
+	}{
+		{"nil", nil},
+		{"empty string", ""},
+		{"empty JSON", "{}"},
+		{"empty bson.M", bson.M{}},
+		{"empty bson.D", bson.D{}},
+		{"empty bson.Raw", bson.Raw{}},
+	}
+
+	for _, tc := range validEmptyFilters {
+		t.Run("valid_empty_with_allowUpdateAll/"+tc.name, func(t *testing.T) {
+			ex := gocamel.NewExchange(context.Background())
+			ex.SetBody(map[string]interface{}{
+				"filter": tc.filter,
+				"update": bson.M{"$set": bson.M{"updated": true}},
+			})
+			require.NoError(t, prod.Send(ex))
+			cmds := srv.Commands()
+			require.NotEmpty(t, cmds)
+			last := cmds[len(cmds)-1]
+			require.Equal(t, "update", last.Name)
+			updates := last.Doc["updates"].([]bson.M)
+			assert.Equal(t, bson.M{}, updates[0]["q"])
+		})
+	}
+}
+
+func TestMongoDB_NilCriteriaHeaderFallsBackToBodyFilterConsistently(t *testing.T) {
+	srv, client := startMockMongoServer(t, func(cmdName string, cmd bson.M) bson.D {
+		switch cmdName {
+		case "find":
+			return bson.D{
+				{Key: "cursor", Value: bson.D{
+					{Key: "id", Value: int64(0)},
+					{Key: "ns", Value: "db.items"},
+					{Key: "firstBatch", Value: bson.A{bson.D{{Key: "source", Value: "body"}}}},
+				}},
+				{Key: "ok", Value: float64(1)},
+			}
+		case "aggregate":
+			return bson.D{
+				{Key: "cursor", Value: bson.D{
+					{Key: "id", Value: int64(0)},
+					{Key: "ns", Value: "db.items"},
+					{Key: "firstBatch", Value: bson.A{bson.D{{Key: "n", Value: int64(1)}}}},
+				}},
+				{Key: "ok", Value: float64(1)},
+			}
+		case "delete":
+			return bson.D{{Key: "n", Value: int32(1)}, {Key: "ok", Value: float64(1)}}
+		case "update":
+			return bson.D{{Key: "n", Value: int32(1)}, {Key: "nModified", Value: int32(1)}, {Key: "ok", Value: float64(1)}}
+		default:
+			return bson.D{{Key: "ok", Value: float64(1)}}
+		}
+	})
+
+	comp := NewMongoDBComponent()
+	comp.RegisterConnection("mock", CreateMongoDBConnection(client, "mongodb://mock", "db"))
+
+	ep, err := comp.CreateEndpoint("mongodb://mock?collection=items&allowHeaderOverride=true")
+	require.NoError(t, err)
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, prod.Start(context.Background()))
+	defer func() { _ = prod.Stop() }()
+
+	t.Run("find falls back to body filter when CamelMongoDbCriteria is nil", func(t *testing.T) {
+		ex := gocamel.NewExchange(context.Background())
+		ex.GetIn().SetHeader(CamelMongoDbOperation, "find")
+		ex.GetIn().SetHeader(CamelMongoDbCriteria, nil)
+		ex.SetBody(bson.M{"source": "body"})
+		require.NoError(t, prod.Send(ex))
+
+		cmds := srv.Commands()
+		last := cmds[len(cmds)-1]
+		require.Equal(t, "find", last.Name)
+		assert.Equal(t, bson.M{"source": "body"}, last.Doc["filter"])
+	})
+
+	t.Run("findOne falls back to body filter when CamelMongoDbCriteria is nil", func(t *testing.T) {
+		ex := gocamel.NewExchange(context.Background())
+		ex.GetIn().SetHeader(CamelMongoDbOperation, "findOne")
+		ex.GetIn().SetHeader(CamelMongoDbCriteria, nil)
+		ex.SetBody(bson.M{"source": "body"})
+		require.NoError(t, prod.Send(ex))
+
+		cmds := srv.Commands()
+		last := cmds[len(cmds)-1]
+		require.Equal(t, "find", last.Name)
+		assert.Equal(t, bson.M{"source": "body"}, last.Doc["filter"])
+	})
+
+	t.Run("count falls back to body filter when CamelMongoDbCriteria is nil", func(t *testing.T) {
+		ex := gocamel.NewExchange(context.Background())
+		ex.GetIn().SetHeader(CamelMongoDbOperation, "count")
+		ex.GetIn().SetHeader(CamelMongoDbCriteria, nil)
+		ex.SetBody(bson.M{"source": "body"})
+		require.NoError(t, prod.Send(ex))
+
+		cmds := srv.Commands()
+		last := cmds[len(cmds)-1]
+		require.Equal(t, "aggregate", last.Name)
+		pipeline, ok := last.Doc["pipeline"].(bson.A)
+		require.True(t, ok)
+		require.NotEmpty(t, pipeline)
+		firstStage, ok := pipeline[0].(bson.M)
+		require.True(t, ok)
+		assert.Equal(t, bson.M{"source": "body"}, firstStage["$match"])
+	})
+
+	t.Run("remove falls back to body filter when CamelMongoDbCriteria is nil", func(t *testing.T) {
+		ex := gocamel.NewExchange(context.Background())
+		ex.GetIn().SetHeader(CamelMongoDbOperation, "remove")
+		ex.GetIn().SetHeader(CamelMongoDbCriteria, nil)
+		ex.SetBody(bson.M{"source": "body"})
+		require.NoError(t, prod.Send(ex))
+
+		cmds := srv.Commands()
+		last := cmds[len(cmds)-1]
+		require.Equal(t, "delete", last.Name)
+		deletes := last.Doc["deletes"].([]bson.M)
+		assert.Equal(t, bson.M{"source": "body"}, deletes[0]["q"])
+	})
+
+	t.Run("update falls back to body filter when CamelMongoDbCriteria is nil", func(t *testing.T) {
+		ex := gocamel.NewExchange(context.Background())
+		ex.GetIn().SetHeader(CamelMongoDbOperation, "update")
+		ex.GetIn().SetHeader(CamelMongoDbCriteria, nil)
+		ex.SetBody(bson.M{
+			"filter": bson.M{"source": "body"},
+			"update": bson.M{"$set": bson.M{"ok": true}},
+		})
+		require.NoError(t, prod.Send(ex))
+
+		cmds := srv.Commands()
+		last := cmds[len(cmds)-1]
+		require.Equal(t, "update", last.Name)
+		updates := last.Doc["updates"].([]bson.M)
+		assert.Equal(t, bson.M{"source": "body"}, updates[0]["q"])
+	})
+}

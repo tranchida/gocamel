@@ -751,6 +751,17 @@ func TestSFTPEndpoint_SecurityPrivateKeyKnownHostsAndProducerEdges(t *testing.T)
 		t.Cleanup(func() { _ = prodDir.Stop() })
 		require.Error(t, prodDir.Send(exNoName))
 
+		// Root and trailing-slash subdir must reject dot CamelFileName values before dialing.
+		beforeConns := srv.connCount.Load()
+		for _, badDotName := range []string{".", "./", "./.", `.\.`} {
+			exDot := gocamel.NewExchange(context.Background())
+			exDot.GetIn().SetHeader(gocamel.CamelFileName, badDotName)
+			exDot.SetBody("bad")
+			require.Error(t, prodRoot.Send(exDot), "root SFTP URI must reject CamelFileName=%q", badDotName)
+			require.Error(t, prodDir.Send(exDot), "subdir SFTP URI must reject CamelFileName=%q", badDotName)
+		}
+		assert.Equal(t, beforeConns, srv.connCount.Load(), "invalid dot CamelFileName must fail before dialing SFTP")
+
 		exReader := gocamel.NewExchange(context.Background())
 		exReader.GetIn().SetHeader(gocamel.CamelFileName, "sub/r.txt")
 		exReader.SetBody(strings.NewReader("reader"))

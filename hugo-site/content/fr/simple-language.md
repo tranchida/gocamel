@@ -193,14 +193,14 @@ ${date:now:ISO8601}
 
 ### Fonctions de Chaîne
 
-Chaînables sur toute expression (`${body.trim().uppercase()}`) ; les fonctions sur chaînes opèrent en runes UTF-8 :
+Chaînables sur toute expression (`${body.trim().uppercase()}`) ; les fonctions d'indexation et de remplissage (`substring`, `capitalize`, `padstart`, `padend`) opèrent en runes UTF-8 :
 
 ```go
 ${body.uppercase()}        // ou ${body.upper()}
 ${body.lowercase()}        // ou ${body.lower()}
 ${header.name.trim()}
 ${body.substring(0, 5)}
-${body.size()}             // ou ${body.length()} : taille d'une chaîne, slice, array ou map
+${body.size()}             // ou ${body.length()} : longueur en octets d'une chaîne, ou nombre d'éléments d'une slice, array ou map
 ```
 
 ### Fonctions Mathématiques

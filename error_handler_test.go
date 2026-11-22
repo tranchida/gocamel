@@ -592,3 +592,19 @@ func TestDeadLetterChannel_ExponentialBackoffGuardsInvalidMultiplier(t *testing.
 	assert.Equal(t, 2.0, dlc.backoffMultiplier)
 }
 
+func TestDeadLetterChannel_ZeroValueRetryAttemptsDoesNotPanic(t *testing.T) {
+	dlc := &DeadLetterChannel{maxRedeliveries: 1}
+	ex := NewExchange(context.Background())
+	origErr := errors.New("boom")
+
+	require.NotPanics(t, func() {
+		err := dlc.HandleError(ex, origErr)
+		assert.NoError(t, err, "first attempt under maxRedeliveries=1 should request retry")
+	})
+
+	require.NotPanics(t, func() {
+		err := dlc.HandleError(ex, origErr)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, origErr)
+	})
+}

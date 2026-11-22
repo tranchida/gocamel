@@ -173,9 +173,10 @@ type OnExceptionDefinition struct {
 // fail records the first configuration error on the parent builder; Build()
 // surfaces it.
 func (d *OnExceptionDefinition) fail(err error) {
-	if d.parent.err == nil {
-		d.parent.err = err
+	if d == nil || d.parent == nil {
+		return
 	}
+	d.parent.recordErr(err)
 }
 
 // MaximumRedeliveries sets how many times the failed processor is retried
@@ -280,6 +281,11 @@ func (d *OnExceptionDefinition) Log(message string) *OnExceptionDefinition {
 
 // End terminates the OnException clause and returns to the RouteBuilder.
 func (d *OnExceptionDefinition) End() *RouteBuilder {
-	d.parent.adoptErr(d.handler)
+	if d == nil {
+		return nil
+	}
+	if d.parent != nil {
+		d.parent.adoptErr(d.handler)
+	}
 	return d.parent
 }

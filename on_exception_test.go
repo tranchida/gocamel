@@ -668,3 +668,40 @@ func TestOnException_BackOffMultiplierRejectsNaNAndInf(t *testing.T) {
 	}
 }
 
+func TestOnException_UnbuiltRoutePropagatesFailAndNilGuard(t *testing.T) {
+	t.Run("omitted Build still fails Validate and Context.Start", func(t *testing.T) {
+		ctx := NewCamelContext()
+		rb := ctx.CreateRouteBuilder().
+			OnException(errOnExceptionSentinel).
+			MaximumRedeliveries(-1).
+			End().
+			From("direct:unbuilt-on-exception")
+
+		require.Error(t, rb.route.Validate())
+		require.Error(t, ctx.Start())
+	})
+
+	t.Run("ignored Build error on invalid target fails Context.Start", func(t *testing.T) {
+		ctx := NewCamelContext()
+		rb := ctx.CreateRouteBuilder().
+			OnException(nil).
+			End().
+			From("direct:unbuilt-nil-target")
+
+		require.Error(t, rb.route.Validate())
+		require.Error(t, ctx.Start())
+	})
+
+	t.Run("nil OnExceptionDefinition does not panic", func(t *testing.T) {
+		var nilDef *OnExceptionDefinition
+		assert.NotPanics(t, func() {
+			nilDef.fail(errors.New("ignored"))
+			assert.Nil(t, nilDef.End())
+		})
+		emptyDef := &OnExceptionDefinition{}
+		assert.NotPanics(t, func() {
+			emptyDef.fail(errors.New("ignored"))
+			assert.Nil(t, emptyDef.End())
+		})
+	})
+}

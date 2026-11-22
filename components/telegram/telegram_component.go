@@ -234,7 +234,6 @@ func (p *TelegramProducer) Start(ctx context.Context) error {
 		p.mu.Unlock()
 		return nil
 	}
-	p.stopped = false
 	p.gen++
 	startGen := p.gen
 	p.mu.Unlock()
@@ -246,11 +245,12 @@ func (p *TelegramProducer) Start(ctx context.Context) error {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.stopped || p.gen != startGen {
+	if p.gen != startGen {
 		return fmt.Errorf("telegram producer stopped during start")
 	}
 	bot.Client = nil
 	p.bot = bot
+	p.stopped = false
 	return nil
 }
 

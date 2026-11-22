@@ -3,6 +3,7 @@ package gocamel
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -80,6 +81,9 @@ func ConfineFileName(name string) error {
 		if part == ".." {
 			return fmt.Errorf("file name contains traversal: %s", name)
 		}
+	}
+	if clean := path.Clean(normalized); clean == "." || clean == "/" || clean == "" {
+		return fmt.Errorf("file name must not resolve to current or root directory: %s", name)
 	}
 	return nil
 }

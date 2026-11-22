@@ -355,4 +355,3 @@ func TestTryCatch_ClearsOutAndFinallyDoesNotSwallowError(t *testing.T) {
 		assert.Empty(t, ctxBad.GetRoutes())
 	})
 }
-

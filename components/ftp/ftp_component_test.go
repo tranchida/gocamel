@@ -1165,6 +1165,16 @@ func TestFTPConsumer_ReadLocksPostProcessingAndEdgeCases(t *testing.T) {
 		t.Cleanup(func() { _ = prodDir.Stop() })
 		require.Error(t, prodDir.Send(ex))
 
+		// Root and trailing-slash subdir must reject dot CamelFileName values before dialing.
+		for _, badDotName := range []string{".", "./", "./.", `.\.`} {
+			exDot := gocamel.NewExchange(context.Background())
+			exDot.GetIn().SetHeader(gocamel.CamelFileName, badDotName)
+			exDot.SetBody("bad")
+			require.Error(t, prod.Send(exDot), "root FTP URI must reject CamelFileName=%q", badDotName)
+			require.Error(t, prodDir.Send(exDot), "subdir FTP URI must reject CamelFileName=%q", badDotName)
+		}
+		assert.Empty(t, srv.commands(), "invalid dot CamelFileName must fail before issuing FTP commands")
+
 		// Unsupported body type.
 		exBadBody := gocamel.NewExchange(context.Background())
 		exBadBody.GetIn().SetHeader(gocamel.CamelFileName, "a.txt")

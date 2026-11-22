@@ -66,7 +66,10 @@ func (d *SagaDefinition) ActionFunc(action func(*Exchange) error, compensation f
 // lost on process exit). Use a SQLSagaRepository so pending compensations
 // survive a crash. A nil repository is a build error.
 func (d *SagaDefinition) Repository(repo SagaRepository) *SagaDefinition {
-	if repo == nil {
+	if d == nil {
+		return nil
+	}
+	if isNilValue(repo) {
 		d.fail(fmt.Errorf("saga: repository must not be nil"))
 		return d
 	}

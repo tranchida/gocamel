@@ -383,7 +383,11 @@ func (p *SFTPProducer) Send(exchange *gocamel.Exchange) error {
 	remotePath := p.endpoint.url.Path
 	if remotePath == "" || remotePath == "/" {
 		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok && name != nil {
-			joined, err := gocamel.JoinRemotePath("", fmt.Sprintf("%v", name))
+			nameStr := fmt.Sprintf("%v", name)
+			if cleanName := path.Clean(strings.ReplaceAll(nameStr, "\\", "/")); cleanName == "." || cleanName == "/" || cleanName == "" {
+				return fmt.Errorf("sftp: invalid CamelFileName: %q", nameStr)
+			}
+			joined, err := gocamel.JoinRemotePath("", nameStr)
 			if err != nil {
 				return fmt.Errorf("sftp: invalid path: %w", err)
 			}
@@ -393,7 +397,11 @@ func (p *SFTPProducer) Send(exchange *gocamel.Exchange) error {
 		}
 	} else if strings.HasSuffix(remotePath, "/") {
 		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok && name != nil {
-			joined, err := gocamel.JoinRemotePath(remotePath, fmt.Sprintf("%v", name))
+			nameStr := fmt.Sprintf("%v", name)
+			if cleanName := path.Clean(strings.ReplaceAll(nameStr, "\\", "/")); cleanName == "." || cleanName == "/" || cleanName == "" {
+				return fmt.Errorf("sftp: invalid CamelFileName: %q", nameStr)
+			}
+			joined, err := gocamel.JoinRemotePath(remotePath, nameStr)
 			if err != nil {
 				return fmt.Errorf("sftp: invalid path: %w", err)
 			}

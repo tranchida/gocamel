@@ -441,6 +441,9 @@ func (p *FTPProducer) Send(exchange *gocamel.Exchange) error {
 		if containsControlChar(nameStr) {
 			return fmt.Errorf("ftp: invalid CamelFileName: contains control character")
 		}
+		if cleanName := path.Clean(strings.ReplaceAll(nameStr, "\\", "/")); cleanName == "." || cleanName == "/" || cleanName == "" {
+			return fmt.Errorf("ftp: invalid CamelFileName: %q", nameStr)
+		}
 		baseDir := remotePath
 		if baseDir == "/" {
 			baseDir = ""

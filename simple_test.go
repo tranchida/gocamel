@@ -2200,6 +2200,37 @@ func TestSimple_UTF8StringsAndQuotedBraces(t *testing.T) {
 		assert.Equal(t, "École", got)
 	})
 
+	t.Run("substring operates on UTF-8 runes", func(t *testing.T) {
+		cases := []struct {
+			name string
+			body string
+			expr string
+			want string
+		}{
+			{"accented prefix", "école", "${body.substring(0, 1)}", "é"},
+			{"accented middle", "école", "${body.substring(1, 3)}", "co"},
+			{"accented tail", "école", "${body.substring(1)}", "cole"},
+			{"emoji prefix", "🚀hello", "${body.substring(0, 2)}", "🚀h"},
+			{"emoji tail", "🚀hello", "${body.substring(1)}", "hello"},
+			{"negative start clamps to zero", "🚀hello", "${body.substring(-2, 2)}", "🚀h"},
+			{"end before start empty", "🚀hello", "${body.substring(3, 1)}", ""},
+			{"start past rune length empty", "🚀hello", "${body.substring(99)}", ""},
+			{"end past rune length clamps", "🚀hello", "${body.substring(1, 99)}", "hello"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				ex := NewExchange(context.Background())
+				ex.GetIn().SetBody(tc.body)
+				tmpl, err := ParseSimpleTemplate(tc.expr)
+				require.NoError(t, err)
+				got, err := tmpl.EvaluateAsString(ex)
+				require.NoError(t, err)
+				assert.True(t, utf8.ValidString(got))
+				assert.Equal(t, tc.want, got)
+			})
+		}
+	})
+
 	t.Run("padstart and padend are UTF-8 rune-safe", func(t *testing.T) {
 		ex := NewExchange(context.Background())
 		ex.GetIn().SetBody("a")

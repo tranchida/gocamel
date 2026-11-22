@@ -330,6 +330,10 @@ func TestConfineFileName_CRLFAndWindowsDriveAndInternalDotDot(t *testing.T) {
 		{"internal dotdot forward slash", "sub/../file"},
 		{"internal dotdot backslash", `sub\..\file`},
 		{"trailing dotdot", "sub/.."},
+		{"current directory dot", "."},
+		{"current directory dot slash", "./"},
+		{"current directory dot slash dot", "./."},
+		{"current directory dot backslash dot", `.\.`},
 	}
 
 	for _, tt := range rejectedNames {

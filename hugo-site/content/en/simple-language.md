@@ -192,14 +192,14 @@ ${date:now:ISO8601}
 
 ### String Functions
 
-Chained on any expression (`${body.trim().uppercase()}`); string functions operate on UTF-8 runes:
+Chained on any expression (`${body.trim().uppercase()}`); indexing and padding functions (`substring`, `capitalize`, `padstart`, `padend`) operate on UTF-8 runes:
 
 ```go
 ${body.uppercase()}        // or ${body.upper()}
 ${body.lowercase()}        // or ${body.lower()}
 ${header.name.trim()}
 ${body.substring(0, 5)}
-${body.size()}             // or ${body.length()}: length of string, slice, array or map
+${body.size()}             // or ${body.length()}: byte length of string, or element count of slice, array or map
 ```
 
 ### Math Functions

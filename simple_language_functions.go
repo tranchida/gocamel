@@ -17,7 +17,10 @@ func evaluateFileFunction(fn string, exchange *Exchange) (interface{}, error) {
 	// Standard file headers
 	name, _ := exchange.GetHeaderAsString(CamelFileName)
 	path, _ := exchange.GetHeaderAsString(CamelFilePath)
-	length, _ := exchange.GetHeaderAsInt(CamelFileLength)
+	var length int64
+	if rawLength, exists := exchange.GetHeader(CamelFileLength); exists {
+		length, _ = valueAsInt64(rawLength)
+	}
 	modified, _ := exchange.GetHeader(CamelFileLastModified)
 
 	lastSep := strings.LastIndexAny(name, "/\\")

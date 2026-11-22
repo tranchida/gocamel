@@ -185,6 +185,9 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 	if dlc.syncPropertyKey == "" {
 		dlc.syncPropertyKey = fmt.Sprintf("CamelDeadLetterSynchronized.%d", globalDeadLetterID.Add(1))
 	}
+	if dlc.retryAttempts == nil {
+		dlc.retryAttempts = make(map[string]int)
+	}
 	syncPropKey := dlc.syncPropertyKey
 	attempt := dlc.retryAttempts[exID]
 	canRetry := attempt < dlc.maxRedeliveries

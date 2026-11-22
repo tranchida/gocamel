@@ -461,3 +461,72 @@ func TestCronComponent_RejectsUnspacedTZAndIntervalOverflowAndStopsSchedulerWhen
 		require.NoError(t, comp.Stop())
 	})
 }
+
+func TestCronComponent_StopWaitsForConcurrentRemoveJobDrain(t *testing.T) {
+	comp := NewCronComponent()
+	ep, err := comp.CreateEndpoint("cron://drainRace?cron=*+*+*+*+*+*&triggerStartDelay=0")
+	require.NoError(t, err)
+
+	jobEntered := make(chan struct{})
+	releaseJob := make(chan struct{})
+	var closeReleaseOnce sync.Once
+	release := func() {
+		closeReleaseOnce.Do(func() { close(releaseJob) })
+	}
+	t.Cleanup(release)
+
+	var jobOnce sync.Once
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error {
+		jobOnce.Do(func() {
+			close(jobEntered)
+			<-releaseJob
+		})
+		return nil
+	}))
+	require.NoError(t, err)
+	require.NoError(t, consumer.Start(context.Background()))
+
+	select {
+	case <-jobEntered:
+	case <-time.After(3 * time.Second):
+		release()
+		_ = consumer.Stop()
+		_ = comp.Stop()
+		t.Fatal("cron job did not fire in time")
+	}
+
+	consumerStopDone := make(chan error, 1)
+	go func() {
+		consumerStopDone <- consumer.Stop()
+	}()
+
+	// Wait until removeJob has rotated the scheduler and cleared comp.started,
+	// while still parked waiting on <-stopCtx.Done().
+	require.Eventually(t, func() bool {
+		comp.mu.Lock()
+		defer comp.mu.Unlock()
+		return !comp.started
+	}, 2*time.Second, 5*time.Millisecond)
+
+	compStopDone := make(chan error, 1)
+	go func() {
+		compStopDone <- comp.Stop()
+	}()
+
+	select {
+	case err := <-compStopDone:
+		release()
+		<-consumerStopDone
+		t.Fatalf("CronComponent.Stop returned (%v) while concurrent removeJob was still draining in-flight cron job", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	release()
+	require.NoError(t, <-consumerStopDone)
+	select {
+	case err := <-compStopDone:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("CronComponent.Stop did not complete after in-flight cron job finished")
+	}
+}

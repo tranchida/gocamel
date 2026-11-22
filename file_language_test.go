@@ -125,4 +125,45 @@ func TestSimple_FileLengthInt64AndDottedDir(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, `dir.v1\report`, gotWinNoExt)
 	})
+
+	t.Run("preserves concrete int64 above 32-bit range", func(t *testing.T) {
+		const bigSize = int64(1) << 40
+		exBig := NewExchange(context.Background())
+		exBig.In.SetHeader(CamelFileLength, bigSize)
+
+		for _, fn := range []string{"length", "size"} {
+			rawVal, err := evaluateFileFunction(fn, exBig)
+			require.NoError(t, err)
+			typedVal, ok := rawVal.(int64)
+			require.True(t, ok, "file:%s should return concrete int64, got %T", fn, rawVal)
+			assert.Equal(t, bigSize, typedVal)
+
+			evalVal, err := evaluateVariable("file:"+fn, exBig)
+			require.NoError(t, err)
+			evalTyped, ok := evalVal.(int64)
+			require.True(t, ok, "evaluateVariable(file:%s) should return concrete int64, got %T", fn, evalVal)
+			assert.Equal(t, bigSize, evalTyped)
+
+			tmpl, err := ParseSimpleTemplate("${file:" + fn + "}")
+			require.NoError(t, err)
+			strVal, err := tmpl.EvaluateAsString(exBig)
+			require.NoError(t, err)
+			assert.Equal(t, "1099511627776", strVal)
+		}
+
+		cmpTmpl, err := ParseSimpleTemplate("${file:length == 1099511627776}")
+		require.NoError(t, err)
+		matched, err := cmpTmpl.EvaluateAsBool(exBig)
+		require.NoError(t, err)
+		assert.True(t, matched)
+
+		// Even small int values should return concrete int64.
+		exSmall := NewExchange(context.Background())
+		exSmall.In.SetHeader(CamelFileLength, 1234)
+		smallVal, err := evaluateFileFunction("length", exSmall)
+		require.NoError(t, err)
+		smallTyped, ok := smallVal.(int64)
+		require.True(t, ok, "small file:length should return concrete int64, got %T", smallVal)
+		assert.Equal(t, int64(1234), smallTyped)
+	})
 }

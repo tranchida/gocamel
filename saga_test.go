@@ -342,4 +342,3 @@ func TestSagaProcessor_SetRepositoryNilDoesNotPanic(t *testing.T) {
 		t.Fatal("expected saga to return failure error")
 	}
 }
-

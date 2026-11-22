@@ -474,6 +474,19 @@ func TestSaga_InvalidConfigurationIsABuildError(t *testing.T) {
 
 	_, err = c.CreateRouteBuilder().From("direct:b").Saga().Repository(nil).End().Build()
 	assert.Error(t, err)
+
+	var nilSQLRepo *SQLSagaRepository
+	_, err = c.CreateRouteBuilder().From("direct:c").Saga().Repository(nilSQLRepo).End().Build()
+	assert.Error(t, err, "typed-nil SagaRepository must be rejected at Build time")
+
+	var nilMemRepo *MemorySagaRepository
+	_, err = c.CreateRouteBuilder().From("direct:d").Saga().Repository(nilMemRepo).End().Build()
+	assert.Error(t, err, "typed-nil MemorySagaRepository must be rejected at Build time")
+
+	var nilDef *SagaDefinition
+	assert.NotPanics(t, func() {
+		assert.Nil(t, nilDef.Repository(nil))
+	})
 }
 
 func TestSaga_NestedSagaGetsItsOwnID(t *testing.T) {
@@ -845,4 +858,3 @@ func TestSagaRecovery_RedactsCompensationURI(t *testing.T) {
 	assert.NotContains(t, logOut, "tok123")
 	assert.Contains(t, logOut, "xxxxx")
 }
-

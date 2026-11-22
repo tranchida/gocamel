@@ -716,42 +716,51 @@ func parseJSONMongoFilter(raw string) (bson.M, error) {
 }
 
 func normalizeUpdateFilter(raw interface{}) (interface{}, error) {
-	if s, ok := raw.(string); ok {
-		return parseJSONMongoFilter(s)
-	}
-	return raw, nil
+	return normalizeFilter(raw)
 }
 
 func normalizeFilter(raw interface{}) (interface{}, error) {
 	if raw == nil {
 		return bson.M{}, nil
 	}
+	var doc interface{}
 	switch v := raw.(type) {
 	case map[string]interface{}:
 		if v == nil {
 			return bson.M{}, nil
 		}
-		return v, nil
+		doc = v
 	case bson.M:
 		if v == nil {
 			return bson.M{}, nil
 		}
-		return v, nil
+		doc = v
 	case bson.D:
 		if v == nil {
 			return bson.D{}, nil
 		}
-		return v, nil
+		doc = v
 	case bson.Raw:
 		if len(v) == 0 {
 			return bson.M{}, nil
 		}
-		return v, nil
+		if err := v.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid BSON filter: %w", err)
+		}
+		doc = v
 	case string:
-		return parseJSONMongoFilter(v)
+		parsed, err := parseJSONMongoFilter(v)
+		if err != nil {
+			return nil, err
+		}
+		doc = parsed
 	default:
 		return nil, fmt.Errorf("unsupported filter type: %T", v)
 	}
+	if _, err := bson.Marshal(doc); err != nil {
+		return nil, fmt.Errorf("invalid filter: %w", err)
+	}
+	return doc, nil
 }
 
 // execCount executes a countDocuments.
@@ -779,7 +788,7 @@ func (p *MongoDBProducer) execCount(ctx context.Context, exchange *gocamel.Excha
 func (p *MongoDBProducer) extractFilter(exchange *gocamel.Exchange) (interface{}, error) {
 	// Criteria header takes priority (opt-in via allowHeaderOverride)
 	if p.endpoint.allowHeaderOverride {
-		if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
+		if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok && crit != nil {
 			return normalizeFilter(crit)
 		}
 	}

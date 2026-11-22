@@ -706,4 +706,78 @@ func TestTelegramProducer_NoLockDuringGetMeAndRespectsCtx(t *testing.T) {
 			t.Fatalf("expected Send to abort with context.DeadlineExceeded, got %v", err)
 		}
 	})
+
+	t.Run("failed Start after Stop keeps producer stopped and Send does not dial", func(t *testing.T) {
+		ep := newEndpoint(t, "telegram://bots?authorizationToken=123:test&chatId=42")
+		var mu sync.Mutex
+		var httpCalls int
+		ep.httpClient = &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				mu.Lock()
+				httpCalls++
+				mu.Unlock()
+				if r.Context().Err() != nil {
+					return nil, r.Context().Err()
+				}
+				var body string
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/getMe"):
+					body = `{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`
+				case strings.HasSuffix(r.URL.Path, "/sendMessage"):
+					body = `{"ok":true,"result":{"message_id":2,"chat":{"id":42,"type":"private"},"text":"ok"}}`
+				default:
+					return nil, errors.New("unexpected call")
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(body)),
+				}, nil
+			}),
+		}
+
+		prod, err := ep.CreateProducer()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := prod.Start(context.Background()); err != nil {
+			t.Fatalf("initial Start: %v", err)
+		}
+		if err := prod.Stop(); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+
+		cancelledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := prod.Start(cancelledCtx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected Start(cancelledCtx) to fail with context.Canceled, got %v", err)
+		}
+
+		mu.Lock()
+		callsBeforeSend := httpCalls
+		mu.Unlock()
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("should not dial")
+		err = prod.Send(ex)
+		if err == nil || !strings.Contains(err.Error(), "stopped") {
+			t.Fatalf("expected stopped error after failed Start following Stop, got %v", err)
+		}
+
+		mu.Lock()
+		callsAfterSend := httpCalls
+		mu.Unlock()
+		if callsAfterSend != callsBeforeSend {
+			t.Fatalf("expected Send on stopped producer to make 0 HTTP calls, made %d", callsAfterSend-callsBeforeSend)
+		}
+
+		// Subsequent valid Start recovers and allows Send.
+		if err := prod.Start(context.Background()); err != nil {
+			t.Fatalf("recovery Start: %v", err)
+		}
+		defer func() { _ = prod.Stop() }()
+		if err := prod.Send(ex); err != nil {
+			t.Fatalf("Send after recovery Start: %v", err)
+		}
+	})
 }

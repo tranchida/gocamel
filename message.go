@@ -57,6 +57,44 @@ func valueAsInt(value any) (int, bool) {
 	}
 }
 
+func valueAsInt64(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), true
+	case int64:
+		return v, true
+	case int32:
+		return int64(v), true
+	case int16:
+		return int64(v), true
+	case int8:
+		return int64(v), true
+	case uint:
+		if uint64(v) > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case uint64:
+		if v > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case uint32:
+		return int64(v), true
+	case uint16:
+		return int64(v), true
+	case uint8:
+		return int64(v), true
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < float64(math.MinInt64) || v >= 9223372036854775808.0 {
+			return 0, false
+		}
+		return int64(v), true
+	default:
+		return 0, false
+	}
+}
+
 func (m *Message) GetBodyAsInt() (int, bool) {
 	if m.Body == nil {
 		return 0, false

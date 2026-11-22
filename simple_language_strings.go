@@ -48,25 +48,32 @@ func applyStringFunction(funcName string, val interface{}, args []interface{}) (
 		if len(args) < 1 {
 			return strVal, nil
 		}
-		start := int(toFloat64(args[0]))
-		if start < 0 {
+		runes := []rune(strVal)
+		startF := toFloat64(args[0])
+		start := 0
+		switch {
+		case math.IsNaN(startF) || startF < 0:
 			start = 0
-		}
-		if start >= len(strVal) {
+		case startF >= float64(len(runes)):
 			return "", nil
+		default:
+			start = int(startF)
 		}
 
 		if len(args) >= 2 {
-			end := int(toFloat64(args[1]))
-			if end > len(strVal) {
-				end = len(strVal)
-			}
-			if end <= start {
+			endF := toFloat64(args[1])
+			var end int
+			switch {
+			case math.IsNaN(endF) || endF <= float64(start):
 				return "", nil
+			case endF >= float64(len(runes)):
+				end = len(runes)
+			default:
+				end = int(endF)
 			}
-			return strVal[start:end], nil
+			return string(runes[start:end]), nil
 		}
-		return strVal[start:], nil
+		return string(runes[start:]), nil
 	case "replace":
 		if len(args) < 2 {
 			return strVal, nil

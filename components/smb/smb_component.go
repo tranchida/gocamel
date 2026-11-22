@@ -41,11 +41,25 @@ type realSMBShare struct {
 }
 
 func (s realSMBShare) Open(name string) (smbFileHandle, error) {
-	return s.Share.Open(name)
+	f, err := s.Share.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return nil, nil
+	}
+	return f, nil
 }
 
 func (s realSMBShare) OpenFile(name string, flag int, perm os.FileMode) (smbFileHandle, error) {
-	return s.Share.OpenFile(name, flag, perm)
+	f, err := s.Share.OpenFile(name, flag, perm)
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return nil, nil
+	}
+	return f, nil
 }
 
 // containsControlChar reports whether s contains any ASCII control character
@@ -430,6 +444,9 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 		}
 		if containsTraversalSegment(nameStr) {
 			return fmt.Errorf("smb: invalid CamelFileName: contains traversal")
+		}
+		if cleanName := path.Clean(strings.ReplaceAll(nameStr, "\\", "/")); cleanName == "." || cleanName == "/" || cleanName == "" {
+			return fmt.Errorf("smb: invalid CamelFileName: %q", nameStr)
 		}
 		joined, err := gocamel.JoinRemotePath(posixPath, nameStr)
 		if err != nil {

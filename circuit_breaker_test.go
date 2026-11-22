@@ -394,4 +394,3 @@ func TestCircuitBreaker_OpenTimeoutValidationAndClearsOutAndGenerationABA(t *tes
 		wg.Wait()
 	})
 }
-
