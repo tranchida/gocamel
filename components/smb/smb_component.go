@@ -8,7 +8,8 @@ import (
 	"io"
 	"net"
 	"net/url"
-	"path/filepath"
+	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -18,27 +19,107 @@ import (
 	gocamel "github.com/tranchida/gocamel"
 )
 
-// SMBComponent represents the SMB component
+// smbFileHandle abstracts an open remote SMB file handle for testing.
+type smbFileHandle interface {
+	io.ReadWriteCloser
+}
+
+// smbShare abstracts *smb2.Share operations used by SMBProducer and SMBConsumer.
+type smbShare interface {
+	Stat(name string) (os.FileInfo, error)
+	Open(name string) (smbFileHandle, error)
+	OpenFile(name string, flag int, perm os.FileMode) (smbFileHandle, error)
+	ReadDir(dirname string) ([]os.FileInfo, error)
+	Mkdir(name string, perm os.FileMode) error
+	Rename(oldpath, newpath string) error
+	Remove(name string) error
+	Umount() error
+}
+
+type realSMBShare struct {
+	*smb2.Share
+}
+
+func (s realSMBShare) Open(name string) (smbFileHandle, error) {
+	return s.Share.Open(name)
+}
+
+func (s realSMBShare) OpenFile(name string, flag int, perm os.FileMode) (smbFileHandle, error) {
+	return s.Share.OpenFile(name, flag, perm)
+}
+
+// containsControlChar reports whether s contains any ASCII control character
+// (< 0x20, including CR/LF/NUL, or 0x7f).
+func containsControlChar(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// containsTraversalSegment reports whether s contains any ".." path component.
+func containsTraversalSegment(s string) bool {
+	norm := strings.ReplaceAll(s, "\\", "/")
+	for _, part := range strings.Split(norm, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// validateSMBRemotePath rejects ASCII control characters alongside traversal
+// validation from gocamel.ValidateRemotePath, even when built standalone
+// against gocamel v0.20.0.
+func validateSMBRemotePath(p string) error {
+	if containsControlChar(p) {
+		return fmt.Errorf("path contains control character")
+	}
+	return gocamel.ValidateRemotePath(p)
+}
+
+func splitSharePath(rawPath string) (string, string) {
+	parts := strings.SplitN(strings.TrimLeft(rawPath, "/"), "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		return "", ""
+	}
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+	return parts[0], parts[1]
+}
+
+// SMBComponent represents the SMB component.
 type SMBComponent struct{}
 
-// NewSMBComponent creates a new SMBComponent
+// NewSMBComponent creates a new SMBComponent.
 func NewSMBComponent() *SMBComponent {
 	return &SMBComponent{}
 }
 
-// CreateEndpoint creates a new SMB endpoint
+// CreateEndpoint creates a new SMB endpoint.
 func (c *SMBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
 		return nil, err
 	}
+	if err := validateSMBRemotePath(u.Path); err != nil {
+		return nil, fmt.Errorf("invalid SMB path: %w", err)
+	}
+	if _, relPath := splitSharePath(u.Path); relPath != "" {
+		if err := validateSMBRemotePath(relPath); err != nil {
+			return nil, fmt.Errorf("invalid SMB path: %w", err)
+		}
+	}
 	if move := gocamel.GetConfigValue(u, "move"); move != "" {
-		if err := gocamel.ValidateRemotePath(move); err != nil {
+		if err := validateSMBRemotePath(move); err != nil {
 			return nil, fmt.Errorf("invalid move path: %w", err)
 		}
 	}
 	if moveFailed := gocamel.GetConfigValue(u, "moveFailed"); moveFailed != "" {
-		if err := gocamel.ValidateRemotePath(moveFailed); err != nil {
+		if err := validateSMBRemotePath(moveFailed); err != nil {
 			return nil, fmt.Errorf("invalid moveFailed path: %w", err)
 		}
 	}
@@ -46,11 +127,15 @@ func (c *SMBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	if maxMessageSize <= 0 {
 		maxMessageSize = gocamel.DefaultMaxBodySize
 	}
+	connectTimeout := gocamel.ParseConnectTimeout(u)
+	if connectTimeout <= 0 {
+		connectTimeout = 10 * time.Second
+	}
 	return &SMBEndpoint{
 		uri:            uri,
 		url:            u,
 		comp:           c,
-		connectTimeout: gocamel.ParseConnectTimeout(u),
+		connectTimeout: connectTimeout,
 		disconnect:     strings.EqualFold(gocamel.GetConfigValue(u, "disconnect"), "true"),
 		// maxMessageSize bounds how many bytes a single polled or produced file
 		// may hold (defaults to DefaultMaxBodySize = 32 MiB).
@@ -58,7 +143,7 @@ func (c *SMBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	}, nil
 }
 
-// SMBEndpoint represents an SMB endpoint
+// SMBEndpoint represents an SMB endpoint.
 type SMBEndpoint struct {
 	uri            string
 	url            *url.URL
@@ -66,61 +151,98 @@ type SMBEndpoint struct {
 	connectTimeout time.Duration
 	disconnect     bool
 	maxMessageSize int64
+	connectFn      func(ctx context.Context, onDial func(net.Conn)) (*smbConn, error)
 }
 
-// URI returns the endpoint URI
+// URI returns the endpoint URI.
 func (e *SMBEndpoint) URI() string {
 	return gocamel.RedactURI(e.uri)
+}
+
+func (e *SMBEndpoint) targetAddr() string {
+	if e.url.Port() == "" {
+		return net.JoinHostPort(e.url.Hostname(), "445")
+	}
+	return e.url.Host
 }
 
 type smbConn struct {
 	tcp     net.Conn
 	session *smb2.Session
-	share   *smb2.Share
+	share   smbShare
 }
 
 // abort force-closes the transport. It is used by Stop to unblock a poll that
-// is stuck in a network operation; Umount/Logoff are skipped because they
-// would try to use the same broken transport.
+// is stuck in a network operation; Umount/Logoff are skipped for live SMB
+// sessions because they would try to use the same broken transport.
 func (sc *smbConn) abort() {
 	if sc.tcp != nil {
 		_ = sc.tcp.Close()
+	}
+	if sc.session == nil && sc.share != nil {
+		_ = sc.share.Umount()
 	}
 }
 
 func (sc *smbConn) close() {
 	if sc.share != nil {
-		sc.share.Umount()
+		_ = sc.share.Umount()
 	}
 	if sc.session != nil {
-		sc.session.Logoff()
+		_ = sc.session.Logoff()
 	}
 	if sc.tcp != nil {
-		sc.tcp.Close()
+		_ = sc.tcp.Close()
 	}
 }
 
-// connect establishes an SMB connection
-func (e *SMBEndpoint) connect() (*smbConn, error) {
-	return e.connectWithDial(nil)
+// connect establishes an SMB connection.
+func (e *SMBEndpoint) connect(ctx context.Context) (*smbConn, error) {
+	return e.connectWithDial(ctx, nil)
 }
 
 // connectWithDial is connect but calls onDial as soon as the TCP transport is
 // established, before the SMB handshake, so a consumer can force-close it
-// during shutdown.
-func (e *SMBEndpoint) connectWithDial(onDial func(net.Conn)) (*smbConn, error) {
-	host := e.url.Host
-	if !strings.Contains(host, ":") {
-		host += ":445"
+// during shutdown. Context cancellation and connectTimeout bound both dialing
+// and the SMB session/mount handshake.
+func (e *SMBEndpoint) connectWithDial(ctx context.Context, onDial func(net.Conn)) (*smbConn, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if e.connectFn != nil {
+		return e.connectFn(ctx, onDial)
 	}
 
-	tcp, err := net.DialTimeout("tcp", host, e.connectTimeout)
+	shareName, _ := e.shareName()
+	if shareName == "" {
+		return nil, fmt.Errorf("no share name specified in the SMB URI")
+	}
+
+	host := e.targetAddr()
+	timeout := e.connectTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, timeout)
+	defer cancelHandshake()
+
+	dialer := &net.Dialer{Timeout: timeout}
+	tcp, err := dialer.DialContext(handshakeCtx, "tcp", host)
 	if err != nil {
 		return nil, fmt.Errorf("TCP connection error (SMB): %w", err)
 	}
-	if e.connectTimeout > 0 {
-		_ = tcp.SetDeadline(time.Now().Add(e.connectTimeout))
+	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := handshakeCtx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
 	}
+	if err := tcp.SetDeadline(deadline); err != nil {
+		_ = tcp.Close()
+		return nil, fmt.Errorf("TCP connection error (SMB): %w", err)
+	}
+	stopHandshakeWatch := context.AfterFunc(handshakeCtx, func() {
+		_ = tcp.Close()
+	})
 	if onDial != nil {
 		onDial(tcp)
 	}
@@ -133,63 +255,59 @@ func (e *SMBEndpoint) connectWithDial(onDial func(net.Conn)) (*smbConn, error) {
 		},
 	}
 
-	session, err := d.Dial(tcp)
+	session, err := d.DialContext(handshakeCtx, tcp)
 	if err != nil {
-		tcp.Close()
+		stopHandshakeWatch()
+		_ = tcp.Close()
 		return nil, fmt.Errorf("SMB session error: %w", err)
 	}
 
-	shareName, _ := e.shareName()
-	if shareName == "" {
-		session.Logoff()
-		tcp.Close()
-		return nil, fmt.Errorf("no share name specified in the SMB URI")
-	}
-
-	if e.connectTimeout > 0 {
-		_ = tcp.SetDeadline(time.Now().Add(e.connectTimeout))
-	}
-	share, err := session.Mount(shareName)
+	share, err := session.WithContext(handshakeCtx).Mount(shareName)
 	if err != nil {
-		session.Logoff()
-		tcp.Close()
+		stopHandshakeWatch()
+		_ = session.Logoff()
+		_ = tcp.Close()
 		return nil, fmt.Errorf("error mounting SMB share %s: %w", shareName, err)
 	}
-	_ = tcp.SetDeadline(time.Time{})
+	if !stopHandshakeWatch() {
+		_ = share.Umount()
+		_ = session.Logoff()
+		_ = tcp.Close()
+		return nil, fmt.Errorf("SMB connection error: %w", handshakeCtx.Err())
+	}
+	if err := tcp.SetDeadline(time.Time{}); err != nil {
+		_ = share.Umount()
+		_ = session.Logoff()
+		_ = tcp.Close()
+		return nil, fmt.Errorf("TCP connection error (SMB): %w", err)
+	}
 
-	return &smbConn{tcp: tcp, session: session, share: share}, nil
+	return &smbConn{tcp: tcp, session: session, share: realSMBShare{share}}, nil
 }
 
 // shareName returns the share name and the relative path within that share.
 func (e *SMBEndpoint) shareName() (string, string) {
-	parts := strings.SplitN(strings.TrimPrefix(e.url.Path, "/"), "/", 2)
-	if len(parts) == 0 || parts[0] == "" {
-		return "", ""
-	}
-	if len(parts) == 1 {
-		return parts[0], ""
-	}
-	return parts[0], parts[1]
+	return splitSharePath(e.url.Path)
 }
 
-// getFilePath returns the file/directory path relative to the share.
+// getFilePath returns the file/directory path relative to the share using SMB backslashes.
 func (e *SMBEndpoint) getFilePath() string {
 	_, p := e.shareName()
 	return strings.ReplaceAll(p, "/", "\\")
 }
 
-// CreateProducer creates an SMB producer
+// CreateProducer creates an SMB producer.
 func (e *SMBEndpoint) CreateProducer() (gocamel.Producer, error) {
 	return &SMBProducer{endpoint: e, fileExist: gocamel.ParseFileExist(e.url)}, nil
 }
 
-// CreateConsumer creates an SMB consumer
+// CreateConsumer creates an SMB consumer.
 func (e *SMBEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consumer, error) {
 	opts := gocamel.ParsePollingOptions(e.url)
-	if err := gocamel.ValidateRemotePath(opts.Move); err != nil {
+	if err := validateSMBRemotePath(opts.Move); err != nil {
 		return nil, fmt.Errorf("invalid move path: %w", err)
 	}
-	if err := gocamel.ValidateRemotePath(opts.MoveFailed); err != nil {
+	if err := validateSMBRemotePath(opts.MoveFailed); err != nil {
 		return nil, fmt.Errorf("invalid moveFailed path: %w", err)
 	}
 	return &SMBConsumer{
@@ -203,7 +321,7 @@ func (e *SMBEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consu
 // Producer
 // ---------------------------------------------------------------------------
 
-// SMBProducer represents an SMB producer
+// SMBProducer represents an SMB producer.
 type SMBProducer struct {
 	endpoint  *SMBEndpoint
 	fileExist gocamel.FileExistBehavior
@@ -257,9 +375,9 @@ func (p *SMBProducer) Stop() error {
 	return nil
 }
 
-func (p *SMBProducer) getConn() (*smbConn, error) {
+func (p *SMBProducer) getConn(ctx context.Context) (*smbConn, error) {
 	if p.endpoint.disconnect {
-		return p.endpoint.connect()
+		return p.endpoint.connect(ctx)
 	}
 	if p.sc != nil {
 		if _, err := p.sc.share.Stat("."); err == nil {
@@ -268,7 +386,7 @@ func (p *SMBProducer) getConn() (*smbConn, error) {
 		p.sc.close()
 		p.sc = nil
 	}
-	sc, err := p.endpoint.connect()
+	sc, err := p.endpoint.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -284,49 +402,56 @@ func (p *SMBProducer) releaseConn(sc *smbConn) {
 
 // Send sends the exchange content to the SMB share.
 func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
-	if err := p.acquire(exchange.Context); err != nil {
+	if exchange == nil {
+		return fmt.Errorf("smb: exchange must not be nil")
+	}
+	ctx := exchange.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := p.acquire(ctx); err != nil {
 		return err
 	}
 	defer p.release()
 	if p.stopped {
 		return fmt.Errorf("smb producer is stopped")
 	}
-	sc, err := p.getConn()
-	if err != nil {
-		return err
-	}
-	defer p.releaseConn(sc)
 
-	path := p.endpoint.getFilePath()
-	if path == "" || strings.HasSuffix(path, "\\") {
-		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
-			joined, err := gocamel.JoinRemotePath(strings.ReplaceAll(path, "\\", "/"), fmt.Sprintf("%v", name))
-			if err != nil {
-				return fmt.Errorf("smb: invalid path: %w", err)
-			}
-			path = joined
-		} else {
+	_, posixPath := p.endpoint.shareName()
+	posixPath = strings.ReplaceAll(posixPath, "\\", "/")
+	if posixPath == "" || strings.HasSuffix(posixPath, "/") {
+		name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName)
+		if !ok || name == nil {
 			return fmt.Errorf("no file name (CamelFileName) specified for SMB")
 		}
+		nameStr := fmt.Sprintf("%v", name)
+		if containsControlChar(nameStr) {
+			return fmt.Errorf("smb: invalid CamelFileName: contains control character")
+		}
+		if containsTraversalSegment(nameStr) {
+			return fmt.Errorf("smb: invalid CamelFileName: contains traversal")
+		}
+		joined, err := gocamel.JoinRemotePath(posixPath, nameStr)
+		if err != nil {
+			return fmt.Errorf("smb: invalid path: %w", err)
+		}
+		posixPath = joined
 	}
-	path = strings.ReplaceAll(path, "/", "\\")
 
-	if err := gocamel.ValidateRemotePath(path); err != nil {
+	if err := validateSMBRemotePath(posixPath); err != nil {
 		return fmt.Errorf("smb: invalid path: %w", err)
 	}
-
-	switch p.fileExist {
-	case gocamel.FileExistFail:
-		if _, err := sc.share.Stat(path); err == nil {
-			return fmt.Errorf("file already exists on SMB: %s", path)
-		}
-	case gocamel.FileExistIgnore:
-		if _, err := sc.share.Stat(path); err == nil {
-			return nil
-		}
+	posixPath = strings.TrimLeft(path.Clean(posixPath), "/")
+	if posixPath == "" || posixPath == "." || containsTraversalSegment(posixPath) {
+		return fmt.Errorf("no file name (CamelFileName) specified for SMB")
 	}
 
+	// Compute POSIX parent dir before converting '/' -> '\' so path.Dir works on Unix too.
+	posixDir := path.Dir(posixPath)
+	smbPath := strings.ReplaceAll(posixPath, "/", "\\")
+
 	var body []byte
+	var err error
 	switch b := exchange.GetIn().GetBody().(type) {
 	case []byte:
 		body = b
@@ -340,32 +465,54 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 		return fmt.Errorf("unsupported body type for SMB: %T", exchange.GetIn().GetBody())
 	}
 
-	if p.fileExist == gocamel.FileExistAppend {
-		// A failed open of a missing file is expected (create-if-absent
-		// semantics); a partial read, however, must abort the send:
-		// concatenating a truncated copy of the existing content would
-		// silently corrupt the stored file.
-		if f, err := sc.share.Open(path); err == nil {
-			existing, readErr := gocamel.ReadLimited(f, p.endpoint.maxMessageSize)
-			f.Close()
-			if readErr != nil {
-				return fmt.Errorf("smb: failed to read existing file %s for append: %w", path, readErr)
-			}
-			body = append(existing, body...)
+	sc, err := p.getConn(ctx)
+	if err != nil {
+		return err
+	}
+	defer p.releaseConn(sc)
+
+	if posixDir != "." && posixDir != "/" && posixDir != "" {
+		smbDir := strings.ReplaceAll(posixDir, "/", "\\")
+		if err := smbMkdirAll(sc.share, smbDir); err != nil {
+			return fmt.Errorf("error creating SMB directory: %w", err)
 		}
 	}
 
-	// Create parent directories if necessary
-	smbMkdirAll(sc.share, filepath.Dir(path))
+	var openFlags int
+	switch p.fileExist {
+	case gocamel.FileExistAppend:
+		openFlags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	case gocamel.FileExistFail, gocamel.FileExistIgnore:
+		openFlags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	default:
+		openFlags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
 
-	file, err := sc.share.Create(path)
+	file, err := sc.share.OpenFile(smbPath, openFlags, 0o644)
 	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			if p.fileExist == gocamel.FileExistFail {
+				return fmt.Errorf("file already exists on SMB: %s", smbPath)
+			}
+			if p.fileExist == gocamel.FileExistIgnore {
+				return nil
+			}
+		}
 		return fmt.Errorf("error creating SMB file: %w", err)
 	}
-	defer file.Close()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = file.Close()
+		}
+	}()
 
 	if _, err = io.Copy(file, bytes.NewReader(body)); err != nil {
 		return fmt.Errorf("error writing SMB file: %w", err)
+	}
+	closed = true
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("error closing SMB file: %w", err)
 	}
 	return nil
 }
@@ -374,16 +521,20 @@ func (p *SMBProducer) Send(exchange *gocamel.Exchange) error {
 // Consumer
 // ---------------------------------------------------------------------------
 
-// SMBConsumer represents an SMB consumer
+// SMBConsumer represents an SMB consumer.
 type SMBConsumer struct {
 	endpoint  *SMBEndpoint
 	processor gocamel.Processor
 	opts      gocamel.PollingOptions
 	mu        sync.Mutex
-	started   bool
-	stopping  bool
-	cancel    context.CancelFunc
-	sc        *smbConn // persistent connection (disconnect=false)
+	// transition is non-nil while a Start or Stop is in progress. It serializes
+	// the two operations so a Stop racing a Start cannot observe started=false
+	// and return before the consumer is fully up (and vice versa). Guarded by mu.
+	transition chan struct{}
+	started    bool
+	stopping   bool
+	cancel     context.CancelFunc
+	sc         *smbConn // persistent connection (disconnect=false)
 	// active references the connection used by the current poll, including
 	// disconnect=true mode, so Stop can abort it to unblock a stalled network
 	// operation. Guarded by mu.
@@ -392,22 +543,103 @@ type SMBConsumer struct {
 	wg        sync.WaitGroup
 }
 
-func (c *SMBConsumer) Start(ctx context.Context) error {
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *SMBConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (c *SMBConsumer) releaseTransition() {
 	c.mu.Lock()
-	if c.started || c.stopping {
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
+}
+
+func (c *SMBConsumer) closeActiveConns() {
+	c.detachAndCloseConns(false)
+}
+
+func (c *SMBConsumer) detachAndCloseConns(markStopping bool) {
+	c.mu.Lock()
+	var cancel context.CancelFunc
+	if markStopping {
+		c.stopping = true
+		cancel = c.cancel
+		c.cancel = nil
+	}
+	sc := c.sc
+	active := c.active
+	activeRaw := c.activeRaw
+	c.sc = nil
+	c.active = nil
+	c.activeRaw = nil
+	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+
+	// Abort transports before waiting so a poll blocked in a network read
+	// is unblocked instead of keeping Stop (and route shutdown) stuck.
+	if activeRaw != nil {
+		_ = activeRaw.Close()
+	}
+	if active != nil {
+		active.abort()
+	}
+	if sc != nil && sc != active {
+		sc.abort()
+	}
+}
+
+func (c *SMBConsumer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.acquireTransition()
+	defer c.releaseTransition()
+
+	c.mu.Lock()
+	if c.started {
 		c.mu.Unlock()
 		return nil
 	}
+	c.stopping = false
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.started = true
 	c.wg.Add(1)
 	c.mu.Unlock()
+
 	go func() {
 		defer c.wg.Done()
-		select {
-		case <-time.After(c.opts.InitialDelay):
-		case <-ctx.Done():
+		initialDelay := c.opts.InitialDelay
+		if initialDelay < 0 {
+			initialDelay = 0
+		}
+		if initialDelay > 0 {
+			timer := time.NewTimer(initialDelay)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			}
+		} else if ctx.Err() != nil {
 			return
 		}
 		c.poll(ctx)
@@ -416,52 +648,98 @@ func (c *SMBConsumer) Start(ctx context.Context) error {
 }
 
 func (c *SMBConsumer) poll(ctx context.Context) {
-	ticker := time.NewTicker(c.opts.Delay)
+	stopWatch := context.AfterFunc(ctx, c.closeActiveConns)
+	defer stopWatch()
+
+	delay := c.opts.Delay
+	if delay <= 0 {
+		delay = 5 * time.Second
+	}
+	ticker := time.NewTicker(delay)
 	defer ticker.Stop()
+
 	c.doPoll(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if ctx.Err() != nil {
+				return
+			}
 			c.doPoll(ctx)
 		}
 	}
 }
 
-func (c *SMBConsumer) getConn() (*smbConn, error) {
+func (c *SMBConsumer) dialAndTrack(ctx context.Context, persistent bool) (*smbConn, error) {
+	c.mu.Lock()
+	if c.stopping || !c.started || ctx.Err() != nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("smb consumer is stopped")
+	}
+	c.mu.Unlock()
+
+	var dialedRaw net.Conn
 	onDial := func(raw net.Conn) {
 		c.mu.Lock()
-		if c.stopping || !c.started {
+		if c.stopping || !c.started || ctx.Err() != nil {
 			c.mu.Unlock()
 			_ = raw.Close()
 			return
 		}
+		dialedRaw = raw
 		c.activeRaw = raw
 		c.mu.Unlock()
 	}
 
-	if c.endpoint.disconnect {
-		sc, err := c.endpoint.connectWithDial(onDial)
-		if err != nil {
-			return nil, err
-		}
+	sc, err := c.endpoint.connectWithDial(ctx, onDial)
+	if err != nil {
 		c.mu.Lock()
-		if c.stopping || !c.started {
-			c.mu.Unlock()
-			sc.close()
-			return nil, fmt.Errorf("smb consumer is stopped")
+		if c.activeRaw == dialedRaw {
+			c.activeRaw = nil
 		}
-		c.active = sc
 		c.mu.Unlock()
-		return sc, nil
+		return nil, err
 	}
+
 	c.mu.Lock()
+	if c.stopping || !c.started || ctx.Err() != nil {
+		if c.activeRaw == sc.tcp {
+			c.activeRaw = nil
+		}
+		c.mu.Unlock()
+		sc.close()
+		return nil, fmt.Errorf("smb consumer is stopped")
+	}
+	if persistent {
+		c.sc = sc
+	}
+	c.active = sc
+	if sc.tcp != nil {
+		c.activeRaw = sc.tcp
+	}
+	c.mu.Unlock()
+	return sc, nil
+}
+
+func (c *SMBConsumer) getConn(ctx context.Context) (*smbConn, error) {
+	if c.endpoint.disconnect {
+		return c.dialAndTrack(ctx, false)
+	}
+
+	c.mu.Lock()
+	if c.stopping || !c.started || ctx.Err() != nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("smb consumer is stopped")
+	}
 	sc := c.sc
 	if sc != nil {
 		c.active = sc
+		c.activeRaw = sc.tcp
 	}
 	c.mu.Unlock()
+
 	if sc != nil {
 		if _, err := sc.share.Stat("."); err == nil {
 			return sc, nil
@@ -477,27 +755,14 @@ func (c *SMBConsumer) getConn() (*smbConn, error) {
 		}
 		c.mu.Unlock()
 	}
-	newSC, err := c.endpoint.connectWithDial(onDial)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	if c.stopping || !c.started {
-		c.mu.Unlock()
-		newSC.close()
-		return nil, fmt.Errorf("smb consumer is stopped")
-	}
-	c.sc = newSC
-	c.active = newSC
-	c.mu.Unlock()
-	return newSC, nil
+
+	return c.dialAndTrack(ctx, true)
 }
 
 func (c *SMBConsumer) releaseConn(sc *smbConn) {
-	if !c.endpoint.disconnect {
-		return
+	if c.endpoint.disconnect {
+		sc.close()
 	}
-	sc.close()
 	c.mu.Lock()
 	if c.active == sc {
 		c.active = nil
@@ -511,8 +776,20 @@ type smbFile struct {
 	path string
 }
 
+func isExcludedMoveDir(fullPath, moveDir string) bool {
+	if moveDir == "" {
+		return false
+	}
+	normFull := path.Clean(strings.TrimPrefix(strings.ReplaceAll(fullPath, "\\", "/"), "/"))
+	normMove := path.Clean(strings.TrimPrefix(strings.ReplaceAll(moveDir, "\\", "/"), "/"))
+	if normMove == "" || normMove == "." {
+		return false
+	}
+	return normFull == normMove || strings.HasPrefix(normFull, normMove+"/")
+}
+
 // listSMBFiles lists files (recursively if opts.Recursive) applying include/exclude filters.
-func (c *SMBConsumer) listSMBFiles(ctx context.Context, share *smb2.Share, dirPath string) []smbFile {
+func (c *SMBConsumer) listSMBFiles(ctx context.Context, share smbShare, dirPath string) []smbFile {
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -522,32 +799,46 @@ func (c *SMBConsumer) listSMBFiles(ctx context.Context, share *smb2.Share, dirPa
 		return nil
 	}
 
+	posixDir := strings.ReplaceAll(dirPath, "\\", "/")
 	var result []smbFile
 	for _, entry := range entries {
 		if ctx.Err() != nil {
 			return result
 		}
-		entryPath := filepath.Join(dirPath, entry.Name())
-		entryPath = strings.ReplaceAll(entryPath, "/", "\\")
+		if entry.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		entryName := entry.Name()
+		if entryName == "" || entryName == "." || entryName == ".." {
+			continue
+		}
+		if containsControlChar(entryName) || strings.ContainsAny(entryName, "/\\") {
+			gocamel.LogWarn("skipping unsafe SMB entry name", "directory", dirPath, "name", entryName)
+			continue
+		}
+		entryPath := strings.ReplaceAll(path.Join(posixDir, entryName), "/", "\\")
 
 		if entry.IsDir() {
-			if c.opts.Recursive && entry.Name() != "." && entry.Name() != ".." {
+			if c.opts.Recursive {
+				if isExcludedMoveDir(entryPath, c.opts.Move) || isExcludedMoveDir(entryPath, c.opts.MoveFailed) {
+					continue
+				}
 				result = append(result, c.listSMBFiles(ctx, share, entryPath)...)
 			}
 			continue
 		}
-		if strings.HasSuffix(entry.Name(), ".camelLock") || strings.HasSuffix(entry.Name(), ".camelExclusiveReadLock") {
+		if strings.HasSuffix(entryName, ".camelLock") || strings.HasSuffix(entryName, ".camelExclusiveReadLock") {
 			continue
 		}
-		if gocamel.MatchFileName(entry.Name(), c.opts.Include, c.opts.Exclude) {
-			result = append(result, smbFile{name: entry.Name(), path: entryPath})
+		if gocamel.MatchFileName(entryName, c.opts.Include, c.opts.Exclude) {
+			result = append(result, smbFile{name: entryName, path: entryPath})
 		}
 	}
 	return result
 }
 
 type smbSynchronization struct {
-	share      *smb2.Share
+	share      smbShare
 	path       string
 	lockPath   string
 	markerPath string
@@ -610,16 +901,19 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	sc, err := c.getConn()
+	sc, err := c.getConn(ctx)
 	if err != nil {
 		gocamel.LogError("SMB polling connection error", "error", err)
 		return
 	}
 	defer c.releaseConn(sc)
 
-	rootPath := c.endpoint.getFilePath()
+	rootPath := strings.TrimRight(c.endpoint.getFilePath(), "\\")
 	if rootPath == "" {
 		rootPath = "."
+	} else if err := validateSMBRemotePath(rootPath); err != nil {
+		gocamel.LogError("invalid SMB polling path", "error", err)
+		return
 	}
 
 	files := c.listSMBFiles(ctx, sc.share, rootPath)
@@ -664,16 +958,18 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 
 		case gocamel.ReadLockMarkerFile:
 			targetMarkerPath := f.path + ".camelLock"
-			if _, err := sc.share.Stat(targetMarkerPath); err == nil {
-				// Marker exists: file is locked
-				continue
-			}
-			mf, err := sc.share.Create(targetMarkerPath)
+			mf, err := sc.share.OpenFile(targetMarkerPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 			if err != nil {
-				gocamel.LogWarn("could not create marker file for SMB read lock; skipping", "file", f.path, "error", err)
+				if !errors.Is(err, os.ErrExist) {
+					gocamel.LogWarn("could not create marker file for SMB read lock; skipping", "file", f.path, "error", err)
+				}
 				continue
 			}
-			mf.Close()
+			if err := mf.Close(); err != nil {
+				_ = sc.share.Remove(targetMarkerPath)
+				gocamel.LogWarn("could not close marker file for SMB read lock; skipping", "file", f.path, "error", err)
+				continue
+			}
 			markerPath = targetMarkerPath
 		}
 
@@ -694,7 +990,7 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 			continue
 		}
 		content, err := gocamel.ReadLimited(file, c.endpoint.maxMessageSize)
-		file.Close()
+		_ = file.Close()
 		if err != nil {
 			gocamel.LogError("SMB file read error", "file", readPath, "error", err)
 			if markerPath != "" {
@@ -722,46 +1018,16 @@ func (c *SMBConsumer) doPoll(ctx context.Context) {
 			moveFailed: c.opts.MoveFailed,
 		})
 
-		procErr := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
-
-		if procErr == nil {
-			count++
-		}
+		_ = gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
+		count++
 	}
 }
 
 func (c *SMBConsumer) Stop() error {
-	c.mu.Lock()
-	if c.stopping {
-		c.mu.Unlock()
-		return nil
-	}
-	c.stopping = true
-	cancel := c.cancel
-	c.cancel = nil
-	sc := c.sc
-	active := c.active
-	activeRaw := c.activeRaw
-	c.sc = nil
-	c.active = nil
-	c.activeRaw = nil
-	c.mu.Unlock()
+	c.acquireTransition()
+	defer c.releaseTransition()
 
-	if cancel != nil {
-		cancel()
-	}
-
-	// Abort the transport before waiting so a poll blocked in a network read
-	// is unblocked instead of keeping Stop (and the route shutdown) stuck.
-	if activeRaw != nil {
-		_ = activeRaw.Close()
-	}
-	if active != nil {
-		active.abort()
-	}
-	if sc != nil {
-		sc.abort()
-	}
+	c.detachAndCloseConns(true)
 
 	c.wg.Wait()
 
@@ -773,21 +1039,42 @@ func (c *SMBConsumer) Stop() error {
 }
 
 // moveSMBFile renames/moves a file on the SMB share.
-func moveSMBFile(share *smb2.Share, srcPath, destDir string) {
-	destDir = strings.ReplaceAll(destDir, "/", "\\")
-	smbMkdirAll(share, destDir)
-	filename := filepath.Base(srcPath)
+func moveSMBFile(share smbShare, srcPath, destDir string) {
+	filename := path.Base(strings.ReplaceAll(srcPath, "\\", "/"))
 	filename = strings.TrimSuffix(filename, ".camelExclusiveReadLock")
-	destPath := strings.ReplaceAll(filepath.Join(destDir, filename), "/", "\\")
+	if filename == "" || filename == "." || filename == ".." {
+		gocamel.LogError("SMB move error: invalid source filename", "src", srcPath)
+		return
+	}
+
+	posixDestDir := strings.ReplaceAll(destDir, "\\", "/")
+	posixDestDir = strings.TrimLeft(posixDestDir, "/")
+	posixDestDir = path.Clean(posixDestDir)
+	posixDestDir = strings.TrimLeft(posixDestDir, "/")
+
+	var destPath string
+	if posixDestDir == "" || posixDestDir == "." {
+		destPath = filename
+	} else {
+		smbDestDir := strings.ReplaceAll(posixDestDir, "/", "\\")
+		if err := smbMkdirAll(share, smbDestDir); err != nil {
+			gocamel.LogError("SMB directory creation error", "directory", smbDestDir, "error", err)
+			return
+		}
+		destPath = strings.ReplaceAll(path.Join(posixDestDir, filename), "/", "\\")
+		destPath = strings.TrimLeft(destPath, "\\")
+	}
+
 	if err := share.Rename(srcPath, destPath); err != nil {
 		gocamel.LogError("SMB move error", "src", srcPath, "dest", destPath, "error", err)
 	}
 }
 
 // smbMkdirAll recursively creates directories on an SMB share.
-func smbMkdirAll(share *smb2.Share, path string) {
-	path = strings.ReplaceAll(path, "/", "\\")
-	parts := strings.Split(path, "\\")
+func smbMkdirAll(share smbShare, dirPath string) error {
+	dirPath = strings.ReplaceAll(dirPath, "/", "\\")
+	dirPath = strings.TrimLeft(dirPath, "\\")
+	parts := strings.Split(dirPath, "\\")
 	current := ""
 	for _, part := range parts {
 		if part == "" || part == "." {
@@ -798,6 +1085,12 @@ func smbMkdirAll(share *smb2.Share, path string) {
 		} else {
 			current = current + "\\" + part
 		}
-		share.Mkdir(current, 0755) // ignore error if directory already exists
+		if err := share.Mkdir(current, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+			if info, statErr := share.Stat(current); statErr == nil && info.IsDir() {
+				continue
+			}
+			return err
+		}
 	}
+	return nil
 }
