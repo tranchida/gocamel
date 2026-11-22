@@ -124,6 +124,19 @@ func TestRedactURI_MalformedQueryAndSpecialUserinfo(t *testing.T) {
 		assert.Contains(t, got, "timeout=5")
 	})
 
+	t.Run("semicolon prefix in sensitive query value", func(t *testing.T) {
+		got := RedactURI("smtp://host?password=;secret")
+		assert.NotContains(t, got, "secret")
+		assert.Equal(t, "smtp://host?password=xxxxx", got)
+
+		gotMulti := RedactURI("smtp://host?mode=x;password=;secret;timeout=5")
+		assert.NotContains(t, gotMulti, "secret")
+		assert.Equal(t, "smtp://host?mode=x;password=xxxxx;timeout=5", gotMulti)
+
+		assert.Equal(t, "smtp://host?password=&mode=x", RedactURI("smtp://host?password=&mode=x"))
+		assert.Equal(t, "smtp://host?password=;mode=x", RedactURI("smtp://host?password=;mode=x"))
+	})
+
 	t.Run("userinfo password containing hash", func(t *testing.T) {
 		got := RedactURI("ftp://user:p#ss@host/dir")
 		assert.NotContains(t, got, "p#ss")
@@ -165,6 +178,21 @@ func TestRedactURI_MalformedQueryAndSpecialUserinfo(t *testing.T) {
 		assert.NotContains(t, gotPort, "s3cr3t")
 		assert.Contains(t, gotPort, "host%zz:8080")
 		assert.Contains(t, gotPort, "password=xxxxx")
+
+		for _, tc := range []struct {
+			uri      string
+			wantHost string
+		}{
+			{uri: "ftp://host%zz:8080?email=a@b&password=s3cr3t", wantHost: "host%zz:8080"},
+			{uri: "smtp://host:badport?email=a@b&password=s3cr3t", wantHost: "host:badport"},
+			{uri: "smtp://host:25?email=a@b&password=sec\nret", wantHost: "host:25"},
+		} {
+			got := RedactURI(tc.uri)
+			assert.NotContains(t, got, "s3cr3t")
+			assert.NotContains(t, got, "sec\nret")
+			assert.Equal(t, strings.Split(tc.uri, "&password=")[0]+"&password=xxxxx", got)
+			assert.Contains(t, got, tc.wantHost)
+		}
 	})
 
 	t.Run("unified credential query keys", func(t *testing.T) {

@@ -368,15 +368,13 @@ func findUnparsedUserinfoEnd(afterScheme string) int {
 	// When '@' appears only after '/', '?', or '#', a password may contain those
 	// delimiters (e.g. user:p#ss@host/dir). Avoid crossing into a trailing
 	// '?key=val@...' query parameter or a '?query'/'#fragment' after '@host'.
-	if afterScheme[delim] == '/' {
-		if q := strings.IndexAny(afterScheme, "?#"); q >= 0 {
-			if strings.IndexByte(afterScheme[:q], '@') >= 0 {
-				return strings.LastIndexByte(afterScheme[:q], '@')
-			}
-			firstAt := strings.IndexByte(afterScheme[q:], '@')
-			if firstAt < 0 || strings.Contains(afterScheme[q:q+firstAt], "=") {
-				return -1
-			}
+	if q := strings.IndexAny(afterScheme, "?#"); q >= 0 {
+		if strings.IndexByte(afterScheme[:q], '@') >= 0 {
+			return strings.LastIndexByte(afterScheme[:q], '@')
+		}
+		firstAt := strings.IndexByte(afterScheme[q:], '@')
+		if firstAt < 0 || strings.Contains(afterScheme[q:q+firstAt], "=") {
+			return -1
 		}
 	}
 	searchEnd := len(afterScheme)
@@ -403,27 +401,10 @@ func redactRawQuery(query string, keys []string) (string, bool) {
 			}
 			continue
 		}
-
-		subParts := strings.Split(ampPart, ";")
-		kept := make([]string, 0, len(subParts))
-		inSensitive := false
-		for _, sub := range subParts {
-			if redacted, partChanged := redactQueryPair(sub, keys); partChanged {
-				kept = append(kept, redacted)
-				changed = true
-				inSensitive = true
-				continue
-			}
-			if _, _, hasEq := strings.Cut(sub, "="); !hasEq && inSensitive {
-				// Trailing ';token' without '=' after a redacted parameter is the
-				// remainder of that parameter's unescaped value (e.g. password=sec;ret).
-				changed = true
-				continue
-			}
-			kept = append(kept, sub)
-			inSensitive = false
+		if redacted, partChanged := redactSemicolonQueryPart(ampPart, keys); partChanged {
+			ampParts[i] = redacted
+			changed = true
 		}
-		ampParts[i] = strings.Join(kept, ";")
 	}
 	if !changed {
 		return query, false
@@ -431,17 +412,71 @@ func redactRawQuery(query string, keys []string) (string, bool) {
 	return strings.Join(ampParts, "&"), true
 }
 
+func redactSemicolonQueryPart(ampPart string, keys []string) (string, bool) {
+	subParts := strings.Split(ampPart, ";")
+	kept := make([]string, 0, len(subParts))
+	changed := false
+	inSensitive := false
+	pendingEmptyName := ""
+	pendingEmptyIdx := -1
+
+	for _, sub := range subParts {
+		name, value, hasEq, sensitive := parseSensitiveQueryPair(sub, keys)
+		if sensitive && value != "" {
+			kept = append(kept, name+"=xxxxx")
+			changed = true
+			inSensitive = true
+			pendingEmptyName = ""
+			continue
+		}
+		if !hasEq {
+			if pendingEmptyName != "" {
+				// A valueless ';token' immediately following a sensitive 'name=' is
+				// the remainder of a value starting with ';' (e.g. password=;secret).
+				kept[pendingEmptyIdx] = pendingEmptyName + "=xxxxx"
+				changed = true
+				pendingEmptyName = ""
+				inSensitive = true
+				continue
+			}
+			if inSensitive {
+				// Trailing ';token' without '=' after a redacted parameter is the
+				// remainder of that parameter's unescaped value (e.g. password=sec;ret).
+				changed = true
+				continue
+			}
+		}
+		kept = append(kept, sub)
+		inSensitive = false
+		if sensitive && value == "" {
+			pendingEmptyName = name
+			pendingEmptyIdx = len(kept) - 1
+		} else {
+			pendingEmptyName = ""
+		}
+	}
+	if !changed {
+		return ampPart, false
+	}
+	return strings.Join(kept, ";"), true
+}
+
 func redactQueryPair(pair string, keys []string) (string, bool) {
-	name, value, ok := strings.Cut(pair, "=")
-	if !ok || value == "" {
+	name, value, _, sensitive := parseSensitiveQueryPair(pair, keys)
+	if !sensitive || value == "" {
 		return pair, false
+	}
+	return name + "=xxxxx", true
+}
+
+func parseSensitiveQueryPair(pair string, keys []string) (name, value string, hasEq, sensitive bool) {
+	name, value, hasEq = strings.Cut(pair, "=")
+	if !hasEq {
+		return "", "", false, false
 	}
 	lookupName := name
 	if decoded, err := url.QueryUnescape(name); err == nil {
 		lookupName = decoded
 	}
-	if isSensitiveKey(lookupName, keys) {
-		return name + "=xxxxx", true
-	}
-	return pair, false
+	return name, value, true, isSensitiveKey(lookupName, keys)
 }
