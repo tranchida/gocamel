@@ -12,8 +12,9 @@ import (
 )
 
 // The Simple Language implementation is split across this package:
-//   simple_language.go              — types, regex globals, parser, templates
-//   simple_language_eval.go         — evaluateVariable + dispatch helpers
+//   simple_language.go              — types, regex globals, templates
+//   simple_language_parser.go       — quote/paren-aware lexer + recursive-descent AST evaluator
+//   simple_language_eval.go         — evaluateVariable entry point + chained-method helpers
 //   simple_language_access.go       — bracket / dot / null-safe property access
 //   simple_language_strings.go      — applyStringFunction (chained string verbs)
 //   simple_language_compare.go      — toBool, checkType, containsValue, compareValues
@@ -70,45 +71,6 @@ var (
 	// Matches ${expression}
 	placeholderRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 
-	// Matches body, header.name, exchangeProperty.name
-	// Now supports names with hyphens and other characters
-	dotNotationRegex = regexp.MustCompile(`^(body)$|^(header|[a-zA-Z]+)\.([a-zA-Z0-9_\-\.]+)$`)
-
-	// Matches date:command:FORMAT (command can be now, header.xxx, property.xxx, file)
-	// Supports offsets like +24h, -10m
-	dateFunctionRegex = regexp.MustCompile(`^date:([^+\-:]+)([\+\-][0-9]+[a-z]+)?(?::(.+))?$`)
-
-	// Matches random(MAX)
-	randomFunctionRegex = regexp.MustCompile(`^random\((\d+)\)$`)
-
-	// Matches math(expr)
-	mathFunctionRegex = regexp.MustCompile(`^math\((.+)\)$`)
-
-	// Matches numeric functions: round(val), floor(val), etc.
-	numericFunctionRegex = regexp.MustCompile(`^(round|floor|ceil|abs|sqrt|sin|cos|tan)\((.+)\)$`)
-
-	// Matches file:functions
-	fileFunctionRegex = regexp.MustCompile(`^file:([a-zA-Z0-9_\.]+)$`)
-
-	// Matches base64:command:target
-	base64FunctionRegex = regexp.MustCompile(`^base64:(encode|decode):(.+)$`)
-
-	// Matches jsonpath:path or jsonpath:header.name:path
-	jsonpathFunctionRegex = regexp.MustCompile(`^jsonpath:(.+)$`)
-
-	// Matches uuid
-	uuidFunctionRegex = regexp.MustCompile(`^uuid$`)
-
-	// Comparison operators with proper order (multi-char operators first)
-	comparisonRegex = regexp.MustCompile(`^(.+?)(==|!=|>=|<=|>|<)(.+)$`)
-
-	// String operation operators
-	stringOpRegex = regexp.MustCompile(`^(.+?)\s+(contains|startsWith|endsWith|regex)\s+(.+)$`)
-
-	// Logical AND - split by && first (lower precedence than comparisons)
-	// We handle || at higher level
-	ternaryRegex = regexp.MustCompile(`^(.+?)\?\s*(.+?)\s*:\s*(.+)$`)
-
 	// Null-safe dot notation: body?.field or header?.name
 	nullSafeDotNotationRegex = regexp.MustCompile(`^(body|header|exchangeProperty)\?\.([a-zA-Z0-9_\-]+)(.*)$`)
 
@@ -120,15 +82,6 @@ var (
 
 	// Index access for last keyword
 	lastIndexRegex = regexp.MustCompile(`^last(-(\d+))?$`)
-
-	// "in" operator for list membership
-	inOperatorRegex = regexp.MustCompile(`^(.+?)\s+in\s+(.+)$`)
-
-	// "range" operator for range check
-	rangeOperatorRegex = regexp.MustCompile(`^(.+?)\s+range\s+(\d+)\.\.(\d+)$`)
-
-	// "is" operator for type checking
-	isOperatorRegex = regexp.MustCompile(`^(.+?)\s+is\s+'?(\w+)'?$`)
 )
 
 // ParseSimpleExpression parses a simple expression string into an Expression

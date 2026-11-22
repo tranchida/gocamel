@@ -1,10 +1,14 @@
 package gocamel
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseSimpleTemplate(t *testing.T) {
@@ -1366,6 +1370,21 @@ func TestChoiceProcessorNestedConditions(t *testing.T) {
 	if got != "Active and high level" {
 		t.Errorf("Process() body = %v, expected 'Active and high level'", got)
 	}
+
+	// Negative-branch assertions: must not fall into first When clause
+	ex.GetIn().SetBody(map[string]interface{}{
+		"status": "pending",
+	})
+	ex.GetOut().SetBody(nil)
+	require.NoError(t, choice.Process(ex))
+	assert.Equal(t, "Pending status", ex.GetOut().GetBody())
+
+	ex.GetIn().SetBody(map[string]interface{}{
+		"status": "other",
+	})
+	ex.GetOut().SetBody(nil)
+	require.NoError(t, choice.Process(ex))
+	assert.Equal(t, "Default", ex.GetOut().GetBody())
 }
 
 func TestChoiceWithSetHeader(t *testing.T) {
@@ -1642,4 +1661,341 @@ func TestExchangePropertyBracketAccess(t *testing.T) {
 	if got != "special-value" {
 		t.Errorf("EvaluateAsString() = %v, want special-value", got)
 	}
+}
+
+func TestSimple_CompoundVariableComparisons(t *testing.T) {
+	t.Run("body.role == 'admin'", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${body.role == 'admin'}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(map[string]any{"role": "guest"})
+		b, err := tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, b)
+		s, err := tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "false", s)
+
+		ex.GetIn().SetBody(map[string]any{"role": "admin"})
+		b, err = tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+	})
+
+	t.Run("body['status'] == 'active'", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${body['status'] == 'active'}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(map[string]any{"status": "pending"})
+		b, err := tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, b)
+
+		ex.GetIn().SetBody(map[string]any{"status": "active"})
+		b, err = tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+	})
+
+	t.Run("body?.authorized == true", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${body?.authorized == true}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(map[string]any{"authorized": false})
+		b, err := tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, b)
+
+		ex.GetIn().SetBody(nil)
+		b, err = tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, b)
+
+		ex.GetIn().SetBody(map[string]any{"authorized": true})
+		b, err = tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+	})
+
+	t.Run("header['count'] > 100", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${header['count'] > 100}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("count", 1)
+		b, err := tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, b)
+
+		ex.GetIn().SetHeader("count", 101)
+		b, err = tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+	})
+
+	t.Run("body.price + 10", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${body.price + 10}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(map[string]any{"price": 5})
+		s, err := tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "15", s)
+	})
+
+	t.Run("body[0]?.name", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${body[0]?.name}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody([]map[string]any{{"name": "Alice"}})
+		s, err := tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "Alice", s)
+
+		ex.GetIn().SetBody([]any{nil})
+		s, err = tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "<nil>", s)
+	})
+}
+
+func TestSimple_PrecedenceParensQuotesAndFunctions(t *testing.T) {
+	t.Run("unary ! precedence before &&", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${!header.a && header.b}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("a", false)
+		ex.GetIn().SetHeader("b", false)
+		b, err := tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, b)
+
+		ex.GetIn().SetHeader("b", true)
+		b, err = tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+
+		ex.GetIn().SetHeader("a", true)
+		b, err = tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, b)
+	})
+
+	t.Run("unary ! precedence before ternary", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${!header.a ? 'yes' : 'no'}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("a", false)
+		s, err := tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "yes", s)
+
+		ex.GetIn().SetHeader("a", true)
+		s, err = tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "no", s)
+	})
+
+	t.Run("balanced parens with ||", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${(header.a == 1) || (header.b == 2)}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("a", 0)
+		ex.GetIn().SetHeader("b", 2)
+		b, err := tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+
+		ex.GetIn().SetHeader("b", 3)
+		b, err = tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, b)
+	})
+
+	t.Run("quoted literal comparison", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${'a' == 'b'}")
+		require.NoError(t, err)
+
+		b, err := tmpl.EvaluateAsBool(NewExchange(context.Background()))
+		require.NoError(t, err)
+		assert.False(t, b)
+	})
+
+	t.Run("multiple math calls", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${math(1+2) + math(3+4)}")
+		require.NoError(t, err)
+
+		s, err := tmpl.EvaluateAsString(NewExchange(context.Background()))
+		require.NoError(t, err)
+		assert.Equal(t, "10", s)
+	})
+
+	t.Run("date function inside comparison", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${date:now:2006 == '1999'}")
+		require.NoError(t, err)
+
+		b, err := tmpl.EvaluateAsBool(NewExchange(context.Background()))
+		require.NoError(t, err)
+		assert.False(t, b)
+	})
+
+	t.Run("unary minus in binary arithmetic", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+
+		tmplMul, err := ParseSimpleTemplate("${10 * -5}")
+		require.NoError(t, err)
+		s, err := tmplMul.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "-50", s)
+
+		tmplSub, err := ParseSimpleTemplate("${10 - -5}")
+		require.NoError(t, err)
+		s, err = tmplSub.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "15", s)
+	})
+
+	t.Run("jsonpath wildcard", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${jsonpath:$.book[*].author}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(`{"book":[{"author":"Alice"},{"author":"Bob"}]}`)
+		s, err := tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "[Alice Bob]", s)
+	})
+
+	t.Run("operator keyword inside string literal", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${header.msg == 'status is ok'}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("msg", "status is ok")
+		b, err := tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+	})
+
+	t.Run("null-safe method call compared to nil in ternary", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${body?.trim() == nil ? 'Empty' : body}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(nil)
+		s, err := tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "Empty", s)
+
+		ex.GetIn().SetBody("hello")
+		s, err = tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "hello", s)
+	})
+}
+
+func TestSimple_ReflectionAndChainSafety(t *testing.T) {
+	t.Run("unexported struct field does not panic", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${body.wall}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(time.Now())
+		require.NotPanics(t, func() {
+			s, evalErr := tmpl.EvaluateAsString(ex)
+			require.NoError(t, evalErr)
+			assert.Equal(t, "<nil>", s)
+		})
+	})
+
+	t.Run("defined string map key does not panic", func(t *testing.T) {
+		type Key string
+		tmpl, err := ParseSimpleTemplate("${body['k']}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(map[Key]any{"k": "v"})
+		require.NotPanics(t, func() {
+			s, evalErr := tmpl.EvaluateAsString(ex)
+			require.NoError(t, evalErr)
+			assert.Equal(t, "v", s)
+		})
+	})
+
+	t.Run("closing paren before opening paren returns syntax error without panic", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${body.a)b(}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody("abc")
+		require.NotPanics(t, func() {
+			_, evalErr := tmpl.EvaluateAsString(ex)
+			assert.Error(t, evalErr)
+		})
+	})
+
+	t.Run("method args containing comma or closing paren", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody("a,b,c")
+
+		tmplComma, err := ParseSimpleTemplate("${body.replace(',', ';')}")
+		require.NoError(t, err)
+		s, err := tmplComma.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "a;b;c", s)
+
+		ex.GetIn().SetBody("a)b")
+		tmplParen, err := ParseSimpleTemplate("${body.replace(')', 'x')}")
+		require.NoError(t, err)
+		s, err = tmplParen.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "axb", s)
+	})
+
+	t.Run("method chain on nil receiver preserves trailing operators", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("fallback", "ok")
+
+		tmplNe, err := ParseSimpleTemplate("${header.missing.trim() != 'hello'}")
+		require.NoError(t, err)
+		b, err := tmplNe.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+
+		tmplOr, err := ParseSimpleTemplate("${header.missing.trim() || header.fallback == 'ok'}")
+		require.NoError(t, err)
+		b, err = tmplOr.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+	})
+
+	t.Run("mixed null-safe and regular chains", func(t *testing.T) {
+		tmpl, err := ParseSimpleTemplate("${body?.user.address?.city}")
+		require.NoError(t, err)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(map[string]any{
+			"user": map[string]any{
+				"address": map[string]any{
+					"city": "Paris",
+				},
+			},
+		})
+		s, err := tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "Paris", s)
+
+		ex.GetIn().SetBody(map[string]any{"user": nil})
+		s, err = tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "<nil>", s)
+	})
 }

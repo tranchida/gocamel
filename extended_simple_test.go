@@ -1,7 +1,12 @@
 package gocamel
 
 import (
+	"context"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ==================== PHASE 3 TESTS: String Operations ====================
@@ -1331,4 +1336,140 @@ func TestEdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSimple_ExtendedOperatorsAndSafety(t *testing.T) {
+	t.Run("hyphenated header and dotted header access", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("x-request-id", "req-42")
+		ex.GetIn().SetHeader("app.env", "prod")
+
+		tmpl, err := ParseSimpleTemplate("${header.x-request-id == 'req-42' && header.app.env == 'prod'}")
+		require.NoError(t, err)
+		b, err := tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+	})
+
+	t.Run("not in, not range, quoted range, not contains, not startsWith, not endsWith, not regex, not is", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody("hello world")
+		ex.GetIn().SetHeader("type", "gold")
+		ex.GetIn().SetHeader("code", 5)
+
+		tests := []struct {
+			expr string
+			want bool
+		}{
+			{"${header.type not in 'silver,bronze'}", true},
+			{"${header.type not in 'gold,silver'}", false},
+			{"${header.code range '1..10'}", true},
+			{"${header.code not range '1..10'}", false},
+			{"${header.code not range 10..20}", true},
+			{"${body not contains 'xyz'}", true},
+			{"${body not contains 'world'}", false},
+			{"${body not startsWith 'bye'}", true},
+			{"${body not endsWith 'mars'}", true},
+			{"${body not regex '\\d+'}", true},
+			{"${body not is 'Int'}", true},
+			{"${body not is 'String'}", false},
+		}
+
+		for _, tt := range tests {
+			tmpl, err := ParseSimpleTemplate(tt.expr)
+			require.NoError(t, err, tt.expr)
+			b, err := tmpl.EvaluateAsBool(ex)
+			require.NoError(t, err, tt.expr)
+			assert.Equal(t, tt.want, b, tt.expr)
+		}
+	})
+
+	t.Run("and/or keyword aliases", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("a", true)
+		ex.GetIn().SetHeader("b", false)
+		ex.GetIn().SetHeader("c", true)
+
+		tmpl, err := ParseSimpleTemplate("${header.b or header.a and header.c}")
+		require.NoError(t, err)
+		b, err := tmpl.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, b)
+
+		tmpl2, err := ParseSimpleTemplate("${!header.a or header.b}")
+		require.NoError(t, err)
+		b, err = tmpl2.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, b)
+	})
+
+	t.Run("min and max functions", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("x", 15)
+
+		tmplMin, err := ParseSimpleTemplate("${min(header.x, 3, 9)}")
+		require.NoError(t, err)
+		s, err := tmplMin.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "3", s)
+
+		tmplMax, err := ParseSimpleTemplate("${max(header.x, 3, 25)}")
+		require.NoError(t, err)
+		s, err = tmplMax.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "25", s)
+	})
+
+	t.Run("deep null-safe chain with intermediate regular dot", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(map[string]any{
+			"root": map[string]any{
+				"user": map[string]any{
+					"address": map[string]any{
+						"city": "Lyon",
+					},
+				},
+			},
+		})
+		tmpl, err := ParseSimpleTemplate("${body?.root?.user.address?.city}")
+		require.NoError(t, err)
+		s, err := tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "Lyon", s)
+	})
+
+	t.Run("recursion depth limit exceeded returns error cleanly", func(t *testing.T) {
+		depth := 300
+		expr := "${" + strings.Repeat("(", depth) + "1" + strings.Repeat(")", depth) + "}"
+		tmpl, err := ParseSimpleTemplate(expr)
+		require.NoError(t, err)
+		_, err = tmpl.Evaluate(NewExchange(context.Background()))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "depth")
+	})
+
+	t.Run("accessor and chain helpers reject trailing operators and bad parens directly", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody(map[string]any{"role": "guest"})
+
+		_, err := evaluateSimpleVariableAccess("body.role == 'admin'", ex)
+		assert.Error(t, err)
+
+		_, err = evaluateSimpleVariableAccess("body['role'] == 'admin'", ex)
+		assert.Error(t, err)
+
+		_, err = evaluateSimpleVariableAccess("body?.role == 'admin'", ex)
+		assert.Error(t, err)
+
+		_, err = evaluateNullSafeAccess(map[string]any{"a": "b"}, "a == 'b'", ex)
+		assert.Error(t, err)
+
+		require.NotPanics(t, func() {
+			_, err = applyChainedFunctions("hello", ".a)b(", ex)
+		})
+		assert.Error(t, err)
+
+		_, err = applyChainedFunctions(nil, ".trim() != 'hello'", ex)
+		assert.Error(t, err)
+	})
 }

@@ -3,12 +3,9 @@ package gocamel
 import (
 	"fmt"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 )
-
-var nullSafeBracketRegex = regexp.MustCompile(`^(body|header|exchangeProperty)\?\.\[([^\]]+)\](.*)$`)
 
 // This file implements property and index access for the Simple Language:
 // bracket notation (body[0], body['key']), dot notation (body.field), and
@@ -55,49 +52,196 @@ func evaluateSimpleVariableAccess(expr string, exchange *Exchange) (interface{},
 	return nil, fmt.Errorf("no variable access pattern matched: %s", expr)
 }
 
+// findMatchingBracket finds the closing ']' for the '[' at openIdx,
+// respecting single/double quotes and nested brackets. Returns -1 if unmatched.
+func findMatchingBracket(s string, openIdx int) int {
+	if openIdx < 0 || openIdx >= len(s) || s[openIdx] != '[' {
+		return -1
+	}
+	depth := 0
+	inSingle := false
+	inDouble := false
+	for i := openIdx; i < len(s); i++ {
+		ch := s[i]
+		if inSingle {
+			if ch == '\\' && i+1 < len(s) && (s[i+1] == '\'' || s[i+1] == '\\') {
+				i++
+				continue
+			}
+			if ch == '\'' {
+				inSingle = false
+			}
+			continue
+		}
+		if inDouble {
+			if ch == '\\' && i+1 < len(s) && (s[i+1] == '"' || s[i+1] == '\\') {
+				i++
+				continue
+			}
+			if ch == '"' {
+				inDouble = false
+			}
+			continue
+		}
+		switch ch {
+		case '\'':
+			inSingle = true
+		case '"':
+			inDouble = true
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// unquoteSimpleStringLiteral unquotes a single complete quoted string literal
+// ('...' or "..."), returning false if s is not a single balanced literal.
+func unquoteSimpleStringLiteral(s string) (string, bool) {
+	if len(s) < 2 {
+		return "", false
+	}
+	quote := s[0]
+	if (quote != '\'' && quote != '"') || s[len(s)-1] != quote {
+		return "", false
+	}
+	var sb strings.Builder
+	for i := 1; i < len(s)-1; i++ {
+		ch := s[i]
+		if ch == '\\' && i+1 < len(s)-1 {
+			next := s[i+1]
+			if next == quote || next == '\\' {
+				sb.WriteByte(next)
+				i++
+				continue
+			}
+		}
+		if ch == quote {
+			// Unescaped quote inside string means s is not a single literal (e.g. 'a' == 'b').
+			return "", false
+		}
+		sb.WriteByte(ch)
+	}
+	return sb.String(), true
+}
+
+func isValidMemberName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func resolveBracketIndex(indexExpr string, currentVal interface{}, exchange *Exchange) (interface{}, bool, error) {
+	if unquoted, ok := unquoteSimpleStringLiteral(indexExpr); ok {
+		return unquoted, false, nil
+	}
+	if numMatch := numericIndexRegex.FindStringSubmatch(indexExpr); numMatch != nil {
+		idx, err := strconv.Atoi(numMatch[1])
+		if err != nil {
+			return nil, false, fmt.Errorf("invalid numeric index: %s", indexExpr)
+		}
+		return idx, false, nil
+	}
+	if lastMatch := lastIndexRegex.FindStringSubmatch(indexExpr); lastMatch != nil {
+		offset := 0
+		if lastMatch[2] != "" {
+			var err error
+			offset, err = strconv.Atoi(lastMatch[2])
+			if err != nil {
+				return nil, false, fmt.Errorf("invalid last offset: %s", lastMatch[2])
+			}
+		}
+		if currentVal == nil {
+			return nil, true, nil
+		}
+		v := reflect.ValueOf(currentVal)
+		for v.Kind() == reflect.Ptr {
+			if v.IsNil() {
+				return nil, true, nil
+			}
+			v = v.Elem()
+		}
+		switch v.Kind() {
+		case reflect.Slice, reflect.Array:
+			return v.Len() - 1 - offset, false, nil
+		case reflect.Map:
+			return nil, false, fmt.Errorf("'last' index not supported for maps")
+		default:
+			return nil, false, fmt.Errorf("cannot use 'last' index on type %v", v.Kind())
+		}
+	}
+	idxVal, err := evaluateVariable(indexExpr, exchange)
+	if err != nil {
+		return nil, false, fmt.Errorf("invalid index expression: %s", indexExpr)
+	}
+	return idxVal, false, nil
+}
+
 // evaluateBracketNotation evaluates bracket notation like body['key'], body[0], body['key']['subkey']
 func evaluateBracketNotation(expr string, exchange *Exchange) (interface{}, error) {
-	// Parse the expression step by step
-	// Format: base[accessor]rest where rest can be more brackets or empty
-
-	// Remove any leading/trailing whitespace
 	expr = strings.TrimSpace(expr)
-	// Find the base (body, header, or exchangeProperty)
 	var base, indexExpr, rest string
-	var bracketStart int
+	bracketStart := -1
 
-	// Find first opening bracket that's not part of a null-safe operator
+	// Find first opening bracket outside quotes; abort if '?.' precedes '['.
+	inSingle, inDouble := false, false
 	for i := 0; i < len(expr); i++ {
-		if expr[i] == '[' {
-			// Check if this is after a null-safe operator (?.)
-			if i >= 2 && expr[i-2:i] == "?." {
-				continue // Skip, this is part of null-safe notation
+		ch := expr[i]
+		if inSingle {
+			if ch == '\\' && i+1 < len(expr) && (expr[i+1] == '\'' || expr[i+1] == '\\') {
+				i++
+				continue
 			}
+			if ch == '\'' {
+				inSingle = false
+			}
+			continue
+		}
+		if inDouble {
+			if ch == '\\' && i+1 < len(expr) && (expr[i+1] == '"' || expr[i+1] == '\\') {
+				i++
+				continue
+			}
+			if ch == '"' {
+				inDouble = false
+			}
+			continue
+		}
+		if ch == '\'' {
+			inSingle = true
+			continue
+		}
+		if ch == '"' {
+			inDouble = true
+			continue
+		}
+		if ch == '?' && i+1 < len(expr) && expr[i+1] == '.' {
+			return nil, fmt.Errorf("null-safe operator precedes bracket in expression: %s", expr)
+		}
+		if ch == '[' {
 			base = strings.TrimSpace(expr[:i])
 			bracketStart = i
 			break
 		}
 	}
 
-	if bracketStart == 0 {
+	if bracketStart <= 0 {
 		return nil, fmt.Errorf("no bracket found in expression")
 	}
 
-	// Find matching closing bracket
-	bracketEnd := -1
-	depth := 0
-	for i := bracketStart; i < len(expr); i++ {
-		if expr[i] == '[' {
-			depth++
-		} else if expr[i] == ']' {
-			depth--
-			if depth == 0 {
-				bracketEnd = i
-				break
-			}
-		}
-	}
-
+	bracketEnd := findMatchingBracket(expr, bracketStart)
 	if bracketEnd == -1 {
 		return nil, fmt.Errorf("unmatched bracket in expression")
 	}
@@ -111,7 +255,6 @@ func evaluateBracketNotation(expr string, exchange *Exchange) (interface{}, erro
 	case "body":
 		currentVal = exchange.GetBody()
 	case "header":
-		// For header['name'] pattern, we need the headers map - get from input message
 		currentVal = exchange.GetIn().GetHeaders()
 	case "exchangeProperty":
 		currentVal = exchange.GetProperties()
@@ -119,72 +262,28 @@ func evaluateBracketNotation(expr string, exchange *Exchange) (interface{}, erro
 		return nil, fmt.Errorf("unknown base in bracket notation: %s", base)
 	}
 
-	// Resolve the index
-	var resolvedIndex interface{}
-	if strings.HasPrefix(indexExpr, "'") && strings.HasSuffix(indexExpr, "'") {
-		resolvedIndex = strings.Trim(indexExpr, "'")
-	} else if strings.HasPrefix(indexExpr, "\"") && strings.HasSuffix(indexExpr, "\"") {
-		resolvedIndex = strings.Trim(indexExpr, "\"")
-	} else if numMatch := numericIndexRegex.FindStringSubmatch(indexExpr); numMatch != nil {
-		idx, err := strconv.Atoi(numMatch[1])
-		if err != nil {
-			return nil, fmt.Errorf("invalid numeric index: %s", indexExpr)
-		}
-		resolvedIndex = idx
-	} else if lastMatch := lastIndexRegex.FindStringSubmatch(indexExpr); lastMatch != nil {
-		// Handle 'last' and 'last-N' indices
-		offset := 0
-		if lastMatch[2] != "" {
-			var err error
-			offset, err = strconv.Atoi(lastMatch[2])
-			if err != nil {
-				return nil, fmt.Errorf("invalid last offset: %s", lastMatch[2])
-			}
-		}
-
-		// Get the length of the slice/array/map
-		if currentVal == nil {
-			return nil, nil
-		}
-
-		v := reflect.ValueOf(currentVal)
-		switch v.Kind() {
-		case reflect.Slice, reflect.Array:
-			length := v.Len()
-			resolvedIndex = length - 1 - offset
-		case reflect.Map:
-			// For maps, we can't easily support 'last', return error
-			return nil, fmt.Errorf("'last' index not supported for maps")
-		default:
-			return nil, fmt.Errorf("cannot use 'last' index on type %v", v.Kind())
-		}
-	} else {
-		// Try to evaluate the index expression
-		idxVal, err := evaluateVariable(indexExpr, exchange)
-		if err != nil {
-			return nil, fmt.Errorf("invalid index expression: %s", indexExpr)
-		}
-		resolvedIndex = idxVal
-	}
-
-	// Access the value
-	result, err := accessValueAtIndex(currentVal, resolvedIndex)
+	resolvedIndex, isNilTarget, err := resolveBracketIndex(indexExpr, currentVal, exchange)
 	if err != nil {
 		return nil, err
 	}
 
+	var result interface{}
+	if !isNilTarget {
+		result, err = accessValueAtIndex(currentVal, resolvedIndex)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Handle chained access
 	if rest != "" {
-		if strings.HasPrefix(rest, "[") {
-			// More bracket notation - create a temporary expression
-			tempExpr := fmt.Sprintf("temp%spart%s", rest, "") // placeholder for chaining
-			_ = tempExpr
-			// Instead, we recursively evaluate: create a mock body with result
-			return evaluateChainedAccess(result, rest, exchange)
-		} else if strings.HasPrefix(rest, ".") {
-			// Dot notation access
+		if strings.HasPrefix(rest, "?.") {
+			return evaluateNullSafeAccess(result, rest[2:], exchange)
+		}
+		if strings.HasPrefix(rest, "[") || strings.HasPrefix(rest, ".") {
 			return evaluateChainedAccess(result, rest, exchange)
 		}
+		return nil, fmt.Errorf("unexpected trailing characters in bracket notation: %s", rest)
 	}
 
 	return result, nil
@@ -192,20 +291,32 @@ func evaluateBracketNotation(expr string, exchange *Exchange) (interface{}, erro
 
 // evaluateNullSafeBracketNotation evaluates null-safe bracket notation like body?.['key'], body?.['key']?.['subkey']
 func evaluateNullSafeBracketNotation(expr string, exchange *Exchange) (interface{}, error) {
-	// Parse: base?.[accessor] or base?.['key'] etc.
 	expr = strings.TrimSpace(expr)
 
-	// Find the null-safe bracket pattern
-	match := nullSafeBracketRegex.FindStringSubmatch(expr)
-	if match == nil {
+	var base string
+	var prefixLen int
+	switch {
+	case strings.HasPrefix(expr, "body?.["):
+		base = "body"
+		prefixLen = len("body?.")
+	case strings.HasPrefix(expr, "header?.["):
+		base = "header"
+		prefixLen = len("header?.")
+	case strings.HasPrefix(expr, "exchangeProperty?.["):
+		base = "exchangeProperty"
+		prefixLen = len("exchangeProperty?.")
+	default:
 		return nil, fmt.Errorf("invalid null-safe bracket notation")
 	}
 
-	base := match[1]
-	indexExpr := match[2]
-	rest := match[3]
+	bracketEnd := findMatchingBracket(expr, prefixLen)
+	if bracketEnd == -1 {
+		return nil, fmt.Errorf("unmatched bracket in null-safe bracket notation")
+	}
 
-	// Get the base value
+	indexExpr := strings.TrimSpace(expr[prefixLen+1 : bracketEnd])
+	rest := strings.TrimSpace(expr[bracketEnd+1:])
+
 	var currentVal interface{}
 	switch base {
 	case "body":
@@ -214,52 +325,30 @@ func evaluateNullSafeBracketNotation(expr string, exchange *Exchange) (interface
 		currentVal = exchange.GetIn().GetHeaders()
 	case "exchangeProperty":
 		currentVal = exchange.GetProperties()
-	default:
-		return nil, fmt.Errorf("unknown base: %s", base)
 	}
 
-	// If null, return nil (null-safe)
-	if currentVal == nil {
-		return nil, nil
-	}
-
-	// Resolve the index
-	var resolvedIndex interface{}
-	indexExpr = strings.TrimSpace(indexExpr)
-	if strings.HasPrefix(indexExpr, "'") && strings.HasSuffix(indexExpr, "'") {
-		resolvedIndex = strings.Trim(indexExpr, "'")
-	} else if strings.HasPrefix(indexExpr, "\"") && strings.HasSuffix(indexExpr, "\"") {
-		resolvedIndex = strings.Trim(indexExpr, "\"")
-	} else if numMatch := numericIndexRegex.FindStringSubmatch(indexExpr); numMatch != nil {
-		idx, err := strconv.Atoi(numMatch[1])
-		if err != nil {
-			return nil, fmt.Errorf("invalid numeric index: %s", indexExpr)
-		}
-		resolvedIndex = idx
-	} else {
-		idxVal, err := evaluateVariable(indexExpr, exchange)
-		if err != nil {
-			return nil, fmt.Errorf("invalid index expression: %s", indexExpr)
-		}
-		resolvedIndex = idxVal
-	}
-
-	// Access the value
-	result, err := accessValueAtIndex(currentVal, resolvedIndex)
+	resolvedIndex, isNilTarget, err := resolveBracketIndex(indexExpr, currentVal, exchange)
 	if err != nil {
 		return nil, err
 	}
 
-	// Handle chained access
+	var result interface{}
+	if currentVal != nil && !isNilTarget {
+		result, err = accessValueAtIndex(currentVal, resolvedIndex)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Handle chained access even when result is nil so trailing operators/syntax are never swallowed.
 	if rest != "" {
-		// Remove leading operator (either ?. or [ or .)
 		if strings.HasPrefix(rest, "?.") {
 			return evaluateNullSafeAccess(result, rest[2:], exchange)
-		} else if strings.HasPrefix(rest, "[") {
-			return evaluateChainedAccess(result, rest, exchange)
-		} else if strings.HasPrefix(rest, ".") {
+		}
+		if strings.HasPrefix(rest, "[") || strings.HasPrefix(rest, ".") {
 			return evaluateChainedAccess(result, rest, exchange)
 		}
+		return nil, fmt.Errorf("unexpected trailing characters in null-safe bracket notation: %s", rest)
 	}
 
 	return result, nil
@@ -274,9 +363,12 @@ func evaluateNullSafeDotNotation(expr string, exchange *Exchange) (interface{}, 
 
 	base := match[1]
 	propName := match[2]
-	rest := match[3]
+	rest := strings.TrimSpace(match[3])
 
-	// Get the base value
+	if rest != "" && !strings.HasPrefix(rest, "?.") && !strings.HasPrefix(rest, ".") && !strings.HasPrefix(rest, "[") {
+		return nil, fmt.Errorf("unexpected trailing characters in null-safe dot notation: %s", rest)
+	}
+
 	var currentVal interface{}
 	switch base {
 	case "body":
@@ -286,37 +378,37 @@ func evaluateNullSafeDotNotation(expr string, exchange *Exchange) (interface{}, 
 		if rest == "" {
 			return currentVal, nil
 		}
+		if strings.HasPrefix(rest, "?.") {
+			return evaluateNullSafeAccess(currentVal, rest[2:], exchange)
+		}
 		return evaluateChainedAccess(currentVal, rest, exchange)
 	case "exchangeProperty":
 		currentVal, _ = exchange.GetProperty(propName)
 		if rest == "" {
 			return currentVal, nil
 		}
+		if strings.HasPrefix(rest, "?.") {
+			return evaluateNullSafeAccess(currentVal, rest[2:], exchange)
+		}
 		return evaluateChainedAccess(currentVal, rest, exchange)
 	default:
 		return nil, fmt.Errorf("unknown base: %s", base)
 	}
 
-	// If null, return nil (null-safe behavior)
-	if currentVal == nil {
-		return nil, nil
+	var result interface{}
+	if currentVal != nil {
+		var err error
+		result, err = accessProperty(currentVal, propName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// Access the property on body
-	result, err := accessProperty(currentVal, propName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Handle chained access
 	if rest != "" {
 		if strings.HasPrefix(rest, "?.") {
 			return evaluateNullSafeAccess(result, rest[2:], exchange)
-		} else if strings.HasPrefix(rest, ".") {
-			return evaluateChainedAccess(result, rest, exchange)
-		} else if strings.HasPrefix(rest, "[") {
-			return evaluateChainedAccess(result, rest, exchange)
 		}
+		return evaluateChainedAccess(result, rest, exchange)
 	}
 
 	return result, nil
@@ -330,20 +422,26 @@ func evaluateBodyProperty(expr string, exchange *Exchange) (interface{}, error) 
 	}
 
 	propName := match[1]
-	rest := match[2]
+	rest := strings.TrimSpace(match[2])
+
+	if rest != "" && !strings.HasPrefix(rest, "?.") && !strings.HasPrefix(rest, ".") && !strings.HasPrefix(rest, "[") {
+		return nil, fmt.Errorf("unexpected trailing characters in body property notation: %s", rest)
+	}
 
 	body := exchange.GetBody()
-	if body == nil {
-		return nil, nil
+	var result interface{}
+	if body != nil {
+		var err error
+		result, err = accessProperty(body, propName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	result, err := accessProperty(body, propName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Handle chained access
 	if rest != "" {
+		if strings.HasPrefix(rest, "?.") {
+			return evaluateNullSafeAccess(result, rest[2:], exchange)
+		}
 		return evaluateChainedAccess(result, rest, exchange)
 	}
 
@@ -352,85 +450,87 @@ func evaluateBodyProperty(expr string, exchange *Exchange) (interface{}, error) 
 
 // evaluateNullSafeAccess handles null-safe chained access
 func evaluateNullSafeAccess(currentVal interface{}, rest string, exchange *Exchange) (interface{}, error) {
-	if currentVal == nil {
-		return nil, nil
-	}
-
+	rest = strings.TrimSpace(rest)
 	if rest == "" {
 		return currentVal, nil
 	}
 
 	// Check for bracket notation first
 	if strings.HasPrefix(rest, "[") {
-		// Extract the index and rest
-		bracketEnd := strings.Index(rest, "]")
+		bracketEnd := findMatchingBracket(rest, 0)
 		if bracketEnd == -1 {
 			return nil, fmt.Errorf("unmatched bracket")
 		}
 
 		indexExpr := strings.TrimSpace(rest[1:bracketEnd])
-		remaining := rest[bracketEnd+1:]
+		remaining := strings.TrimSpace(rest[bracketEnd+1:])
 
-		// Resolve index
-		var resolvedIndex interface{}
-		if strings.HasPrefix(indexExpr, "'") && strings.HasSuffix(indexExpr, "'") {
-			resolvedIndex = strings.Trim(indexExpr, "'")
-		} else if strings.HasPrefix(indexExpr, "\"") && strings.HasSuffix(indexExpr, "\"") {
-			resolvedIndex = strings.Trim(indexExpr, "\"")
-		} else if num, err := strconv.Atoi(indexExpr); err == nil {
-			resolvedIndex = num
-		} else {
-			return nil, fmt.Errorf("invalid index in null-safe chain: %s", indexExpr)
-		}
-
-		result, err := accessValueAtIndex(currentVal, resolvedIndex)
+		resolvedIndex, isNilTarget, err := resolveBracketIndex(indexExpr, currentVal, exchange)
 		if err != nil {
 			return nil, err
+		}
+
+		var result interface{}
+		if currentVal != nil && !isNilTarget {
+			result, err = accessValueAtIndex(currentVal, resolvedIndex)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		if remaining != "" {
 			if strings.HasPrefix(remaining, "?.") {
 				return evaluateNullSafeAccess(result, remaining[2:], exchange)
-			} else if strings.HasPrefix(remaining, ".") {
-				return evaluateChainedAccess(result, remaining, exchange)
-			} else if strings.HasPrefix(remaining, "[") {
+			}
+			if strings.HasPrefix(remaining, ".") || strings.HasPrefix(remaining, "[") {
 				return evaluateChainedAccess(result, remaining, exchange)
 			}
+			return nil, fmt.Errorf("unexpected trailing characters in null-safe access: %s", remaining)
 		}
 
 		return result, nil
 	}
 
-	// Handle property name at start of rest - check for nested null-safe operator first
+	// Handle property name at start of rest — pick the earliest delimiter offset.
 	nullSafeIdx := strings.Index(rest, "?.")
 	dotIdx := strings.Index(rest, ".")
 	bracketIdx := strings.Index(rest, "[")
 
 	endIdx := len(rest)
-	if nullSafeIdx != -1 {
+	if nullSafeIdx != -1 && nullSafeIdx < endIdx {
 		endIdx = nullSafeIdx
-	} else if dotIdx != -1 {
+	}
+	if dotIdx != -1 && dotIdx < endIdx {
 		endIdx = dotIdx
-	} else if bracketIdx != -1 {
+	}
+	if bracketIdx != -1 && bracketIdx < endIdx {
 		endIdx = bracketIdx
 	}
 
 	propName := rest[:endIdx]
-	remaining := rest[endIdx:]
+	remaining := strings.TrimSpace(rest[endIdx:])
 
-	result, err := accessProperty(currentVal, propName)
-	if err != nil {
-		return nil, err
+	if !isValidMemberName(propName) {
+		return nil, fmt.Errorf("invalid property name or trailing characters in null-safe access: %s", rest)
+	}
+
+	var result interface{}
+	if currentVal != nil {
+		var err error
+		result, err = accessProperty(currentVal, propName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if remaining != "" {
 		if strings.HasPrefix(remaining, "?.") {
 			return evaluateNullSafeAccess(result, remaining[2:], exchange)
-		} else if strings.HasPrefix(remaining, ".") {
-			return evaluateChainedAccess(result, remaining, exchange)
-		} else if strings.HasPrefix(remaining, "[") {
+		}
+		if strings.HasPrefix(remaining, ".") || strings.HasPrefix(remaining, "[") {
 			return evaluateChainedAccess(result, remaining, exchange)
 		}
+		return nil, fmt.Errorf("unexpected trailing characters in null-safe access: %s", remaining)
 	}
 
 	return result, nil
@@ -438,64 +538,43 @@ func evaluateNullSafeAccess(currentVal interface{}, rest string, exchange *Excha
 
 // evaluateChainedAccess handles chained access (bracket or dot notation)
 func evaluateChainedAccess(currentVal interface{}, rest string, exchange *Exchange) (interface{}, error) {
-	if currentVal == nil {
-		return nil, nil
-	}
-
+	rest = strings.TrimSpace(rest)
 	if rest == "" {
 		return currentVal, nil
 	}
 
 	// Check for bracket notation first
 	if strings.HasPrefix(rest, "[") {
-		bracketEnd := strings.Index(rest, "]")
+		bracketEnd := findMatchingBracket(rest, 0)
 		if bracketEnd == -1 {
 			return nil, fmt.Errorf("unmatched bracket in chained access")
 		}
 
 		indexExpr := strings.TrimSpace(rest[1:bracketEnd])
-		remaining := rest[bracketEnd+1:]
+		remaining := strings.TrimSpace(rest[bracketEnd+1:])
 
-		// Resolve index
-		var resolvedIndex interface{}
-		if strings.HasPrefix(indexExpr, "'") && strings.HasSuffix(indexExpr, "'") {
-			resolvedIndex = strings.Trim(indexExpr, "'")
-		} else if strings.HasPrefix(indexExpr, "\"") && strings.HasSuffix(indexExpr, "\"") {
-			resolvedIndex = strings.Trim(indexExpr, "\"")
-		} else if num, err := strconv.Atoi(indexExpr); err == nil {
-			resolvedIndex = num
-		} else if lastMatch := lastIndexRegex.FindStringSubmatch(indexExpr); lastMatch != nil {
-			// Handle 'last' keyword
-			offset := 0
-			if lastMatch[2] != "" {
-				offset, _ = strconv.Atoi(lastMatch[2])
-			}
-
-			v := reflect.ValueOf(currentVal)
-			switch v.Kind() {
-			case reflect.Slice, reflect.Array:
-				length := v.Len()
-				resolvedIndex = length - 1 - offset
-			default:
-				return nil, fmt.Errorf("cannot use 'last' on type %v", v.Kind())
-			}
-		} else {
-			idxVal, err := evaluateVariable(indexExpr, exchange)
-			if err != nil {
-				return nil, fmt.Errorf("invalid index in chain: %s", indexExpr)
-			}
-			resolvedIndex = idxVal
-		}
-
-		result, err := accessValueAtIndex(currentVal, resolvedIndex)
+		resolvedIndex, isNilTarget, err := resolveBracketIndex(indexExpr, currentVal, exchange)
 		if err != nil {
 			return nil, err
+		}
+
+		var result interface{}
+		if currentVal != nil && !isNilTarget {
+			result, err = accessValueAtIndex(currentVal, resolvedIndex)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		if remaining != "" {
 			return evaluateChainedAccess(result, remaining, exchange)
 		}
 		return result, nil
+	}
+
+	// Check for null-safe notation (must precede single '.' check)
+	if strings.HasPrefix(rest, "?.") {
+		return evaluateNullSafeAccess(currentVal, rest[2:], exchange)
 	}
 
 	// Check for dot notation
@@ -518,11 +597,19 @@ func evaluateChainedAccess(currentVal interface{}, rest string, exchange *Exchan
 		}
 
 		propName := rest[:endIdx]
-		remaining := rest[endIdx:]
+		remaining := strings.TrimSpace(rest[endIdx:])
 
-		result, err := accessProperty(currentVal, propName)
-		if err != nil {
-			return nil, err
+		if !isValidMemberName(propName) {
+			return nil, fmt.Errorf("invalid property name or trailing characters in chained access: %s", rest)
+		}
+
+		var result interface{}
+		if currentVal != nil {
+			var err error
+			result, err = accessProperty(currentVal, propName)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		if remaining != "" {
@@ -534,12 +621,7 @@ func evaluateChainedAccess(currentVal interface{}, rest string, exchange *Exchan
 		return result, nil
 	}
 
-	// Check for null-safe notation
-	if strings.HasPrefix(rest, "?.") {
-		return evaluateNullSafeAccess(currentVal, rest[2:], exchange)
-	}
-
-	return currentVal, nil
+	return nil, fmt.Errorf("unexpected trailing characters in chained access: %s", rest)
 }
 
 // accessValueAtIndex accesses a value from a map, slice, or array by index/key
@@ -604,7 +686,7 @@ func accessProperty(container interface{}, propName string) (interface{}, error)
 	v := reflect.ValueOf(container)
 
 	// Dereference pointers
-	if v.Kind() == reflect.Ptr {
+	for v.Kind() == reflect.Ptr {
 		if v.IsNil() {
 			return nil, nil
 		}
@@ -621,16 +703,10 @@ func accessProperty(container interface{}, propName string) (interface{}, error)
 		return val, nil
 
 	case reflect.Struct:
-		// Struct field access
-		field := v.FieldByName(propName)
-		if !field.IsValid() {
-			// Try case-insensitive match
-			field = v.FieldByNameFunc(func(s string) bool {
-				return strings.EqualFold(s, propName)
-			})
-		}
-		if !field.IsValid() {
-			return nil, nil // Field not found
+		// Struct field access: only exported, interfaceable fields are accessible.
+		field := findExportedStructField(v, propName)
+		if !field.IsValid() || !field.CanInterface() {
+			return nil, nil // Field not found or unexported
 		}
 		return field.Interface(), nil
 
@@ -646,16 +722,52 @@ func accessProperty(container interface{}, propName string) (interface{}, error)
 	}
 }
 
+// findExportedStructField looks up an exported struct field by exact name or
+// case-insensitive fallback, traversing only exported embedded struct fields.
+func findExportedStructField(v reflect.Value, propName string) reflect.Value {
+	field := v.FieldByName(propName)
+	if field.IsValid() && field.CanInterface() {
+		return field
+	}
+
+	queue := []reflect.Value{v}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		t := cur.Type()
+		for i := 0; i < t.NumField(); i++ {
+			sf := t.Field(i)
+			if !sf.IsExported() {
+				continue
+			}
+			fv := cur.Field(i)
+			if strings.EqualFold(sf.Name, propName) && fv.CanInterface() {
+				return fv
+			}
+			if sf.Anonymous {
+				for fv.Kind() == reflect.Ptr {
+					if fv.IsNil() {
+						break
+					}
+					fv = fv.Elem()
+				}
+				if fv.Kind() == reflect.Struct && fv.CanInterface() {
+					queue = append(queue, fv)
+				}
+			}
+		}
+	}
+	return reflect.Value{}
+}
+
 // mapLookup looks up keyStr in a reflect.Value of a map without panicking when
-// the map's key type is not string (e.g. map[int]any). reflect.Value.MapIndex
-// panics if the lookup key is not assignable to the map's key type, so the key
-// string is converted to the map's key type where possible. It returns
-// (nil, false) when the key is absent or cannot be represented in the map's
-// key type.
+// the map's key type is not string (e.g. map[int]any or map[MyKey]any).
+// reflect.Value.MapIndex panics if the lookup key is not assignable to the map's
+// key type, so keyStr is converted to the map's key type where possible.
 func mapLookup(v reflect.Value, keyStr string) (interface{}, bool) {
 	keyType := v.Type().Key()
 	if keyType.Kind() == reflect.String {
-		val := v.MapIndex(reflect.ValueOf(keyStr))
+		val := v.MapIndex(reflect.ValueOf(keyStr).Convert(keyType))
 		if !val.IsValid() {
 			return nil, false
 		}
@@ -693,34 +805,4 @@ func convertToKeyType(s string, t reflect.Type) (reflect.Value, error) {
 	default:
 		return reflect.Value{}, fmt.Errorf("unsupported map key type %v", t)
 	}
-}
-
-// evaluateDotNotationRegex evaluates variables using the regex match groups
-func evaluateDotNotationRegex(match []string, exchange *Exchange) (interface{}, error) {
-	// match[0] = full match
-	// match[1] = "body" (if body matched) or empty
-	// match[2] = "header" or empty (for body)
-	// match[3] = the rest after .
-
-	if match[1] == "body" {
-		return exchange.GetBody(), nil
-	}
-
-	if match[2] == "header" && len(match[3]) > 0 {
-		value, exists := exchange.GetHeader(match[3])
-		if !exists {
-			return nil, nil
-		}
-		return value, nil
-	}
-
-	if match[2] == "exchangeProperty" && len(match[3]) > 0 {
-		value, exists := exchange.GetProperty(match[3])
-		if !exists {
-			return nil, nil
-		}
-		return value, nil
-	}
-
-	return nil, fmt.Errorf("unknown variable pattern")
 }
