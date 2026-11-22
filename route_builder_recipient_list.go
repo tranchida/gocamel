@@ -41,13 +41,17 @@ import (
 //	        return []string{"direct:a", "direct:b"}, nil
 //	    }).
 //	    Build()
-func (b *RouteBuilder) RecipientList(expression any) *RecipientListDefinition {
+func (b *RouteBuilder) buildRecipientList(expression any) (*RecipientList, bool) {
 	rl := NewRecipientList(b.context)
 
 	switch expr := expression.(type) {
 	case string:
 		// Heuristic: if it contains "${", treat it as a Simple Language expression.
 		if strings.Contains(expr, "${") {
+			if _, err := ParseSimpleTemplate(expr); err != nil {
+				b.recordErr(fmt.Errorf("recipient list: invalid simple expression: %w", err))
+				return rl, false
+			}
 			rl.SetSimpleExpression(expr)
 		} else {
 			rl.SetStaticURIs(expr)
@@ -55,14 +59,18 @@ func (b *RouteBuilder) RecipientList(expression any) *RecipientListDefinition {
 	case func(*Exchange) ([]string, error):
 		rl.SetURIFunc(expr)
 	default:
-		b.err = fmt.Errorf("unsupported RecipientList expression type: %T", expression)
-		return &RecipientListDefinition{
-			parent:        b,
-			recipientList: rl,
-		}
+		b.recordErr(fmt.Errorf("unsupported RecipientList expression type: %T", expression))
+		return rl, false
 	}
 
-	b.container.AddProcessor(rl)
+	return rl, true
+}
+
+func (b *RouteBuilder) RecipientList(expression any) *RecipientListDefinition {
+	rl, ok := b.buildRecipientList(expression)
+	if ok {
+		b.container.AddProcessor(rl)
+	}
 
 	return &RecipientListDefinition{
 		parent:        b,

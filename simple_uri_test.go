@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,4 +82,130 @@ func TestSimpleTemplate_EvaluateURIReturnsEvaluationError(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, got)
 	assert.Contains(t, err.Error(), "random argument must be positive")
+}
+
+func TestInterpolateURI_LeadingPlaceholderAndAuthoritySSRF(t *testing.T) {
+	t.Run("leading placeholder query injection is escaped", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.SetHeader("base", "http://api.internal/search")
+		ex.SetHeader("user", "x&allowHeaderOverride=true")
+
+		got := InterpolateURI("${header.base}?q=${header.user}", ex)
+		assert.Equal(t, "http://api.internal/search?q=x%26allowHeaderOverride%3Dtrue", got)
+
+		u, err := ParseURI(got)
+		require.NoError(t, err)
+		assert.Equal(t, "x&allowHeaderOverride=true", u.Query().Get("q"))
+		assert.Empty(t, u.Query().Get("allowHeaderOverride"))
+	})
+
+	t.Run("authority path and userinfo SSRF characters are escaped", func(t *testing.T) {
+		for _, tenant := range []string{
+			"169.254.169.254/latest/",
+			"x@169.254.169.254/",
+			`a?b#c\d,e`,
+		} {
+			ex := NewExchange(context.Background())
+			ex.SetHeader("tenant", tenant)
+
+			got := InterpolateURI("http://${header.tenant}.internal/api", ex)
+			// Authority must not leak unescaped '/', '@', '?', '#', '\', or ',' before ".internal".
+			authority := strings.TrimPrefix(got, "http://")
+			authority = strings.TrimSuffix(authority, "/api")
+			assert.True(t, strings.HasSuffix(authority, ".internal"), "unexpected authority in %q", got)
+			assert.NotContains(t, authority, "/")
+			assert.NotContains(t, authority, "@")
+			assert.NotContains(t, authority, "?")
+			assert.NotContains(t, authority, "#")
+			assert.NotContains(t, authority, `\`)
+			assert.NotContains(t, authority, ",")
+
+			u, err := ParseURI(got)
+			if err == nil {
+				assert.True(t, strings.HasSuffix(u.Host, ".internal"), "host escaped .internal: %q", u.Host)
+			}
+		}
+	})
+
+	t.Run("userinfo placeholder cannot hijack host", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.SetHeader("user", "x@169.254.169.254/")
+
+		got := InterpolateURI("http://${header.user}@trusted.internal/api", ex)
+		u, err := ParseURI(got)
+		require.NoError(t, err)
+		assert.Equal(t, "trusted.internal", u.Host)
+	})
+
+	t.Run("valid authority and whole-URI delegation still work", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.SetHeader("tenant", "acme")
+		ex.SetHeader("target", "seda:out?size=5")
+
+		got := InterpolateURI("http://${header.tenant}.internal/api", ex)
+		u, err := ParseURI(got)
+		require.NoError(t, err)
+		assert.Equal(t, "acme.internal", u.Host)
+		assert.Equal(t, "/api", u.Path)
+
+		assert.Equal(t, "seda:out?size=5", InterpolateURI("${header.target}", ex))
+	})
+}
+
+func TestEvaluateURI_LeadingPlaceholderAuthorityAndNil(t *testing.T) {
+	t.Run("leading placeholder query injection is escaped", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.SetHeader("base", "http://api.internal/search")
+		ex.SetHeader("user", "x&allowHeaderOverride=true")
+
+		tmpl, err := ParseSimpleTemplate("${header.base}?q=${header.user}")
+		require.NoError(t, err)
+		got, err := tmpl.EvaluateURI(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "http://api.internal/search?q=x%26allowHeaderOverride%3Dtrue", got)
+	})
+
+	t.Run("authority SSRF characters are escaped", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.SetHeader("tenant", "169.254.169.254/latest/")
+
+		tmpl, err := ParseSimpleTemplate("http://${header.tenant}.internal/api")
+		require.NoError(t, err)
+		got, err := tmpl.EvaluateURI(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "http://169.254.169.254%2Flatest%2F.internal/api", got)
+	})
+
+	t.Run("missing or nil placeholder formats as empty string not <nil>", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.SetHeader("nilhdr", nil)
+
+		for _, expr := range []string{
+			"chan:${header.missing}",
+			"chan:${header.nilhdr}",
+		} {
+			tmpl, err := ParseSimpleTemplate(expr)
+			require.NoError(t, err)
+			got, err := tmpl.EvaluateURI(ex)
+			require.NoError(t, err)
+			assert.Equal(t, "chan:", got)
+		}
+
+		tmpl, err := ParseSimpleTemplate("${header.missing}")
+		require.NoError(t, err)
+		got, err := tmpl.EvaluateURI(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("whole-URI delegation remains verbatim", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.SetHeader("target", "seda:out?size=5")
+
+		tmpl, err := ParseSimpleTemplate("${header.target}")
+		require.NoError(t, err)
+		got, err := tmpl.EvaluateURI(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "seda:out?size=5", got)
+	})
 }

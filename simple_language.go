@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
 )
 
 // The Simple Language implementation is split across this package:
@@ -197,6 +198,9 @@ func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
 
 	// Check if it's a simple literal (no placeholders)
 	if !placeholderRegex.MatchString(expression) {
+		if strings.Contains(expression, "${") {
+			return nil, fmt.Errorf("malformed simple template: unclosed or empty ${...} placeholder")
+		}
 		template.isLiteral = true
 		template.parts = append(template.parts, templatePart{isVariable: false, content: expression})
 		cacheSimpleTemplate(expression, template)
@@ -211,9 +215,13 @@ func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
 
 		// Add literal text before the placeholder
 		if start > lastIndex {
+			lit := expression[lastIndex:start]
+			if strings.Contains(lit, "${") {
+				return nil, fmt.Errorf("malformed simple template: unclosed or empty ${...} placeholder")
+			}
 			template.parts = append(template.parts, templatePart{
 				isVariable: false,
-				content:    expression[lastIndex:start],
+				content:    lit,
 			})
 		}
 
@@ -229,9 +237,13 @@ func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
 
 	// Add remaining literal text
 	if lastIndex < len(expression) {
+		lit := expression[lastIndex:]
+		if strings.Contains(lit, "${") {
+			return nil, fmt.Errorf("malformed simple template: unclosed or empty ${...} placeholder")
+		}
 		template.parts = append(template.parts, templatePart{
 			isVariable: false,
-			content:    expression[lastIndex:],
+			content:    lit,
 		})
 	}
 
@@ -274,15 +286,22 @@ func (t *SimpleTemplate) EvaluateAsString(exchange *Exchange) (string, error) {
 // EvaluateURI evaluates the template as an endpoint URI. Each placeholder is
 // evaluated with the full Simple language, and the resulting value is escaped
 // for its position in the URI (see uriValueEscaper), so an exchange value
-// cannot inject endpoint options such as "?bufferSize=...". Evaluation errors
-// are returned to the caller.
+// cannot inject endpoint options such as "?bufferSize=...". Nil placeholder
+// values are formatted as "". Evaluation errors are returned to the caller.
 func (t *SimpleTemplate) EvaluateURI(exchange *Exchange) (string, error) {
+	return t.evaluateURI(exchange, false)
+}
+
+func (t *SimpleTemplate) evaluateURI(exchange *Exchange, escapeCommas bool) (string, error) {
 	if t.isLiteral {
+		if len(t.parts) == 0 {
+			return "", nil
+		}
 		return t.parts[0].content, nil
 	}
 
 	var sb strings.Builder
-	var escaper uriValueEscaper
+	escaper := uriValueEscaper{escapeCommas: escapeCommas}
 	for _, part := range t.parts {
 		if !part.isVariable {
 			sb.WriteString(part.content)
@@ -293,9 +312,106 @@ func (t *SimpleTemplate) EvaluateURI(exchange *Exchange) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("simple expression ${%s}: %w", part.content, err)
 		}
-		sb.WriteString(escaper.escape(fmt.Sprintf("%v", value)))
+		strVal := ""
+		if value != nil {
+			strVal = fmt.Sprintf("%v", value)
+		}
+		sb.WriteString(escaper.escape(strVal))
 	}
 	return sb.String(), nil
+}
+
+// hasLiteralURIDelimiters reports whether any literal segment outside ${...}
+// placeholders contains URI structure delimiters (':', '/', '?', '#').
+func (t *SimpleTemplate) hasLiteralURIDelimiters() bool {
+	for _, part := range t.parts {
+		if !part.isVariable && strings.ContainsAny(part.content, ":/?#") {
+			return true
+		}
+	}
+	return false
+}
+
+// evaluateAsURIListString evaluates a whole-list delegation template (such as
+// "${header.targets}") without URI-escaping, treating nil values as "".
+func (t *SimpleTemplate) evaluateAsURIListString(exchange *Exchange) (string, error) {
+	if t.isLiteral {
+		if len(t.parts) == 0 {
+			return "", nil
+		}
+		return t.parts[0].content, nil
+	}
+
+	var sb strings.Builder
+	for _, part := range t.parts {
+		if !part.isVariable {
+			sb.WriteString(part.content)
+			continue
+		}
+		value, err := evaluateVariable(part.content, exchange)
+		if err != nil {
+			return "", fmt.Errorf("simple expression ${%s}: %w", part.content, err)
+		}
+		if value != nil {
+			sb.WriteString(fmt.Sprintf("%v", value))
+		}
+	}
+	return sb.String(), nil
+}
+
+// splitCommaOutsidePlaceholders splits the template on commas that appear in
+// literal segments outside ${...} placeholders, returning one trimmed
+// SimpleTemplate per non-empty item.
+func (t *SimpleTemplate) splitCommaOutsidePlaceholders() []*SimpleTemplate {
+	var items []*SimpleTemplate
+	var current []templatePart
+
+	flush := func() {
+		parts := trimTemplateItemParts(current)
+		current = nil
+		if len(parts) == 0 {
+			return
+		}
+		items = append(items, &SimpleTemplate{
+			isLiteral: len(parts) == 1 && !parts[0].isVariable,
+			parts:     parts,
+		})
+	}
+
+	for _, part := range t.parts {
+		if part.isVariable {
+			current = append(current, part)
+			continue
+		}
+		segs := strings.Split(part.content, ",")
+		for i, seg := range segs {
+			if i > 0 {
+				flush()
+			}
+			if seg != "" {
+				current = append(current, templatePart{isVariable: false, content: seg})
+			}
+		}
+	}
+	flush()
+	return items
+}
+
+func trimTemplateItemParts(parts []templatePart) []templatePart {
+	if len(parts) > 0 && !parts[0].isVariable {
+		parts[0].content = strings.TrimLeftFunc(parts[0].content, unicode.IsSpace)
+		if parts[0].content == "" {
+			parts = parts[1:]
+		}
+	}
+	if len(parts) > 0 && !parts[len(parts)-1].isVariable {
+		last := len(parts) - 1
+		parts[last].content = strings.TrimRightFunc(parts[last].content, unicode.IsSpace)
+		if parts[last].content == "" {
+			parts = parts[:last]
+		}
+	}
+	return parts
 }
 
 // EvaluateAsInt evaluates the template and returns an integer

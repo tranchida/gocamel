@@ -42,6 +42,19 @@ func (r *RoutingSlip) SetURIFunc(f func(*Exchange) ([]string, error)) *RoutingSl
 	return r
 }
 
+// Validate implements the Validator interface for build-time validation.
+func (r *RoutingSlip) Validate() error {
+	if r == nil {
+		return nil
+	}
+	if r.SimpleExpression != "" {
+		if _, err := ParseSimpleTemplate(r.SimpleExpression); err != nil {
+			return fmt.Errorf("routing slip: invalid simple expression: %w", err)
+		}
+	}
+	return nil
+}
+
 func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 	if r.URIFunc != nil {
 		uris, err := r.URIFunc(exchange)
@@ -53,11 +66,10 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 	}
 
 	if r.SimpleExpression != "" {
-		resolved, err := evaluateSimpleExpression(r.SimpleExpression, exchange)
+		uris, err := evaluateURIListTemplate(r.SimpleExpression, exchange)
 		if err != nil {
 			return nil, fmt.Errorf("routing slip simple expression error: %w", err)
 		}
-		uris := splitAndTrim(resolved)
 		LogDebug("routing slip resolved URIs via simple expression",
 			"expression", r.SimpleExpression,
 			"count", len(uris),
@@ -67,11 +79,7 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 	}
 
 	if r.StaticURIs != "" {
-		rawList := splitAndTrim(r.StaticURIs)
-		uris := make([]string, 0, len(rawList))
-		for _, raw := range rawList {
-			uris = append(uris, InterpolateURI(raw, exchange))
-		}
+		uris := interpolateURIList(r.StaticURIs, exchange)
 		LogDebug("routing slip resolved URIs via static string", "count", len(uris), "uris", redactURIs(uris))
 		return uris, nil
 	}

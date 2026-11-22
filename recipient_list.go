@@ -73,6 +73,19 @@ func (r *RecipientList) SetAggregationStrategy(strategy AggregationStrategy) *Re
 	return r
 }
 
+// Validate implements the Validator interface for build-time validation.
+func (r *RecipientList) Validate() error {
+	if r == nil {
+		return nil
+	}
+	if r.SimpleExpression != "" {
+		if _, err := ParseSimpleTemplate(r.SimpleExpression); err != nil {
+			return fmt.Errorf("recipient list: invalid simple expression: %w", err)
+		}
+	}
+	return nil
+}
+
 // resolveURIs resolves the recipient URIs at runtime from the configured expression.
 func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 	// Priority: Go function > Simple expression > static string
@@ -89,12 +102,10 @@ func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 	}
 
 	if r.SimpleExpression != "" {
-		// Use Simple Language to evaluate the expression
-		resolved, err := evaluateSimpleExpression(r.SimpleExpression, exchange)
+		uris, err := evaluateURIListTemplate(r.SimpleExpression, exchange)
 		if err != nil {
 			return nil, fmt.Errorf("recipient list simple expression error: %w", err)
 		}
-		uris := splitAndTrim(resolved)
 		LogDebug("recipient list resolved URIs via simple expression",
 			"expression", r.SimpleExpression,
 			"count", len(uris),
@@ -104,11 +115,7 @@ func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 	}
 
 	if r.StaticURIs != "" {
-		rawList := splitAndTrim(r.StaticURIs)
-		uris := make([]string, 0, len(rawList))
-		for _, raw := range rawList {
-			uris = append(uris, InterpolateURI(raw, exchange))
-		}
+		uris := interpolateURIList(r.StaticURIs, exchange)
 		LogDebug("recipient list resolved URIs via static string",
 			"count", len(uris),
 			"uris", redactURIs(uris),
@@ -117,6 +124,51 @@ func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 	}
 
 	return nil, nil
+}
+
+// evaluateURIListTemplate evaluates a comma-separated URI list template safely.
+// Whole-list expressions without literal URI delimiters outside ${...}
+// (e.g. "${header.targets}") are evaluated as a string and split on commas,
+// preserving explicit whole-list delegation. Templates with literal URI syntax
+// are split on commas outside ${...} first, and each item is evaluated via
+// SimpleTemplate with URI escaping (including comma escaping).
+func evaluateURIListTemplate(expr string, exchange *Exchange) ([]string, error) {
+	tmpl, err := ParseSimpleTemplate(expr)
+	if err != nil {
+		return nil, err
+	}
+	if !tmpl.hasLiteralURIDelimiters() {
+		resolved, err := tmpl.evaluateAsURIListString(exchange)
+		if err != nil {
+			return nil, err
+		}
+		return splitAndTrim(resolved), nil
+	}
+
+	items := tmpl.splitCommaOutsidePlaceholders()
+	uris := make([]string, 0, len(items))
+	for _, item := range items {
+		resolved, err := item.evaluateURI(exchange, true)
+		if err != nil {
+			return nil, err
+		}
+		trimmed := strings.TrimSpace(resolved)
+		if trimmed != "" {
+			uris = append(uris, trimmed)
+		}
+	}
+	return uris, nil
+}
+
+func interpolateURIList(staticURIs string, exchange *Exchange) []string {
+	rawList := splitAndTrim(staticURIs)
+	uris := make([]string, 0, len(rawList))
+	for _, raw := range rawList {
+		if resolved := strings.TrimSpace(interpolateURI(raw, exchange, true)); resolved != "" {
+			uris = append(uris, resolved)
+		}
+	}
+	return uris
 }
 
 // splitAndTrim splits a comma-separated string and trims whitespace from each part.

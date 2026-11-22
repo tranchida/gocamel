@@ -651,6 +651,10 @@ func (b *RouteBuilder) RoutingSlip(expression any) *RouteBuilder {
 	switch expr := expression.(type) {
 	case string:
 		if strings.Contains(expr, "${") {
+			if _, err := ParseSimpleTemplate(expr); err != nil {
+				b.recordErr(fmt.Errorf("routing slip: invalid simple expression: %w", err))
+				return b
+			}
 			rs.SetSimpleExpression(expr)
 		} else {
 			rs.SetStaticURIs(expr)

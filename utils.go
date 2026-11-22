@@ -108,12 +108,32 @@ func resolvePlaceholder(kind, key string, exchange *Exchange) string {
 // path (or opaque) part of a URI start a query string or a fragment.
 var uriPathEscaper = strings.NewReplacer("?", "%3F", "#", "%23")
 
+// uriPathListEscaper additionally escapes ',' so a substituted value in a
+// comma-separated URI list template cannot split into a second endpoint.
+var uriPathListEscaper = strings.NewReplacer("?", "%3F", "#", "%23", ",", "%2C")
+
+// uriAuthorityEscaper escapes characters that could break out of the authority
+// (host / userinfo / port) into path, query, fragment, userinfo, or another list
+// item.
+var uriAuthorityEscaper = strings.NewReplacer(
+	"/", "%2F",
+	"@", "%40",
+	"?", "%3F",
+	"#", "%23",
+	`\`, "%5C",
+	",", "%2C",
+)
+
 // InterpolateURI is Interpolate for endpoint URIs (ToD). Exchange values are
 // data, not URI syntax, so each substituted value is escaped according to
 // where its placeholder sits in the template:
 //
-//   - in the query string (after a literal '?'): url.QueryEscape, so a value
-//     cannot add endpoint options such as "&allowHeaderOverride=true";
+//   - in the query string or fragment (after a literal '?' or '#'):
+//     url.QueryEscape, so a value cannot add endpoint options such as
+//     "&allowHeaderOverride=true";
+//   - in the authority (after a literal "://" and before '/', '?', or '#'):
+//     '/', '@', '?', '#', '\', and ',' are percent-encoded so a value cannot
+//     hijack the target host;
 //   - in the path or opaque part: '?' and '#' are escaped, so a value cannot
 //     start a query string or a fragment.
 //
@@ -122,6 +142,10 @@ var uriPathEscaper = strings.NewReplacer("?", "%3F", "#", "%23")
 // explicitly delegated the choice of endpoint to exchange data, which must
 // then come from a trusted source.
 func InterpolateURI(text string, exchange *Exchange) string {
+	return interpolateURI(text, exchange, false)
+}
+
+func interpolateURI(text string, exchange *Exchange, escapeCommas bool) string {
 	if len(text) > MaxSimpleInputBytes {
 		LogError("InterpolateURI: input exceeds MaxSimpleInputBytes; returning unchanged",
 			"size", len(text), "limit", MaxSimpleInputBytes)
@@ -133,7 +157,7 @@ func InterpolateURI(text string, exchange *Exchange) string {
 	}
 
 	var sb strings.Builder
-	var escaper uriValueEscaper
+	escaper := uriValueEscaper{escapeCommas: escapeCommas}
 	last := 0
 	for _, m := range matches {
 		literal := text[last:m[0]]
@@ -153,29 +177,54 @@ func InterpolateURI(text string, exchange *Exchange) string {
 }
 
 // uriValueEscaper escapes exchange values substituted into an endpoint URI
-// template. Its position is derived from the literal parts of the template,
+// template across four conceptual states {beforeScheme, inAuthority, inPath,
+// inQuery}. Its position is derived from the literal parts of the template,
 // never from the values themselves, and is updated by observeLiteral as the
 // template is walked left to right:
 //
-//   - before the scheme ':' has been seen, values are inserted verbatim (a
-//     whole-URI or scheme placeholder is a deliberate delegation of the
-//     endpoint choice to trusted data);
-//   - once a literal '?' or '#' has been seen (query part), values are
-//     url.QueryEscape'd;
-//   - otherwise (path or opaque part), only '?' and '#' are escaped.
+//   - once a literal '?' or '#' has been seen (inQuery), values are
+//     url.QueryEscape'd (checked before beforeScheme so leading placeholders
+//     such as "${header.base}?q=${header.user}" still query-escape subsequent
+//     parameters);
+//   - before any scheme ':', '/', '?', or '#' has been seen (beforeScheme),
+//     values are inserted verbatim (a whole-URI or scheme placeholder is a
+//     deliberate delegation of the endpoint choice to trusted data);
+//   - after "://" and before '/', '?', or '#' (inAuthority), '/', '@', '?',
+//     '#', '\', and ',' are percent-encoded;
+//   - otherwise (inPath), '?' and '#' (and ',' when escapeCommas is true) are
+//     percent-encoded.
 type uriValueEscaper struct {
-	sawScheme bool
-	inQuery   bool
+	sawScheme    bool
+	inAuthority  bool
+	inQuery      bool
+	escapeCommas bool
 }
 
-// observeLiteral records the scheme and query delimiters found in a literal
-// template part. Call it for every literal, in template order, before escaping
-// the values that follow it.
+// observeLiteral records the scheme, authority, path, and query delimiters
+// found in a literal template part. Call it for every literal, in template
+// order, before escaping the values that follow it.
 func (e *uriValueEscaper) observeLiteral(literal string) {
-	if !e.sawScheme && strings.Contains(literal, ":") {
+	if e.inQuery {
+		return
+	}
+	rest := literal
+	if !e.sawScheme {
+		if idx := strings.Index(literal, "://"); idx >= 0 {
+			if !strings.ContainsAny(literal[:idx], "/?#") {
+				e.sawScheme = true
+				e.inAuthority = true
+				rest = literal[idx+3:]
+			}
+		}
+	}
+	if !e.sawScheme && strings.Contains(rest, ":") {
 		e.sawScheme = true
 	}
-	if strings.ContainsAny(literal, "?#") {
+	if strings.ContainsAny(rest, "/?#") {
+		e.sawScheme = true
+		e.inAuthority = false
+	}
+	if strings.ContainsAny(rest, "?#") {
 		e.inQuery = true
 	}
 }
@@ -183,10 +232,14 @@ func (e *uriValueEscaper) observeLiteral(literal string) {
 // escape returns value escaped for the position reached so far.
 func (e *uriValueEscaper) escape(value string) string {
 	switch {
-	case !e.sawScheme:
-		return value
 	case e.inQuery:
 		return url.QueryEscape(value)
+	case !e.sawScheme:
+		return value
+	case e.inAuthority:
+		return uriAuthorityEscaper.Replace(value)
+	case e.escapeCommas:
+		return uriPathListEscaper.Replace(value)
 	default:
 		return uriPathEscaper.Replace(value)
 	}

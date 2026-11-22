@@ -3,6 +3,8 @@ package gocamel
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -221,4 +223,153 @@ func TestRouteBuilder_RoutingSlipUnsupportedType(t *testing.T) {
 	assert.Nil(t, route)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported RoutingSlip expression type")
+}
+
+type rsSpyComponent struct {
+	mu   sync.Mutex
+	uris []string
+}
+
+func (c *rsSpyComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &rsSpyEndpoint{comp: c, uri: uri}, nil
+}
+
+func (c *rsSpyComponent) record(uri string) {
+	c.mu.Lock()
+	c.uris = append(c.uris, uri)
+	c.mu.Unlock()
+}
+
+func (c *rsSpyComponent) recorded() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.uris))
+	copy(out, c.uris)
+	return out
+}
+
+type rsSpyEndpoint struct {
+	comp *rsSpyComponent
+	uri  string
+}
+
+func (e *rsSpyEndpoint) URI() string { return e.uri }
+func (e *rsSpyEndpoint) CreateProducer() (Producer, error) {
+	return &rsSpyProducer{comp: e.comp, uri: e.uri}, nil
+}
+func (e *rsSpyEndpoint) CreateConsumer(Processor) (Consumer, error) {
+	return &rsSpyConsumer{}, nil
+}
+
+type rsSpyConsumer struct{}
+
+func (c *rsSpyConsumer) Start(context.Context) error { return nil }
+func (c *rsSpyConsumer) Stop() error                 { return nil }
+
+type rsSpyProducer struct {
+	comp *rsSpyComponent
+	uri  string
+}
+
+func (p *rsSpyProducer) Start(context.Context) error { return nil }
+func (p *rsSpyProducer) Stop() error                 { return nil }
+func (p *rsSpyProducer) Send(*Exchange) error {
+	p.comp.record(p.uri)
+	return nil
+}
+
+func TestRoutingSlip_InjectionClosed(t *testing.T) {
+	t.Run("comma and query option injection is escaped and never invokes exec", func(t *testing.T) {
+		ctx := NewCamelContext()
+		directSpy := &rsSpyComponent{}
+		execSpy := &rsSpyComponent{}
+		ctx.AddComponent("direct", directSpy)
+		ctx.AddComponent("exec", execSpy)
+
+		route, err := ctx.CreateRouteBuilder().
+			From("direct:start").
+			RoutingSlip("direct:step-${header.step},direct:done").
+			Build()
+		require.NoError(t, err)
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("step", "a,exec:echo?args=pwn")
+
+		require.NoError(t, route.Process(ex))
+		assert.Empty(t, execSpy.recorded(), "injected exec endpoint must never be invoked")
+		assert.Equal(t, []string{
+			"direct:step-a%2Cexec:echo%3Fargs=pwn",
+			"direct:done",
+		}, directSpy.recorded())
+	})
+
+	t.Run("leading placeholder query injection and authority SSRF in routing slip", func(t *testing.T) {
+		ctx := NewCamelContext()
+		rs := NewRoutingSlip(ctx).SetSimpleExpression("${header.base}?q=${header.user},direct:done")
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("base", "direct:step")
+		ex.GetIn().SetHeader("user", "x&allowHeaderOverride=true,exec:pwn")
+
+		uris, err := rs.resolveURIs(ex)
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"direct:step?q=x%26allowHeaderOverride%3Dtrue%2Cexec%3Apwn",
+			"direct:done",
+		}, uris)
+
+		rsAuth := NewRoutingSlip(ctx).SetSimpleExpression("http://${header.tenant}.internal/api,direct:done")
+		ex2 := NewExchange(context.Background())
+		ex2.GetIn().SetHeader("tenant", "169.254.169.254/latest/,exec:pwn")
+
+		uris2, err := rsAuth.resolveURIs(ex2)
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"http://169.254.169.254%2Flatest%2F%2Cexec:pwn.internal/api",
+			"direct:done",
+		}, uris2)
+	})
+
+	t.Run("whole-list delegation still works", func(t *testing.T) {
+		ctx := NewCamelContext()
+		rs := NewRoutingSlip(ctx).SetSimpleExpression("${header.slip}")
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("slip", "direct:x?a=1,direct:y?b=2")
+
+		uris, err := rs.resolveURIs(ex)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"direct:x?a=1", "direct:y?b=2"}, uris)
+	})
+}
+
+func TestRoutingSlip_BuildAndValidateRejectMalformedTemplate(t *testing.T) {
+	malformedExprs := []string{
+		"direct:${header.x",
+		"direct:${}",
+		"${header." + strings.Repeat("a", MaxSimpleInputBytes+1) + "}",
+	}
+
+	for _, expr := range malformedExprs {
+		t.Run("RouteBuilder "+expr[:min(len(expr), 20)], func(t *testing.T) {
+			ctx := NewCamelContext()
+			_, err := ctx.CreateRouteBuilder().
+				From("direct:start").
+				RoutingSlip(expr).
+				Build()
+			require.Error(t, err)
+		})
+
+		t.Run("Validator "+expr[:min(len(expr), 20)], func(t *testing.T) {
+			ctx := NewCamelContext()
+			rs := NewRoutingSlip(ctx).SetSimpleExpression(expr)
+			v, ok := any(rs).(Validator)
+			require.True(t, ok, "RoutingSlip must implement Validator")
+			require.Error(t, v.Validate())
+
+			r := ctx.CreateRoute().From("direct:start")
+			r.AddProcessor(rs)
+			require.Error(t, r.Validate())
+		})
+	}
 }

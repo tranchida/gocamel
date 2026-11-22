@@ -1,10 +1,5 @@
 package gocamel
 
-import (
-	"fmt"
-	"strings"
-)
-
 // This file implements the Multicast EIP sub-DSL and the nested Pipeline DSL
 // used for grouping processors inside a multicast branch.
 //
@@ -93,21 +88,9 @@ func (d *MulticastDefinition) ToD(uriTemplates ...string) *MulticastDefinition {
 
 // RecipientList sends to dynamically resolved recipients within this multicast branch.
 func (d *MulticastDefinition) RecipientList(expression any) *MulticastDefinition {
-	rl := NewRecipientList(d.context)
-	switch expr := expression.(type) {
-	case string:
-		if strings.Contains(expr, "${") {
-			rl.SetSimpleExpression(expr)
-		} else {
-			rl.SetStaticURIs(expr)
-		}
-	case func(*Exchange) ([]string, error):
-		rl.SetURIFunc(expr)
-	default:
-		d.err = fmt.Errorf("unsupported RecipientList expression type: %T", expression)
-		return d
+	if rl, ok := d.buildRecipientList(expression); ok {
+		d.container.AddProcessor(rl)
 	}
-	d.container.AddProcessor(rl)
 	return d
 }
 
@@ -186,21 +169,9 @@ func (d *PipelineDefinition) ToD(uriTemplates ...string) *PipelineDefinition {
 
 // RecipientList sends to dynamically resolved recipients within this pipeline branch.
 func (d *PipelineDefinition) RecipientList(expression any) *PipelineDefinition {
-	rl := NewRecipientList(d.context)
-	switch expr := expression.(type) {
-	case string:
-		if strings.Contains(expr, "${") {
-			rl.SetSimpleExpression(expr)
-		} else {
-			rl.SetStaticURIs(expr)
-		}
-	case func(*Exchange) ([]string, error):
-		rl.SetURIFunc(expr)
-	default:
-		d.err = fmt.Errorf("unsupported RecipientList expression type: %T", expression)
-		return d
+	if rl, ok := d.buildRecipientList(expression); ok {
+		d.container.AddProcessor(rl)
 	}
-	d.container.AddProcessor(rl)
 	return d
 }
 

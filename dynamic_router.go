@@ -32,6 +32,19 @@ func (p *DynamicRouter) SetSimpleExpression(expression string) *DynamicRouter {
 	return p
 }
 
+// Validate implements the Validator interface for build-time validation.
+func (p *DynamicRouter) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.expression != "" {
+		if _, err := ParseSimpleTemplate(p.expression); err != nil {
+			return fmt.Errorf("dynamic router: invalid simple expression: %w", err)
+		}
+	}
+	return nil
+}
+
 // Process executes the dynamic router logic.
 func (p *DynamicRouter) Process(exchange *Exchange) error {
 	limit := p.maxIterations
@@ -75,7 +88,11 @@ func (p *DynamicRouter) resolveNextURI(exchange *Exchange) (string, error) {
 	}
 
 	if p.expression != "" {
-		return evaluateSimpleExpression(p.expression, exchange)
+		tmpl, err := ParseSimpleTemplate(p.expression)
+		if err != nil {
+			return "", err
+		}
+		return tmpl.EvaluateURI(exchange)
 	}
 
 	return "", nil
@@ -99,9 +116,13 @@ func (b *RouteBuilder) DynamicRouter(expression any) *RouteBuilder {
 	case func(*Exchange) (string, error):
 		dr = NewDynamicRouter(b.context, expr)
 	case string:
+		if _, err := ParseSimpleTemplate(expr); err != nil {
+			b.recordErr(fmt.Errorf("dynamic router: invalid simple expression: %w", err))
+			return b
+		}
 		dr = NewSimpleDynamicRouter(b.context, expr)
 	default:
-		b.err = fmt.Errorf("DynamicRouter: unsupported expression type %T (want func(*Exchange)(string,error) or string)", expression)
+		b.recordErr(fmt.Errorf("DynamicRouter: unsupported expression type %T (want func(*Exchange)(string,error) or string)", expression))
 		return b
 	}
 

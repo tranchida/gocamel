@@ -2,6 +2,8 @@ package gocamel
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -152,4 +154,94 @@ func TestToDInSplit(t *testing.T) {
 	err = producer.Send(exchange)
 	assert.NoError(t, err)
 	assert.ElementsMatch(t, []string{"received-a", "received-b"}, receivedBodies)
+}
+
+type todSpyComponent struct {
+	mu   sync.Mutex
+	uris []string
+}
+
+func (c *todSpyComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	u, err := ParseURI(uri)
+	if err != nil {
+		return nil, err
+	}
+	_ = u
+	c.mu.Lock()
+	c.uris = append(c.uris, uri)
+	c.mu.Unlock()
+	return &todSpyEndpoint{uri: uri}, nil
+}
+
+func (c *todSpyComponent) lastURI() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.uris) == 0 {
+		return ""
+	}
+	return c.uris[len(c.uris)-1]
+}
+
+type todSpyEndpoint struct{ uri string }
+
+func (e *todSpyEndpoint) URI() string                       { return e.uri }
+func (e *todSpyEndpoint) CreateProducer() (Producer, error) { return &todSpyProducer{}, nil }
+func (e *todSpyEndpoint) CreateConsumer(Processor) (Consumer, error) {
+	return nil, nil
+}
+
+type todSpyProducer struct{}
+
+func (p *todSpyProducer) Start(context.Context) error { return nil }
+func (p *todSpyProducer) Stop() error                 { return nil }
+func (p *todSpyProducer) Send(*Exchange) error        { return nil }
+
+func TestToD_LeadingPlaceholderAndAuthoritySSRF(t *testing.T) {
+	t.Run("leading placeholder query injection is escaped", func(t *testing.T) {
+		ctx := NewCamelContext()
+		spy := &todSpyComponent{}
+		ctx.AddComponent("rec", spy)
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+
+		ex := NewExchange(context.Background())
+		ex.SetHeader("base", "rec:search")
+		ex.SetHeader("user", "x&allowHeaderOverride=true")
+
+		require.NoError(t, createToDProcessor(ctx, "${header.base}?q=${header.user}").Process(ex))
+
+		u, err := ParseURI(spy.lastURI())
+		require.NoError(t, err)
+		assert.Equal(t, "x&allowHeaderOverride=true", u.Query().Get("q"))
+		assert.Empty(t, u.Query().Get("allowHeaderOverride"))
+	})
+
+	t.Run("authority SSRF cannot hijack host", func(t *testing.T) {
+		ctx := NewCamelContext()
+		spy := &todSpyComponent{}
+		ctx.AddComponent("http", spy)
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+
+		for _, tenant := range []string{
+			"169.254.169.254/latest/",
+			"x@169.254.169.254/",
+		} {
+			ex := NewExchange(context.Background())
+			ex.SetHeader("tenant", tenant)
+
+			err := createToDProcessor(ctx, "http://${header.tenant}.internal/api").Process(ex)
+			require.Error(t, err)
+			assert.Empty(t, spy.lastURI())
+		}
+
+		// Valid tenant still resolves cleanly to *.internal.
+		ex := NewExchange(context.Background())
+		ex.SetHeader("tenant", "acme")
+		require.NoError(t, createToDProcessor(ctx, "http://${header.tenant}.internal/api").Process(ex))
+		u, err := ParseURI(spy.lastURI())
+		require.NoError(t, err)
+		assert.True(t, strings.HasSuffix(u.Host, ".internal"))
+		assert.Equal(t, "acme.internal", u.Host)
+	})
 }

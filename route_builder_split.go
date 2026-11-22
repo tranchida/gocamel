@@ -1,10 +1,5 @@
 package gocamel
 
-import (
-	"fmt"
-	"strings"
-)
-
 // This file implements the Split EIP sub-DSL.
 //
 // The methods on SplitDefinition are type-preserving wrappers around the
@@ -85,21 +80,9 @@ func (d *SplitDefinition) ToD(uriTemplates ...string) *SplitDefinition {
 
 // RecipientList adds a Recipient List EIP that sends each split part to dynamic recipients.
 func (d *SplitDefinition) RecipientList(expression any) *SplitDefinition {
-	rl := NewRecipientList(d.context)
-	switch expr := expression.(type) {
-	case string:
-		if strings.Contains(expr, "${") {
-			rl.SetSimpleExpression(expr)
-		} else {
-			rl.SetStaticURIs(expr)
-		}
-	case func(*Exchange) ([]string, error):
-		rl.SetURIFunc(expr)
-	default:
-		d.err = fmt.Errorf("unsupported RecipientList expression type: %T", expression)
-		return d
+	if rl, ok := d.buildRecipientList(expression); ok {
+		d.container.AddProcessor(rl)
 	}
-	d.container.AddProcessor(rl)
 	return d
 }
 
