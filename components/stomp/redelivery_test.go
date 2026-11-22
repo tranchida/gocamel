@@ -1,6 +1,7 @@
 package stomp
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -130,5 +131,55 @@ func TestStompConsumer_DropsInboundCamelHeaders(t *testing.T) {
 		assert.Equal(t, "/queue/headers", headers[CamelStompDestination])
 	case <-time.After(5 * time.Second):
 		t.Fatal("message not received")
+	}
+}
+
+func TestStompConsumer_ShutdownAbortedMessageNotAcked(t *testing.T) {
+	addr, acks, connClosed := startAckTrackingBroker(t, "abort-me")
+	component := NewStompComponent()
+
+	// Also start a producer on the same endpoint so that in the unpatched code
+	// the shared socket stays alive while Stop finishes, exposing the missing
+	// ctx.Err() check before redelivery.Exhausted(0).
+	ep, err := component.CreateEndpoint("stomp://queue/abort?host=" + addr + "&ack=client-individual&maxRedeliveries=0")
+	require.NoError(t, err)
+
+	producer, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, producer.Start(context.Background()))
+	t.Cleanup(func() { _ = producer.Stop() })
+
+	inHandler := make(chan struct{}, 1)
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
+		select {
+		case inHandler <- struct{}{}:
+		default:
+		}
+		<-e.Context.Done()
+		return e.Context.Err()
+	}))
+	require.NoError(t, err)
+	require.NoError(t, consumer.Start(context.Background()))
+
+	select {
+	case <-inHandler:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for message handler")
+	}
+
+	require.NoError(t, consumer.Stop())
+
+	select {
+	case <-connClosed:
+	case <-time.After(2 * time.Second):
+		// In the unpatched shared-connection code, Stop() doesn't even close
+		// the consumer's connection because producer still holds a reference;
+		// check whether an erroneous ACK arrived either way!
+	}
+
+	select {
+	case ackFrame := <-acks:
+		t.Fatalf("shutdown-aborted message must NOT be ACKed, got ACK frame %+v", ackFrame)
+	case <-time.After(150 * time.Millisecond):
 	}
 }

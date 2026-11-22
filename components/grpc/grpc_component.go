@@ -137,6 +137,10 @@ func NewGRPCComponent() *GRPCComponent {
 //	                    When false, TLS with a minimum version of 1.2 is used.
 //	caCert              Path to a PEM-encoded CA certificate trusted for server
 //	                    verification when insecure=false (default: system pool)
+//	certFile            Path to a PEM-encoded server TLS certificate required
+//	                    by GRPCConsumer when insecure=false (requires keyFile)
+//	keyFile             Path to a PEM-encoded server TLS private key required
+//	                    by GRPCConsumer when insecure=false (requires certFile)
 //	forwardHeaders      Comma-separated allowlist of exchange headers the
 //	                    producer forwards as outgoing RPC metadata. When set,
 //	                    ONLY these headers are propagated. When unset, all
@@ -190,6 +194,20 @@ func (c *GRPCComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		}
 	}
 
+	certFile := gocamel.GetConfigValue(u, "certFile")
+	keyFile := gocamel.GetConfigValue(u, "keyFile")
+	if (certFile != "" || keyFile != "") && isInsecure {
+		return nil, fmt.Errorf("invalid gRPC URI: certFile and keyFile require insecure=false")
+	}
+	if (certFile != "") != (keyFile != "") {
+		return nil, fmt.Errorf("invalid gRPC URI: certFile and keyFile must both be set")
+	}
+	if certFile != "" && keyFile != "" {
+		if _, err := serverTransportCredentials(certFile, keyFile); err != nil {
+			return nil, fmt.Errorf("invalid gRPC URI: %w", err)
+		}
+	}
+
 	allowHeaderOverride := false
 	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -211,6 +229,8 @@ func (c *GRPCComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		method:              method,
 		insecure:            isInsecure,
 		caCert:              caCert,
+		certFile:            certFile,
+		keyFile:             keyFile,
 		timeout:             timeout,
 		allowHeaderOverride: allowHeaderOverride,
 		forwardHeaders:      parseForwardHeaders(gocamel.GetConfigValue(u, "forwardHeaders")),
@@ -229,6 +249,9 @@ func transportCredentials(target, caCertPath string) (credentials.TransportCrede
 
 	var pool *x509.CertPool
 	if caCertPath != "" {
+		if !gocamel.IsSafePath(caCertPath, false) {
+			return nil, fmt.Errorf("unsafe caCert path %q: directory traversal or null byte", caCertPath)
+		}
 		// caCertPath is trusted operator configuration from the endpoint URI
 		// (like the SFTP private key path), never influenced by exchange data:
 		// reading the file it names is the intended behaviour.
@@ -249,6 +272,25 @@ func transportCredentials(target, caCertPath string) (credentials.TransportCrede
 	}), nil
 }
 
+// serverTransportCredentials builds TLS 1.2+ server credentials from the
+// configured PEM certificate and private key files.
+func serverTransportCredentials(certFile, keyFile string) (credentials.TransportCredentials, error) {
+	if !gocamel.IsSafePath(certFile, false) {
+		return nil, fmt.Errorf("unsafe certFile path %q: directory traversal or null byte", certFile)
+	}
+	if !gocamel.IsSafePath(keyFile, false) {
+		return nil, fmt.Errorf("unsafe keyFile path %q: directory traversal or null byte", keyFile)
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load server TLS key pair: %w", err)
+	}
+	return credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}), nil
+}
+
 // GRPCEndpoint represents a gRPC client or server endpoint.
 type GRPCEndpoint struct {
 	uri                 string
@@ -257,6 +299,8 @@ type GRPCEndpoint struct {
 	method              string
 	insecure            bool
 	caCert              string
+	certFile            string
+	keyFile             string
 	timeout             time.Duration
 	allowHeaderOverride bool // opt-in: the CamelGrpcMethod header may replace the configured method
 	// forwardHeaders is the optional header allowlist: when non-nil, ONLY the
@@ -386,6 +430,17 @@ func (p *GRPCProducer) Stop() error {
 
 // Send executes the RPC call and puts response in the Exchange.
 func (p *GRPCProducer) Send(exchange *gocamel.Exchange) error {
+	if exchange == nil {
+		return fmt.Errorf("grpc producer: exchange cannot be nil")
+	}
+
+	p.mu.Lock()
+	started := p.started
+	p.mu.Unlock()
+	if !started {
+		return fmt.Errorf("grpc producer is not started or connected")
+	}
+
 	p.endpoint.mu.Lock()
 	conn := p.endpoint.clientConn
 	p.endpoint.mu.Unlock()
@@ -421,6 +476,11 @@ func (p *GRPCProducer) Send(exchange *gocamel.Exchange) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if p.endpoint.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.endpoint.timeout)
+		defer cancel()
+	}
 
 	// Propagate metadata headers: Camel-prefixed internal headers and
 	// sensitive credential headers are never forwarded; when an explicit
@@ -428,7 +488,7 @@ func (p *GRPCProducer) Send(exchange *gocamel.Exchange) error {
 	// (sensitive ones stay blocked).
 	md := metadata.MD{}
 	for name, value := range exchange.In.GetHeaders() {
-		if strings.HasPrefix(name, "Camel") {
+		if gocamel.IsCamelHeader(name) {
 			continue
 		}
 		lower := strings.ToLower(name)
@@ -485,7 +545,8 @@ func (p *GRPCProducer) Send(exchange *gocamel.Exchange) error {
 	exchange.Out.SetBody(respBytes)
 
 	for k, vals := range headerMD {
-		if len(vals) > 0 {
+		// Remote servers must not inject internal Camel* headers into Out.
+		if len(vals) > 0 && !gocamel.IsCamelHeader(k) {
 			exchange.Out.SetHeader(k, vals[0])
 		}
 	}
@@ -495,53 +556,122 @@ func (p *GRPCProducer) Send(exchange *gocamel.Exchange) error {
 
 // GRPCConsumer hosts a gRPC server that dispatches incoming calls to a GoCamel route.
 type GRPCConsumer struct {
-	endpoint  *GRPCEndpoint
-	processor gocamel.Processor
-	server    *grpc.Server
-	listener  net.Listener
-	addr      string
-	stopAfter func() bool
-	stopping  bool
-	wg        sync.WaitGroup
+	endpoint   *GRPCEndpoint
+	processor  gocamel.Processor
+	mu         sync.Mutex
+	transition chan struct{}
+	started    bool
+	gen        uint64
+	server     *grpc.Server
+	listener   net.Listener
+	addr       string
+	stopAfter  func() bool
+	wg         sync.WaitGroup
+}
+
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *GRPCConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (c *GRPCConsumer) releaseTransition() {
+	c.mu.Lock()
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
 }
 
 // Start begins listening on the configured address.
 func (c *GRPCConsumer) Start(ctx context.Context) error {
-	c.endpoint.mu.Lock()
-	if c.server != nil || c.stopping {
-		c.endpoint.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.acquireTransition()
+	defer c.releaseTransition()
+
+	c.mu.Lock()
+	if c.started {
+		c.mu.Unlock()
 		return nil
 	}
+	c.mu.Unlock()
 
-	target := c.endpoint.target
-	if !strings.Contains(target, ":") {
-		target = ":" + target
+	// Use unknown service handler to receive all RPC calls and forward them to GoCamel
+	serverOpts := []grpc.ServerOption{
+		grpc.ForceServerCodec(RawBytesCodec{}),
+		grpc.UnknownServiceHandler(c.handler),
+	}
+	if !c.endpoint.insecure {
+		if c.endpoint.certFile == "" || c.endpoint.keyFile == "" {
+			return fmt.Errorf("grpc consumer: insecure=false requires certFile and keyFile to enable TLS")
+		}
+		creds, err := serverTransportCredentials(c.endpoint.certFile, c.endpoint.keyFile)
+		if err != nil {
+			return fmt.Errorf("grpc consumer: %w", err)
+		}
+		serverOpts = append(serverOpts, grpc.Creds(creds))
 	}
 
+	c.endpoint.mu.Lock()
+	if c.endpoint.consumer != nil && c.endpoint.consumer != c {
+		c.endpoint.mu.Unlock()
+		return fmt.Errorf("multiple consumers for the same gRPC endpoint are not allowed: %s", c.endpoint.URI())
+	}
+	c.endpoint.mu.Unlock()
+
+	c.mu.Lock()
 	lis := c.listener
+	c.mu.Unlock()
+
 	if lis == nil {
+		target := c.endpoint.target
+		if !strings.Contains(target, ":") {
+			target = ":" + target
+		}
 		var err error
 		lis, err = net.Listen("tcp", target)
 		if err != nil {
-			c.endpoint.mu.Unlock()
 			return fmt.Errorf("grpc consumer failed to listen on %s: %w", target, err)
 		}
-		c.listener = lis
 	}
-	c.addr = lis.Addr().String()
 
-	// Use unknown service handler to receive all RPC calls and forward them to GoCamel
-	srv := grpc.NewServer(
-		grpc.ForceServerCodec(RawBytesCodec{}),
-		grpc.UnknownServiceHandler(c.handler),
-	)
-	c.server = srv
-	c.stopAfter = context.AfterFunc(ctx, func() {
-		_ = c.Stop()
-	})
+	srv := grpc.NewServer(serverOpts...)
 
-	c.wg.Add(1)
+	c.endpoint.mu.Lock()
+	if c.endpoint.consumer != nil && c.endpoint.consumer != c {
+		c.endpoint.mu.Unlock()
+		_ = lis.Close()
+		return fmt.Errorf("multiple consumers for the same gRPC endpoint are not allowed: %s", c.endpoint.URI())
+	}
+	c.endpoint.consumer = c
 	c.endpoint.mu.Unlock()
+
+	c.mu.Lock()
+	c.listener = lis
+	c.addr = lis.Addr().String()
+	c.server = srv
+	c.started = true
+	c.gen++
+	gen := c.gen
+	c.stopAfter = context.AfterFunc(ctx, func() {
+		_ = c.stopGeneration(gen)
+	})
+	c.wg.Add(1)
+	c.mu.Unlock()
 
 	go func() {
 		defer c.wg.Done()
@@ -554,27 +684,35 @@ func (c *GRPCConsumer) Start(ctx context.Context) error {
 // Stop gracefully shuts down the gRPC server, falling back to a forced Stop()
 // if GracefulStop() does not complete within the endpoint timeout.
 func (c *GRPCConsumer) Stop() error {
-	c.endpoint.mu.Lock()
-	if c.stopping {
-		c.endpoint.mu.Unlock()
-		c.wg.Wait()
+	return c.stopGeneration(0)
+}
+
+func (c *GRPCConsumer) stopGeneration(targetGen uint64) error {
+	c.acquireTransition()
+	defer c.releaseTransition()
+
+	c.mu.Lock()
+	if targetGen != 0 && c.gen != targetGen {
+		c.mu.Unlock()
 		return nil
 	}
-	if c.server == nil && c.listener == nil {
+	if !c.started && c.server == nil && c.listener == nil {
+		c.mu.Unlock()
+		c.endpoint.mu.Lock()
 		if c.endpoint.consumer == c {
 			c.endpoint.consumer = nil
 		}
 		c.endpoint.mu.Unlock()
 		return nil
 	}
-	c.stopping = true
 	srv := c.server
 	lis := c.listener
 	stopAfter := c.stopAfter
 	c.server = nil
 	c.listener = nil
 	c.stopAfter = nil
-	c.endpoint.mu.Unlock()
+	c.started = false
+	c.mu.Unlock()
 
 	if stopAfter != nil {
 		stopAfter()
@@ -605,7 +743,6 @@ func (c *GRPCConsumer) Stop() error {
 	c.wg.Wait()
 
 	c.endpoint.mu.Lock()
-	c.stopping = false
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}
@@ -615,8 +752,8 @@ func (c *GRPCConsumer) Stop() error {
 
 // Address returns the actual listening address (useful when port 0 is used in tests).
 func (c *GRPCConsumer) Address() string {
-	c.endpoint.mu.Lock()
-	defer c.endpoint.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.listener != nil {
 		return c.listener.Addr().String()
 	}
@@ -632,7 +769,12 @@ func (c *GRPCConsumer) handler(srv any, stream grpc.ServerStream) error {
 
 	var reqBytes []byte
 	if err := stream.RecvMsg(&reqBytes); err != nil {
-		return status.Errorf(codes.Internal, "failed to receive request: %v", err)
+		gocamel.LogError("grpc consumer failed to receive request",
+			"uri", c.endpoint.URI(),
+			"method", fullMethod,
+			"error", err,
+		)
+		return status.Error(codes.Internal, "failed to receive request")
 	}
 
 	exchange := gocamel.NewExchange(ctx)
@@ -656,14 +798,32 @@ func (c *GRPCConsumer) handler(srv any, stream grpc.ServerStream) error {
 			"error", err,
 			"exchange_id", exchange.ID,
 		)
+		resp := exchange.GetResponse()
 		code := codes.Internal
-		if cCode, ok := exchange.GetHeaderAsInt(CamelGrpcStatusCode); ok && cCode >= 0 && cCode <= int(codes.Unauthenticated) {
+		cCode, hasCode := resp.GetHeaderAsInt(CamelGrpcStatusCode)
+		if hasCode && cCode > int(codes.OK) && cCode <= int(codes.Unauthenticated) {
 			code = codes.Code(cCode) // #nosec G115
 		}
-		return status.Errorf(code, "route error: %v", err)
+		// Never leak raw internal route errors to remote callers. Honor an
+		// explicit CamelGrpcStatusDescription unless CamelGrpcStatusCode was
+		// left at 0 (codes.OK, e.g. from an earlier GRPCProducer success).
+		msg := ""
+		if !(hasCode && cCode == int(codes.OK)) {
+			if desc, ok := resp.GetHeaderAsString(CamelGrpcStatusDescription); ok && desc != "" {
+				msg = desc
+			}
+		}
+		if msg == "" {
+			if code == codes.Internal {
+				msg = "internal server error"
+			} else {
+				msg = code.String()
+			}
+		}
+		return status.Error(code, msg)
 	}
 
-	respBody := exchange.GetOut().GetBody()
+	respBody := exchange.GetResponse().GetBody()
 	var respBytes []byte
 	switch b := respBody.(type) {
 	case []byte:
@@ -674,7 +834,13 @@ func (c *GRPCConsumer) handler(srv any, stream grpc.ServerStream) error {
 		var err error
 		respBytes, err = proto.Marshal(b)
 		if err != nil {
-			return status.Errorf(codes.Internal, "failed to marshal response proto: %v", err)
+			gocamel.LogError("grpc consumer failed to marshal response proto",
+				"uri", c.endpoint.URI(),
+				"method", fullMethod,
+				"error", err,
+				"exchange_id", exchange.ID,
+			)
+			return status.Error(codes.Internal, "failed to marshal response")
 		}
 	case nil:
 		respBytes = []byte{}
@@ -683,7 +849,13 @@ func (c *GRPCConsumer) handler(srv any, stream grpc.ServerStream) error {
 	}
 
 	if err := stream.SendMsg(&respBytes); err != nil {
-		return status.Errorf(codes.Internal, "failed to send response: %v", err)
+		gocamel.LogError("grpc consumer failed to send response",
+			"uri", c.endpoint.URI(),
+			"method", fullMethod,
+			"error", err,
+			"exchange_id", exchange.ID,
+		)
+		return status.Error(codes.Internal, "failed to send response")
 	}
 
 	return nil

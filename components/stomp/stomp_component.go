@@ -4,6 +4,7 @@
 package stomp
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-stomp/stomp"
@@ -143,6 +145,31 @@ var sensitiveOutboundHeaders = map[string]bool{
 	"www-authenticate":    true,
 }
 
+// stompProtocolHeaders are reserved STOMP 1.0/1.1/1.2 frame headers. They are
+// never forwarded from arbitrary exchange headers (matching is case-insensitive),
+// preventing callers from injecting receipt/transaction/framing directives.
+var stompProtocolHeaders = map[string]bool{
+	"receipt":        true,
+	"transaction":    true,
+	"destination":    true,
+	"content-length": true,
+	"content-type":   true,
+	"id":             true,
+	"ack":            true,
+	"subscription":   true,
+	"message-id":     true,
+	"receipt-id":     true,
+	"host":           true,
+	"accept-version": true,
+	"version":        true,
+	"login":          true,
+	"passcode":       true,
+	"heart-beat":     true,
+	"session":        true,
+	"server":         true,
+	"message":        true,
+}
+
 // parseForwardHeaders builds the case-insensitive header allowlist from
 // the forwardHeaders URI option. It returns nil when the option is unset
 // or empty, meaning "forward all non-Camel, non-sensitive headers".
@@ -265,10 +292,25 @@ func (c *StompComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		host = defaultHost
 	}
 
-	// GetConfigValue falls back to URI userinfo for the well-known
-	// credential keys, so stomp://user:pass@broker:61613 works too.
+	// Fall back to URI userinfo / username / password when login/passcode are unset.
 	login := gocamel.GetConfigValue(u, "login")
+	if login == "" {
+		login = gocamel.GetConfigValue(u, "username")
+	}
 	passcode := gocamel.GetConfigValue(u, "passcode")
+	if passcode == "" {
+		passcode = gocamel.GetConfigValue(u, "password")
+	}
+
+	if strings.ContainsRune(destination, '\x00') {
+		return nil, fmt.Errorf("invalid STOMP URI: destination contains null byte")
+	}
+	if strings.ContainsRune(host, '\x00') {
+		return nil, fmt.Errorf("invalid STOMP URI: host contains null byte")
+	}
+	if strings.ContainsRune(login, '\x00') || strings.ContainsRune(passcode, '\x00') {
+		return nil, fmt.Errorf("invalid STOMP URI: credentials contain null byte")
+	}
 
 	ackMode := parseAckMode(gocamel.GetConfigValue(u, "ack"))
 
@@ -344,13 +386,14 @@ type StompEndpoint struct {
 }
 
 // closeConn decrements the active user count and closes the endpoint's shared
-// STOMP connection when the last user releases it.
+// STOMP producer connection when the last producer releases it.
 //
-// The producer and the consumer created from the same endpoint may share
-// one connection, and both call Stop() on shutdown. The mutex serialises
-// the close against connection establishment and Send's conn snapshot;
-// reference counting keeps the connection open while another user is still
-// active.
+// Multiple producers created from the same endpoint share one connection, and
+// each calls Stop() on shutdown. The mutex serialises the close against
+// connection establishment and Send's conn snapshot; reference counting keeps
+// the connection open while another producer is still active. Consumers use
+// their own dedicated connection so stopping or reconnecting a consumer never
+// disrupts or stalls shared producers.
 func (e *StompEndpoint) closeConn() {
 	e.mu.Lock()
 	if e.connUsers > 0 {
@@ -372,31 +415,6 @@ func (e *StompEndpoint) closeConn() {
 	// the TCP connection abruptly is equivalent from the broker's point of
 	// view: it requeues unacknowledged messages.
 	_ = conn.MustDisconnect()
-}
-
-// replaceConn replaces the endpoint's shared connection with a newly dialed
-// connection while preserving the active user reference count, and force-closes
-// the previous broken connection.
-func (e *StompEndpoint) replaceConn(ctx context.Context, conn *stomp.Conn) error {
-	e.mu.Lock()
-	if ctx.Err() != nil || e.connUsers == 0 {
-		e.mu.Unlock()
-		_ = conn.MustDisconnect()
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return errors.New("stomp endpoint has no active users")
-	}
-	old := e.conn
-	e.conn = conn
-	e.mu.Unlock()
-
-	if old != nil {
-		// The old connection is broken: a graceful Disconnect could wait
-		// forever for a RECEIPT.
-		_ = old.MustDisconnect()
-	}
-	return nil
 }
 
 // URI returns the endpoint URI with sensitive credentials masked.
@@ -429,6 +447,11 @@ func (e *StompEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Con
 // TLS depending on the ssl option. Connection establishment is bounded by
 // connectTimeout and aborted when ctx ends.
 func (e *StompEndpoint) dial(ctx context.Context) (*stomp.Conn, error) {
+	conn, _, err := e.dialWithTracking(ctx, false)
+	return conn, err
+}
+
+func (e *StompEndpoint) dialWithTracking(ctx context.Context, trackAcks bool) (*stomp.Conn, *ackTrackingConn, error) {
 	var opts []func(*stomp.Conn) error
 	if e.login != "" || e.passcode != "" {
 		opts = append(opts, stomp.ConnOpt.Login(e.login, e.passcode))
@@ -440,7 +463,7 @@ func (e *StompEndpoint) dial(ctx context.Context) (*stomp.Conn, error) {
 	dialer := &net.Dialer{Timeout: e.connectTimeout}
 	tcpConn, err := dialer.DialContext(ctx, "tcp", e.host)
 	if err != nil {
-		return nil, fmt.Errorf("stomp connect to %s failed: %w", e.host, err)
+		return nil, nil, fmt.Errorf("stomp connect to %s failed: %w", e.host, err)
 	}
 
 	// A broker accepting the TCP connection but never answering must not
@@ -459,24 +482,103 @@ func (e *StompEndpoint) dial(ctx context.Context) (*stomp.Conn, error) {
 		tlsConn := tls.Client(netConn, e.tlsConfig.Clone())
 		if err := tlsConn.Handshake(); err != nil {
 			_ = netConn.Close()
-			return nil, fmt.Errorf("stomp TLS handshake with %s failed: %w", e.host, err)
+			return nil, nil, fmt.Errorf("stomp TLS handshake with %s failed: %w", e.host, err)
 		}
 		netConn = tlsConn
 	}
 
-	conn, err := stomp.Connect(netConn, opts...)
+	var tracked *ackTrackingConn
+	wireConn := netConn
+	if trackAcks {
+		tracked = newAckTrackingConn(netConn)
+		wireConn = tracked
+	}
+
+	conn, err := stomp.Connect(wireConn, opts...)
 	if err != nil {
-		_ = netConn.Close()
-		return nil, fmt.Errorf("stomp connect to %s failed: %w", e.host, err)
+		_ = wireConn.Close()
+		return nil, nil, fmt.Errorf("stomp connect to %s failed: %w", e.host, err)
 	}
 	if !stopAbort() {
 		// ctx ended: the abort may already have expired the deadline.
 		_ = conn.MustDisconnect()
-		return nil, fmt.Errorf("stomp connect to %s aborted: %w", e.host, ctx.Err())
+		return nil, nil, fmt.Errorf("stomp connect to %s aborted: %w", e.host, ctx.Err())
 	}
 	// The established connection is long-lived: liveness is left to STOMP.
 	_ = tcpConn.SetDeadline(time.Time{})
-	return conn, nil
+	return conn, tracked, nil
+}
+
+const ackFlushWaitTimeout = 250 * time.Millisecond
+
+// ackTrackingConn observes outbound STOMP ACK frames flushed by go-stomp's
+// writer goroutine so StompConsumer.Stop can ensure an in-flight ACK hits the
+// socket before MustDisconnect closes the connection.
+type ackTrackingConn struct {
+	net.Conn
+	acksExpected atomic.Uint64
+	mu           sync.Mutex
+	ackWrites    uint64
+	closed       bool
+	notify       chan struct{}
+}
+
+func newAckTrackingConn(c net.Conn) *ackTrackingConn {
+	return &ackTrackingConn{
+		Conn:   c,
+		notify: make(chan struct{}),
+	}
+}
+
+func (a *ackTrackingConn) noteAck() {
+	a.acksExpected.Add(1)
+}
+
+func (a *ackTrackingConn) Write(p []byte) (int, error) {
+	n, err := a.Conn.Write(p)
+	if err == nil && bytes.HasPrefix(p, []byte("ACK\n")) {
+		a.mu.Lock()
+		a.ackWrites++
+		close(a.notify)
+		a.notify = make(chan struct{})
+		a.mu.Unlock()
+	}
+	return n, err
+}
+
+func (a *ackTrackingConn) Close() error {
+	a.mu.Lock()
+	if !a.closed {
+		a.closed = true
+		close(a.notify)
+		a.notify = make(chan struct{})
+	}
+	a.mu.Unlock()
+	return a.Conn.Close()
+}
+
+func (a *ackTrackingConn) waitAllAcksFlushed(timeout time.Duration) {
+	target := a.acksExpected.Load()
+	if target == 0 {
+		return
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		a.mu.Lock()
+		if a.ackWrites >= target || a.closed {
+			a.mu.Unlock()
+			return
+		}
+		ch := a.notify
+		a.mu.Unlock()
+
+		select {
+		case <-ch:
+		case <-timer.C:
+			return
+		}
+	}
 }
 
 // StompProducer publishes messages to a STOMP destination.
@@ -540,34 +642,46 @@ func (p *StompProducer) resolveDestination(exchange *gocamel.Exchange) (string, 
 	if destination == "" {
 		return "", fmt.Errorf("stomp: destination is required to publish a message")
 	}
+	if strings.ContainsRune(destination, '\x00') {
+		return "", fmt.Errorf("stomp: invalid destination %q: contains null byte", destination)
+	}
 	return destination, nil
 }
 
 // filterHeaders returns the exchange headers allowed to be forwarded to
-// the STOMP broker: Camel-prefixed internal headers and sensitive
-// credential headers are never forwarded; when an explicit forwardHeaders
-// allowlist is configured, only the listed headers remain (sensitive ones
-// stay blocked).
-func (p *StompProducer) filterHeaders(exchange *gocamel.Exchange) []func(*frame.Frame) error {
+// the STOMP broker: Camel-prefixed internal headers, sensitive credential
+// headers, and STOMP protocol headers are never forwarded; when an explicit
+// forwardHeaders allowlist is configured, only the listed non-blocked headers
+// remain. Header names or values containing NUL bytes are rejected to prevent
+// STOMP frame truncation.
+func (p *StompProducer) filterHeaders(exchange *gocamel.Exchange) ([]func(*frame.Frame) error, error) {
 	var opts []func(*frame.Frame) error
 	for name, value := range exchange.In.GetHeaders() {
-		if strings.HasPrefix(name, "Camel") {
+		if gocamel.IsCamelHeader(name) {
 			continue
 		}
 		lower := strings.ToLower(name)
-		if sensitiveOutboundHeaders[lower] {
+		if sensitiveOutboundHeaders[lower] || stompProtocolHeaders[lower] {
 			continue
 		}
 		if p.endpoint.forwardHeaders != nil && !p.endpoint.forwardHeaders[lower] {
 			continue
 		}
-		opts = append(opts, stomp.SendOpt.Header(name, fmt.Sprintf("%v", value)))
+		valStr := fmt.Sprintf("%v", value)
+		if strings.ContainsRune(name, '\x00') || strings.ContainsRune(valStr, '\x00') {
+			return nil, fmt.Errorf("stomp: header %q contains null byte", name)
+		}
+		opts = append(opts, stomp.SendOpt.Header(name, valStr))
 	}
-	return opts
+	return opts, nil
 }
 
 // Send publishes the exchange body to a STOMP destination.
 func (p *StompProducer) Send(exchange *gocamel.Exchange) error {
+	if exchange == nil {
+		return fmt.Errorf("stomp producer: exchange cannot be nil")
+	}
+
 	p.mu.Lock()
 	started := p.started
 	p.mu.Unlock()
@@ -590,7 +704,15 @@ func (p *StompProducer) Send(exchange *gocamel.Exchange) error {
 
 	contentType := ""
 	if ct, ok := exchange.GetHeaderAsString(CamelStompContentType); ok {
+		if strings.ContainsRune(ct, '\x00') {
+			return fmt.Errorf("stomp: invalid content-type %q: contains null byte", ct)
+		}
 		contentType = ct
+	}
+
+	headerOpts, err := p.filterHeaders(exchange)
+	if err != nil {
+		return err
 	}
 
 	body := exchange.In.GetBody()
@@ -606,7 +728,7 @@ func (p *StompProducer) Send(exchange *gocamel.Exchange) error {
 		payload = []byte(fmt.Sprintf("%v", b))
 	}
 
-	if err := conn.Send(destination, contentType, payload, p.filterHeaders(exchange)...); err != nil {
+	if err := conn.Send(destination, contentType, payload, headerOpts...); err != nil {
 		return fmt.Errorf("stomp send error on destination %q: %w", destination, err)
 	}
 	return nil
@@ -614,15 +736,42 @@ func (p *StompProducer) Send(exchange *gocamel.Exchange) error {
 
 // StompConsumer consumes messages from a STOMP destination.
 type StompConsumer struct {
-	endpoint  *StompEndpoint
-	processor gocamel.Processor
-	subMu     sync.Mutex
-	sub       subscriptionReader
-	mu        sync.Mutex
-	started   bool
-	stopping  bool
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	endpoint   *StompEndpoint
+	processor  gocamel.Processor
+	subMu      sync.Mutex
+	sub        subscriptionReader
+	mu         sync.Mutex
+	transition chan struct{}
+	conn       *stomp.Conn
+	rawConn    *ackTrackingConn
+	started    bool
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+}
+
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *StompConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (c *StompConsumer) releaseTransition() {
+	c.mu.Lock()
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
 }
 
 func (c *StompConsumer) subscription() subscriptionReader {
@@ -637,71 +786,79 @@ func (c *StompConsumer) setSubscription(sub subscriptionReader) {
 	c.subMu.Unlock()
 }
 
-// Start opens the STOMP connection, subscribes to the destination and
-// handles incoming messages.
+// Start opens a dedicated STOMP connection for this consumer, subscribes to
+// the destination, and handles incoming messages.
 func (c *StompConsumer) Start(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.started || c.stopping {
-		return nil
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	c.endpoint.mu.Lock()
-	defer c.endpoint.mu.Unlock()
+	c.acquireTransition()
+	defer c.releaseTransition()
+
+	c.mu.Lock()
+	if c.started {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
 
 	if c.endpoint.destination == "" {
 		return fmt.Errorf("stomp consumer: destination is required to subscribe")
 	}
 
-	createdConn := false
-	if c.endpoint.conn == nil {
-		conn, err := c.endpoint.dial(ctx)
-		if err != nil {
-			return err
-		}
-		c.endpoint.conn = conn
-		createdConn = true
+	c.endpoint.mu.Lock()
+	if c.endpoint.consumer != nil && c.endpoint.consumer != c {
+		c.endpoint.mu.Unlock()
+		return fmt.Errorf("multiple consumers for the same STOMP endpoint are not allowed: %s", c.endpoint.URI())
+	}
+	c.endpoint.mu.Unlock()
+
+	conn, rawConn, err := c.endpoint.dialWithTracking(ctx, true)
+	if err != nil {
+		return err
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	c.cancel = cancel
-
-	sub, err := c.endpoint.conn.Subscribe(c.endpoint.destination, c.endpoint.ackMode)
+	sub, err := conn.Subscribe(c.endpoint.destination, c.endpoint.ackMode)
 	if err != nil {
-		cancel()
-		c.cancel = nil
-		if createdConn && c.endpoint.connUsers == 0 {
-			// Same rationale as closeConn: a graceful Disconnect can hang
-			// waiting for a RECEIPT that never arrives.
-			_ = c.endpoint.conn.MustDisconnect()
-			c.endpoint.conn = nil
-		}
+		_ = conn.MustDisconnect()
 		return fmt.Errorf("stomp subscription to %q failed: %w", c.endpoint.destination, err)
 	}
-	c.setSubscription(sub)
-	c.endpoint.connUsers++
-	c.started = true
 
+	runCtx, cancel := context.WithCancel(ctx)
+
+	c.endpoint.mu.Lock()
+	if c.endpoint.consumer != nil && c.endpoint.consumer != c {
+		c.endpoint.mu.Unlock()
+		cancel()
+		_ = conn.MustDisconnect()
+		return fmt.Errorf("multiple consumers for the same STOMP endpoint are not allowed: %s", c.endpoint.URI())
+	}
+	c.endpoint.consumer = c
+	c.endpoint.mu.Unlock()
+
+	c.setSubscription(sub)
+	c.mu.Lock()
+	c.conn = conn
+	c.rawConn = rawConn
+	c.cancel = cancel
+	c.started = true
 	c.wg.Add(1)
-	go c.run(ctx)
+	c.mu.Unlock()
+
+	go c.run(runCtx)
 
 	return nil
 }
 
-// Stop releases the endpoint's shared STOMP connection.
-//
-// The go-stomp Unsubscribe blocks until the broker returns a RECEIPT for
-// the UNSUBSCRIBE frame, which not all brokers send reliably (the embedded
-// test broker never does). Instead ctx is cancelled and the shared connection
-// reference is released: when the last user stops, the resulting TCP close
-// unblocks the run loop's Read, and the broker requeues any unacknowledged
-// message, which is the correct STOMP behavior on abrupt disconnect.
+// Stop cancels the consumer loop, waits for any in-flight message processing
+// and final ACK to finish, and then closes the consumer's dedicated STOMP
+// connection so producers sharing the endpoint are never blocked or disrupted.
 func (c *StompConsumer) Stop() error {
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	if c.stopping {
-		c.mu.Unlock()
-		return nil
-	}
 	if !c.started {
 		c.mu.Unlock()
 		c.endpoint.mu.Lock()
@@ -711,7 +868,6 @@ func (c *StompConsumer) Stop() error {
 		c.endpoint.mu.Unlock()
 		return nil
 	}
-	c.stopping = true
 	cancel := c.cancel
 	c.cancel = nil
 	c.mu.Unlock()
@@ -720,11 +876,26 @@ func (c *StompConsumer) Stop() error {
 		cancel()
 	}
 
-	// Closing the connection unblocks the run loop's Read (the
-	// subscription channel closes with ErrCompletedSubscription) before
-	// wg.Wait.
-	c.endpoint.closeConn()
+	// Wait for the run loop (including any completed in-flight Ack) before
+	// closing the STOMP connection.
 	c.wg.Wait()
+
+	c.mu.Lock()
+	conn := c.conn
+	rawConn := c.rawConn
+	c.conn = nil
+	c.rawConn = nil
+	c.started = false
+	c.mu.Unlock()
+
+	c.setSubscription(nil)
+
+	if rawConn != nil {
+		rawConn.waitAllAcksFlushed(ackFlushWaitTimeout)
+	}
+	if conn != nil {
+		_ = conn.MustDisconnect()
+	}
 
 	c.endpoint.mu.Lock()
 	if c.endpoint.consumer == c {
@@ -732,10 +903,6 @@ func (c *StompConsumer) Stop() error {
 	}
 	c.endpoint.mu.Unlock()
 
-	c.mu.Lock()
-	c.started = false
-	c.stopping = false
-	c.mu.Unlock()
 	return nil
 }
 
@@ -747,6 +914,9 @@ type subscriptionReader interface {
 }
 
 func (c *StompConsumer) readMessage(ctx context.Context) (*stomp.Message, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	sub := c.subscription()
 	if sub == nil {
 		return nil, stomp.ErrCompletedSubscription
@@ -854,6 +1024,9 @@ func (c *StompConsumer) run(ctx context.Context) {
 				)
 				break
 			}
+			if ctx.Err() != nil {
+				return
+			}
 			if c.endpoint.redelivery.Exhausted(redeliveries) {
 				gocamel.LogError("stomp message failed; redeliveries exhausted, acknowledging",
 					"destination", c.endpoint.destination,
@@ -887,6 +1060,12 @@ func (c *StompConsumer) run(ctx context.Context) {
 			for ackAttempts := 0; ; ackAttempts++ {
 				err := msg.Conn.Ack(msg)
 				if err == nil {
+					c.mu.Lock()
+					rc := c.rawConn
+					c.mu.Unlock()
+					if rc != nil {
+						rc.noteAck()
+					}
 					break
 				}
 				if errors.Is(err, stomp.ErrClosedUnexpectedly) || errors.Is(err, stomp.ErrAlreadyClosed) {
@@ -918,13 +1097,12 @@ func (c *StompConsumer) run(ctx context.Context) {
 	}
 }
 
-// reconnect replaces the endpoint's shared connection with a new one and
-// resubscribes. The new connection is installed only while ctx is live:
-// Stop cancels ctx before closing the endpoint connection, so a connection
-// installed here is always closed by Stop.
+// reconnect opens a new dedicated STOMP connection for this consumer and
+// resubscribes, leaving any shared producer connection on the endpoint
+// untouched. The new connection is installed only while ctx is live.
 func (c *StompConsumer) reconnect(ctx context.Context) error {
 	e := c.endpoint
-	conn, err := e.dial(ctx)
+	conn, rawConn, err := e.dialWithTracking(ctx, true)
 	if err != nil {
 		return err
 	}
@@ -934,10 +1112,24 @@ func (c *StompConsumer) reconnect(ctx context.Context) error {
 		return fmt.Errorf("stomp subscription to %q failed: %w", e.destination, err)
 	}
 
-	if err := e.replaceConn(ctx, conn); err != nil {
-		return err
+	c.mu.Lock()
+	if ctx.Err() != nil || !c.started {
+		c.mu.Unlock()
+		_ = conn.MustDisconnect()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("stomp consumer is stopped")
 	}
+	oldConn := c.conn
+	c.conn = conn
+	c.rawConn = rawConn
+	c.mu.Unlock()
+
 	c.setSubscription(sub)
+	if oldConn != nil {
+		_ = oldConn.MustDisconnect()
+	}
 	return nil
 }
 

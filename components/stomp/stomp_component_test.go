@@ -9,10 +9,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -593,12 +595,20 @@ func TestStompEndpoint_SharedConnectionReferenceCounting(t *testing.T) {
 	require.NoError(t, p1.Start(ctx))
 	require.NoError(t, p2.Start(ctx))
 	require.NoError(t, consumer.Start(ctx))
-	assert.Equal(t, 3, se.connUsers)
+	// Producers share se.conn (connUsers == 2); the consumer uses its own
+	// dedicated connection so stopping or reconnecting it never disrupts producers.
+	assert.Equal(t, 2, se.connUsers)
+	sc := consumer.(*StompConsumer)
+	sc.mu.Lock()
+	consConn := sc.conn
+	sc.mu.Unlock()
+	require.NotNil(t, consConn)
+	assert.NotSame(t, se.conn, consConn)
 
 	// Stopping p1 (even twice) and consumer leaves p2's shared connection active.
 	require.NoError(t, p1.Stop())
 	require.NoError(t, p1.Stop())
-	assert.Equal(t, 2, se.connUsers)
+	assert.Equal(t, 1, se.connUsers)
 
 	require.NoError(t, consumer.Stop())
 	require.NoError(t, consumer.Stop())
@@ -698,4 +708,421 @@ func TestStompConsumer_AckPermanentFailureDoesNotSpinForever(t *testing.T) {
 	}
 	cancel()
 	sc.wg.Wait()
+}
+
+// startCapturingBroker starts a minimal STOMP 1.2 TCP server that records
+// received CONNECT and SEND frames for inspection in tests.
+func startCapturingBroker(t *testing.T) (addr string, connectFrames <-chan *frame.Frame, sendFrames <-chan *frame.Frame) {
+	t.Helper()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+
+	connects := make(chan *frame.Frame, 8)
+	sends := make(chan *frame.Frame, 32)
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			go func() {
+				r, w := frame.NewReader(conn), frame.NewWriter(conn)
+				cf, err := r.Read()
+				if err != nil || cf == nil {
+					return
+				}
+				connects <- cf
+				if w.Write(frame.New(frame.CONNECTED, frame.Version, "1.2")) != nil {
+					return
+				}
+				for {
+					f, err := r.Read()
+					if err != nil || f == nil {
+						return
+					}
+					switch f.Command {
+					case frame.SEND:
+						sends <- f
+					case frame.DISCONNECT:
+						_ = w.Write(frame.New(frame.RECEIPT, frame.ReceiptId, f.Header.Get(frame.Receipt)))
+						return
+					}
+				}
+			}()
+		}
+	}()
+
+	return l.Addr().String(), connects, sends
+}
+
+func TestStompProducer_BlocksProtocolHeadersAndNullBytes(t *testing.T) {
+	addr, _, sendFrames := startCapturingBroker(t)
+	component := NewStompComponent()
+
+	// Reject NUL bytes in URI destination / host.
+	_, err := component.CreateEndpoint("stomp://queue/bad%00dest?host=" + addr)
+	require.Error(t, err)
+
+	ep, err := component.CreateEndpoint("stomp://queue/orders?host=" + addr + "&allowHeaderOverride=true&forwardHeaders=receipt,transaction,x-trace,camelFileName")
+	require.NoError(t, err)
+
+	producer, err := ep.CreateProducer()
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, producer.Start(ctx))
+	t.Cleanup(func() { _ = producer.Stop() })
+
+	epAll, err := component.CreateEndpoint("stomp://queue/orders?host=" + addr)
+	require.NoError(t, err)
+	pAll, err := epAll.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, pAll.Start(ctx))
+	t.Cleanup(func() { _ = pAll.Stop() })
+
+	// 1. NUL bytes in destination, contentType, forwarded header key, and header value must be rejected.
+	badDest := gocamel.NewExchange(ctx)
+	badDest.In.SetBody("hello")
+	badDest.In.SetHeader(CamelStompDestination, "/queue/evil\x00/drop")
+	require.Error(t, producer.Send(badDest))
+
+	badCT := gocamel.NewExchange(ctx)
+	badCT.In.SetBody("hello")
+	badCT.In.SetHeader(CamelStompContentType, "text/plain\x00evil")
+	require.Error(t, producer.Send(badCT))
+
+	badHdrKey := gocamel.NewExchange(ctx)
+	badHdrKey.In.SetBody("hello")
+	badHdrKey.In.SetHeader("x-bad\x00key", "val")
+	require.Error(t, pAll.Send(badHdrKey))
+
+	badHdrVal := gocamel.NewExchange(ctx)
+	badHdrVal.In.SetBody("hello")
+	badHdrVal.In.SetHeader("x-trace", "val\x00evil")
+	require.Error(t, producer.Send(badHdrVal))
+
+	// 2. All STOMP protocol headers and case-insensitive Camel* headers must be
+	// blocked even when listed in forwardHeaders.
+
+	for _, p := range []gocamel.Producer{producer, pAll} {
+		ex := gocamel.NewExchange(ctx)
+		ex.In.SetBody("hello")
+		blockedHeaders := map[string]string{
+			"receipt":        "sub-0",
+			"Receipt":        "sub-1",
+			"transaction":    "tx-1",
+			"destination":    "/queue/hijack",
+			"content-length": "999",
+			"content-type":   "application/evil",
+			"id":             "sub-99",
+			"ack":            "client",
+			"subscription":   "sub-99",
+			"message-id":     "msg-99",
+			"receipt-id":     "rcpt-99",
+			"host":           "evil-vhost",
+			"accept-version": "1.0",
+			"version":        "1.0",
+			"login":          "attacker",
+			"passcode":       "attacker-pw",
+			"heart-beat":     "0,0",
+			"session":        "sess-1",
+			"server":         "evil",
+			"message":        "boom",
+			"camelFileName":  "../../etc/passwd",
+			"CamelCustom":    "internal",
+		}
+		for k, v := range blockedHeaders {
+			ex.In.SetHeader(k, v)
+		}
+		ex.In.SetHeader("x-trace", "trace-123")
+
+		require.NoError(t, p.Send(ex))
+
+		var f *frame.Frame
+		select {
+		case f = <-sendFrames:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for SEND frame")
+		}
+
+		assert.Equal(t, "/queue/orders", f.Header.Get(frame.Destination))
+		assert.Equal(t, "5", f.Header.Get(frame.ContentLength))
+		assert.Empty(t, f.Header.Get(frame.ContentType))
+		assert.Equal(t, "trace-123", f.Header.Get("x-trace"))
+
+		for _, blocked := range []string{
+			"receipt", "Receipt", "transaction", "id", "ack", "subscription",
+			"message-id", "receipt-id", "host", "accept-version", "version",
+			"login", "passcode", "heart-beat", "session", "server", "message",
+			"camelFileName", "CamelCustom",
+		} {
+			_, present := f.Header.Contains(blocked)
+			assert.False(t, present, "header %q must not be forwarded in STOMP SEND frame", blocked)
+		}
+		assert.Equal(t, []string{"/queue/orders"}, f.Header.GetAll(frame.Destination))
+		assert.Equal(t, []string{"5"}, f.Header.GetAll(frame.ContentLength))
+	}
+}
+
+// startAckTrackingBroker starts a minimal STOMP 1.2 broker that delivers one
+// queued message upon SUBSCRIBE (ack: ack-1, message-id: msg-1) and reports
+// received ACK frames and connection closes.
+func startAckTrackingBroker(t *testing.T, body string) (addr string, acks <-chan *frame.Frame, connClosed <-chan struct{}) {
+	t.Helper()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+
+	ackCh := make(chan *frame.Frame, 8)
+	closedCh := make(chan struct{}, 8)
+
+	go func() {
+		delivered := false
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			go func(c net.Conn) {
+				defer func() {
+					closedCh <- struct{}{}
+				}()
+				r, w := frame.NewReader(c), frame.NewWriter(c)
+				if _, err := r.Read(); err != nil { // CONNECT
+					return
+				}
+				if w.Write(frame.New(frame.CONNECTED, frame.Version, "1.2")) != nil {
+					return
+				}
+				for {
+					f, err := r.Read()
+					if err != nil || f == nil {
+						return
+					}
+					switch f.Command {
+					case frame.SUBSCRIBE:
+						if !delivered {
+							delivered = true
+							subID := f.Header.Get(frame.Id)
+							dest := f.Header.Get(frame.Destination)
+							msg := frame.New(frame.MESSAGE,
+								frame.Destination, dest,
+								frame.MessageId, "msg-1",
+								frame.Ack, "ack-1",
+								frame.Subscription, subID)
+							msg.Body = []byte(body)
+							if w.Write(msg) != nil {
+								return
+							}
+						}
+					case frame.ACK:
+						ackCh <- f
+					case frame.DISCONNECT:
+						_ = w.Write(frame.New(frame.RECEIPT, frame.ReceiptId, f.Header.Get(frame.Receipt)))
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	return l.Addr().String(), ackCh, closedCh
+}
+
+func TestStompConsumer_StopDoesNotStallSharedProducerAndAcksInFlight(t *testing.T) {
+	t.Run("SoloConsumerAcksInFlightBeforeClosingConn", func(t *testing.T) {
+		addr, acks, connClosed := startAckTrackingBroker(t, "inflight-msg")
+		component := NewStompComponent()
+
+		ep, err := component.CreateEndpoint("stomp://queue/inflight?host=" + addr + "&ack=client-individual")
+		require.NoError(t, err)
+
+		inHandler := make(chan context.Context, 1)
+		release := make(chan struct{})
+		consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
+			inHandler <- e.Context
+			<-release
+			return nil
+		}))
+		require.NoError(t, err)
+		require.NoError(t, consumer.Start(context.Background()))
+
+		var exCtx context.Context
+		select {
+		case exCtx = <-inHandler:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timed out waiting for inflight message")
+		}
+
+		stopErr := make(chan error, 1)
+		go func() {
+			stopErr <- consumer.Stop()
+		}()
+
+		// Wait deterministically until Stop has cancelled the consumer context.
+		select {
+		case <-exCtx.Done():
+		case <-time.After(3 * time.Second):
+			t.Fatal("consumer.Stop did not cancel exchange context")
+		}
+
+		close(release)
+		select {
+		case err := <-stopErr:
+			require.NoError(t, err)
+		case <-time.After(3 * time.Second):
+			t.Fatal("consumer.Stop timed out")
+		}
+
+		select {
+		case <-connClosed:
+		case <-time.After(3 * time.Second):
+			t.Fatal("broker did not observe consumer disconnect")
+		}
+
+		select {
+		case ackFrame := <-acks:
+			assert.Equal(t, "ack-1", ackFrame.Header.Get(frame.Id))
+		default:
+			t.Fatal("inflight message was not ACKed before Stop closed connection")
+		}
+	})
+
+	t.Run("StopDoesNotStallSharedProducer", func(t *testing.T) {
+		addr := startTestBroker(t)
+		component := NewStompComponent()
+
+		ep, err := component.CreateEndpoint("stomp://queue/sharedstop?host=" + addr)
+		require.NoError(t, err)
+
+		producer, err := ep.CreateProducer()
+		require.NoError(t, err)
+		require.NoError(t, producer.Start(context.Background()))
+		t.Cleanup(func() { _ = producer.Stop() })
+
+		gotOne := make(chan struct{}, 1)
+		consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
+			select {
+			case gotOne <- struct{}{}:
+			default:
+			}
+			return nil
+		}))
+		require.NoError(t, err)
+		require.NoError(t, consumer.Start(context.Background()))
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.In.SetBody("warmup")
+		require.NoError(t, producer.Send(ex))
+		select {
+		case <-gotOne:
+		case <-time.After(3 * time.Second):
+			t.Fatal("warmup message not received")
+		}
+
+		require.NoError(t, consumer.Stop())
+
+		// Sending > 16+20+readCh messages totaling more than the TCP socket buffer
+		// after consumer.Stop() must not stall or time out the shared producer.
+		sendDone := make(chan error, 1)
+		go func() {
+			for i := range 200 {
+				msg := gocamel.NewExchange(context.Background())
+				buf := make([]byte, 8192)
+				copy(buf, fmt.Sprintf("after-stop-%d", i))
+				msg.In.SetBody(buf)
+				if err := producer.Send(msg); err != nil {
+					sendDone <- err
+					return
+				}
+			}
+			sendDone <- nil
+		}()
+
+		select {
+		case err := <-sendDone:
+			require.NoError(t, err)
+		case <-time.After(3 * time.Second):
+			t.Fatal("shared StompProducer stalled after StompConsumer.Stop()")
+		}
+	})
+}
+
+func TestStomp_UserinfoLoginPasscodeFallback(t *testing.T) {
+	addr, connectFrames, _ := startCapturingBroker(t)
+	component := NewStompComponent()
+
+	ep, err := component.CreateEndpoint("stomp://alice:s3cr3t@queue/auth?host=" + addr)
+	require.NoError(t, err)
+	se := ep.(*StompEndpoint)
+	assert.Equal(t, "alice", se.login)
+	assert.Equal(t, "s3cr3t", se.passcode)
+	assert.NotContains(t, ep.URI(), "s3cr3t")
+	assert.Contains(t, ep.URI(), "alice:xxxxx@")
+
+	producer, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, producer.Start(context.Background()))
+	t.Cleanup(func() { _ = producer.Stop() })
+
+	select {
+	case cf := <-connectFrames:
+		assert.Equal(t, "alice", cf.Header.Get(frame.Login))
+		assert.Equal(t, "s3cr3t", cf.Header.Get(frame.Passcode))
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CONNECT frame")
+	}
+
+	// Explicit login/passcode override userinfo credentials.
+	ep2, err := component.CreateEndpoint("stomp://alice:s3cr3t@queue/auth?host=" + addr + "&login=bob&passcode=pw2")
+	require.NoError(t, err)
+	se2 := ep2.(*StompEndpoint)
+	assert.Equal(t, "bob", se2.login)
+	assert.Equal(t, "pw2", se2.passcode)
+}
+
+func TestStompConsumer_ConcurrentStartStopNoRace(t *testing.T) {
+	addr := startTestBroker(t)
+	component := NewStompComponent()
+
+	ep, err := component.CreateEndpoint("stomp://queue/concurrent?host=" + addr)
+	require.NoError(t, err)
+
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = consumer.Stop() })
+
+	for range 8 {
+		ctx, cancel := context.WithCancel(context.Background())
+		var wg sync.WaitGroup
+		wg.Add(4)
+		go func() {
+			defer wg.Done()
+			_ = consumer.Start(ctx)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = consumer.Start(ctx)
+		}()
+		go func() {
+			defer wg.Done()
+			cancel()
+		}()
+		go func() {
+			defer wg.Done()
+			_ = consumer.Stop()
+		}()
+		wg.Wait()
+		require.NoError(t, consumer.Stop())
+	}
+
+	liveCtx, liveCancel := context.WithCancel(context.Background())
+	defer liveCancel()
+	require.NoError(t, consumer.Start(liveCtx))
+	require.NoError(t, consumer.Stop())
 }
