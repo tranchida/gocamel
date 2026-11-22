@@ -40,7 +40,9 @@ func NewCSVDataFormat(opts ...CSVOption) *CSVDataFormat {
 		RecordSeparator: "\n",
 	}
 	for _, opt := range opts {
-		opt(format)
+		if opt != nil {
+			opt(format)
+		}
 	}
 	return format
 }
@@ -128,8 +130,29 @@ func (f *CSVDataFormat) Marshal(_ *Exchange, body any) (any, error) {
 	}
 
 	var buf bytes.Buffer
+	delim := f.delimiter()
+	customSep := f.RecordSeparator != "" && f.RecordSeparator != "\n" && f.RecordSeparator != "\r\n"
+
+	if customSep {
+		var recBuf bytes.Buffer
+		if len(headers) > 0 && !f.SkipHeaderRecord {
+			if err := writeCSVRecordWithSeparator(&buf, &recBuf, delim, f.RecordSeparator, headers); err != nil {
+				return "", fmt.Errorf("csv marshal header: %w", err)
+			}
+		}
+		for _, row := range rows {
+			if f.Trim {
+				row = trimRecord(row)
+			}
+			if err := writeCSVRecordWithSeparator(&buf, &recBuf, delim, f.RecordSeparator, row); err != nil {
+				return "", fmt.Errorf("csv marshal row: %w", err)
+			}
+		}
+		return buf.String(), nil
+	}
+
 	writer := csv.NewWriter(&buf)
-	writer.Comma = f.delimiter()
+	writer.Comma = delim
 	writer.UseCRLF = f.RecordSeparator == "\r\n"
 
 	if len(headers) > 0 && !f.SkipHeaderRecord {
@@ -149,12 +172,24 @@ func (f *CSVDataFormat) Marshal(_ *Exchange, body any) (any, error) {
 	if err := writer.Error(); err != nil {
 		return "", fmt.Errorf("csv marshal: %w", err)
 	}
+	return buf.String(), nil
+}
 
-	out := buf.String()
-	if f.RecordSeparator != "" && f.RecordSeparator != "\n" && f.RecordSeparator != "\r\n" {
-		out = strings.ReplaceAll(out, "\n", f.RecordSeparator)
+func writeCSVRecordWithSeparator(out, recBuf *bytes.Buffer, delim rune, sep string, record []string) error {
+	recBuf.Reset()
+	w := csv.NewWriter(recBuf)
+	w.Comma = delim
+	if err := w.Write(record); err != nil {
+		return err
 	}
-	return out, nil
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return err
+	}
+	encoded := bytes.TrimSuffix(recBuf.Bytes(), []byte{'\n'})
+	out.Write(encoded)
+	out.WriteString(sep)
+	return nil
 }
 
 // Unmarshal parses CSV input into [][]string or []map[string]string when UseMaps is enabled.
@@ -266,12 +301,9 @@ func (f *CSVDataFormat) rowsForMarshal(body any) ([][]string, []string, error) {
 	case []any:
 		return [][]string{anyRowToStrings(v)}, headers, nil
 	default:
-		rows, ok := rowsFromStructs(body, headers)
+		rows, resolvedHeaders, ok := rowsFromStructs(body, headers)
 		if ok {
-			if len(headers) == 0 {
-				headers = structFieldNames(body)
-			}
-			return rows, headers, nil
+			return rows, resolvedHeaders, nil
 		}
 		return nil, nil, fmt.Errorf("csv marshal: unsupported body type %T", body)
 	}
@@ -403,56 +435,74 @@ func stringifyCSVValue(value any) string {
 	return fmt.Sprint(value)
 }
 
-func rowsFromStructs(body any, headers []string) ([][]string, bool) {
+func rowsFromStructs(body any, headers []string) ([][]string, []string, bool) {
+	if body == nil {
+		return nil, nil, false
+	}
 	value := reflect.ValueOf(body)
 	if value.Kind() != reflect.Slice {
-		return nil, false
+		return nil, nil, false
 	}
+	elemType := value.Type().Elem()
+	if elemType.Kind() == reflect.Pointer {
+		elemType = elemType.Elem()
+	}
+	if elemType.Kind() != reflect.Struct {
+		return nil, nil, false
+	}
+
+	fieldNames := append([]string(nil), headers...)
+	if len(fieldNames) == 0 {
+		fieldNames = exportedFieldNames(elemType)
+	}
+	fieldIndexes := make([][]int, len(fieldNames))
+	for j, fieldName := range fieldNames {
+		if sf, ok := elemType.FieldByName(fieldName); ok {
+			fieldIndexes[j] = sf.Index
+		}
+	}
+
 	rows := make([][]string, value.Len())
 	for i := 0; i < value.Len(); i++ {
+		row := make([]string, len(fieldNames))
 		item := value.Index(i)
 		if item.Kind() == reflect.Pointer {
 			if item.IsNil() {
-				rows[i] = make([]string, len(headers))
+				rows[i] = row
 				continue
 			}
 			item = item.Elem()
 		}
 		if item.Kind() != reflect.Struct {
-			return nil, false
+			return nil, nil, false
 		}
-		fieldNames := headers
-		if len(fieldNames) == 0 {
-			fieldNames = exportedFieldNames(item.Type())
-		}
-		row := make([]string, len(fieldNames))
-		for j, fieldName := range fieldNames {
-			field := item.FieldByName(fieldName)
-			if field.IsValid() && field.CanInterface() {
+		for j, index := range fieldIndexes {
+			if index == nil {
+				continue
+			}
+			if field, ok := safeFieldByIndex(item, index); ok && field.CanInterface() {
 				row[j] = stringifyCSVValue(field.Interface())
 			}
 		}
 		rows[i] = row
 	}
-	return rows, true
+	return rows, fieldNames, true
 }
 
-func structFieldNames(body any) []string {
-	value := reflect.ValueOf(body)
-	if value.Kind() != reflect.Slice || value.Len() == 0 {
-		return nil
-	}
-	item := value.Index(0)
-	if item.Kind() == reflect.Pointer {
-		if item.IsNil() {
-			return nil
+// safeFieldByIndex traverses a struct field index path without panicking when
+// an intermediate embedded struct pointer is nil.
+func safeFieldByIndex(v reflect.Value, index []int) (reflect.Value, bool) {
+	cur := v
+	for _, idx := range index {
+		if cur.Kind() == reflect.Pointer {
+			if cur.IsNil() {
+				return reflect.Value{}, false
+			}
+			cur = cur.Elem()
 		}
-		item = item.Elem()
+		cur = cur.Field(idx)
 	}
-	if item.Kind() != reflect.Struct {
-		return nil
-	}
-	return exportedFieldNames(item.Type())
+	return cur, true
 }
 
 func exportedFieldNames(t reflect.Type) []string {

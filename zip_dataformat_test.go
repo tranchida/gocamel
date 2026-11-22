@@ -4,12 +4,15 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"context"
+	"hash/crc32"
 	"io"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -562,4 +565,237 @@ func TestZipFixtureFilesExist(t *testing.T) {
 		_, err := os.Stat(name)
 		require.NoError(t, err, "fixture %s is missing", name)
 	}
+}
+
+func TestArchiveEntryNames_CrossPlatformWindowsPaths(t *testing.T) {
+	badArchiveNames := []string{
+		`..\evil.txt`,
+		`C:\evil.txt`,
+		`\\host\share\x`,
+		`.`,
+		`/etc/passwd`,
+		`\evil.txt`,
+		`//host/share/x`,
+	}
+	badMarshalOnly := []string{
+		`./`,
+		`dir/.`,
+		``,
+	}
+
+	t.Run("zip marshal and unmarshal reject unsafe names", func(t *testing.T) {
+		f := NewZipDataFormat()
+		fFlat := NewZipDataFormat(ZipFlat(true))
+
+		for _, name := range append(append([]string(nil), badArchiveNames...), badMarshalOnly...) {
+			_, err := f.Marshal(nil, ZipFiles{{Name: name, Content: []byte("x")}})
+			require.Error(t, err, "zip marshal should reject %q", name)
+			_, err = fFlat.Marshal(nil, ZipFiles{{Name: name, Content: []byte("x")}})
+			require.Error(t, err, "zip flat marshal should reject %q", name)
+		}
+
+		for _, name := range badArchiveNames {
+			var buf bytes.Buffer
+			w := zip.NewWriter(&buf)
+			fw, werr := w.CreateRaw(&zip.FileHeader{Name: name, Method: zip.Store})
+			require.NoError(t, werr)
+			_, werr = fw.Write([]byte("x"))
+			require.NoError(t, werr)
+			require.NoError(t, w.Close())
+
+			_, err := f.Unmarshal(nil, buf.Bytes())
+			require.Error(t, err, "zip unmarshal should reject %q", name)
+		}
+	})
+
+	t.Run("targz marshal and unmarshal reject unsafe names", func(t *testing.T) {
+		f := NewTarGzDataFormat()
+		fFlat := NewTarGzDataFormat(TarGzFlat(true))
+
+		for _, name := range append(append([]string(nil), badArchiveNames...), badMarshalOnly...) {
+			_, err := f.Marshal(nil, TarGzFiles{{Name: name, Content: []byte("x")}})
+			require.Error(t, err, "targz marshal should reject %q", name)
+			_, err = fFlat.Marshal(nil, TarGzFiles{{Name: name, Content: []byte("x")}})
+			require.Error(t, err, "targz flat marshal should reject %q", name)
+		}
+
+		for _, name := range badArchiveNames {
+			var buf bytes.Buffer
+			zw := gzip.NewWriter(&buf)
+			tw := tar.NewWriter(zw)
+			require.NoError(t, tw.WriteHeader(&tar.Header{
+				Name:     name,
+				Typeflag: tar.TypeReg,
+				Mode:     0o644,
+				Size:     1,
+			}))
+			_, werr := tw.Write([]byte("x"))
+			require.NoError(t, werr)
+			require.NoError(t, tw.Close())
+			require.NoError(t, zw.Close())
+
+			_, err := f.Unmarshal(nil, buf.Bytes())
+			require.Error(t, err, "targz unmarshal should reject %q", name)
+		}
+	})
+}
+
+func TestZipCrypto_DetectsCorruptedPayloadAndWrongPasswordCRC(t *testing.T) {
+	t.Run("corrupted payload byte in ZipCrypto Store fixture triggers CRC-32 error", func(t *testing.T) {
+		raw, err := os.ReadFile(fixtureZipCrypto)
+		require.NoError(t, err)
+
+		zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+		require.NoError(t, err)
+		require.NotEmpty(t, zr.File)
+		require.Equal(t, zip.Store, zr.File[0].Method)
+
+		offset, err := zr.File[0].DataOffset()
+		require.NoError(t, err)
+		// Flip a byte past the 12-byte ZipCrypto encryption header.
+		corrupted := append([]byte(nil), raw...)
+		corrupted[offset+12] ^= 0x01
+
+		f := NewZipDataFormat(ZipPassword(fixturePassword))
+		_, err = f.Unmarshal(nil, corrupted)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "CRC-32")
+	})
+
+	t.Run("wrong password with colliding check byte fails CRC-32 check", func(t *testing.T) {
+		// Build a single-entry ZipCrypto Store archive encrypted with "secret".
+		plain := []byte("confidential ZipCrypto payload")
+		crc := crc32.ChecksumIEEE(plain)
+		check := byte(crc >> 24)
+
+		keys := initZipCryptoKeys("secret")
+		encryptByte := func(b byte) byte {
+			c := b ^ keys.streamByte()
+			keys.update(b)
+			return c
+		}
+		enc := make([]byte, 12+len(plain))
+		for i := range 11 {
+			enc[i] = encryptByte(byte(i + 1))
+		}
+		enc[11] = encryptByte(check)
+		for i, b := range plain {
+			enc[12+i] = encryptByte(b)
+		}
+
+		var buf bytes.Buffer
+		w := zip.NewWriter(&buf)
+		hdr := &zip.FileHeader{
+			Name:               "secret.txt",
+			Method:             zip.Store,
+			Flags:              1,
+			CRC32:              crc,
+			CompressedSize64:   uint64(len(enc)),
+			UncompressedSize64: uint64(len(plain)),
+		}
+		fw, err := w.CreateRaw(hdr)
+		require.NoError(t, err)
+		_, err = fw.Write(enc)
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+
+		// Find a wrong password whose 1-byte header check happens to collide.
+		var collidingPassword string
+		for i := range 5000 {
+			candidate := "wrong-" + string(rune('a'+(i%26))) + "-" + strings.Repeat("x", i%7) + string(rune('0'+(i/26)%10)) + string(rune('0'+(i/260)%10))
+			if candidate == "secret" {
+				continue
+			}
+			r := newZipCryptoReader(bytes.NewReader(enc), candidate)
+			if r.checkHeader(check) == nil {
+				collidingPassword = candidate
+				break
+			}
+		}
+		require.NotEmpty(t, collidingPassword, "expected to find a 1-in-256 check-byte collision")
+
+		f := NewZipDataFormat(ZipPassword(collidingPassword))
+		_, err = f.Unmarshal(nil, buf.Bytes())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "CRC-32")
+	})
+}
+
+func TestWinZipAES_RejectsTamperedCiphertextBeforeDecompress(t *testing.T) {
+	plain := bytes.Repeat([]byte("WinZip AES deflate test payload "), 16)
+	var compressed bytes.Buffer
+	fw, err := flate.NewWriter(&compressed, flate.DefaultCompression)
+	require.NoError(t, err)
+	_, err = fw.Write(plain)
+	require.NoError(t, err)
+	require.NoError(t, fw.Close())
+
+	payload, extra, err := aesEncryptEntry(bytes.NewReader(compressed.Bytes()), "pw", zipAESStrength256)
+	require.NoError(t, err)
+	extra[5] = byte(zip.Deflate)
+	extra[6] = 0
+
+	// Tamper the first ciphertext byte (after 16-byte salt + 2-byte verifier).
+	require.Greater(t, len(payload), 18+10)
+	payload[18] ^= 0xFF
+
+	extraField, err := aesExtraField(extra)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	hdr := &zip.FileHeader{
+		Name:               "secret.bin",
+		Method:             zipAESMethodPlaceholder,
+		Flags:              1,
+		Extra:              extraField,
+		CompressedSize64:   uint64(len(payload)),
+		UncompressedSize64: uint64(len(plain)),
+	}
+	rawWriter, err := w.CreateRaw(hdr)
+	require.NoError(t, err)
+	_, err = rawWriter.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	f := NewZipDataFormat(ZipPassword("pw"))
+	_, err = f.Unmarshal(nil, buf.Bytes())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), zipAESPasswordError)
+	assert.NotContains(t, err.Error(), "flate")
+}
+
+func TestWinZipAES_PreservesModTimeAndUTF8Flag(t *testing.T) {
+	wantModTime := time.Date(2025, 3, 15, 14, 22, 30, 0, time.UTC)
+	nonASCII := "résumé-日本語.txt"
+
+	f := NewZipDataFormat(
+		ZipPassword("pw"),
+		ZipModTime(wantModTime),
+		ZipEntryName(nonASCII),
+		ZipComment("utf8-and-mtime"),
+	)
+	out, err := f.Marshal(nil, []byte("hello utf8"))
+	require.NoError(t, err)
+	data := out.([]byte)
+
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	require.Len(t, zr.File, 1)
+	entry := zr.File[0]
+	assert.Equal(t, uint16(51), entry.ReaderVersion)
+	assert.NotZero(t, entry.Flags&0x800, "UTF-8 flag 0x800 must be set for non-ASCII names")
+	assert.False(t, entry.NonUTF8)
+	assert.Equal(t, nonASCII, entry.Name)
+	assert.Equal(t, wantModTime, entry.Modified.UTC())
+	assert.Equal(t, "utf8-and-mtime", zr.Comment)
+
+	got, err := f.Unmarshal(nil, data)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("hello utf8"), got)
+
+	// Overlong comment must return an error instead of being silently ignored.
+	fBadComment := NewZipDataFormat(ZipComment(strings.Repeat("x", 70000)))
+	_, err = fBadComment.Marshal(nil, []byte("hi"))
+	require.Error(t, err)
 }

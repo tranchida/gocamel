@@ -97,12 +97,19 @@ func (f *RSSDataFormat) Unmarshal(_ *Exchange, body any) (any, error) {
 			if bytes.HasPrefix(bytes.TrimSpace(t), []byte("DOCTYPE")) {
 				return nil, fmt.Errorf("rss unmarshal: DOCTYPE declarations are not allowed")
 			}
+		case xml.CharData:
+			if len(bytes.TrimSpace(t)) > 0 {
+				return nil, fmt.Errorf("rss unmarshal failed: unexpected content before <rss> root element")
+			}
 		case xml.StartElement:
 			if t.Name.Local != "rss" {
 				return nil, fmt.Errorf("rss unmarshal expected <rss> root element, got <%s>", t.Name.Local)
 			}
 			if err := decoder.DecodeElement(&feed, &t); err != nil {
 				return nil, fmt.Errorf("rss unmarshal failed: %w", err)
+			}
+			if err := ensureNoTrailingXMLTokens(decoder, "rss unmarshal"); err != nil {
+				return nil, err
 			}
 			return &feed, nil
 		}

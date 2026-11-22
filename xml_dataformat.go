@@ -119,24 +119,32 @@ func (f *XMLDataFormat) Unmarshal(_ *Exchange, body any) (any, error) {
 		return nil, fmt.Errorf("xml unmarshal: empty payload")
 	}
 
-	// Security check for DOCTYPE
-	decoder := xml.NewDecoder(bytes.NewReader(trimmed))
-	decoder.Strict = true
+	// Security check for DOCTYPE in the XML prolog using RawToken to avoid
+	// namespace tracking and full-document double scanning.
+	prologDecoder := xml.NewDecoder(bytes.NewReader(trimmed))
+	prologDecoder.Strict = true
 
+prologScan:
 	for {
-		tok, err := decoder.Token()
+		tok, err := prologDecoder.RawToken()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return nil, fmt.Errorf("xml unmarshal scan failed: %w", err)
 		}
-		if t, ok := tok.(xml.Directive); ok {
+		switch t := tok.(type) {
+		case xml.Directive:
 			if bytes.HasPrefix(bytes.TrimSpace(t), []byte("DOCTYPE")) {
 				return nil, fmt.Errorf("xml unmarshal: DOCTYPE declarations are not allowed")
 			}
+		case xml.StartElement:
+			break prologScan
 		}
 	}
+
+	decoder := xml.NewDecoder(bytes.NewReader(trimmed))
+	decoder.Strict = true
 
 	if f.unmarshalType != nil {
 		targetType := f.unmarshalType
@@ -149,8 +157,11 @@ func (f *XMLDataFormat) Unmarshal(_ *Exchange, body any) (any, error) {
 		}
 
 		valPtr := reflect.New(elemType)
-		if err := xml.Unmarshal(trimmed, valPtr.Interface()); err != nil {
+		if err := decoder.Decode(valPtr.Interface()); err != nil {
 			return nil, fmt.Errorf("xml unmarshal into %v failed: %w", targetType, err)
+		}
+		if err := ensureNoTrailingXMLTokens(decoder, "xml unmarshal"); err != nil {
+			return nil, err
 		}
 
 		if isPtr {
@@ -161,11 +172,38 @@ func (f *XMLDataFormat) Unmarshal(_ *Exchange, body any) (any, error) {
 
 	// Default unmarshalling into generic XML element tree
 	var genericDoc GenericXMLNode
-	if err := xml.Unmarshal(trimmed, &genericDoc); err != nil {
+	if err := decoder.Decode(&genericDoc); err != nil {
 		return nil, fmt.Errorf("xml unmarshal failed: %w", err)
+	}
+	if err := ensureNoTrailingXMLTokens(decoder, "xml unmarshal"); err != nil {
+		return nil, err
 	}
 
 	return &genericDoc, nil
+}
+
+// ensureNoTrailingXMLTokens verifies that only valid XML epilog tokens
+// (whitespace, comments, or processing instructions) follow the root element.
+func ensureNoTrailingXMLTokens(decoder *xml.Decoder, op string) error {
+	for {
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("%s failed: %w", op, err)
+		}
+		switch t := tok.(type) {
+		case xml.CharData:
+			if len(bytes.TrimSpace(t)) > 0 {
+				return fmt.Errorf("%s failed: unexpected trailing data", op)
+			}
+		case xml.Comment, xml.ProcInst:
+			// Comments and processing instructions are valid XML epilog tokens.
+		default:
+			return fmt.Errorf("%s failed: unexpected trailing token", op)
+		}
+	}
 }
 
 // GenericXMLNode represents a raw XML element node when no target type is supplied.

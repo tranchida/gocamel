@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"reflect"
 )
 
@@ -130,6 +131,9 @@ func (f *JSONDataFormat) Unmarshal(_ *Exchange, body any) (any, error) {
 		if err := decoder.Decode(valPtr.Interface()); err != nil {
 			return nil, fmt.Errorf("json unmarshal into %v failed: %w", targetType, err)
 		}
+		if err := ensureNoTrailingJSONTokens(decoder); err != nil {
+			return nil, err
+		}
 
 		if isPtr {
 			return valPtr.Interface(), nil
@@ -142,8 +146,21 @@ func (f *JSONDataFormat) Unmarshal(_ *Exchange, body any) (any, error) {
 	if err := decoder.Decode(&result); err != nil {
 		return nil, fmt.Errorf("json unmarshal failed: %w", err)
 	}
+	if err := ensureNoTrailingJSONTokens(decoder); err != nil {
+		return nil, err
+	}
 
 	return result, nil
+}
+
+func ensureNoTrailingJSONTokens(decoder *json.Decoder) error {
+	if _, err := decoder.Token(); err != io.EOF {
+		if err != nil {
+			return fmt.Errorf("json unmarshal failed: trailing data: %w", err)
+		}
+		return fmt.Errorf("json unmarshal failed: unexpected trailing data")
+	}
+	return nil
 }
 
 // MarshalJson adds a JSON marshal step to the route.

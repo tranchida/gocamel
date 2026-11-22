@@ -6,10 +6,8 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"path"
-	"path/filepath"
+	"math"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -124,11 +122,8 @@ func (f *TarGzDataFormat) Marshal(exchange *Exchange, body any) (any, error) {
 
 	now := time.Now()
 	for _, file := range files {
-		name := file.Name
-		if f.flat {
-			name = path.Base(name)
-		}
-		if err := validateTarEntryName(name); err != nil {
+		name, err := validateArchiveMarshalName("tar.gz marshal", file.Name, f.flat)
+		if err != nil {
 			return nil, err
 		}
 		modTime := file.ModTime
@@ -178,11 +173,6 @@ func (f *TarGzDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 	}
 	defer zr.Close()
 
-	tr := tar.NewReader(zr)
-	contents := make(map[string][]byte)
-	var names []string
-	var total int64
-
 	limit := f.maxEntrySize
 	if limit <= 0 {
 		limit = 1 << 62
@@ -196,6 +186,17 @@ func (f *TarGzDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 		maxTotal = 1 << 62
 	}
 
+	var tarInput io.Reader = zr
+	if f.maxTotalSize > 0 && f.maxEntries > 0 && f.maxEntries <= (math.MaxInt64-1-maxTotal)/2048 {
+		tarInput = io.LimitReader(zr, maxTotal+maxEntries*2048+1)
+	}
+
+	tr := tar.NewReader(tarInput)
+	contents := make(map[string][]byte)
+	var names []string
+	var headerCount int64
+	var total int64
+
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -204,11 +205,20 @@ func (f *TarGzDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tar.gz unmarshal: %w", err)
 		}
-		if hdr.Typeflag != tar.TypeReg {
-			continue // skip directories, symlinks and special files
-		}
-		if int64(len(names)+1) > maxEntries {
+		headerCount++
+		if headerCount > maxEntries {
 			return nil, fmt.Errorf("tar.gz unmarshal: archive exceeds the maximum of %d entries (possible tar bomb)", maxEntries)
+		}
+		remaining := maxTotal - total
+		if hdr.Typeflag != tar.TypeReg {
+			if hdr.Size < 0 || hdr.Size > remaining {
+				return nil, fmt.Errorf("tar.gz unmarshal: archive exceeds the maximum total size of %d bytes (possible tar bomb)", maxTotal)
+			}
+			if hdr.Size > limit {
+				return nil, fmt.Errorf("tar.gz unmarshal: entry %q exceeds the maximum size of %d bytes (possible tar bomb)", hdr.Name, limit)
+			}
+			total += hdr.Size
+			continue // skip directories, symlinks and special files
 		}
 		name, err := validateTarEntryReadName(hdr.Name)
 		if err != nil {
@@ -217,29 +227,41 @@ func (f *TarGzDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 		if hdr.Size > limit {
 			return nil, fmt.Errorf("tar.gz unmarshal: entry %q exceeds the maximum size of %d bytes (possible tar bomb)", name, limit)
 		}
-		content, err := io.ReadAll(io.LimitReader(tr, limit+1))
+		if hdr.Size > remaining {
+			return nil, fmt.Errorf("tar.gz unmarshal: archive exceeds the maximum total size of %d bytes (possible tar bomb)", maxTotal)
+		}
+		entryLimit := min(limit, remaining)
+		readLimit := entryLimit
+		if readLimit < math.MaxInt64 {
+			readLimit++
+		}
+		content, err := io.ReadAll(io.LimitReader(tr, readLimit))
 		if err != nil {
 			return nil, fmt.Errorf("tar.gz unmarshal: reading entry %q: %w", name, err)
 		}
 		if int64(len(content)) > limit {
 			return nil, fmt.Errorf("tar.gz unmarshal: entry %q exceeds the maximum size of %d bytes (possible tar bomb)", name, limit)
 		}
-		if total+int64(len(content)) > maxTotal {
+		if int64(len(content)) > remaining {
 			return nil, fmt.Errorf("tar.gz unmarshal: archive exceeds the maximum total size of %d bytes (possible tar bomb)", maxTotal)
 		}
 		total += int64(len(content))
+		if _, exists := contents[name]; !exists {
+			names = append(names, name)
+		}
 		contents[name] = content
-		names = append(names, name)
-	}
-
-	if exchange != nil {
-		exchange.GetIn().SetHeader(CamelZipEntryCount, len(names))
-		exchange.GetIn().SetHeader(CamelZipEntryNames, names)
 	}
 
 	if len(names) == 0 {
 		return nil, fmt.Errorf("tar.gz unmarshal: archive contains no regular file")
 	}
+
+	sort.Strings(names)
+	if exchange != nil {
+		exchange.GetIn().SetHeader(CamelZipEntryCount, len(names))
+		exchange.GetIn().SetHeader(CamelZipEntryNames, names)
+	}
+
 	if len(names) == 1 {
 		return contents[names[0]], nil
 	}
@@ -293,44 +315,11 @@ func (f *TarGzDataFormat) nameFor(exchange *Exchange) string {
 	return "data"
 }
 
-// validateTarEntryName rejects entry names that could escape the extraction
-// root (tar-slip) or that contain null bytes.
-func validateTarEntryName(name string) error {
-	if name == "" {
-		return fmt.Errorf("tar.gz marshal: empty entry name")
-	}
-	if strings.ContainsRune(name, 0) {
-		return fmt.Errorf("tar.gz marshal: entry name %q contains a null byte", name)
-	}
-	clean := path.Clean(name)
-	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return fmt.Errorf("tar.gz marshal: entry name %q escapes the archive root", name)
-	}
-	if path.IsAbs(clean) || strings.HasPrefix(clean, "/") || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
-		return fmt.Errorf("tar.gz marshal: entry name %q is absolute", name)
-	}
-	return nil
-}
-
 // validateTarEntryReadName validates an entry name read from an archive,
 // rejecting traversal and null bytes (tar-slip protection) instead of
 // renaming entries silently.
 func validateTarEntryReadName(name string) (string, error) {
-	if strings.ContainsRune(name, 0) {
-		return "", fmt.Errorf("tar.gz unmarshal: entry name %q contains a null byte", name)
-	}
-	if name == "" {
-		return "", fmt.Errorf("tar.gz unmarshal: empty entry name")
-	}
-	if containsTraversal(name) {
-		return "", fmt.Errorf("tar.gz unmarshal: entry name %q escapes the archive root", name)
-	}
-	clean := path.Clean(name)
-	clean = strings.TrimPrefix(clean, "/")
-	if clean == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("tar.gz unmarshal: invalid entry name %q", name)
-	}
-	return clean, nil
+	return validateArchiveEntryName("tar.gz unmarshal", name)
 }
 
 // MarshalZip adds a ZIP marshal step to the route.

@@ -104,3 +104,24 @@ func TestRSSDataFormat_UnmarshalRejectsDOCTYPE(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DOCTYPE")
 }
+
+func TestRSSDataFormat_RejectsTrailingGarbage(t *testing.T) {
+	df := NewRSSDataFormat()
+
+	for _, payload := range []string{
+		`<rss version="2.0"><channel/></rss><<<BAD`,
+		`<rss version="2.0"><channel/></rss><extra/>`,
+		`<rss version="2.0"><channel/></rss> trailing text`,
+		`leading text<rss version="2.0"><channel/></rss>`,
+	} {
+		_, err := df.Unmarshal(nil, payload)
+		require.Error(t, err, "RSS unmarshal should reject trailing/leading garbage in %q", payload)
+	}
+
+	// Trailing whitespace and comments are valid XML epilog.
+	res, err := df.Unmarshal(nil, rssSample+"\n<!-- end of feed -->\n")
+	require.NoError(t, err)
+	feed, ok := res.(*RSSFeed)
+	require.True(t, ok)
+	assert.Equal(t, "GoCamel News", feed.Channel.Title)
+}

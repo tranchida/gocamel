@@ -99,3 +99,64 @@ func TestRouteBuilderCSVSteps(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "name,status\nAlice,ok\n", exchange.GetIn().GetBody())
 }
+
+func TestCSVDataFormat_CustomRecordSeparatorPreservesQuotedNewlines(t *testing.T) {
+	format := NewCSVDataFormat(nil, CSVRecordSeparator("|"), CSVHeader("col1", "col2"))
+
+	out, err := format.Marshal(nil, [][]string{
+		{"a", "line1\nline2"},
+		{"b", "c"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "col1,col2|a,\"line1\nline2\"|b,c|", out)
+
+	noHeader := NewCSVDataFormat(CSVRecordSeparator(";"))
+	outNoHeader, err := noHeader.Marshal(nil, [][]string{
+		{"x", "hello\n"},
+		{"y", "z"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "x,\"hello\n\";y,z;", outNoHeader)
+}
+
+func TestCSVDataFormat_StructEdgeCases(t *testing.T) {
+	format := NewCSVDataFormat()
+
+	t.Run("rejects empty non-struct slice", func(t *testing.T) {
+		_, err := format.Marshal(nil, []int{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported body type")
+
+		_, err = format.Marshal(nil, []*int{nil})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported body type")
+	})
+
+	t.Run("handles pointer slice with leading nil element", func(t *testing.T) {
+		type csvPerson struct {
+			Name string
+			Age  int
+		}
+		out, err := format.Marshal(nil, []*csvPerson{nil, {Name: "Alice", Age: 30}})
+		require.NoError(t, err)
+		assert.Equal(t, "Name,Age\n,\nAlice,30\n", out)
+	})
+
+	t.Run("handles nil embedded struct pointer without panic", func(t *testing.T) {
+		type embeddedMeta struct {
+			ID int
+		}
+		type item struct {
+			*embeddedMeta
+			Name string
+		}
+
+		f := NewCSVDataFormat(CSVHeader("ID", "Name"))
+		out, err := f.Marshal(nil, []item{
+			{embeddedMeta: nil, Name: "first"},
+			{embeddedMeta: &embeddedMeta{ID: 42}, Name: "second"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "ID,Name\n,first\n42,second\n", out)
+	})
+}

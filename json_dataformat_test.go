@@ -118,3 +118,30 @@ func TestJSONDataFormat_RouteIntegration(t *testing.T) {
 	assert.Equal(t, "Eve", captured.Name)
 	assert.Equal(t, 28, captured.Age)
 }
+
+func TestJSONDataFormat_RejectsTrailingData(t *testing.T) {
+	generic := NewJSONDataFormat()
+	typed := NewJSONDataFormat(JSONUnmarshalType(testPerson{}))
+
+	for _, payload := range []string{
+		`{"a":1} garbage`,
+		`{"a":1}{"b":2}`,
+		`{"a":1} 123`,
+	} {
+		_, err := generic.Unmarshal(nil, payload)
+		require.Error(t, err, "generic JSON unmarshal should reject trailing data in %q", payload)
+	}
+
+	for _, payload := range []string{
+		`{"name":"Alice","age":30} garbage`,
+		`{"name":"Alice","age":30}{"name":"Bob","age":25}`,
+	} {
+		_, err := typed.Unmarshal(nil, payload)
+		require.Error(t, err, "typed JSON unmarshal should reject trailing data in %q", payload)
+	}
+
+	// Trailing whitespace alone remains valid.
+	res, err := generic.Unmarshal(nil, "{\"a\":1}  \n\t ")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"a": float64(1)}, res)
+}

@@ -128,6 +128,65 @@ func (z *zipCryptoReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// zipCRCVerifyReadCloser verifies the uncompressed byte count and IEEE CRC-32
+// of a decrypted ZipCrypto stream at EOF and on Close.
+type zipCRCVerifyReadCloser struct {
+	rc           io.ReadCloser
+	hash         hash.Hash32
+	nread        uint64
+	expectedCRC  uint32
+	expectedSize uint64
+	verified     bool
+	verifyErr    error
+}
+
+func newZipCRCVerifyReadCloser(rc io.ReadCloser, expectedCRC uint32, expectedSize uint64) *zipCRCVerifyReadCloser {
+	return &zipCRCVerifyReadCloser{
+		rc:           rc,
+		hash:         crc32.NewIEEE(),
+		expectedCRC:  expectedCRC,
+		expectedSize: expectedSize,
+	}
+}
+
+func (v *zipCRCVerifyReadCloser) Read(p []byte) (int, error) {
+	n, err := v.rc.Read(p)
+	if n > 0 {
+		v.nread += uint64(n)
+		_, _ = v.hash.Write(p[:n])
+	}
+	if err == io.EOF {
+		if verifyErr := v.verify(); verifyErr != nil {
+			return n, verifyErr
+		}
+	}
+	return n, err
+}
+
+func (v *zipCRCVerifyReadCloser) verify() error {
+	if v.verified {
+		return v.verifyErr
+	}
+	v.verified = true
+	if v.nread != v.expectedSize {
+		v.verifyErr = fmt.Errorf("zipcrypto: uncompressed size mismatch (got %d, want %d)", v.nread, v.expectedSize)
+		return v.verifyErr
+	}
+	if got := v.hash.Sum32(); got != v.expectedCRC {
+		v.verifyErr = fmt.Errorf("zipcrypto: CRC-32 mismatch (got %#08x, want %#08x)", got, v.expectedCRC)
+		return v.verifyErr
+	}
+	return nil
+}
+
+func (v *zipCRCVerifyReadCloser) Close() error {
+	closeErr := v.rc.Close()
+	if verifyErr := v.verify(); verifyErr != nil {
+		return verifyErr
+	}
+	return closeErr
+}
+
 // WinZip AES constants (AES extra field, method 99).
 const (
 	zipAESExtraID       = 0x9901 // stored little-endian as bytes 01 99
@@ -274,6 +333,7 @@ type zipAESReader struct {
 	data      io.Reader
 	stream    cipher.Stream
 	mac       hash.Hash
+	authKey   []byte
 	remaining int64 // compressed payload bytes left before the 10-byte MAC
 	macDone   bool
 	macErr    error
@@ -311,8 +371,37 @@ func newZipAESReader(r io.Reader, password string, extra *zipAESExtra, compresse
 		data:      r,
 		stream:    stream,
 		mac:       hmac.New(sha1.New, authKey),
+		authKey:   authKey,
 		remaining: payloadSize,
 	}, nil
+}
+
+// verifySectionMAC authenticates the full ciphertext and trailing 10-byte
+// WinZip AES HMAC-SHA1 over sr before decrypting or inflating, then rewinds
+// sr back to the start of the ciphertext.
+func (z *zipAESReader) verifySectionMAC(sr *io.SectionReader) error {
+	startOffset, err := sr.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("zip aes: getting payload offset: %w", err)
+	}
+	mac := hmac.New(sha1.New, z.authKey)
+	if _, err := io.CopyN(mac, sr, z.remaining); err != nil {
+		if errors.Is(err, io.EOF) {
+			return fmt.Errorf("zip aes: reading encrypted payload: %w", io.ErrUnexpectedEOF)
+		}
+		return fmt.Errorf("zip aes: reading encrypted payload: %w", err)
+	}
+	expected := make([]byte, 10)
+	if _, err := io.ReadFull(sr, expected); err != nil {
+		return fmt.Errorf("zip aes: reading authentication code: %w", err)
+	}
+	if !hmac.Equal(expected, mac.Sum(nil)[:10]) {
+		return errors.New(zipAESPasswordError)
+	}
+	if _, err := sr.Seek(startOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("zip aes: seeking payload: %w", err)
+	}
+	return nil
 }
 
 func (z *zipAESReader) finishMAC() error {
@@ -331,6 +420,9 @@ func (z *zipAESReader) Read(p []byte) (int, error) {
 		}
 		return 0, io.EOF
 	}
+	if len(p) == 0 {
+		return 0, nil
+	}
 	if int64(len(p)) > z.remaining {
 		p = p[:z.remaining]
 	}
@@ -341,6 +433,9 @@ func (z *zipAESReader) Read(p []byte) (int, error) {
 			return n, macErr
 		}
 		z.stream.XORKeyStream(p[:n], p[:n])
+	}
+	if err == io.EOF && z.remaining > 0 {
+		return n, io.ErrUnexpectedEOF
 	}
 	if z.remaining == 0 && (err == nil || err == io.EOF) {
 		if macErr := z.finishMAC(); macErr != nil {

@@ -108,3 +108,24 @@ func TestXMLDataFormat_RouteIntegration(t *testing.T) {
 	assert.Equal(t, "Camel in Action", captured.Title)
 	assert.Equal(t, "Claus", captured.Author)
 }
+
+func TestXMLDataFormat_PrologScanAndTrailingData(t *testing.T) {
+	format := NewXMLDataFormat(XMLUnmarshalType(testBook{}))
+
+	// Valid prolog with declaration, comments, and namespace works.
+	valid := `<?xml version="1.0"?><!-- header comment --><book xmlns="urn:books"><title>Go</title><author>Camel</author></book>`
+	res, err := format.Unmarshal(nil, valid)
+	require.NoError(t, err)
+	book, ok := res.(testBook)
+	require.True(t, ok)
+	assert.Equal(t, "Go", book.Title)
+
+	// Trailing garbage / extra root elements are rejected.
+	for _, bad := range []string{
+		`<book><title>A</title><author>B</author></book><<<BAD`,
+		`<book><title>A</title><author>B</author></book><extra/>`,
+	} {
+		_, err := format.Unmarshal(nil, bad)
+		require.Error(t, err, "XML unmarshal should reject trailing data in %q", bad)
+	}
+}

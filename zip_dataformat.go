@@ -11,15 +11,17 @@ import (
 	"math"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-// Header set on the exchange while unmarshalling multi-entry archives.
+// Headers set on the exchange while unmarshalling archives.
 const (
-	// CamelZipEntryCount stores the number of readable entries in the archive.
+	// CamelZipEntryCount stores the number of unique readable entries in the archive.
 	CamelZipEntryCount = "CamelZipEntryCount"
-	// CamelZipEntryNames stores the sorted entry names, as []string.
+	// CamelZipEntryNames stores the sorted unique entry names, as []string.
 	CamelZipEntryNames = "CamelZipEntryNames"
 )
 
@@ -143,7 +145,9 @@ func (f *ZipDataFormat) Marshal(exchange *Exchange, body any) (any, error) {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
 	if f.comment != "" {
-		w.SetComment(f.comment)
+		if err := w.SetComment(f.comment); err != nil {
+			return nil, fmt.Errorf("zip marshal: setting comment: %w", err)
+		}
 	}
 	w.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
 		return flate.NewWriter(out, flate.DefaultCompression)
@@ -155,11 +159,8 @@ func (f *ZipDataFormat) Marshal(exchange *Exchange, body any) (any, error) {
 	}
 
 	for _, file := range files {
-		name := file.Name
-		if f.flat {
-			name = path.Base(name)
-		}
-		if err := validateZipEntryName(name); err != nil {
+		name, err := validateArchiveMarshalName("zip marshal", file.Name, f.flat)
+		if err != nil {
 			return nil, err
 		}
 		if f.password != "" {
@@ -205,16 +206,22 @@ func (f *ZipDataFormat) writeAESEntry(w *zip.Writer, name string, content []byte
 	}
 
 	hdr := &zip.FileHeader{
-		Name:     name,
-		Method:   zipAESMethodPlaceholder, // method 99 marks AES entries
-		Flags:    1,                       // bit 0: encrypted
-		Modified: modTime,
-		Extra:    extraField,
+		Name:          name,
+		Method:        zipAESMethodPlaceholder, // method 99 marks AES entries
+		ReaderVersion: 51,                      // PKZIP 5.1 required for WinZip AES
+		Flags:         1,                       // bit 0: encrypted
+		Extra:         extraField,
 		// AE-2 stores no CRC-32; integrity is guaranteed by HMAC-SHA1.
 		// Raw entries must declare their sizes up front.
 		CompressedSize64:   uint64(len(payload)),
 		UncompressedSize64: uint64(len(content)),
 	}
+	if !isASCII(name) && utf8.ValidString(name) {
+		hdr.Flags |= 0x800
+	}
+	// CreateRaw writes ModifiedDate/ModifiedTime without deriving them from Modified.
+	//lint:ignore SA1019 CreateRaw requires SetModTime to populate DOS ModifiedDate/ModifiedTime fields
+	hdr.SetModTime(modTime)
 	fw, err := w.CreateRaw(hdr)
 	if err != nil {
 		return fmt.Errorf("zip marshal: creating AES entry %q: %w", name, err)
@@ -300,11 +307,6 @@ func (f *ZipDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 		return nil, fmt.Errorf("zip unmarshal: %w", err)
 	}
 
-	var (
-		contents = make(map[string][]byte, len(zr.File))
-		names    []string
-		total    int64
-	)
 	maxEntries := f.maxEntries
 	if maxEntries <= 0 {
 		maxEntries = 1 << 30
@@ -313,29 +315,38 @@ func (f *ZipDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 	if maxTotal <= 0 {
 		maxTotal = 1 << 62
 	}
+	hint := min(int64(len(zr.File)), maxEntries)
+	var (
+		contents   = make(map[string][]byte, int(hint))
+		names      []string
+		entryCount int64
+		total      int64
+	)
 	for _, file := range zr.File {
 		if file.FileInfo().IsDir() {
 			continue
 		}
-		if int64(len(names)+1) > maxEntries {
+		entryCount++
+		if entryCount > maxEntries {
 			return nil, fmt.Errorf("zip unmarshal: archive exceeds the maximum of %d entries (possible zip bomb)", maxEntries)
 		}
 		name, err := validateZipEntryReadName(file.Name)
 		if err != nil {
 			return nil, err
 		}
-		content, err := f.readFile(file)
+		remaining := maxTotal - total
+		content, err := f.readFile(file, remaining, maxTotal)
 		if err != nil {
 			return nil, err
 		}
-		if total+int64(len(content)) > maxTotal {
-			return nil, fmt.Errorf("zip unmarshal: archive exceeds the maximum total size of %d bytes (possible zip bomb)", maxTotal)
-		}
 		total += int64(len(content))
+		if _, exists := contents[name]; !exists {
+			names = append(names, name)
+		}
 		contents[name] = content
-		names = append(names, name)
 	}
 
+	sort.Strings(names)
 	if exchange != nil {
 		exchange.GetIn().SetHeader(CamelZipEntryCount, len(names))
 		exchange.GetIn().SetHeader(CamelZipEntryNames, names)
@@ -348,7 +359,7 @@ func (f *ZipDataFormat) Unmarshal(exchange *Exchange, body any) (any, error) {
 }
 
 // readFile decrypts and decompresses a single archive entry.
-func (f *ZipDataFormat) readFile(file *zip.File) ([]byte, error) {
+func (f *ZipDataFormat) readFile(file *zip.File, remaining, maxTotal int64) ([]byte, error) {
 	rc, err := f.openEntry(file)
 	if err != nil {
 		return nil, fmt.Errorf("zip unmarshal: opening entry %q: %w", file.Name, err)
@@ -359,12 +370,20 @@ func (f *ZipDataFormat) readFile(file *zip.File) ([]byte, error) {
 	if limit <= 0 {
 		limit = 1 << 62
 	}
-	data, err := io.ReadAll(io.LimitReader(rc, limit+1))
+	entryLimit := min(limit, remaining)
+	readLimit := entryLimit
+	if readLimit < math.MaxInt64 {
+		readLimit++
+	}
+	data, err := io.ReadAll(io.LimitReader(rc, readLimit))
 	if err != nil {
 		return nil, fmt.Errorf("zip unmarshal: reading entry %q: %w", file.Name, err)
 	}
 	if int64(len(data)) > limit {
 		return nil, fmt.Errorf("zip unmarshal: entry %q exceeds the maximum size of %d bytes (possible zip bomb)", file.Name, limit)
+	}
+	if int64(len(data)) > remaining {
+		return nil, fmt.Errorf("zip unmarshal: archive exceeds the maximum total size of %d bytes (possible zip bomb)", maxTotal)
 	}
 	if closeErr := rc.Close(); closeErr != nil {
 		return nil, fmt.Errorf("zip unmarshal: authenticating entry %q: %w", file.Name, closeErr)
@@ -411,14 +430,16 @@ func (f *ZipDataFormat) openEntry(file *zip.File) (io.ReadCloser, error) {
 	if err := zr.checkHeader(check); err != nil {
 		return nil, err
 	}
+	var inner io.ReadCloser
 	switch file.Method {
 	case zip.Store:
-		return io.NopCloser(zr), nil
+		inner = io.NopCloser(zr)
 	case zip.Deflate:
-		return flate.NewReader(zr), nil
+		inner = flate.NewReader(zr)
 	default:
 		return nil, fmt.Errorf("zip unmarshal: entry %q uses unsupported compression method %d", file.Name, file.Method)
 	}
+	return newZipCRCVerifyReadCloser(inner, file.CRC32, file.UncompressedSize64), nil
 }
 
 const zipAESMethodPlaceholder = 99
@@ -436,6 +457,11 @@ func (f *ZipDataFormat) openAESEntry(file *zip.File, extra *zipAESExtra) (io.Rea
 	ae, err := newZipAESReader(raw, f.password, extra, compSize)
 	if err != nil {
 		return nil, err
+	}
+	if sr, ok := raw.(*io.SectionReader); ok {
+		if err := ae.verifySectionMAC(sr); err != nil {
+			return nil, err
+		}
 	}
 	switch extra.realMethod {
 	case zip.Store:
@@ -508,23 +534,70 @@ func findAESExtra(file *zip.File) (*zipAESExtra, error) {
 	return nil, fmt.Errorf("zip unmarshal: entry %q declares AES but carries no 0x9901 extra field", file.Name)
 }
 
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// validateArchiveEntryName validates and cleans an archive entry name for
+// cross-platform safety on both marshal and unmarshal. It rejects empty names,
+// null bytes, ASCII control characters, Windows drive prefixes, UNC paths,
+// leading path separators, traversal sequences, and "." entries.
+func validateArchiveEntryName(op, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("%s: empty entry name", op)
+	}
+	if strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("%s: entry name %q contains a null byte", op, name)
+	}
+	if containsControlChar(name) {
+		return "", fmt.Errorf("%s: entry name %q contains a control character", op, name)
+	}
+	if hasWindowsDrivePrefix(name) || filepath.VolumeName(name) != "" {
+		return "", fmt.Errorf("%s: entry name %q is absolute", op, name)
+	}
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	if strings.HasPrefix(normalized, "//") {
+		return "", fmt.Errorf("%s: entry name %q is a UNC path", op, name)
+	}
+	if strings.HasPrefix(normalized, "/") || filepath.IsAbs(name) {
+		return "", fmt.Errorf("%s: entry name %q is absolute", op, name)
+	}
+	if containsTraversal(normalized) {
+		return "", fmt.Errorf("%s: entry name %q escapes the archive root", op, name)
+	}
+	if strings.HasSuffix(normalized, "/") || strings.HasSuffix(normalized, "/.") {
+		return "", fmt.Errorf("%s: invalid entry name %q", op, name)
+	}
+	clean := path.Clean(normalized)
+	if clean == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("%s: invalid entry name %q", op, name)
+	}
+	return clean, nil
+}
+
+// validateArchiveMarshalName validates rawName before optionally applying flat
+// base-name extraction, and re-validates the resulting name.
+func validateArchiveMarshalName(op, rawName string, flat bool) (string, error) {
+	clean, err := validateArchiveEntryName(op, rawName)
+	if err != nil {
+		return "", err
+	}
+	if !flat {
+		return clean, nil
+	}
+	return validateArchiveEntryName(op, path.Base(clean))
+}
+
 // validateZipEntryName rejects entry names that could escape the archive root
 // when written to disk (zip-slip), or that contain null bytes.
 func validateZipEntryName(name string) error {
-	if name == "" {
-		return fmt.Errorf("zip marshal: empty entry name")
-	}
-	if strings.ContainsRune(name, 0) {
-		return fmt.Errorf("zip marshal: entry name %q contains a null byte", name)
-	}
-	clean := path.Clean(name)
-	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return fmt.Errorf("zip marshal: entry name %q escapes the archive root", name)
-	}
-	if path.IsAbs(clean) || strings.HasPrefix(clean, "/") || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
-		return fmt.Errorf("zip marshal: entry name %q is absolute", name)
-	}
-	return nil
+	_, err := validateArchiveEntryName("zip marshal", name)
+	return err
 }
 
 // validateZipEntryReadName validates an entry name read from an archive:
@@ -532,19 +605,5 @@ func validateZipEntryName(name string) error {
 // bytes are rejected outright rather than silently renamed, because
 // downstream processors may write entries to disk under the map key.
 func validateZipEntryReadName(name string) (string, error) {
-	if strings.ContainsRune(name, 0) {
-		return "", fmt.Errorf("zip unmarshal: entry name %q contains a null byte", name)
-	}
-	if name == "" {
-		return "", fmt.Errorf("zip unmarshal: empty entry name")
-	}
-	if containsTraversal(name) {
-		return "", fmt.Errorf("zip unmarshal: entry name %q escapes the archive root", name)
-	}
-	clean := path.Clean(name)
-	clean = strings.TrimPrefix(clean, "/")
-	if clean == "." || clean == "" || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("zip unmarshal: invalid entry name %q", name)
-	}
-	return clean, nil
+	return validateArchiveEntryName("zip unmarshal", name)
 }
