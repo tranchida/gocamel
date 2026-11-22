@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -85,6 +84,10 @@ func NewSQLStoredComponent() *SQLStoredComponent {
 
 // RegisterDataSource registers a *sql.DB connection under a name.
 func (c *SQLStoredComponent) RegisterDataSource(name string, db *sql.DB) {
+	if db == nil {
+		LogWarn("sql-stored: ignoring nil *sql.DB in RegisterDataSource", "name", name)
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.dataSources[name] = db
@@ -92,6 +95,10 @@ func (c *SQLStoredComponent) RegisterDataSource(name string, db *sql.DB) {
 
 // SetDefaultDataSource sets the default connection to use when no named datasource matches.
 func (c *SQLStoredComponent) SetDefaultDataSource(db *sql.DB) {
+	if db == nil {
+		LogWarn("sql-stored: ignoring nil *sql.DB in SetDefaultDataSource")
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.defaultDataSource = db
@@ -101,7 +108,7 @@ func (c *SQLStoredComponent) lookup(name string) (*sql.DB, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if name != "" {
-		if db, ok := c.dataSources[name]; ok {
+		if db, ok := c.dataSources[name]; ok && db != nil {
 			return db, true
 		}
 	}
@@ -139,18 +146,12 @@ func (c *SQLStoredComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		return nil, fmt.Errorf("invalid sql-stored URI: %w", err)
 	}
 
-	name := u.Host
-	if name == "" && u.Opaque != "" {
-		name = u.Opaque
-	}
-	if path := strings.TrimPrefix(u.Path, "/"); path != "" {
-		name = path
-	}
-	if ref := GetConfigValue(u, "dataSourceRef"); ref != "" {
-		name = ref
-	}
+	// Read SQL options strictly from URI query parameters, never from environment
+	// variables, so process env vars cannot hijack procedures or enable allowHeaderOverride.
+	q := u.Query()
+	name := resolveSQLDataSourceName(u, q)
 
-	procedure := GetConfigValue(u, "procedure")
+	procedure := q.Get("procedure")
 	if procedure == "" {
 		return nil, fmt.Errorf("required option 'procedure' missing in sql-stored URI: %s", uri)
 	}
@@ -163,30 +164,24 @@ func (c *SQLStoredComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		return nil, fmt.Errorf("datasource '%s' not found: register it via RegisterDataSource() or SetDefaultDataSource()", name)
 	}
 
-	outputType := SQLOutputSelectList
-	if v := GetConfigValue(u, "outputType"); v != "" {
-		outputType = SQLOutputType(v)
+	outputType, err := parseSQLOutputType(q, "sql-stored")
+	if err != nil {
+		return nil, err
 	}
 
-	transacted := false
-	if v := GetConfigValue(u, "transacted"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			transacted = b
-		}
+	transacted, err := parseSQLBoolOption(q, "transacted")
+	if err != nil {
+		return nil, err
 	}
 
-	noop := false
-	if v := GetConfigValue(u, "noop"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			noop = b
-		}
+	noop, err := parseSQLBoolOption(q, "noop")
+	if err != nil {
+		return nil, err
 	}
 
-	allowHeaderOverride := false
-	if v := GetConfigValue(u, "allowHeaderOverride"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			allowHeaderOverride = b
-		}
+	allowHeaderOverride, err := parseSQLBoolOption(q, "allowHeaderOverride")
+	if err != nil {
+		return nil, err
 	}
 
 	return &SQLStoredEndpoint{
@@ -214,6 +209,10 @@ func (p *SQLStoredProducer) Stop() error { return nil }
 
 // Send executes the stored procedure with the given exchange.
 func (p *SQLStoredProducer) Send(exchange *Exchange) error {
+	if p.endpoint == nil {
+		return fmt.Errorf("sql-stored: producer has no configured endpoint")
+	}
+
 	// The procedure name defaults to the trusted URI configuration. The header
 	// is only honored when the endpoint opted in with allowHeaderOverride, so
 	// an untrusted exchange cannot smuggle a procedure name by default.
@@ -240,8 +239,14 @@ func (p *SQLStoredProducer) Send(exchange *Exchange) error {
 		ctx = context.Background()
 	}
 
-	// Extract parameters from exchange
-	params := extractStoredProcedureParameters(exchange)
+	// Extract and validate parameters from exchange
+	params, err := extractStoredProcedureParameters(exchange)
+	if err != nil {
+		return err
+	}
+	if err := validateStoredProcedureParams(params); err != nil {
+		return err
+	}
 
 	// If noop mode: set body with procedure info and return
 	if p.endpoint.noop {
@@ -253,6 +258,10 @@ func (p *SQLStoredProducer) Send(exchange *Exchange) error {
 		return nil
 	}
 
+	if p.endpoint.db == nil {
+		return fmt.Errorf("sql-stored: producer has no configured datasource")
+	}
+
 	// Execute procedure (transacted or direct)
 	if p.endpoint.transacted {
 		return p.sendTx(ctx, exchange, procedure, params)
@@ -262,216 +271,140 @@ func (p *SQLStoredProducer) Send(exchange *Exchange) error {
 
 // execProcedure executes the stored procedure against the database.
 func (p *SQLStoredProducer) execProcedure(ctx context.Context, exchange *Exchange, db *sql.DB, procedure string, params []StoredProcedureParam) error {
-	// Build CALL statement
-	query, args, outIndices := buildCallStatement(procedure, params)
-
-	// Execute the stored procedure
-	rows, err := db.QueryContext(ctx, query, args...)
+	query, args, err := buildCallStatement(procedure, params)
 	if err != nil {
-		return fmt.Errorf("error executing stored procedure: %w", err)
-	}
-	defer rows.Close()
-
-	// Process results (support multiple result sets)
-	var allResults []map[string]any
-	var resultCount int
-
-	for {
-		cols, err := rows.Columns()
-		if err != nil {
-			return fmt.Errorf("error getting columns: %w", err)
-		}
-
-		for rows.Next() {
-			values := make([]any, len(cols))
-			pointers := make([]any, len(cols))
-			for i := range values {
-				pointers[i] = &values[i]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				return fmt.Errorf("error scanning row: %w", err)
-			}
-			row := make(map[string]any, len(cols))
-			for i, c := range cols {
-				row[c] = normalizeSQLValue(values[i])
-			}
-			allResults = append(allResults, row)
-		}
-		resultCount++
-
-		// Check if there are more result sets
-		if !rows.NextResultSet() {
-			break
-		}
+		return err
 	}
 
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating rows: %w", err)
+	allResults, err := runStoredQuery(ctx, db, query, args, p.endpoint.outputType == SQLOutputSelectOne)
+	if err != nil {
+		return err
 	}
 
-	// Handle OUT parameters
-	if len(outIndices) > 0 {
-		// For simplicity, we return row count and set body based on outputType
-		// Full OUT parameter support would require sql.Out with specific drivers
-	}
-
-	// Set output body based on outputType
-	switch p.endpoint.outputType {
-	case SQLOutputSelectOne:
-		if len(allResults) > 0 {
-			exchange.GetOut().SetBody(allResults[0])
-		} else {
-			exchange.GetOut().SetBody(nil)
-		}
-	default:
-		exchange.GetOut().SetBody(allResults)
-	}
-
-	// Set SqlRowCount header
-	exchange.GetOut().SetHeader(SqlRowCount, len(allResults))
-
+	applyStoredProcedureResult(exchange, p.endpoint.outputType, allResults)
 	return nil
 }
 
 // sendTx executes the stored procedure within a transaction.
 func (p *SQLStoredProducer) sendTx(ctx context.Context, exchange *Exchange, procedure string, params []StoredProcedureParam) error {
+	query, args, err := buildCallStatement(procedure, params)
+	if err != nil {
+		return err
+	}
+
 	tx, err := p.endpoint.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("error beginning transaction: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
 
-	// Build CALL statement
-	query, args, outIndices := buildCallStatement(procedure, params)
-
-	rows, err := tx.QueryContext(ctx, query, args...)
+	allResults, err := runStoredQuery(ctx, tx, query, args, p.endpoint.outputType == SQLOutputSelectOne)
 	if err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("error executing stored procedure: %w", err)
+		return err
 	}
-
-	// Process results
-	var allResults []map[string]any
-	for {
-		cols, err := rows.Columns()
-		if err != nil {
-			_ = rows.Close()
-			_ = tx.Rollback()
-			return fmt.Errorf("error getting columns: %w", err)
-		}
-
-		for rows.Next() {
-			values := make([]any, len(cols))
-			pointers := make([]any, len(cols))
-			for i := range values {
-				pointers[i] = &values[i]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				_ = rows.Close()
-				_ = tx.Rollback()
-				return fmt.Errorf("error scanning row: %w", err)
-			}
-			row := make(map[string]any, len(cols))
-			for i, c := range cols {
-				row[c] = normalizeSQLValue(values[i])
-			}
-			allResults = append(allResults, row)
-		}
-
-		if !rows.NextResultSet() {
-			break
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		_ = tx.Rollback()
-		return fmt.Errorf("error iterating rows: %w", err)
-	}
-	rows.Close()
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("error committing transaction: %w", err)
 	}
 
-	// Handle OUT parameters
-	if len(outIndices) > 0 {
-		// OUT parameter handling would be implemented here
-	}
-
-	// Set output body based on outputType
-	switch p.endpoint.outputType {
-	case SQLOutputSelectOne:
-		if len(allResults) > 0 {
-			exchange.GetOut().SetBody(allResults[0])
-		} else {
-			exchange.GetOut().SetBody(nil)
-		}
-	default:
-		exchange.GetOut().SetBody(allResults)
-	}
-
-	// Set SqlRowCount header
-	exchange.GetOut().SetHeader(SqlRowCount, len(allResults))
-
+	applyStoredProcedureResult(exchange, p.endpoint.outputType, allResults)
 	return nil
 }
 
+func runStoredQuery(ctx context.Context, q sqlQuerier, query string, args []any, selectOne bool) ([]map[string]any, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("error executing stored procedure: %w", err)
+	}
+	defer rows.Close()
+
+	var allResults []map[string]any
+	for {
+		cols, err := rows.Columns()
+		if err != nil {
+			return nil, fmt.Errorf("error getting columns: %w", err)
+		}
+
+		for rows.Next() {
+			row, err := scanSQLRow(rows, cols)
+			if err != nil {
+				return nil, fmt.Errorf("error scanning row: %w", err)
+			}
+			allResults = append(allResults, row)
+			if selectOne {
+				break
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("error iterating rows: %w", err)
+		}
+
+		if selectOne && len(allResults) > 0 {
+			break
+		}
+		if !rows.NextResultSet() {
+			break
+		}
+	}
+
+	return allResults, nil
+}
+
+func applyStoredProcedureResult(exchange *Exchange, outputType SQLOutputType, allResults []map[string]any) {
+	applySQLOutput(exchange, outputType, allResults)
+	exchange.GetOut().SetHeader(SqlRowCount, len(allResults))
+}
+
 // extractStoredProcedureParameters extracts parameters from the exchange body.
-// Priority 1: body is []StoredProcedureParam
-// Priority 2: body is map[string]any -> convert to []StoredProcedureParam with Direction=ParamDirectionIn
-func extractStoredProcedureParameters(exchange *Exchange) []StoredProcedureParam {
+// Only []StoredProcedureParam is accepted for ordered positional CALL binding;
+// unordered map[string]any bodies are rejected to avoid random argument transposition.
+func extractStoredProcedureParameters(exchange *Exchange) ([]StoredProcedureParam, error) {
 	body := exchange.GetIn().GetBody()
 	if body == nil {
-		return nil
+		return nil, nil
 	}
 
-	// Priority 1: body is []StoredProcedureParam
 	if params, ok := body.([]StoredProcedureParam); ok {
-		return params
+		return params, nil
 	}
 
-	// Priority 2: body is map[string]any
-	if m, ok := body.(map[string]any); ok {
-		params := make([]StoredProcedureParam, 0, len(m))
-		for name, value := range m {
-			params = append(params, StoredProcedureParam{
-				Name:      name,
-				Direction: ParamDirectionIn,
-				Value:     value,
-			})
+	if _, ok := body.(map[string]any); ok {
+		return nil, fmt.Errorf("sql-stored: unordered map[string]any body cannot be used for positional CALL parameters; pass []StoredProcedureParam instead")
+	}
+
+	return nil, nil
+}
+
+func validateStoredProcedureParams(params []StoredProcedureParam) error {
+	for i, param := range params {
+		switch param.Direction {
+		case ParamDirectionIn:
+		case ParamDirectionOut, ParamDirectionInOut:
+			return fmt.Errorf("sql-stored: parameter %d (%q) uses unsupported direction %s; OUT/INOUT parameters require driver-specific sql.Out support", i, param.Name, param.Direction)
+		default:
+			return fmt.Errorf("sql-stored: parameter %d (%q) has unknown direction %d", i, param.Name, param.Direction)
 		}
-		return params
 	}
-
 	return nil
 }
 
 // buildCallStatement builds the CALL statement for a stored procedure.
-// Returns: query string, argument values, indices of OUT parameters for retrieval
-func buildCallStatement(procedure string, params []StoredProcedureParam) (string, []any, []int) {
+// Returns: query string, argument values, or an error if any parameter direction is unsupported.
+func buildCallStatement(procedure string, params []StoredProcedureParam) (string, []any, error) {
+	if err := validateStoredProcedureParams(params); err != nil {
+		return "", nil, err
+	}
 	if len(params) == 0 {
 		return fmt.Sprintf("CALL %s()", procedure), nil, nil
 	}
 
 	placeholders := make([]string, len(params))
-	args := make([]any, 0, len(params))
-	var outIndices []int
-
+	args := make([]any, len(params))
 	for i, param := range params {
-		switch param.Direction {
-		case ParamDirectionOut, ParamDirectionInOut:
-			// For OUT/INOUT parameters, use ? placeholder
-			// The actual OUT value retrieval is driver-specific
-			placeholders[i] = "?"
-			if param.Direction == ParamDirectionOut {
-				outIndices = append(outIndices, i)
-			}
-			args = append(args, param.Value)
-		default: // ParamDirectionIn
-			placeholders[i] = "?"
-			args = append(args, param.Value)
-		}
+		placeholders[i] = "?"
+		args[i] = param.Value
 	}
 
 	query := fmt.Sprintf("CALL %s(%s)", procedure, strings.Join(placeholders, ", "))
-	return query, args, outIndices
+	return query, args, nil
 }
