@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/textproto"
 	"net/url"
-	"path/filepath"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,27 @@ import (
 
 	gocamel "github.com/tranchida/gocamel"
 )
+
+// containsControlChar reports whether s contains any ASCII control character
+// (< 0x20, including CR/LF/NUL, or 0x7f).
+func containsControlChar(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// validateFTPRemotePath rejects ASCII control characters (including CR/LF and
+// NUL) even when built standalone against gocamel v0.20.0, alongside traversal
+// validation from gocamel.ValidateRemotePath.
+func validateFTPRemotePath(p string) error {
+	if containsControlChar(p) {
+		return fmt.Errorf("path contains control character")
+	}
+	return gocamel.ValidateRemotePath(p)
+}
 
 // FTPComponent represents the FTP component
 type FTPComponent struct{}
@@ -32,13 +54,30 @@ func (c *FTPComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateFTPRemotePath(u.Path); err != nil {
+		return nil, fmt.Errorf("invalid FTP path: %w", err)
+	}
+	if u.User != nil {
+		if containsControlChar(u.User.Username()) {
+			return nil, fmt.Errorf("invalid FTP username: contains control character")
+		}
+		if pass, ok := u.User.Password(); ok && containsControlChar(pass) {
+			return nil, fmt.Errorf("invalid FTP password: contains control character")
+		}
+	}
+	if user := gocamel.GetConfigValue(u, "username"); containsControlChar(user) {
+		return nil, fmt.Errorf("invalid FTP username: contains control character")
+	}
+	if pass := gocamel.GetConfigValue(u, "password"); containsControlChar(pass) {
+		return nil, fmt.Errorf("invalid FTP password: contains control character")
+	}
 	if move := gocamel.GetConfigValue(u, "move"); move != "" {
-		if err := gocamel.ValidateRemotePath(move); err != nil {
+		if err := validateFTPRemotePath(move); err != nil {
 			return nil, fmt.Errorf("invalid move path: %w", err)
 		}
 	}
 	if moveFailed := gocamel.GetConfigValue(u, "moveFailed"); moveFailed != "" {
-		if err := gocamel.ValidateRemotePath(moveFailed); err != nil {
+		if err := validateFTPRemotePath(moveFailed); err != nil {
 			return nil, fmt.Errorf("invalid moveFailed path: %w", err)
 		}
 	}
@@ -46,11 +85,15 @@ func (c *FTPComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	if maxMessageSize <= 0 {
 		maxMessageSize = gocamel.DefaultMaxBodySize
 	}
+	connectTimeout := gocamel.ParseConnectTimeout(u)
+	if connectTimeout <= 0 {
+		connectTimeout = 10 * time.Second
+	}
 	return &FTPEndpoint{
 		uri:            uri,
 		url:            u,
 		comp:           c,
-		connectTimeout: gocamel.ParseConnectTimeout(u),
+		connectTimeout: connectTimeout,
 		// passiveMode=true (default): the jlaffaye/ftp library uses EPSV/PASV.
 		// passiveMode=false: disables EPSV and falls back to basic PASV.
 		passiveMode: !strings.EqualFold(gocamel.GetConfigValue(u, "passiveMode"), "false"),
@@ -79,38 +122,98 @@ func (e *FTPEndpoint) URI() string {
 	return gocamel.RedactURI(e.uri)
 }
 
+func (e *FTPEndpoint) targetAddr() string {
+	if e.url.Port() == "" {
+		return net.JoinHostPort(e.url.Hostname(), "21")
+	}
+	return e.url.Host
+}
+
 // connect establishes an FTP connection
 func (e *FTPEndpoint) connect() (*ftp.ServerConn, error) {
-	conn, _, err := e.connectWithRaw(nil)
+	conn, _, err := e.connectWithRaw(context.Background(), nil, nil)
 	return conn, err
 }
 
-// connectWithRaw is connect but also returns the underlying control
-// connection so a consumer can force-close it during shutdown to unblock a
-// stalled network operation. The first net.Conn dialed by ftp.Dial is the
-// control connection; data connections use the same dialer afterwards.
-// onDial, when non-nil, is called as soon as the control connection is
-// dialed, before the FTP greeting/login completes.
-func (e *FTPEndpoint) connectWithRaw(onDial func(net.Conn)) (*ftp.ServerConn, net.Conn, error) {
-	host := e.url.Host
-	if !strings.Contains(host, ":") {
-		host += ":21"
+// connectWithRaw establishes an FTP connection, bounding both TCP dialing and
+// the greeting + Login handshake with e.connectTimeout and ctx. When trackConn
+// is non-nil, every dialed control and data net.Conn passes through it so the
+// caller can force-close active sockets during shutdown.
+func (e *FTPEndpoint) connectWithRaw(
+	ctx context.Context,
+	dialCtxFn func() context.Context,
+	trackConn func(net.Conn) (net.Conn, error),
+) (*ftp.ServerConn, net.Conn, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
+	user := gocamel.GetConfigValue(e.url, "username")
+	if user == "" {
+		user = "anonymous"
+	}
+	password := gocamel.GetConfigValue(e.url, "password")
+	if containsControlChar(user) {
+		return nil, nil, fmt.Errorf("invalid FTP username: contains control character")
+	}
+	if containsControlChar(password) {
+		return nil, nil, fmt.Errorf("invalid FTP password: contains control character")
+	}
+
+	timeout := e.connectTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, timeout)
+	defer cancelHandshake()
+
+	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := handshakeCtx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+
+	host := e.targetAddr()
 	var rawConn net.Conn
-	dialer := &net.Dialer{Timeout: e.connectTimeout}
+	var stopHandshakeWatch func() bool
+	dialer := &net.Dialer{Timeout: timeout}
 	opts := []ftp.DialOption{
-		ftp.DialWithTimeout(e.connectTimeout),
+		ftp.DialWithTimeout(timeout),
 		ftp.DialWithDialFunc(func(network, address string) (net.Conn, error) {
-			c, err := dialer.Dial(network, address)
+			isControl := rawConn == nil
+			dctx := handshakeCtx
+			if !isControl {
+				if dialCtxFn != nil {
+					dctx = dialCtxFn()
+				} else {
+					dctx = ctx
+				}
+				if dctx == nil {
+					dctx = context.Background()
+				}
+			}
+			c, err := dialer.DialContext(dctx, network, address)
 			if err != nil {
 				return nil, err
 			}
-			if rawConn == nil {
-				rawConn = c
-				if onDial != nil {
-					onDial(c)
+			if isControl {
+				if err := c.SetDeadline(deadline); err != nil {
+					_ = c.Close()
+					return nil, err
 				}
+			}
+			if trackConn != nil {
+				tracked, err := trackConn(c)
+				if err != nil {
+					_ = c.Close()
+					return nil, err
+				}
+				c = tracked
+			}
+			if isControl {
+				rawConn = c
+				stopHandshakeWatch = context.AfterFunc(handshakeCtx, func() {
+					_ = c.Close()
+				})
 			}
 			return c, nil
 		}),
@@ -121,22 +224,37 @@ func (e *FTPEndpoint) connectWithRaw(onDial func(net.Conn)) (*ftp.ServerConn, ne
 
 	conn, err := ftp.Dial(host, opts...)
 	if err != nil {
+		if stopHandshakeWatch != nil {
+			stopHandshakeWatch()
+		}
 		if rawConn != nil {
 			_ = rawConn.Close()
 		}
 		return nil, nil, fmt.Errorf("FTP connection error: %w", err)
 	}
 
-	user := gocamel.GetConfigValue(e.url, "username")
-	if user == "" {
-		user = "anonymous"
+	loginErr := conn.Login(user, password)
+	watchStopped := true
+	if stopHandshakeWatch != nil {
+		watchStopped = stopHandshakeWatch()
 	}
-	if err := conn.Login(user, gocamel.GetConfigValue(e.url, "password")); err != nil {
+	if loginErr != nil || !watchStopped {
 		_ = conn.Quit()
 		if rawConn != nil {
 			_ = rawConn.Close()
 		}
-		return nil, nil, fmt.Errorf("FTP authentication error: %w", err)
+		if loginErr != nil {
+			return nil, nil, fmt.Errorf("FTP authentication error: %w", loginErr)
+		}
+		return nil, nil, fmt.Errorf("FTP authentication error: %w", handshakeCtx.Err())
+	}
+
+	if rawConn != nil {
+		if err := rawConn.SetDeadline(time.Time{}); err != nil {
+			_ = conn.Quit()
+			_ = rawConn.Close()
+			return nil, nil, fmt.Errorf("FTP connection error: %w", err)
+		}
 	}
 	return conn, rawConn, nil
 }
@@ -149,10 +267,10 @@ func (e *FTPEndpoint) CreateProducer() (gocamel.Producer, error) {
 // CreateConsumer creates an FTP consumer
 func (e *FTPEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consumer, error) {
 	opts := gocamel.ParsePollingOptions(e.url)
-	if err := gocamel.ValidateRemotePath(opts.Move); err != nil {
+	if err := validateFTPRemotePath(opts.Move); err != nil {
 		return nil, fmt.Errorf("invalid move path: %w", err)
 	}
-	if err := gocamel.ValidateRemotePath(opts.MoveFailed); err != nil {
+	if err := validateFTPRemotePath(opts.MoveFailed); err != nil {
 		return nil, fmt.Errorf("invalid moveFailed path: %w", err)
 	}
 	return &FTPConsumer{
@@ -160,6 +278,35 @@ func (e *FTPEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consu
 		processor: processor,
 		opts:      opts,
 	}, nil
+}
+
+// trackedConn wraps a net.Conn so closing it invokes onClose exactly once,
+// removing closed control/data sockets from the consumer's active set.
+type trackedConn struct {
+	net.Conn
+	onClose func()
+	once    sync.Once
+}
+
+func (tc *trackedConn) Close() error {
+	err := tc.Conn.Close()
+	tc.once.Do(tc.onClose)
+	return err
+}
+
+// ftpFileExists checks whether path exists on the FTP server via SIZE.
+// A 550 (StatusFileUnavailable) response indicates absence; any other protocol
+// or network error is returned so callers do not silently overwrite existing files.
+func ftpFileExists(conn *ftp.ServerConn, remotePath string) (bool, error) {
+	size, err := conn.FileSize(remotePath)
+	if err == nil {
+		return size >= 0, nil
+	}
+	var tpErr *textproto.Error
+	if errors.As(err, &tpErr) && tpErr.Code == ftp.StatusFileUnavailable {
+		return false, nil
+	}
+	return false, fmt.Errorf("error checking FTP file existence for %s: %w", remotePath, err)
 }
 
 // ---------------------------------------------------------------------------
@@ -170,9 +317,10 @@ func (e *FTPEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Consu
 type FTPProducer struct {
 	endpoint  *FTPEndpoint
 	fileExist gocamel.FileExistBehavior
-	mu        sync.Mutex      // protects operation initialization
+	mu        sync.Mutex      // protects operation initialization and dialCtx
 	operation chan struct{}   // exclusive connection lease for the entire transfer
 	conn      *ftp.ServerConn // persistent connection (disconnect=false)
+	dialCtx   context.Context // current Send context for data-connection dials
 	stopped   bool            // guarded by operation lease
 }
 
@@ -207,6 +355,22 @@ func (p *FTPProducer) acquire(ctx context.Context) error {
 
 func (p *FTPProducer) release() { <-p.operation }
 
+func (p *FTPProducer) setDialCtx(ctx context.Context) {
+	p.mu.Lock()
+	p.dialCtx = ctx
+	p.mu.Unlock()
+}
+
+func (p *FTPProducer) currentDialCtx() context.Context {
+	p.mu.Lock()
+	ctx := p.dialCtx
+	p.mu.Unlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
 func (p *FTPProducer) Stop() error {
 	if err := p.acquire(context.Background()); err != nil {
 		return err
@@ -221,18 +385,19 @@ func (p *FTPProducer) Stop() error {
 	return nil
 }
 
-func (p *FTPProducer) getConn() (*ftp.ServerConn, error) {
+func (p *FTPProducer) getConn(ctx context.Context) (*ftp.ServerConn, error) {
 	if p.endpoint.disconnect {
-		return p.endpoint.connect()
+		conn, _, err := p.endpoint.connectWithRaw(ctx, p.currentDialCtx, nil)
+		return conn, err
 	}
 	if p.conn != nil {
 		if err := p.conn.NoOp(); err == nil {
 			return p.conn, nil
 		}
-		p.conn.Quit()
+		_ = p.conn.Quit()
 		p.conn = nil
 	}
-	conn, err := p.endpoint.connect()
+	conn, _, err := p.endpoint.connectWithRaw(ctx, p.currentDialCtx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +407,14 @@ func (p *FTPProducer) getConn() (*ftp.ServerConn, error) {
 
 func (p *FTPProducer) releaseConn(conn *ftp.ServerConn) {
 	if p.endpoint.disconnect {
-		conn.Quit()
+		_ = conn.Quit()
+	}
+}
+
+func (p *FTPProducer) discardConnOnError(conn *ftp.ServerConn) {
+	if !p.endpoint.disconnect && p.conn == conn {
+		_ = conn.Quit()
+		p.conn = nil
 	}
 }
 
@@ -255,42 +427,42 @@ func (p *FTPProducer) Send(exchange *gocamel.Exchange) error {
 	if p.stopped {
 		return fmt.Errorf("ftp producer is stopped")
 	}
-	conn, err := p.getConn()
-	if err != nil {
-		return err
-	}
-	defer p.releaseConn(conn)
 
-	path := p.endpoint.url.Path
-	if path == "" || path == "/" {
-		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
-			joined, err := gocamel.JoinRemotePath("", fmt.Sprintf("%v", name))
-			if err != nil {
-				return fmt.Errorf("ftp: invalid path: %w", err)
+	remotePath := p.endpoint.url.Path
+	if remotePath == "" || remotePath == "/" || strings.HasSuffix(remotePath, "/") {
+		name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName)
+		if !ok || name == nil {
+			if remotePath == "" || remotePath == "/" {
+				return fmt.Errorf("no path or CamelFileName specified for FTP")
 			}
-			path = joined
-		} else {
-			return fmt.Errorf("no path or CamelFileName specified for FTP")
-		}
-	} else if strings.HasSuffix(path, "/") {
-		if name, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
-			joined, err := gocamel.JoinRemotePath(path, fmt.Sprintf("%v", name))
-			if err != nil {
-				return fmt.Errorf("ftp: invalid path: %w", err)
-			}
-			path = joined
-		} else {
 			return fmt.Errorf("path is a directory but CamelFileName is not specified")
 		}
+		nameStr := fmt.Sprintf("%v", name)
+		if containsControlChar(nameStr) {
+			return fmt.Errorf("ftp: invalid CamelFileName: contains control character")
+		}
+		baseDir := remotePath
+		if baseDir == "/" {
+			baseDir = ""
+		}
+		joined, err := gocamel.JoinRemotePath(baseDir, nameStr)
+		if err != nil {
+			return fmt.Errorf("ftp: invalid path: %w", err)
+		}
+		remotePath = joined
 	}
 
-	if err := gocamel.ValidateRemotePath(path); err != nil {
+	if err := validateFTPRemotePath(remotePath); err != nil {
 		return fmt.Errorf("ftp: invalid path: %w", err)
 	}
 
-	path = strings.TrimPrefix(path, "/")
+	remotePath = strings.TrimPrefix(remotePath, "/")
+	if remotePath == "" {
+		return fmt.Errorf("no path or CamelFileName specified for FTP")
+	}
 
 	var body []byte
+	var err error
 	switch b := exchange.GetIn().GetBody().(type) {
 	case []byte:
 		body = b
@@ -305,36 +477,49 @@ func (p *FTPProducer) Send(exchange *gocamel.Exchange) error {
 		return fmt.Errorf("unsupported body type for FTP: %T", exchange.GetIn().GetBody())
 	}
 
+	p.setDialCtx(exchange.Context)
+	defer p.setDialCtx(context.Background())
+
+	conn, err := p.getConn(exchange.Context)
+	if err != nil {
+		return err
+	}
+	defer p.releaseConn(conn)
+
 	switch p.fileExist {
 	case gocamel.FileExistFail:
-		if size, err := conn.FileSize(path); err == nil && size >= 0 {
-			return fmt.Errorf("file already exists on FTP: %s", path)
+		exists, err := ftpFileExists(conn, remotePath)
+		if err != nil {
+			p.discardConnOnError(conn)
+			return err
+		}
+		if exists {
+			return fmt.Errorf("file already exists on FTP: %s", remotePath)
 		}
 	case gocamel.FileExistIgnore:
-		if size, err := conn.FileSize(path); err == nil && size >= 0 {
+		exists, err := ftpFileExists(conn, remotePath)
+		if err != nil {
+			p.discardConnOnError(conn)
+			return err
+		}
+		if exists {
 			return nil
 		}
 	case gocamel.FileExistAppend:
-		// Download the existing file and concatenate. A failed download of a
-		// missing file is expected (create-if-absent semantics); a partial
-		// read, however, must abort the send: concatenating a truncated copy
-		// of the existing content would silently corrupt the stored file.
-		if resp, err := conn.Retr(path); err == nil {
-			existing, readErr := gocamel.ReadLimited(resp, p.endpoint.maxMessageSize)
-			resp.Close()
-			if readErr != nil {
-				return fmt.Errorf("ftp: failed to read existing file %s for append: %w", path, readErr)
-			}
-			body = append(existing, body...)
+		if err := conn.Append(remotePath, bytes.NewReader(body)); err != nil {
+			p.discardConnOnError(conn)
+			return fmt.Errorf("error appending FTP file: %w", err)
 		}
+		return nil
 	}
 
-	// STOR (like RETR and SIZE above) accepts a full pathname resolved from
+	// STOR (like RETR, APPE, and SIZE above) accepts a full pathname resolved from
 	// the login directory, so no ChangeDir is needed. Keeping the session in
 	// the login directory matters: with a persistent connection
 	// (disconnect=false), a ChangeDir would leak into the next Send and make
 	// a relative path resolve against the previous file's directory.
-	if err := conn.Stor(path, bytes.NewReader(body)); err != nil {
+	if err := conn.Stor(remotePath, bytes.NewReader(body)); err != nil {
+		p.discardConnOnError(conn)
 		return fmt.Errorf("error sending FTP file: %w", err)
 	}
 	return nil
@@ -350,34 +535,124 @@ type FTPConsumer struct {
 	processor gocamel.Processor
 	opts      gocamel.PollingOptions
 	mu        sync.Mutex
-	started   bool
-	stopping  bool
-	cancel    context.CancelFunc
-	conn      *ftp.ServerConn // persistent connection (disconnect=false)
-	rawConn   net.Conn        // underlying control connection for conn
+	// transition is non-nil while a Start or Stop is in progress. It serializes
+	// the two operations so a Stop racing a Start cannot observe started=false
+	// and return before the consumer is fully up (and vice versa). Guarded by mu.
+	transition chan struct{}
+	started    bool
+	stopping   bool
+	cancel     context.CancelFunc
+	conn       *ftp.ServerConn // persistent connection (disconnect=false)
+	rawConn    net.Conn        // underlying control connection for conn
 	// activeConn/activeRaw reference the connection used by the current poll,
 	// including disconnect=true mode, so Stop can force-close it to unblock a
 	// stalled network operation. Guarded by mu.
 	activeConn *ftp.ServerConn
 	activeRaw  net.Conn
-	wg         sync.WaitGroup
+	// conns tracks every live control and data net.Conn opened by this consumer
+	// so Stop and context cancellation can abort stalled LIST/RETR transfers.
+	// Guarded by mu.
+	conns map[net.Conn]struct{}
+	wg    sync.WaitGroup
+}
+
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *FTPConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (c *FTPConsumer) releaseTransition() {
+	c.mu.Lock()
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
+}
+
+func (c *FTPConsumer) trackConn(raw net.Conn) (net.Conn, error) {
+	c.mu.Lock()
+	if c.stopping || !c.started {
+		c.mu.Unlock()
+		_ = raw.Close()
+		return nil, fmt.Errorf("ftp consumer is stopped")
+	}
+	if c.conns == nil {
+		c.conns = make(map[net.Conn]struct{})
+	}
+	var tc *trackedConn
+	tc = &trackedConn{
+		Conn: raw,
+		onClose: func() {
+			c.mu.Lock()
+			delete(c.conns, tc)
+			c.mu.Unlock()
+		},
+	}
+	c.conns[tc] = struct{}{}
+	c.mu.Unlock()
+	return tc, nil
+}
+
+func (c *FTPConsumer) closeTrackedConns() {
+	c.mu.Lock()
+	conns := make([]net.Conn, 0, len(c.conns))
+	for conn := range c.conns {
+		conns = append(conns, conn)
+	}
+	c.conns = nil
+	c.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
 }
 
 func (c *FTPConsumer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.started || c.stopping {
+	if c.started {
+		c.mu.Unlock()
 		return nil
 	}
+	c.stopping = false
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.started = true
 	c.wg.Add(1)
+	c.mu.Unlock()
+
 	go func() {
 		defer c.wg.Done()
-		select {
-		case <-time.After(c.opts.InitialDelay):
-		case <-ctx.Done():
+		initialDelay := c.opts.InitialDelay
+		if initialDelay < 0 {
+			initialDelay = 0
+		}
+		if initialDelay > 0 {
+			timer := time.NewTimer(initialDelay)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			}
+		} else if ctx.Err() != nil {
 			return
 		}
 		c.poll(ctx)
@@ -386,38 +661,44 @@ func (c *FTPConsumer) Start(ctx context.Context) error {
 }
 
 func (c *FTPConsumer) poll(ctx context.Context) {
-	ticker := time.NewTicker(c.opts.Delay)
+	stopWatch := context.AfterFunc(ctx, c.closeTrackedConns)
+	defer stopWatch()
+
+	delay := c.opts.Delay
+	if delay <= 0 {
+		delay = 5 * time.Second
+	}
+	ticker := time.NewTicker(delay)
 	defer ticker.Stop()
+
 	c.doPoll(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if ctx.Err() != nil {
+				return
+			}
 			c.doPoll(ctx)
 		}
 	}
 }
 
-func (c *FTPConsumer) getConn() (*ftp.ServerConn, error) {
-	onDial := func(raw net.Conn) {
-		c.mu.Lock()
-		if c.stopping || !c.started {
-			c.mu.Unlock()
-			_ = raw.Close()
-			return
-		}
-		c.activeRaw = raw
+func (c *FTPConsumer) getConn(ctx context.Context) (*ftp.ServerConn, error) {
+	c.mu.Lock()
+	if c.stopping || !c.started || ctx.Err() != nil {
 		c.mu.Unlock()
+		return nil, fmt.Errorf("ftp consumer is stopped")
 	}
-
 	if c.endpoint.disconnect {
-		conn, raw, err := c.endpoint.connectWithRaw(onDial)
+		c.mu.Unlock()
+		conn, raw, err := c.endpoint.connectWithRaw(ctx, nil, c.trackConn)
 		if err != nil {
 			return nil, err
 		}
 		c.mu.Lock()
-		if c.stopping || !c.started {
+		if c.stopping || !c.started || ctx.Err() != nil {
 			c.mu.Unlock()
 			_ = conn.Quit()
 			if raw != nil {
@@ -430,7 +711,7 @@ func (c *FTPConsumer) getConn() (*ftp.ServerConn, error) {
 		c.mu.Unlock()
 		return conn, nil
 	}
-	c.mu.Lock()
+
 	conn := c.conn
 	raw := c.rawConn
 	if conn != nil {
@@ -457,12 +738,20 @@ func (c *FTPConsumer) getConn() (*ftp.ServerConn, error) {
 		}
 		c.mu.Unlock()
 	}
-	newConn, newRaw, err := c.endpoint.connectWithRaw(onDial)
+
+	c.mu.Lock()
+	if c.stopping || !c.started || ctx.Err() != nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("ftp consumer is stopped")
+	}
+	c.mu.Unlock()
+
+	newConn, newRaw, err := c.endpoint.connectWithRaw(ctx, nil, c.trackConn)
 	if err != nil {
 		return nil, err
 	}
 	c.mu.Lock()
-	if c.stopping || !c.started {
+	if c.stopping || !c.started || ctx.Err() != nil {
 		c.mu.Unlock()
 		_ = newConn.Quit()
 		if newRaw != nil {
@@ -551,20 +840,35 @@ func (s *ftpSynchronization) OnFailure(exchange *gocamel.Exchange) {
 	}
 }
 
+func isExcludedMoveDir(fullPath, moveDir string) bool {
+	if moveDir == "" {
+		return false
+	}
+	normFull := path.Clean(strings.TrimPrefix(strings.ReplaceAll(fullPath, "\\", "/"), "/"))
+	normMove := path.Clean(strings.TrimPrefix(strings.ReplaceAll(moveDir, "\\", "/"), "/"))
+	if normMove == "" || normMove == "." {
+		return false
+	}
+	return normFull == normMove || strings.HasPrefix(normFull, normMove+"/")
+}
+
 func (c *FTPConsumer) doPoll(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	conn, err := c.getConn()
+	conn, err := c.getConn(ctx)
 	if err != nil {
 		gocamel.LogError("FTP polling connection error", "error", err)
 		return
 	}
 	defer c.releaseConn(conn)
 
-	rootPath := strings.TrimPrefix(c.endpoint.url.Path, "/")
+	rootPath := strings.Trim(c.endpoint.url.Path, "/")
 	if rootPath == "" {
 		rootPath = "."
+	} else if err := validateFTPRemotePath(rootPath); err != nil {
+		gocamel.LogError("invalid FTP polling path", "error", err)
+		return
 	}
 
 	type ftpFile struct {
@@ -587,13 +891,23 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
+			if entry.Name == "" || entry.Name == "." || entry.Name == ".." {
+				continue
+			}
+			if containsControlChar(entry.Name) || strings.ContainsAny(entry.Name, "/\\") {
+				gocamel.LogWarn("skipping unsafe FTP entry name", "directory", dir, "name", entry.Name)
+				continue
+			}
 			fullPath := dir + "/" + entry.Name
 			if dir == "." {
 				fullPath = entry.Name
 			}
 			switch entry.Type {
 			case ftp.EntryTypeFolder:
-				if c.opts.Recursive && entry.Name != "." && entry.Name != ".." {
+				if c.opts.Recursive {
+					if isExcludedMoveDir(fullPath, c.opts.Move) || isExcludedMoveDir(fullPath, c.opts.MoveFailed) {
+						continue
+					}
 					listDir(fullPath)
 				}
 			case ftp.EntryTypeFile:
@@ -649,7 +963,12 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 
 		case gocamel.ReadLockMarkerFile:
 			targetMarkerPath := f.path + ".camelLock"
-			if size, err := conn.FileSize(targetMarkerPath); err == nil && size >= 0 {
+			exists, err := ftpFileExists(conn, targetMarkerPath)
+			if err != nil {
+				gocamel.LogWarn("could not check FTP marker file; skipping", "file", f.path, "error", err)
+				continue
+			}
+			if exists {
 				// Marker exists: file is locked
 				continue
 			}
@@ -677,7 +996,7 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 			continue
 		}
 		content, err := gocamel.ReadLimited(resp, c.endpoint.maxMessageSize)
-		resp.Close()
+		_ = resp.Close()
 		if err != nil {
 			gocamel.LogError("FTP file read error", "file", readPath, "error", err)
 			if markerPath != "" {
@@ -705,20 +1024,16 @@ func (c *FTPConsumer) doPoll(ctx context.Context) {
 			moveFailed: c.opts.MoveFailed,
 		})
 
-		procErr := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
-
-		if procErr == nil {
-			count++
-		}
+		_ = gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
+		count++
 	}
 }
 
 func (c *FTPConsumer) Stop() error {
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	if c.stopping {
-		c.mu.Unlock()
-		return nil
-	}
 	c.stopping = true
 	cancel := c.cancel
 	c.cancel = nil
@@ -730,15 +1045,22 @@ func (c *FTPConsumer) Stop() error {
 	c.rawConn = nil
 	c.activeConn = nil
 	c.activeRaw = nil
+	conns := make([]net.Conn, 0, len(c.conns))
+	for tracked := range c.conns {
+		conns = append(conns, tracked)
+	}
+	c.conns = nil
 	c.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
 
-	// Close the control connection(s) before waiting so a poll blocked in a
-	// network read is unblocked instead of keeping Stop (and the route
-	// shutdown) stuck.
+	// Close all control and data sockets before waiting so a poll blocked in
+	// handshake, LIST, or RETR unblocks instead of stalling Stop.
+	for _, tracked := range conns {
+		_ = tracked.Close()
+	}
 	if raw != nil {
 		_ = raw.Close()
 	}
@@ -762,11 +1084,44 @@ func (c *FTPConsumer) Stop() error {
 	return nil
 }
 
-// moveFTPFile renames/moves a file on the FTP server.
+// ftpMkdirAll creates each segment of dir on the FTP server, ignoring errors for
+// segments that already exist.
+func ftpMkdirAll(conn *ftp.ServerConn, dir string) {
+	abs := strings.HasPrefix(dir, "/")
+	parts := strings.Split(strings.TrimPrefix(dir, "/"), "/")
+	current := ""
+	if abs {
+		current = "/"
+	}
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		if current == "" || current == "/" {
+			current += part
+		} else {
+			current += "/" + part
+		}
+		_ = conn.MakeDir(current)
+	}
+}
+
+// moveFTPFile renames/moves a file on the FTP server, creating destDir if needed.
 func moveFTPFile(conn *ftp.ServerConn, srcPath, destDir string) {
-	filename := filepath.Base(srcPath)
+	filename := path.Base(strings.ReplaceAll(srcPath, "\\", "/"))
 	filename = strings.TrimSuffix(filename, ".camelExclusiveReadLock")
-	destPath := destDir + "/" + filename
+	cleanDir := path.Clean(strings.ReplaceAll(destDir, "\\", "/"))
+	if cleanDir == "" || cleanDir == "." {
+		return
+	}
+	var destPath string
+	if cleanDir == "/" {
+		destPath = "/" + filename
+	} else {
+		cleanDir = strings.TrimRight(cleanDir, "/")
+		ftpMkdirAll(conn, cleanDir)
+		destPath = cleanDir + "/" + filename
+	}
 	if err := conn.Rename(srcPath, destPath); err != nil {
 		gocamel.LogError("FTP move error", "src", srcPath, "dest", destPath, "error", err)
 	}
