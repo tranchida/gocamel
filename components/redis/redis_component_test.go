@@ -8,6 +8,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	gocamel "github.com/tranchida/gocamel"
 )
@@ -257,4 +258,130 @@ func TestRedisConsumer_StartFailureReleasesConnection(t *testing.T) {
 
 	// Calling Stop after a failed Start must be a safe no-op.
 	assert.NoError(t, consumer.Stop())
+}
+
+func TestRedisProducer_SetAndPublishPreserveByteSlice(t *testing.T) {
+	s := miniredis.RunT(t)
+
+	camelCtx := gocamel.NewCamelContext()
+	camelCtx.AddComponent("direct", gocamel.NewDirectComponent())
+	camelCtx.AddComponent("redis", NewRedisComponent())
+
+	_, err := camelCtx.CreateRouteBuilder().
+		From("direct:set").
+		To("redis://" + s.Addr() + "?command=SET&key=bin-key").
+		Build()
+	require.NoError(t, err)
+
+	_, err = camelCtx.CreateRouteBuilder().
+		From("direct:pub").
+		To("redis://" + s.Addr() + "?command=PUBLISH&channel=bin-chan").
+		Build()
+	require.NoError(t, err)
+
+	require.NoError(t, camelCtx.Start())
+	t.Cleanup(func() { _ = camelCtx.Stop() })
+
+	ctx := context.Background()
+	client := redis.NewClient(&redis.Options{Addr: s.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	sub := client.Subscribe(ctx, "bin-chan")
+	t.Cleanup(func() { _ = sub.Close() })
+	_, err = sub.Receive(ctx)
+	require.NoError(t, err)
+
+	payload := []byte{0x00, 0x01, 0x7f, 0x80, 0xff, 'h', 'i'}
+
+	setEp, err := camelCtx.CreateEndpoint("direct:set")
+	require.NoError(t, err)
+	setProd, err := setEp.CreateProducer()
+	require.NoError(t, err)
+	setEx := gocamel.NewExchange(ctx)
+	setEx.In.SetBody(payload)
+	require.NoError(t, setProd.Send(setEx))
+
+	gotSet, err := client.Get(ctx, "bin-key").Bytes()
+	require.NoError(t, err)
+	assert.Equal(t, payload, gotSet, "SET must store raw []byte verbatim")
+
+	pubEp, err := camelCtx.CreateEndpoint("direct:pub")
+	require.NoError(t, err)
+	pubProd, err := pubEp.CreateProducer()
+	require.NoError(t, err)
+	pubEx := gocamel.NewExchange(ctx)
+	pubEx.In.SetBody(payload)
+	require.NoError(t, pubProd.Send(pubEx))
+
+	select {
+	case msg := <-sub.Channel():
+		assert.Equal(t, payload, []byte(msg.Payload), "PUBLISH must transmit raw []byte verbatim")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for published []byte message")
+	}
+
+	// Verify nil and non-string/[]byte default values still work cleanly.
+	nilEx := gocamel.NewExchange(ctx)
+	nilEx.In.SetBody(nil)
+	require.NoError(t, setProd.Send(nilEx))
+	gotNil, err := client.Get(ctx, "bin-key").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "", gotNil)
+
+	intEx := gocamel.NewExchange(ctx)
+	intEx.In.SetBody(42)
+	require.NoError(t, setProd.Send(intEx))
+	gotInt, err := client.Get(ctx, "bin-key").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "42", gotInt)
+}
+
+func TestRedisProducer_GetMissClearsInBody(t *testing.T) {
+	s := miniredis.RunT(t)
+
+	camelCtx := gocamel.NewCamelContext()
+	camelCtx.AddComponent("direct", gocamel.NewDirectComponent())
+	camelCtx.AddComponent("redis", NewRedisComponent())
+
+	var downstreamBody any = "sentinel"
+	_, err := camelCtx.CreateRouteBuilder().
+		From("direct:get").
+		To("redis://" + s.Addr() + "?command=GET&key=missing").
+		ProcessFunc(func(e *gocamel.Exchange) error {
+			downstreamBody = e.GetIn().GetBody()
+			return nil
+		}).
+		Build()
+	require.NoError(t, err)
+
+	require.NoError(t, camelCtx.Start())
+	t.Cleanup(func() { _ = camelCtx.Stop() })
+
+	ep, err := camelCtx.CreateEndpoint("direct:get")
+	require.NoError(t, err)
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+
+	// 1. Two-step route with stale In.Body only (normal request).
+	ex := gocamel.NewExchange(context.Background())
+	ex.GetIn().SetBody("stale-request-body")
+	require.NoError(t, prod.Send(ex))
+
+	assert.Nil(t, downstreamBody, "downstream step must observe In.Body == nil on redis.Nil")
+	assert.Nil(t, ex.GetIn().GetBody(), "In.Body must be cleared on redis.Nil")
+	assert.Nil(t, ex.GetOut().GetBody(), "Out.Body must be cleared on redis.Nil")
+	assert.Nil(t, ex.GetResponse().GetBody(), "GetResponse().GetBody() must be nil on redis.Nil")
+
+	// 2. Stale Out.Body + Out.Headers + In.Body on direct GET miss.
+	downstreamBody = "sentinel"
+	ex2 := gocamel.NewExchange(context.Background())
+	ex2.GetIn().SetBody("stale-in-body")
+	ex2.GetOut().SetBody("stale-out-body")
+	ex2.GetOut().SetHeader("X-Keep", "yes")
+	require.NoError(t, prod.Send(ex2))
+
+	assert.Nil(t, downstreamBody, "downstream step must observe In.Body == nil when Out had stale body")
+	assert.Nil(t, ex2.GetIn().GetBody(), "In.Body must be cleared on redis.Nil")
+	assert.Nil(t, ex2.GetOut().GetBody(), "Out.Body must be cleared on redis.Nil")
+	assert.Nil(t, ex2.GetResponse().GetBody(), "GetResponse().GetBody() must be nil even when Out has headers")
 }

@@ -3,9 +3,20 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+)
+
+// redisGlobEscaper escapes Redis SCAN MATCH glob metacharacters so a literal
+// repository prefix cannot match keys belonging to other prefixes.
+var redisGlobEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	`*`, `\*`,
+	`?`, `\?`,
+	`[`, `\[`,
+	`]`, `\]`,
 )
 
 // RedisIdempotentRepository implements IdempotentRepository using Redis.
@@ -59,7 +70,10 @@ func (r *RedisIdempotentRepository) Remove(ctx context.Context, key string) erro
 
 // Clear removes all keys matching the prefix.
 func (r *RedisIdempotentRepository) Clear(ctx context.Context) error {
-	pattern := r.prefix + "*"
+	if r.prefix == "" {
+		return fmt.Errorf("redis idempotent repository Clear error: prefix must not be empty")
+	}
+	pattern := redisGlobEscaper.Replace(r.prefix) + "*"
 
 	// Scan keys with the configured prefix
 	var cursor uint64

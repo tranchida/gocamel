@@ -7,6 +7,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRedisIdempotentRepository(t *testing.T) {
@@ -111,4 +113,56 @@ func TestRedisIdempotentRepository_Clear(t *testing.T) {
 	if !containsC {
 		t.Error("Expected other prefix keyC to remain intact")
 	}
+}
+
+func TestRedisIdempotentRepository_ClearEscapesGlobAndRejectsEmptyPrefix(t *testing.T) {
+	s := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: s.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+
+	t.Run("rejects empty prefix without deleting keys", func(t *testing.T) {
+		require.NoError(t, client.Set(ctx, "important:data", "keep", 0).Err())
+		repo := NewRedisIdempotentRepository(client, "", 0)
+
+		err := repo.Clear(ctx)
+		require.Error(t, err)
+
+		val, err := client.Get(ctx, "important:data").Result()
+		require.NoError(t, err)
+		assert.Equal(t, "keep", val)
+	})
+
+	t.Run("escapes glob metacharacters in prefix", func(t *testing.T) {
+		cases := []struct {
+			name      string
+			prefix    string
+			key       string
+			unrelated string
+		}{
+			{name: "asterisk", prefix: "ns*:", key: "k1", unrelated: "nsOther:k1"},
+			{name: "brackets", prefix: "app[1]:", key: "k1", unrelated: "app1:k1"},
+			{name: "question", prefix: "q?:", key: "k1", unrelated: "qa:k1"},
+			{name: "backslash", prefix: `bs\:`, key: "k1", unrelated: "bs:k1"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				repo := NewRedisIdempotentRepository(client, tc.prefix, 0)
+				added, err := repo.Add(ctx, tc.key)
+				require.NoError(t, err)
+				require.True(t, added)
+				require.NoError(t, client.Set(ctx, tc.unrelated, "keep", 0).Err())
+
+				require.NoError(t, repo.Clear(ctx))
+
+				contains, err := repo.Contains(ctx, tc.key)
+				require.NoError(t, err)
+				assert.False(t, contains, "repository key with metacharacter prefix must be cleared")
+
+				val, err := client.Get(ctx, tc.unrelated).Result()
+				require.NoError(t, err, "unrelated key %q must not be matched by escaped prefix", tc.unrelated)
+				assert.Equal(t, "keep", val)
+			})
+		}
+	})
 }

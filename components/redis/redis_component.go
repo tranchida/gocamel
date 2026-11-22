@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -241,10 +242,16 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 		}
 	}
 
-	body := exchange.In.GetBody()
-	bodyStr := ""
-	if body != nil {
-		bodyStr = fmt.Sprintf("%v", body)
+	var payload any
+	switch b := exchange.In.GetBody().(type) {
+	case []byte:
+		payload = b
+	case string:
+		payload = b
+	case nil:
+		payload = ""
+	default:
+		payload = fmt.Sprintf("%v", b)
 	}
 
 	switch cmd {
@@ -252,7 +259,7 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 		if key == "" {
 			return fmt.Errorf("redis: key is required for SET command")
 		}
-		err := conn.client.Set(ctx, key, bodyStr, 0).Err()
+		err := conn.client.Set(ctx, key, payload, 0).Err()
 		if err != nil {
 			return err
 		}
@@ -264,8 +271,9 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 		}
 		val, err := conn.client.Get(ctx, key).Result()
 		if err != nil {
-			if err == redis.Nil {
-				exchange.Out.SetBody(nil)
+			if errors.Is(err, redis.Nil) {
+				exchange.GetIn().SetBody(nil)
+				exchange.GetOut().SetBody(nil)
 				return nil
 			}
 			return err
@@ -290,7 +298,7 @@ func (p *RedisProducer) Send(exchange *gocamel.Exchange) error {
 		if pubChan == "" {
 			return fmt.Errorf("redis: channel or key is required for PUBLISH command")
 		}
-		receivers, err := conn.client.Publish(ctx, pubChan, bodyStr).Result()
+		receivers, err := conn.client.Publish(ctx, pubChan, payload).Result()
 		if err != nil {
 			return err
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -127,9 +128,11 @@ func (c *KafkaComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 
 	partition := -1
 	if pStr := gocamel.GetConfigValue(u, "partition"); pStr != "" {
-		if p, err := strconv.Atoi(pStr); err == nil {
-			partition = p
+		p, err := strconv.Atoi(pStr)
+		if err != nil || p < 0 || p >= math.MaxInt32 {
+			return nil, fmt.Errorf("invalid Kafka partition %q: must be an integer in [0, %d)", pStr, math.MaxInt32)
 		}
+		partition = p
 	}
 
 	clientID := gocamel.GetConfigValue(u, "clientId")
@@ -177,9 +180,9 @@ type KafkaEndpoint struct {
 	mu          sync.Mutex
 }
 
-// URI returns the endpoint URI.
+// URI returns the endpoint URI with sensitive parameters masked.
 func (e *KafkaEndpoint) URI() string {
-	return e.uri
+	return gocamel.RedactURI(e.uri)
 }
 
 // CreateProducer creates a KafkaProducer for publishing messages.
@@ -193,7 +196,7 @@ func (e *KafkaEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Con
 	defer e.mu.Unlock()
 
 	if e.consumer != nil {
-		return nil, fmt.Errorf("multiple consumers for the same Kafka endpoint are not allowed: %s", e.uri)
+		return nil, fmt.Errorf("multiple consumers for the same Kafka endpoint are not allowed: %s", gocamel.RedactURI(e.uri))
 	}
 
 	e.consumer = &KafkaConsumer{
@@ -224,8 +227,11 @@ func (p *KafkaProducer) Start(_ context.Context) error {
 	if p.endpoint.writer == nil {
 		p.endpoint.writer = &kafka.Writer{
 			Addr:         kafka.TCP(p.endpoint.brokers...),
-			Balancer:     &kafka.LeastBytes{},
+			Balancer:     &kafka.Hash{},
 			BatchTimeout: 10 * time.Millisecond,
+			Transport: &kafka.Transport{
+				ClientID: p.endpoint.clientID,
+			},
 		}
 	}
 	p.endpoint.writerUsers++
@@ -299,7 +305,7 @@ func (p *KafkaProducer) resolveKey(exchange *gocamel.Exchange) []byte {
 func (p *KafkaProducer) filterHeaders(exchange *gocamel.Exchange) []kafka.Header {
 	var kafkaHeaders []kafka.Header
 	for name, value := range exchange.In.GetHeaders() {
-		if strings.HasPrefix(name, "Camel") {
+		if gocamel.IsCamelHeader(name) {
 			continue
 		}
 		lower := strings.ToLower(name)
@@ -382,23 +388,58 @@ type KafkaConsumer struct {
 	endpoint  *KafkaEndpoint
 	processor gocamel.Processor
 	mu        sync.Mutex
-	started   bool
-	stopping  bool
-	reader    messageReader
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	// transition is non-nil while a Start or Stop is in progress. It serializes
+	// the two operations so concurrent Start/Stop calls wait for teardown and
+	// endpoint registration cleanup instead of returning early. Guarded by mu.
+	transition chan struct{}
+	started    bool
+	reader     messageReader
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+}
+
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *KafkaConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition publishes the final state and wakes Start/Stop waiters.
+func (c *KafkaConsumer) releaseTransition() {
+	c.mu.Lock()
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
 }
 
 // Start begins consuming Kafka messages.
 func (c *KafkaConsumer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	if c.started || c.stopping {
-		c.mu.Unlock()
+	defer c.mu.Unlock()
+
+	if c.started {
 		return nil
 	}
 
 	if c.endpoint.topic == "" {
-		c.mu.Unlock()
 		return fmt.Errorf("kafka consumer: topic is required")
 	}
 
@@ -408,6 +449,11 @@ func (c *KafkaConsumer) Start(ctx context.Context) error {
 		MinBytes: 1,
 		MaxBytes: 10e6, // 10MB
 	}
+	if c.endpoint.clientID != "" {
+		dialer := *kafka.DefaultDialer
+		dialer.ClientID = c.endpoint.clientID
+		readerConfig.Dialer = &dialer
+	}
 
 	if c.endpoint.groupID != "" {
 		readerConfig.GroupID = c.endpoint.groupID
@@ -416,17 +462,29 @@ func (c *KafkaConsumer) Start(ctx context.Context) error {
 	}
 
 	if c.reader == nil {
+		if err := readerConfig.Validate(); err != nil {
+			return fmt.Errorf("kafka consumer: invalid reader configuration: %w", err)
+		}
+	}
+
+	c.endpoint.mu.Lock()
+	if c.endpoint.consumer != nil && c.endpoint.consumer != c {
+		c.endpoint.mu.Unlock()
+		return fmt.Errorf("multiple consumers for the same Kafka endpoint are not allowed: %s", gocamel.RedactURI(c.endpoint.uri))
+	}
+	c.endpoint.consumer = c
+	c.endpoint.mu.Unlock()
+
+	if c.reader == nil {
 		c.reader = kafka.NewReader(readerConfig)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.started = true
-
 	c.wg.Add(1)
-	c.mu.Unlock()
 
-	go c.run(ctx)
+	go c.run(runCtx)
 
 	return nil
 }
@@ -434,11 +492,10 @@ func (c *KafkaConsumer) Start(ctx context.Context) error {
 // Stop stops the consumer and closes the reader after any in-flight processor
 // finishes and commits its offset.
 func (c *KafkaConsumer) Stop() error {
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
-	if c.stopping {
-		c.mu.Unlock()
-		return nil
-	}
 	if !c.started && c.cancel == nil && c.reader == nil {
 		c.mu.Unlock()
 		c.endpoint.mu.Lock()
@@ -448,7 +505,6 @@ func (c *KafkaConsumer) Stop() error {
 		c.endpoint.mu.Unlock()
 		return nil
 	}
-	c.stopping = true
 	cancel := c.cancel
 	c.cancel = nil
 	c.mu.Unlock()
@@ -461,12 +517,11 @@ func (c *KafkaConsumer) Stop() error {
 	c.mu.Lock()
 	reader := c.reader
 	c.reader = nil
-	c.started = false
-	c.stopping = false
 	c.mu.Unlock()
 
+	var closeErr error
 	if reader != nil {
-		_ = reader.Close()
+		closeErr = reader.Close()
 	}
 
 	c.endpoint.mu.Lock()
@@ -474,7 +529,12 @@ func (c *KafkaConsumer) Stop() error {
 		c.endpoint.consumer = nil
 	}
 	c.endpoint.mu.Unlock()
-	return nil
+
+	c.mu.Lock()
+	c.started = false
+	c.mu.Unlock()
+
+	return closeErr
 }
 
 // messageReader allows consumer delivery and commit ordering to be verified
@@ -543,6 +603,9 @@ func (c *KafkaConsumer) run(ctx context.Context) {
 				// Redelivering would dead-letter a duplicate on every attempt.
 				gocamel.LogWarn("kafka record dead-lettered; committing offset", "topic", msg.Topic, "offset", msg.Offset, "error", err)
 				break
+			}
+			if ctx.Err() != nil {
+				return
 			}
 			if c.endpoint.redelivery.Exhausted(redeliveries) {
 				gocamel.LogError("kafka record failed; redeliveries exhausted, committing offset",

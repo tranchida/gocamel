@@ -155,3 +155,76 @@ func TestEndpointParsesRedeliveryOptions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, gocamel.NewConsumerRedeliveryPolicy(), ep.(*KafkaEndpoint).redelivery)
 }
+
+type abortRecordingReader struct {
+	mu      sync.Mutex
+	msg     kafka.Message
+	fetched bool
+	commits []int64
+}
+
+func (r *abortRecordingReader) FetchMessage(ctx context.Context) (kafka.Message, error) {
+	r.mu.Lock()
+	already := r.fetched
+	r.fetched = true
+	r.mu.Unlock()
+	if already {
+		<-ctx.Done()
+		return kafka.Message{}, ctx.Err()
+	}
+	return r.msg, nil
+}
+
+func (r *abortRecordingReader) CommitMessages(ctx context.Context, msgs ...kafka.Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.commits = append(r.commits, msgs[0].Offset)
+	r.mu.Unlock()
+	return nil
+}
+
+func (*abortRecordingReader) Close() error { return nil }
+
+func TestKafkaConsumer_ShutdownAbortedRecordNotCommitted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	reader := &abortRecordingReader{
+		msg: kafka.Message{Topic: "orders", Offset: 42, Value: []byte("order-1")},
+	}
+	inFlight := make(chan struct{})
+	c := &KafkaConsumer{
+		endpoint: &KafkaEndpoint{
+			groupID:    "group",
+			redelivery: fastPolicy(0), // MaxRedeliveries=0: Exhausted(0) is true unless shutdown is checked first
+		},
+		reader: reader,
+		processor: gocamel.ProcessorFunc(func(e *gocamel.Exchange) error {
+			close(inFlight)
+			<-e.Context.Done()
+			return e.Context.Err()
+		}),
+	}
+
+	c.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.run(ctx)
+	}()
+
+	<-inFlight
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("consumer did not exit after cancellation")
+	}
+
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	assert.Empty(t, reader.commits, "shutdown-aborted record must not have its offset committed")
+}

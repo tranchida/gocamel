@@ -3,6 +3,8 @@ package kafka
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"net"
 	"sync"
 	"testing"
@@ -163,6 +165,7 @@ func TestKafkaProducer_SensitiveHeadersNotForwarded(t *testing.T) {
 	exchange.In.SetHeader("WWW-Authenticate", "Basic realm=app")
 	exchange.In.SetHeader("tenant-id", "acme")
 	exchange.In.SetHeader(CamelKafkaTopic, "payments")
+	exchange.In.SetHeader("camelFileName", "../../etc/passwd")
 
 	keys := headerKeys(producer.filterHeaders(exchange))
 	assert.Contains(t, keys, "tenant-id")
@@ -172,6 +175,7 @@ func TestKafkaProducer_SensitiveHeadersNotForwarded(t *testing.T) {
 	assert.NotContains(t, keys, "Set-Cookie")
 	assert.NotContains(t, keys, "WWW-Authenticate")
 	assert.NotContains(t, keys, CamelKafkaTopic, "Camel-prefixed headers must never be forwarded")
+	assert.NotContains(t, keys, "camelFileName", "case-insensitive Camel-prefixed headers must never be forwarded")
 }
 
 func TestKafkaProducer_ForwardHeadersAllowlist(t *testing.T) {
@@ -328,4 +332,166 @@ func TestKafkaProducer_SharedWriterReferenceCounting(t *testing.T) {
 	require.NoError(t, p2.Stop())
 	assert.Equal(t, 0, ke.writerUsers)
 	assert.Nil(t, ke.writer)
+}
+
+func TestKafkaEndpoint_RejectsHugePartitionAndRedactsURI(t *testing.T) {
+	component := NewKafkaComponent()
+
+	invalidURIs := []string{
+		fmt.Sprintf("kafka:orders?brokers=localhost:9092&partition=%d", math.MaxInt32),
+		"kafka:orders?brokers=localhost:9092&partition=999999999999",
+		"kafka:orders?brokers=localhost:9092&partition=-1",
+		"kafka:orders?brokers=localhost:9092&partition=abc",
+	}
+	for _, uri := range invalidURIs {
+		_, err := component.CreateEndpoint(uri)
+		assert.Error(t, err, "expected invalid partition URI to fail: %s", uri)
+	}
+
+	// Direct invalid endpoint configuration must fail readerConfig.Validate() cleanly
+	// without panicking and without leaving the consumer mutex locked.
+	badConsumer := &KafkaConsumer{
+		endpoint: &KafkaEndpoint{
+			topic:     "orders",
+			brokers:   nil,
+			partition: math.MaxInt32,
+		},
+		processor: gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }),
+	}
+	require.Error(t, badConsumer.Start(context.Background()))
+	require.NoError(t, badConsumer.Stop())
+
+	ep, err := component.CreateEndpoint("kafka:orders?brokers=localhost:9092&password=super-secret&token=tok-secret")
+	require.NoError(t, err)
+
+	redacted := ep.URI()
+	assert.NotContains(t, redacted, "super-secret")
+	assert.NotContains(t, redacted, "tok-secret")
+	assert.Contains(t, redacted, "password=xxxxx")
+	assert.Contains(t, redacted, "token=xxxxx")
+
+	_, err = ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	require.NoError(t, err)
+	_, err = ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "super-secret")
+	assert.NotContains(t, err.Error(), "tok-secret")
+}
+
+func TestKafkaProducer_UsesHashBalancerAndClientID(t *testing.T) {
+	component := NewKafkaComponent()
+	ep, err := component.CreateEndpoint("kafka:orders?brokers=127.0.0.1:9092&clientId=billing-service")
+	require.NoError(t, err)
+	ke := ep.(*KafkaEndpoint)
+
+	producer, err := ep.CreateProducer()
+	require.NoError(t, err)
+	require.NoError(t, producer.Start(context.Background()))
+	t.Cleanup(func() { _ = producer.Stop() })
+
+	require.NotNil(t, ke.writer)
+	hashBalancer, isHash := ke.writer.Balancer.(*kafka.Hash)
+	assert.True(t, isHash, "producer writer must use *kafka.Hash balancer for keyed partitioning, got %T", ke.writer.Balancer)
+	if isHash {
+		p1 := hashBalancer.Balance(kafka.Message{Key: []byte("customer-42")}, 0, 1, 2, 3)
+		p2 := hashBalancer.Balance(kafka.Message{Key: []byte("customer-42")}, 0, 1, 2, 3)
+		assert.Equal(t, p1, p2)
+	}
+
+	transport, ok := ke.writer.Transport.(*kafka.Transport)
+	require.True(t, ok, "producer writer must configure *kafka.Transport with clientId, got %T", ke.writer.Transport)
+	assert.Equal(t, "billing-service", transport.ClientID)
+
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	require.NoError(t, err)
+	require.NoError(t, consumer.Start(context.Background()))
+	t.Cleanup(func() { _ = consumer.Stop() })
+
+	kc := consumer.(*KafkaConsumer)
+	kr, ok := kc.reader.(*kafka.Reader)
+	require.True(t, ok)
+	require.NotNil(t, kr.Config().Dialer)
+	assert.Equal(t, "billing-service", kr.Config().Dialer.ClientID)
+}
+
+type slowCloseReader struct {
+	closeStarted chan struct{}
+	allowClose   chan struct{}
+	once         sync.Once
+}
+
+func (r *slowCloseReader) FetchMessage(ctx context.Context) (kafka.Message, error) {
+	<-ctx.Done()
+	return kafka.Message{}, ctx.Err()
+}
+
+func (*slowCloseReader) CommitMessages(context.Context, ...kafka.Message) error { return nil }
+
+func (r *slowCloseReader) Close() error {
+	r.once.Do(func() { close(r.closeStarted) })
+	<-r.allowClose
+	return nil
+}
+
+func TestKafkaConsumer_StopWaitsBeforeClearingRegistration(t *testing.T) {
+	component := NewKafkaComponent()
+	ep, err := component.CreateEndpoint("kafka:orders?brokers=localhost:9092&groupId=billing")
+	require.NoError(t, err)
+
+	c1Iface, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	require.NoError(t, err)
+	c1 := c1Iface.(*KafkaConsumer)
+	reader := &slowCloseReader{
+		closeStarted: make(chan struct{}),
+		allowClose:   make(chan struct{}),
+	}
+	c1.reader = reader
+
+	require.NoError(t, c1.Start(context.Background()))
+
+	stop1Done := make(chan error, 1)
+	go func() {
+		stop1Done <- c1.Stop()
+	}()
+
+	select {
+	case <-reader.closeStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reader.Close() was not reached")
+	}
+
+	// Concurrent Stop must wait until the first Stop finishes closing reader and clearing registration.
+	stop2Done := make(chan error, 1)
+	go func() {
+		stop2Done <- c1.Stop()
+	}()
+
+	select {
+	case <-stop2Done:
+		t.Fatal("concurrent Stop returned before first Stop finished closing reader")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Registration must remain occupied while Stop is still closing reader.
+	_, err = ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	assert.Error(t, err, "new consumer must not register while previous consumer Stop is still closing")
+
+	close(reader.allowClose)
+
+	select {
+	case err := <-stop1Done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("first Stop did not finish")
+	}
+	select {
+	case err := <-stop2Done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("second Stop did not finish")
+	}
+
+	// After Stop completes, registration is cleared.
+	_, err = ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+	assert.NoError(t, err)
 }

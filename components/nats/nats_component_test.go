@@ -2,6 +2,9 @@ package nats
 
 import (
 	"context"
+	"net"
+	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -388,4 +391,212 @@ func TestNATSProducer_SendRejectsUnstartedOrStoppedProducerWithSharedConn(t *tes
 	require.NoError(t, prod.Stop())
 	err = prod.Send(ex)
 	assert.ErrorContains(t, err, "nats producer is not started")
+}
+
+func TestNATSEndpoint_RedactsCredentialsInServersParam(t *testing.T) {
+	comp := NewNATSComponent()
+
+	t.Run("redacts user:pass and token in comma-separated servers", func(t *testing.T) {
+		ep, err := comp.CreateEndpoint("nats://orders?servers=nats://alice:super-secret@broker1:4222,nats://secret-token@broker2:4222")
+		require.NoError(t, err)
+
+		uri := ep.URI()
+		assert.NotContains(t, uri, "super-secret")
+		assert.NotContains(t, uri, "secret-token")
+		assert.Contains(t, uri, "broker1:4222")
+		assert.Contains(t, uri, "broker2:4222")
+
+		parsed, err := url.Parse(uri)
+		require.NoError(t, err)
+		assert.Equal(t, "nats://alice:xxxxx@broker1:4222,nats://xxxxx@broker2:4222", parsed.Query().Get("servers"))
+
+		// Multiple consumers error uses the redacted URI.
+		_, err = ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+		require.NoError(t, err)
+		_, err = ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "super-secret")
+		assert.NotContains(t, err.Error(), "secret-token")
+	})
+
+	t.Run("redacts schemeless servers and outer credential params", func(t *testing.T) {
+		ep, err := comp.CreateEndpoint("nats://orders?servers=bob:pass123@broker1:4222,tok999@broker2:4222&token=outer-secret")
+		require.NoError(t, err)
+
+		uri := ep.URI()
+		assert.NotContains(t, uri, "pass123")
+		assert.NotContains(t, uri, "tok999")
+		assert.NotContains(t, uri, "outer-secret")
+
+		parsed, err := url.Parse(uri)
+		require.NoError(t, err)
+		assert.Equal(t, "bob:xxxxx@broker1:4222,xxxxx@broker2:4222", parsed.Query().Get("servers"))
+		assert.Equal(t, "xxxxx", parsed.Query().Get("token"))
+	})
+
+	t.Run("redacts malformed percent-encoded password inside servers", func(t *testing.T) {
+		ep := &NATSEndpoint{uri: "nats://orders?servers=nats://alice:bad%pass@broker1:4222,nats://tok%en@broker2:4222"}
+		uri := ep.URI()
+		assert.NotContains(t, uri, "bad%pass")
+		assert.NotContains(t, uri, "tok%en")
+		assert.Contains(t, uri, "alice:xxxxx@broker1:4222")
+		assert.Contains(t, uri, "xxxxx@broker2:4222")
+	})
+}
+
+func startHangingTCPListener(t *testing.T) (addr string, accepted <-chan struct{}) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	acceptedCh := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	var conns []net.Conn
+
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+		mu.Unlock()
+	})
+
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+			once.Do(func() { close(acceptedCh) })
+		}
+	}()
+
+	return ln.Addr().String(), acceptedCh
+}
+
+func TestNATS_ConnectRespectsContextOutsideLock(t *testing.T) {
+	t.Run("producer connect does not hold endpoint lock and aborts on context cancel", func(t *testing.T) {
+		addr, accepted := startHangingTCPListener(t)
+		ep, err := NewNATSComponent().CreateEndpoint("nats://orders?servers=nats://" + addr)
+		require.NoError(t, err)
+		ne := ep.(*NATSEndpoint)
+
+		prod, err := ep.CreateProducer()
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		startErr := make(chan error, 1)
+		go func() {
+			startErr <- prod.Start(ctx)
+		}()
+
+		select {
+		case <-accepted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("nats.Connect did not dial listener")
+		}
+
+		// endpoint.mu must not be held while connecting.
+		lockAcquired := make(chan bool, 1)
+		go func() {
+			ne.mu.Lock()
+			isNil := ne.conn == nil
+			ne.mu.Unlock()
+			lockAcquired <- isNil
+		}()
+		select {
+		case isNil := <-lockAcquired:
+			assert.True(t, isNil)
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("NATSEndpoint.mu is held during NATS connect")
+		}
+
+		// Cancelling ctx must abort Start promptly instead of waiting for nats.DefaultTimeout (2s).
+		cancelStart := time.Now()
+		cancel()
+		select {
+		case err := <-startErr:
+			require.Error(t, err)
+			assert.ErrorIs(t, err, context.Canceled)
+			assert.Less(t, time.Since(cancelStart), 500*time.Millisecond)
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("NATSProducer.Start did not abort promptly on context cancellation")
+		}
+	})
+
+	t.Run("consumer connect respects context outside lock and serializes Start/Stop", func(t *testing.T) {
+		addr, accepted := startHangingTCPListener(t)
+		ep, err := NewNATSComponent().CreateEndpoint("nats://orders?servers=nats://" + addr)
+		require.NoError(t, err)
+		ne := ep.(*NATSEndpoint)
+
+		consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		startErr := make(chan error, 1)
+		go func() {
+			startErr <- consumer.Start(ctx)
+		}()
+
+		select {
+		case <-accepted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("nats.Connect did not dial listener")
+		}
+
+		// endpoint.mu must not be held while connecting.
+		lockAcquired := make(chan bool, 1)
+		go func() {
+			ne.mu.Lock()
+			isNil := ne.conn == nil
+			ne.mu.Unlock()
+			lockAcquired <- isNil
+		}()
+		select {
+		case isNil := <-lockAcquired:
+			assert.True(t, isNil)
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("NATSEndpoint.mu is held during NATSConsumer connect")
+		}
+
+		// Concurrent Stop must wait for the in-progress Start transition rather than returning early.
+		stopDone := make(chan error, 1)
+		go func() {
+			stopDone <- consumer.Stop()
+		}()
+		select {
+		case <-stopDone:
+			t.Fatal("NATSConsumer.Stop returned before in-progress Start finished")
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		cancel()
+		select {
+		case err := <-startErr:
+			require.Error(t, err)
+			assert.ErrorIs(t, err, context.Canceled)
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("NATSConsumer.Start did not abort promptly on context cancellation")
+		}
+		select {
+		case err := <-stopDone:
+			require.NoError(t, err)
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("NATSConsumer.Stop did not finish after Start aborted")
+		}
+
+		ne.mu.Lock()
+		assert.Nil(t, ne.consumer)
+		ne.mu.Unlock()
+	})
 }
