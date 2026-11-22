@@ -40,6 +40,9 @@ func (c *SedaComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	if queueName == "" {
 		queueName = u.Opaque
 	}
+	if queueName == "" {
+		return nil, fmt.Errorf("SEDA queue name is required in URI: %s", RedactURI(uri))
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -50,7 +53,7 @@ func (c *SedaComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		// consumer's size or concurrentConsumers.
 		if u.RawQuery != "" && endpoint.uri != uri {
 			LogWarn("seda endpoint already exists; URI parameters ignored",
-				"queue", queueName, "existing", endpoint.uri, "requested", uri)
+				"queue", queueName, "existing", RedactURI(endpoint.uri), "requested", RedactURI(uri))
 		}
 		return endpoint, nil
 	}
@@ -74,32 +77,78 @@ func (c *SedaComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	endpoint := &SedaEndpoint{
-		uri:                 uri,
-		queue:               make(chan *Exchange, size),
+		queueEndpointBase: queueEndpointBase{
+			uri:             uri,
+			queue:           make(chan *Exchange, size),
+			shutdownTimeout: parseShutdownTimeout(u, "seda"),
+			stopCh:          make(chan struct{}),
+		},
 		concurrentConsumers: concurrentConsumers,
-		shutdownTimeout:     parseShutdownTimeout(u, "seda"),
 	}
 	c.endpoints[queueName] = endpoint
 	return endpoint, nil
 }
 
-// SedaEndpoint represents a SEDA endpoint.
-type SedaEndpoint struct {
-	polling             int // guarded by mu; active Poll calls, mutually exclusive with a continuous consumer
-	uri                 string
-	queue               chan *Exchange
-	concurrentConsumers int
-	shutdownTimeout     time.Duration // bound on draining queued exchanges at Stop
-	consumer            *SedaConsumer
-	mu                  sync.Mutex
-	stopCh              chan struct{}  // closed when the consumer stops; nil until first Start
-	stopped             bool           // true after Stop until the next Start
-	senders             sync.WaitGroup // in-flight Send calls; Add is guarded by mu
+type queueEndpointBase struct {
+	polling         int // guarded by mu; active Poll calls, mutually exclusive with a continuous consumer
+	uri             string
+	queue           chan *Exchange
+	shutdownTimeout time.Duration // bound on draining queued exchanges at Stop
+	consumer        Consumer      // active/registered consumer; guarded by mu
+	mu              sync.Mutex
+	stopCh          chan struct{}  // closed when the consumer stops; initialized in CreateEndpoint
+	stopped         bool           // true after Stop until the next Start
+	senders         sync.WaitGroup // in-flight Send calls; Add is guarded by mu
 }
 
 // URI returns the endpoint URI.
-func (e *SedaEndpoint) URI() string {
+func (e *queueEndpointBase) URI() string {
 	return e.uri
+}
+
+func (e *queueEndpointBase) beginSend(scheme string) (<-chan struct{}, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stopped {
+		return nil, fmt.Errorf("%s: consumer stopped: %s", scheme, RedactURI(e.uri))
+	}
+	e.senders.Add(1)
+	return e.stopCh, nil
+}
+
+func (e *queueEndpointBase) send(scheme string, exchange *Exchange) error {
+	// Deep-copy the exchange: the consumer runs on its own goroutine and may
+	// mutate the body/headers concurrently with the sender. A shallow Copy()
+	// would share mutable bodies ([]byte, map, ...) between the two goroutines
+	// — a data race. DeepCopy duplicates the common mutable container types.
+	queued := exchange.DeepCopy()
+
+	// A nil exchange context must not panic here; fall back to a blocking
+	// enqueue, which is the behaviour of an uncancellable context.
+	ctx := exchange.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	stopCh, err := e.beginSend(scheme)
+	if err != nil {
+		return err
+	}
+	defer e.senders.Done()
+	select {
+	case e.queue <- queued:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-stopCh:
+		return fmt.Errorf("%s: consumer stopped: %s", scheme, RedactURI(e.uri))
+	}
+}
+
+// SedaEndpoint represents a SEDA endpoint.
+type SedaEndpoint struct {
+	queueEndpointBase
+	concurrentConsumers int
 }
 
 // CreateProducer creates a SEDA producer.
@@ -113,14 +162,18 @@ func (e *SedaEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	defer e.mu.Unlock()
 
 	if e.consumer != nil || e.polling > 0 {
-		return nil, fmt.Errorf("multiple consumers for the same SEDA endpoint are not allowed: %s", e.uri)
+		return nil, fmt.Errorf("multiple consumers for the same SEDA endpoint are not allowed: %s", RedactURI(e.uri))
 	}
 
-	e.consumer = &SedaConsumer{
-		endpoint:  e,
-		processor: processor,
+	c := &SedaConsumer{
+		endpoint: e,
+		queueConsumerBase: queueConsumerBase{
+			base:      &e.queueEndpointBase,
+			processor: processor,
+		},
 	}
-	return e.consumer, nil
+	e.consumer = c
+	return c, nil
 }
 
 // SedaProducer represents a SEDA producer.
@@ -140,81 +193,176 @@ func (p *SedaProducer) Stop() error {
 
 // Send asynchronously sends an exchange to the SEDA queue.
 // It creates a deep copy of the exchange so the queued exchange is fully
-// independent of the caller's: the producer returns immediately and the
-// consumer processes the copy later, so a shallow Copy() would let the
-// caller mutate a shared mutable body ([]byte, map, ...) underneath the
-// consumer — a data race. DeepCopy duplicates the common mutable container
-// types (see Message.DeepCopy).
+// independent of the caller's (see queueEndpointBase.send).
 func (p *SedaProducer) Send(exchange *Exchange) error {
-	queued := exchange.DeepCopy()
+	return p.endpoint.send("seda", exchange)
+}
 
-	// A nil exchange context must not panic here; fall back to a blocking
-	// enqueue, which is the behaviour of an uncancellable context.
-	ctx := exchange.Context
+// acquireConsumerTransition serializes Start and Stop transitions without
+// holding mu while waiting for an in-progress transition.
+func acquireConsumerTransition(mu *sync.Mutex, transition *chan struct{}) {
+	for {
+		mu.Lock()
+		if *transition != nil {
+			done := *transition
+			mu.Unlock()
+			<-done
+			continue
+		}
+		*transition = make(chan struct{})
+		mu.Unlock()
+		return
+	}
+}
+
+// releaseConsumerTransition marks the active Start/Stop transition complete and
+// wakes any waiting callers.
+func releaseConsumerTransition(mu *sync.Mutex, transition *chan struct{}) {
+	mu.Lock()
+	close(*transition)
+	*transition = nil
+	mu.Unlock()
+}
+
+// isClosedChan reports whether ch is non-nil and already closed.
+func isClosedChan(ch <-chan struct{}) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// ensureOpenStopCh returns ch if it is non-nil and still open, or allocates a
+// fresh open channel when ch is nil or closed. Must be called under the owning mutex.
+func ensureOpenStopCh(ch chan struct{}) chan struct{} {
+	if ch == nil || isClosedChan(ch) {
+		return make(chan struct{})
+	}
+	return ch
+}
+
+// closeStopCh closes ch if it is non-nil and not yet closed. Must be called
+// under the owning mutex.
+func closeStopCh(ch chan struct{}) {
+	if ch != nil && !isClosedChan(ch) {
+		close(ch)
+	}
+}
+
+type queueConsumerBase struct {
+	base       *queueEndpointBase
+	processor  Processor
+	mu         sync.Mutex
+	transition chan struct{}
+	started    bool
+	cancel     context.CancelFunc
+	drain      chan struct{} // closed by Stop: finish the queued exchanges, then exit
+	wg         sync.WaitGroup
+}
+
+func (c *queueConsumerBase) start(ctx context.Context, owner Consumer, scheme, endpointKind string, workers int, errMsg string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	stopCh, err := p.endpoint.beginSend()
-	if err != nil {
-		return err
+	acquireConsumerTransition(&c.mu, &c.transition)
+	defer releaseConsumerTransition(&c.mu, &c.transition)
+
+	c.mu.Lock()
+	if c.started {
+		c.mu.Unlock()
+		return fmt.Errorf("%s consumer is already running: %s", scheme, RedactURI(c.base.uri))
 	}
-	defer p.endpoint.senders.Done()
-	select {
-	case p.endpoint.queue <- queued:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-stopCh:
-		return fmt.Errorf("seda: consumer stopped: %s", p.endpoint.uri)
+	c.mu.Unlock()
+
+	c.base.mu.Lock()
+	if (c.base.consumer != nil && c.base.consumer != owner) || c.base.polling > 0 {
+		c.base.mu.Unlock()
+		return fmt.Errorf("multiple consumers for the same %s endpoint are not allowed: %s", endpointKind, RedactURI(c.base.uri))
 	}
+	c.base.consumer = owner
+	c.base.stopped = false
+	c.base.stopCh = ensureOpenStopCh(c.base.stopCh)
+	c.base.mu.Unlock()
+
+	runCtx, cancel := context.WithCancel(ctx)
+	drain := make(chan struct{})
+
+	c.mu.Lock()
+	c.cancel = cancel
+	c.drain = drain
+	c.started = true
+	for i := 0; i < workers; i++ {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			runQueueWorker(runCtx, drain, c.base.queue, c.processor, errMsg, RedactURI(c.base.uri))
+		}()
+	}
+	c.mu.Unlock()
+
+	return nil
 }
 
-// beginSend returns the current stop channel, or an error if the consumer
-// has already stopped. stopCh may be nil when no consumer has started yet
-// (enqueue is still allowed; a nil channel never fires in select).
-// It also registers the send so Stop can wait for every in-flight Send to
-// finish before it drains the queue.
-func (e *SedaEndpoint) beginSend() (<-chan struct{}, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.stopped {
-		return nil, fmt.Errorf("seda: consumer stopped: %s", e.uri)
+func (c *queueConsumerBase) stop(owner Consumer, scheme string) error {
+	acquireConsumerTransition(&c.mu, &c.transition)
+	defer releaseConsumerTransition(&c.mu, &c.transition)
+
+	c.mu.Lock()
+	started := c.started
+	drain := c.drain
+	cancel := c.cancel
+	c.mu.Unlock()
+
+	c.base.mu.Lock()
+	owned := c.base.consumer == owner
+	if !started && !owned {
+		c.base.mu.Unlock()
+		return nil
 	}
-	e.senders.Add(1)
-	return e.stopCh, nil
+	c.base.stopped = true
+	closeStopCh(c.base.stopCh)
+	c.base.mu.Unlock()
+
+	// Every Send that passed beginSend either enqueued or observed stopCh.
+	// Wait for them before the workers/drain touch the queue, so no exchange
+	// can be enqueued after the final drain.
+	c.base.senders.Wait()
+
+	if started {
+		stopQueueWorkers(drain, &c.wg, cancel, c.base.shutdownTimeout)
+	}
+
+	c.mu.Lock()
+	c.drain = nil
+	c.cancel = nil
+	c.started = false
+	c.mu.Unlock()
+
+	c.base.mu.Lock()
+	if c.base.consumer == owner {
+		c.base.consumer = nil
+	}
+	c.base.mu.Unlock()
+
+	drainExchangeQueue(c.base.queue, fmt.Errorf("%s: discarded because the consumer stopped", scheme))
+	return nil
 }
 
 // SedaConsumer represents a SEDA consumer.
 type SedaConsumer struct {
-	endpoint  *SedaEndpoint
-	processor Processor
-	cancel    context.CancelFunc
-	drain     chan struct{} // closed by Stop: finish the queued exchanges, then exit
-	wg        sync.WaitGroup
+	queueConsumerBase
+	endpoint *SedaEndpoint
 }
 
 // Start starts the SEDA consumer workers.
 func (c *SedaConsumer) Start(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	c.cancel = cancel
-	drain := make(chan struct{})
-	c.drain = drain
-
-	c.endpoint.mu.Lock()
-	c.endpoint.stopped = false
-	c.endpoint.stopCh = make(chan struct{})
-	c.endpoint.mu.Unlock()
-
-	for i := 0; i < c.endpoint.concurrentConsumers; i++ {
-		c.wg.Add(1)
-		go func() {
-			defer c.wg.Done()
-			runQueueWorker(ctx, drain, c.endpoint.queue, c.processor, "SEDA consumer processing error", c.endpoint.uri)
-		}()
-	}
-
-	return nil
+	return c.queueConsumerBase.start(ctx, c, "seda", "SEDA", c.endpoint.concurrentConsumers, "SEDA consumer processing error")
 }
 
 // Stop rejects new sends and unblocks producers waiting on a full queue, then
@@ -223,33 +371,7 @@ func (c *SedaConsumer) Start(ctx context.Context) error {
 // or its timeout), the workers exit immediately and the leftover exchanges are
 // discarded as failures so they cannot leak after shutdown.
 func (c *SedaConsumer) Stop() error {
-	c.endpoint.mu.Lock()
-	c.endpoint.stopped = true
-	if c.endpoint.stopCh != nil {
-		select {
-		case <-c.endpoint.stopCh:
-		default:
-			close(c.endpoint.stopCh)
-		}
-	}
-	c.endpoint.mu.Unlock()
-
-	// Every Send that passed beginSend either enqueued or observed stopCh.
-	// Wait for them before the workers/drain touch the queue, so no exchange
-	// can be enqueued after the final drain.
-	c.endpoint.senders.Wait()
-
-	stopQueueWorkers(c.drain, &c.wg, c.cancel, c.endpoint.shutdownTimeout)
-	c.drain = nil
-
-	c.endpoint.mu.Lock()
-	if c.endpoint.consumer == c {
-		c.endpoint.consumer = nil
-	}
-	c.endpoint.mu.Unlock()
-
-	drainExchangeQueue(c.endpoint.queue, fmt.Errorf("seda: discarded because the consumer stopped"))
-	return nil
+	return c.queueConsumerBase.stop(c, "seda")
 }
 
 // drainExchangeQueue discards leftover exchanges after a consumer stops so they
@@ -291,6 +413,16 @@ func parseShutdownTimeout(u *url.URL, scheme string) time.Duration {
 // waits for them for at most timeout, then cancels ctx so in-flight exchanges
 // observe the shutdown, and waits for the workers to return.
 func stopQueueWorkers(drain chan struct{}, wg *sync.WaitGroup, cancel context.CancelFunc, timeout time.Duration) {
+	if timeout <= 0 {
+		if cancel != nil {
+			cancel()
+		}
+		if drain != nil {
+			close(drain)
+		}
+		wg.Wait()
+		return
+	}
 	if drain != nil {
 		close(drain)
 	}
@@ -326,6 +458,11 @@ func runQueueWorker(ctx context.Context, drain <-chan struct{}, queue chan *Exch
 		}
 	}
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		select {
 		case <-ctx.Done():
 			return

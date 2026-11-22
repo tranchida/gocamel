@@ -2,9 +2,11 @@ package gocamel
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -365,4 +367,127 @@ func TestNetTCPTextlineReplyLongerThanBufferSize(t *testing.T) {
 	err := producer.Send(exchange)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds bufferSize")
+}
+
+func TestNetConsumer_TextlineClonesBufferAndCancelsContextOnStop(t *testing.T) {
+	t.Run("textline_clones_buffer", func(t *testing.T) {
+		var mu sync.Mutex
+		var seen []string
+		done := make(chan struct{})
+		consumer := startNetConsumer(t, "net:tcp://127.0.0.1:0?sync=false", ProcessorFunc(func(e *Exchange) error {
+			body := e.GetIn().GetBody().([]byte)
+			snapshot := string(body)
+			// Mutate via append on the first line's slice: must not corrupt line 2 in bufio.Reader.
+			_ = append(body, []byte("-CORRUPT")...)
+
+			mu.Lock()
+			seen = append(seen, snapshot)
+			count := len(seen)
+			mu.Unlock()
+			if count == 2 {
+				close(done)
+			}
+			return nil
+		}))
+
+		conn, err := net.Dial("tcp", consumer.Address().String())
+		require.NoError(t, err)
+		defer conn.Close()
+
+		_, err = conn.Write([]byte("line1\nline2\n"))
+		require.NoError(t, err)
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for two lines")
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Equal(t, []string{"line1", "line2"}, seen)
+	})
+
+	t.Run("cancels_context_on_stop", func(t *testing.T) {
+		ep, err := NewNetComponent().CreateEndpoint("net:tcp://127.0.0.1:0?sync=false")
+		require.NoError(t, err)
+
+		entered := make(chan struct{})
+		var once sync.Once
+		delayDone := make(chan error, 1)
+		pipeline := NewPipeline()
+		pipeline.AddProcessor(ProcessorFunc(func(*Exchange) error {
+			once.Do(func() { close(entered) })
+			return nil
+		}))
+		pipeline.AddProcessor(NewDelayer(5 * time.Second))
+
+		consumer, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
+			err := pipeline.Process(e)
+			delayDone <- err
+			return err
+		}))
+		require.NoError(t, err)
+		nc := consumer.(*NetConsumer)
+		require.NoError(t, nc.Start(context.Background()))
+
+		conn, err := net.Dial("tcp", nc.Address().String())
+		require.NoError(t, err)
+		defer conn.Close()
+		_, err = conn.Write([]byte("trigger\n"))
+		require.NoError(t, err)
+
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("processor was not invoked")
+		}
+
+		stopStart := time.Now()
+		require.NoError(t, nc.Stop())
+		assert.Less(t, time.Since(stopStart), time.Second, "Stop must cancel in-flight exchange context promptly")
+
+		select {
+		case err := <-delayDone:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(2 * time.Second):
+			t.Fatal("delayed processor did not exit")
+		}
+	})
+}
+
+func TestNetConsumer_WriteReplyDeadline(t *testing.T) {
+	ep, err := NewNetComponent().CreateEndpoint("net:tcp://127.0.0.1:0?timeout=50")
+	require.NoError(t, err)
+
+	procEntered := make(chan struct{})
+	largeReply := bytes.Repeat([]byte("R"), 16<<20)
+	consumer, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
+		close(procEntered)
+		e.GetOut().SetBody(largeReply)
+		return nil
+	}))
+	require.NoError(t, err)
+	nc := consumer.(*NetConsumer)
+	require.NoError(t, nc.Start(context.Background()))
+	t.Cleanup(func() { _ = nc.Stop() })
+
+	conn, err := net.Dial("tcp", nc.Address().String())
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Write([]byte("ping\n"))
+	require.NoError(t, err)
+
+	select {
+	case <-procEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("processor did not run")
+	}
+
+	// Do not read from conn; writeReply must time out via SetWriteDeadline and close the connection.
+	require.Eventually(t, func() bool {
+		nc.mu.Lock()
+		defer nc.mu.Unlock()
+		return len(nc.conns) == 0
+	}, 2*time.Second, 10*time.Millisecond, "stalled TCP writer did not time out via SetWriteDeadline")
 }

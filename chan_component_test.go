@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -118,4 +119,26 @@ func TestChanConsumer_StopReleasesEndpointRegistration(t *testing.T) {
 
 	_, err = endpoint.CreateConsumer(ProcessorFunc(func(*Exchange) error { return nil }))
 	assert.NoError(t, err)
+}
+
+func TestChanComponent_NoDuplicateWarningWithoutQuery(t *testing.T) {
+	buf := &syncBuffer{}
+	prev := GetLogger()
+	t.Cleanup(func() { SetLogger(prev) })
+	SetLogger(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	comp := NewChanComponent()
+	ep1, err := comp.CreateEndpoint("chan:orders?bufferSize=10")
+	require.NoError(t, err)
+	ep2, err := comp.CreateEndpoint("chan:orders")
+	require.NoError(t, err)
+	assert.Same(t, ep1, ep2)
+
+	assert.NotContains(t, buf.String(), "URI parameters ignored")
+
+	ep3, err := comp.CreateEndpoint("chan:orders?bufferSize=20")
+	require.NoError(t, err)
+	assert.Same(t, ep1, ep3)
+
+	assert.Contains(t, buf.String(), "URI parameters ignored")
 }

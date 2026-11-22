@@ -2,11 +2,14 @@ package gocamel
 
 import (
 	"context"
+	"log/slog"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTimerComponent_CreateEndpoint(t *testing.T) {
@@ -198,4 +201,114 @@ func TestTimerConsumer_RecoversProcessorPanic(t *testing.T) {
 	if n.Load() != 2 {
 		t.Errorf("expected 2 ticks after panics, got %d", n.Load())
 	}
+}
+
+func TestTimerConsumer_CancelsInFlightContextOnStop(t *testing.T) {
+	ep, err := NewTimerComponent().CreateEndpoint("timer:cancel?delay=1&period=50")
+	require.NoError(t, err)
+
+	entered := make(chan struct{})
+	var once sync.Once
+	ctxErrCh := make(chan error, 1)
+	delayer := NewDelayer(5 * time.Second)
+
+	consumer, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
+		once.Do(func() { close(entered) })
+		err := delayer.Process(e)
+		select {
+		case ctxErrCh <- err:
+		default:
+		}
+		return err
+	}))
+	require.NoError(t, err)
+
+	require.NoError(t, consumer.Start(context.Background()))
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timer tick did not start")
+	}
+
+	stopStart := time.Now()
+	require.NoError(t, consumer.Stop())
+	assert.Less(t, time.Since(stopStart), time.Second, "Stop must cancel in-flight timer exchange context promptly")
+
+	select {
+	case err := <-ctxErrCh:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight timer processor did not observe cancellation")
+	}
+}
+
+func TestTimerConsumer_DelayZeroCancelledCtxAndValidationAndConcurrentStop(t *testing.T) {
+	t.Run("delay_zero_on_cancelled_context_does_not_fire", func(t *testing.T) {
+		ep, err := NewTimerComponent().CreateEndpoint("timer:immediate?delay=0&period=50&repeatCount=1")
+		require.NoError(t, err)
+
+		var calls atomic.Int32
+		consumer, err := ep.CreateConsumer(ProcessorFunc(func(*Exchange) error {
+			calls.Add(1)
+			return nil
+		}))
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.NoError(t, consumer.Start(ctx))
+		require.NoError(t, consumer.Stop())
+		assert.Equal(t, int32(0), calls.Load(), "delay<=0 with cancelled context must not fire")
+	})
+
+	t.Run("rejects_non_positive_period_and_warns_invalid_options", func(t *testing.T) {
+		comp := NewTimerComponent()
+		_, err := comp.CreateEndpoint("timer:bad?period=0")
+		require.Error(t, err)
+		_, err = comp.CreateEndpoint("timer:bad?period=-5")
+		require.Error(t, err)
+
+		logBuf := &syncBuffer{}
+		prev := GetLogger()
+		t.Cleanup(func() { SetLogger(prev) })
+		SetLogger(slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+		_, err = comp.CreateEndpoint("timer:warn?period=abc&delay=nope&repeatCount=-2&fixedRate=maybe")
+		require.NoError(t, err)
+
+		logged := logBuf.String()
+		assert.Contains(t, logged, "period")
+		assert.Contains(t, logged, "delay")
+		assert.Contains(t, logged, "repeatCount")
+		assert.Contains(t, logged, "fixedRate")
+	})
+
+	t.Run("concurrent_stop_waits_for_worker_completion", func(t *testing.T) {
+		ep, err := NewTimerComponent().CreateEndpoint("timer:concstop?delay=1&period=20")
+		require.NoError(t, err)
+
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var once sync.Once
+		consumer, err := ep.CreateConsumer(ProcessorFunc(func(*Exchange) error {
+			once.Do(func() { close(entered) })
+			<-release
+			return nil
+		}))
+		require.NoError(t, err)
+		require.NoError(t, consumer.Start(context.Background()))
+		<-entered
+
+		stop1Done := make(chan error, 1)
+		stop2Done := make(chan error, 1)
+		go func() { stop1Done <- consumer.Stop() }()
+		// Wait briefly for stop1 to enter wg.Wait(), then call concurrent stop2.
+		assert.Never(t, func() bool { return len(stop1Done) > 0 }, 30*time.Millisecond, 5*time.Millisecond)
+		go func() { stop2Done <- consumer.Stop() }()
+		assert.Never(t, func() bool { return len(stop2Done) > 0 }, 30*time.Millisecond, 5*time.Millisecond)
+
+		close(release)
+		require.NoError(t, <-stop1Done)
+		require.NoError(t, <-stop2Done)
+	})
 }

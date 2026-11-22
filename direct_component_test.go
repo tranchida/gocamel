@@ -3,6 +3,7 @@ package gocamel
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -191,4 +192,78 @@ func TestDirectProducer_RecoversProcessorPanic(t *testing.T) {
 	err = prod.Send(NewExchange(context.Background()))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrProcessorPanic)
+}
+
+func TestDirectConsumer_RestartAndNotActiveBeforeStart(t *testing.T) {
+	comp := NewDirectComponent()
+	ep, err := comp.CreateEndpoint("direct:restart-and-guard")
+	require.NoError(t, err)
+
+	prod, err := ep.CreateProducer()
+	require.NoError(t, err)
+
+	var calls atomic.Int32
+	consumer, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
+		calls.Add(1)
+		e.GetOut().SetBody("ok")
+		return nil
+	}))
+	require.NoError(t, err)
+
+	// Consumer is NOT active before Start().
+	err = prod.Send(NewExchange(context.Background()))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no consumers available")
+	assert.Equal(t, int32(0), calls.Load())
+
+	// Active after Start().
+	require.NoError(t, consumer.Start(context.Background()))
+	ex1 := NewExchange(context.Background())
+	require.NoError(t, prod.Send(ex1))
+	assert.Equal(t, int32(1), calls.Load())
+	assert.Equal(t, "ok", ex1.GetOut().GetBody())
+
+	// Double Start while active must fail.
+	require.Error(t, consumer.Start(context.Background()))
+
+	// Inactive after Stop().
+	require.NoError(t, consumer.Stop())
+	require.Error(t, prod.Send(NewExchange(context.Background())))
+
+	// Restarting the SAME DirectConsumer instance re-registers and activates it.
+	require.NoError(t, consumer.Start(context.Background()))
+	ex2 := NewExchange(context.Background())
+	require.NoError(t, prod.Send(ex2))
+	assert.Equal(t, int32(2), calls.Load())
+	assert.Equal(t, "ok", ex2.GetOut().GetBody())
+
+	// Concurrent Start/Stop on same DirectConsumer must not race WaitGroup.
+	for i := 0; i < 20; i++ {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = consumer.Start(context.Background())
+		}()
+		go func() {
+			defer wg.Done()
+			_ = consumer.Stop()
+		}()
+		wg.Wait()
+		require.NoError(t, consumer.Stop())
+	}
+
+	// Replacing consumer after Stop blocks stale consumer from reclaiming endpoint.
+	c2, err := ep.CreateConsumer(ProcessorFunc(func(e *Exchange) error {
+		e.GetOut().SetBody("c2")
+		return nil
+	}))
+	require.NoError(t, err)
+	require.NoError(t, c2.Start(context.Background()))
+	require.Error(t, consumer.Start(context.Background()))
+	require.NoError(t, consumer.Stop())
+	ex3 := NewExchange(context.Background())
+	require.NoError(t, prod.Send(ex3))
+	assert.Equal(t, "c2", ex3.GetOut().GetBody())
+	require.NoError(t, c2.Stop())
 }

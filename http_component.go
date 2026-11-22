@@ -173,7 +173,8 @@ type HTTPComponent struct {
 func NewHTTPComponent() *HTTPComponent {
 	return &HTTPComponent{
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:       30 * time.Second,
+			CheckRedirect: defaultHTTPCheckRedirect,
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
 					Timeout:   10 * time.Second,
@@ -188,6 +189,76 @@ func NewHTTPComponent() *HTTPComponent {
 		throwExceptionOnFailure: true,
 		servers:                 newHTTPServers(),
 	}
+}
+
+var redirectSensitiveHeaders = []string{
+	"Authorization",
+	"Cookie",
+	"Cookie2",
+	"Proxy-Authorization",
+	"X-Api-Key",
+	"Api-Key",
+	"X-Auth-Token",
+}
+
+func defaultHTTPCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if len(via) == 0 {
+		return nil
+	}
+	prev := via[len(via)-1]
+	if strings.EqualFold(prev.URL.Scheme, "https") && strings.EqualFold(req.URL.Scheme, "http") {
+		for _, h := range redirectSensitiveHeaders {
+			req.Header.Del(h)
+		}
+		return fmt.Errorf("http: refusing redirect downgrade from https to http (%s)", RedactURI(req.URL.String()))
+	}
+	if !sameHTTPOrigin(prev.URL, req.URL) || !sameHTTPOrigin(via[0].URL, req.URL) {
+		for _, h := range redirectSensitiveHeaders {
+			req.Header.Del(h)
+		}
+	}
+	return nil
+}
+
+func sameHTTPOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		effectiveHTTPPort(a) == effectiveHTTPPort(b)
+}
+
+func effectiveHTTPPort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
+	}
+}
+
+// SetCheckRedirect installs a custom redirect policy on the HTTP client.
+// By default, NewHTTPComponent blocks HTTPS-to-HTTP downgrades and strips
+// credential headers on cross-origin redirects. Passing nil restores the
+// default redirect policy.
+func (c *HTTPComponent) SetCheckRedirect(fn func(req *http.Request, via []*http.Request) error) {
+	if c.client == nil {
+		return
+	}
+	if fn == nil {
+		c.client.CheckRedirect = defaultHTTPCheckRedirect
+		return
+	}
+	c.client.CheckRedirect = fn
 }
 
 // SetMiddleware installs an http.Handler middleware applied to every consumer
@@ -262,9 +333,9 @@ type HTTPEndpoint struct {
 	forwardInboundCreds      bool
 }
 
-// URI returns the endpoint URI
+// URI returns the redacted endpoint URI.
 func (e *HTTPEndpoint) URI() string {
-	return e.uri
+	return RedactURI(e.uri)
 }
 
 // CreateProducer creates an HTTP producer
@@ -280,9 +351,9 @@ func (e *HTTPEndpoint) CreateProducer() (Producer, error) {
 }
 
 func (e *HTTPEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
-	parsed, err := url.Parse(e.uri)
+	parsed, err := ParseURI(e.uri)
 	if err != nil {
-		return nil, fmt.Errorf("invalid HTTP URI: %v", err)
+		return nil, fmt.Errorf("invalid HTTP URI: %w", err)
 	}
 	if strings.EqualFold(parsed.Scheme, "https") {
 		return nil, fmt.Errorf("http consumer does not terminate TLS; use an http:// URI and terminate TLS in front of the listener")
@@ -345,7 +416,7 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	}
 	req, err := http.NewRequestWithContext(reqCtx, method, p.uri, bodyReader)
 	if err != nil {
-		return fmt.Errorf("error creating HTTP request: %w", err)
+		return fmt.Errorf("error creating HTTP request: %w", redactURLError(err))
 	}
 
 	// Adding headers (CRLF-stripped to prevent header injection — CWE-113).
@@ -353,12 +424,14 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	// downstream of the HTTP consumer, the In message still carries the
 	// inbound request's Content-Length/Host, and forwarding those would
 	// misframe the outbound request.
+	// Accept-Encoding is also skipped so Go's http.Transport manages gzip
+	// negotiation and transparent decompression automatically.
 	// Internal Camel* headers stay inside the route, response-only headers
 	// left by a previous HTTP call are not replayed as request headers, and a
 	// client's credentials received by the HTTP consumer are not relayed
 	// unchanged to the upstream unless SetForwardInboundCredentials(true).
 	for key, value := range exchange.GetIn().GetHeaders() {
-		if isHopByHopHeader(key) || IsCamelHeader(key) || isResponseOnlyHeader(key) {
+		if isHopByHopHeader(key) || IsCamelHeader(key) || isResponseOnlyHeader(key) || strings.EqualFold(key, "Accept-Encoding") {
 			continue
 		}
 		if p.skipAuthorizationHeaders && authorizationHeaders[http.CanonicalHeaderKey(key)] {
@@ -381,7 +454,7 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	// Sending the request
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error sending HTTP request: %w", err)
+		return fmt.Errorf("error sending HTTP request: %w", redactURLError(err))
 	}
 	defer resp.Body.Close()
 
@@ -392,12 +465,14 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 		return fmt.Errorf("error reading HTTP response: %w", err)
 	}
 
-	// Updating the exchange with the response
+	// Updating the exchange with the response, stripping internal Camel* and
+	// hop-by-hop headers so an upstream cannot inject route-control headers.
 	exchange.GetOut().SetBody(body)
 	for key, values := range resp.Header {
-		if len(values) > 0 {
-			exchange.GetOut().SetHeader(key, messageHeaderValue(values))
+		if len(values) == 0 || IsCamelHeader(key) || isHopByHopHeader(key) {
+			continue
 		}
+		exchange.GetOut().SetHeader(key, messageHeaderValue(values))
 	}
 	exchange.GetOut().SetHeader(CamelHttpResponseCode, resp.StatusCode)
 	exchange.GetOut().SetHeader(CamelHttpResponseText, resp.Status)
@@ -407,10 +482,31 @@ func (p *HTTPProducer) Send(exchange *Exchange) error {
 	// Apache Camel semantics: a response >= 300 is a failure unless the
 	// caller opted out via SetThrowExceptionOnFailure(false).
 	if p.throwExceptionOnFailure && resp.StatusCode >= 300 {
-		return fmt.Errorf("http: %s returned status %d: %w", p.uri, resp.StatusCode, ErrHTTPStatus)
+		return fmt.Errorf("http: %s returned status %d: %w", RedactURI(p.uri), resp.StatusCode, ErrHTTPStatus)
 	}
 
 	return nil
+}
+
+// redactURLError masks credentials (including query parameters) in any *url.Error
+// returned by net/http without altering its Unwrap chain.
+func redactURLError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if direct, ok := err.(*url.Error); ok {
+		return &url.Error{
+			Op:  direct.Op,
+			URL: RedactURI(direct.URL),
+			Err: redactURLError(direct.Err),
+		}
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr != nil {
+		urlErr.URL = RedactURI(urlErr.URL)
+		urlErr.Err = redactURLError(urlErr.Err)
+	}
+	return err
 }
 
 // ErrHTTPStatus is wrapped by the error the HTTP producer returns when an
@@ -449,40 +545,42 @@ type HTTPConsumer struct {
 	// transition is non-nil while a Start or Stop is in progress. It serializes
 	// the two operations so a Stop racing a Start cannot observe running=false
 	// and return before the server is up (and vice versa). Guarded by mu.
-	transition chan struct{}
-	running    bool
-	stopping   bool
-	servers    *httpServers      // registry of shared listeners; nil: private to this consumer
-	shared     *sharedHTTPServer // listener this consumer is registered on while running
-	pattern    string            // path pattern registered on shared
-	server     *http.Server      // shared.server, while running
-	handlerWG  sync.WaitGroup
-	cancel     context.CancelFunc
+	transition      chan struct{}
+	running         bool
+	stopping        bool
+	servers         *httpServers      // registry of shared listeners; nil: private to this consumer
+	shared          *sharedHTTPServer // listener this consumer is registered on while running
+	pattern         string            // path pattern registered on shared
+	server          *http.Server      // shared.server, while running
+	handlerWG       sync.WaitGroup
+	cancel          context.CancelFunc
+	shutdownTimeout time.Duration // 0 defaults to httpShutdownTimeout
+	writeTimeout    time.Duration // 0 defaults to httpWriteTimeout
+}
+
+func (c *HTTPConsumer) effectiveShutdownTimeout() time.Duration {
+	if c.shutdownTimeout > 0 {
+		return c.shutdownTimeout
+	}
+	return httpShutdownTimeout
+}
+
+func (c *HTTPConsumer) effectiveWriteTimeout() time.Duration {
+	if c.writeTimeout > 0 {
+		return c.writeTimeout
+	}
+	return httpWriteTimeout
 }
 
 // acquireTransition waits for an in-progress Start/Stop and claims the next
 // transition. It never holds c.mu while waiting.
 func (c *HTTPConsumer) acquireTransition() {
-	for {
-		c.mu.Lock()
-		if c.transition != nil {
-			done := c.transition
-			c.mu.Unlock()
-			<-done
-			continue
-		}
-		c.transition = make(chan struct{})
-		c.mu.Unlock()
-		return
-	}
+	acquireConsumerTransition(&c.mu, &c.transition)
 }
 
 // releaseTransition publishes the final state and wakes Start/Stop waiters.
 func (c *HTTPConsumer) releaseTransition() {
-	c.mu.Lock()
-	close(c.transition)
-	c.transition = nil
-	c.mu.Unlock()
+	releaseConsumerTransition(&c.mu, &c.transition)
 }
 
 // Start starts the HTTP consumer
@@ -501,9 +599,9 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	parsedURL, err := url.Parse(c.uri)
+	parsedURL, err := ParseURI(c.uri)
 	if err != nil {
-		return fmt.Errorf("invalid HTTP URI: %v", err)
+		return fmt.Errorf("invalid HTTP URI: %w", err)
 	}
 
 	port := parsedURL.Port()
@@ -549,11 +647,11 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 		if err != nil {
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
-				LogWarn("HTTP consumer: request body too large", "uri", c.uri, "limit", c.maxBodySize)
+				LogWarn("HTTP consumer: request body too large", "uri", RedactURI(c.uri), "limit", c.maxBodySize)
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 				return
 			}
-			LogError("HTTP consumer: error reading request body", "uri", c.uri, "error", err)
+			LogError("HTTP consumer: error reading request body", "uri", RedactURI(c.uri), "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -590,7 +688,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			// The error may carry internal detail (SQL text, file paths,
 			// driver errors); log it and return a generic message.
 			LogError("HTTP consumer: route processing failed",
-				"uri", c.uri, "exchange_id", exchange.ID, "error", err)
+				"uri", RedactURI(c.uri), "exchange_id", exchange.ID, "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -630,7 +728,7 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			}
 			for i, v := range values {
 				if err := addSafeHTTPHeader(w.Header(), key, v, i == 0); err != nil {
-					LogError("HTTP consumer: invalid response header", "uri", c.uri, "error", err)
+					LogError("HTTP consumer: invalid response header", "uri", RedactURI(c.uri), "error", err)
 					http.Error(w, "internal server error", http.StatusInternalServerError)
 					return
 				}
@@ -643,17 +741,18 @@ func (c *HTTPConsumer) Start(ctx context.Context) error {
 			w.WriteHeader(code)
 		}
 
+		writeTimeout := c.effectiveWriteTimeout()
 		switch body := response.GetBody().(type) {
 		case []byte:
-			writeResponseBody(w, body, c.uri)
+			writeResponseBody(w, body, c.uri, writeTimeout)
 		case string:
-			writeResponseBody(w, []byte(body), c.uri)
+			writeResponseBody(w, []byte(body), c.uri, writeTimeout)
 		case nil:
 			// no body
 		default:
 			// Fall back to the string representation rather than silently
 			// returning an empty response for non-string bodies.
-			writeResponseBody(w, []byte(fmt.Sprintf("%v", body)), c.uri)
+			writeResponseBody(w, []byte(fmt.Sprintf("%v", body)), c.uri, writeTimeout)
 		}
 	}
 
@@ -714,26 +813,33 @@ func (c *HTTPConsumer) Stop() error {
 	c.mu.Unlock()
 
 	// Stop routing new requests here, give the in-flight ones the same grace
-	// period http.Server.Shutdown would, then cancel them.
+	// period http.Server.Shutdown would, then cancel them and release the
+	// listener so stalled connections are force-closed instead of hanging Stop().
 	_ = shared.setHandler(pattern, nil)
 	handlersDone := make(chan struct{})
 	go func() {
 		c.handlerWG.Wait()
 		close(handlersDone)
 	}()
-	grace := time.NewTimer(httpShutdownTimeout)
+	grace := time.NewTimer(c.effectiveShutdownTimeout())
+	timedOut := false
 	select {
 	case <-handlersDone:
 	case <-grace.C:
+		timedOut = true
 	}
 	grace.Stop()
 	if cancel != nil {
 		cancel()
 	}
-	<-handlersDone
+	if !timedOut {
+		<-handlersDone
+	}
 
-	// The listener closes with its last consumer.
-	err := servers.release(shared)
+	// The listener closes with its last consumer (force-closing stalled
+	// connections when the grace period already expired).
+	err := servers.release(shared, timedOut)
+	<-handlersDone
 
 	c.mu.Lock()
 	c.shared = nil
@@ -748,6 +854,10 @@ func (c *HTTPConsumer) Stop() error {
 // httpShutdownTimeout bounds how long a stopping HTTP consumer waits for its
 // in-flight requests, and a closing listener for its connections.
 const httpShutdownTimeout = 30 * time.Second
+
+// httpWriteTimeout bounds how long writing an HTTP response may block on a
+// slow or stalled client.
+const httpWriteTimeout = 60 * time.Second
 
 // httpServers owns the listeners of an HTTPComponent. Consumers whose URIs
 // share a host:port share one listener and are told apart by their path, so
@@ -863,7 +973,9 @@ func (hs *httpServers) acquire(addr string, shareable bool, pattern string, hand
 		// headers promptly then trickles the body cannot pin a handler
 		// goroutine (and its MaxBytesReader) open indefinitely (slow body DoS).
 		ReadTimeout: 60 * time.Second,
-		IdleTimeout: 60 * time.Second,
+		// Bound response writing so slow-reading clients cannot pin handlers.
+		WriteTimeout: httpWriteTimeout,
+		IdleTimeout:  60 * time.Second,
 	}
 	if shareable {
 		hs.servers[addr] = s
@@ -882,7 +994,7 @@ func (hs *httpServers) acquire(addr string, shareable bool, pattern string, hand
 // meanwhile so a consumer starting on the same address waits for the port to
 // be free instead of failing to bind; by then the consumer's own requests are
 // over, so only idle connections remain.
-func (hs *httpServers) release(s *sharedHTTPServer) error {
+func (hs *httpServers) release(s *sharedHTTPServer, forceClose bool) error {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 	s.refs--
@@ -891,6 +1003,11 @@ func (hs *httpServers) release(s *sharedHTTPServer) error {
 	}
 	if hs.servers[s.addr] == s {
 		delete(hs.servers, s.addr)
+	}
+	if forceClose {
+		err := s.server.Close()
+		<-s.served
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 	defer cancel()
@@ -937,11 +1054,17 @@ func responseStatusCode(response *Message) (int, bool) {
 	return 0, false
 }
 
-// writeResponseBody writes the body and logs a failed write, which otherwise
-// disappears silently (a client disconnecting mid-response is the common case).
-func writeResponseBody(w http.ResponseWriter, body []byte, uri string) {
+// writeResponseBody applies a per-write deadline, writes the body, and logs a
+// failed write (a client disconnecting mid-response is the common case).
+func writeResponseBody(w http.ResponseWriter, body []byte, uri string, writeTimeout time.Duration) {
+	if writeTimeout > 0 {
+		rc := http.NewResponseController(w)
+		if err := rc.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			LogWarn("HTTP consumer: failed to set write deadline", "uri", RedactURI(uri), "error", err)
+		}
+	}
 	if _, err := w.Write(body); err != nil {
-		LogWarn("HTTP consumer: error writing response body", "uri", uri, "error", err)
+		LogWarn("HTTP consumer: error writing response body", "uri", RedactURI(uri), "error", err)
 	}
 }
 

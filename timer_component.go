@@ -48,7 +48,12 @@ func (c *TimerComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	query := parsedURL.Query()
 
 	if val := query.Get("period"); val != "" {
-		if v, err := strconv.ParseInt(val, 10, 64); err == nil {
+		v, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			LogWarn("timer: invalid period; using default", "value", val, "default", endpoint.period)
+		} else if v <= 0 {
+			return nil, fmt.Errorf("timer: period must be positive, got %d", v)
+		} else {
 			endpoint.period = v
 		}
 	}
@@ -56,18 +61,24 @@ func (c *TimerComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	if val := query.Get("delay"); val != "" {
 		if v, err := strconv.ParseInt(val, 10, 64); err == nil {
 			endpoint.delay = v
+		} else {
+			LogWarn("timer: invalid delay; using default", "value", val, "default", endpoint.delay)
 		}
 	}
 
 	if val := query.Get("repeatCount"); val != "" {
-		if v, err := strconv.ParseInt(val, 10, 64); err == nil {
+		if v, err := strconv.ParseInt(val, 10, 64); err == nil && v >= 0 {
 			endpoint.repeatCount = v
+		} else {
+			LogWarn("timer: invalid repeatCount; using default", "value", val, "default", endpoint.repeatCount)
 		}
 	}
 
 	if val := query.Get("fixedRate"); val != "" {
 		if v, err := strconv.ParseBool(val); err == nil {
 			endpoint.fixedRate = v
+		} else {
+			LogWarn("timer: invalid fixedRate; using default", "value", val, "default", endpoint.fixedRate)
 		}
 	}
 
@@ -105,60 +116,75 @@ func (e *TimerEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 
 // TimerConsumer fires events periodically.
 type TimerConsumer struct {
-	endpoint  *TimerEndpoint
-	processor Processor
-	stopChan  chan struct{}
-	running   bool
-	stopping  bool
-	mu        sync.Mutex
-	wg        sync.WaitGroup
+	endpoint   *TimerEndpoint
+	processor  Processor
+	stopChan   chan struct{}
+	transition chan struct{}
+	cancel     context.CancelFunc
+	running    bool
+	mu         sync.Mutex
+	wg         sync.WaitGroup
 }
 
 // Start begins message generation by the timer.
 func (c *TimerConsumer) Start(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.running || c.stopping {
-		return errors.New("timer is already running")
-	}
-
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	acquireConsumerTransition(&c.mu, &c.transition)
+	defer releaseConsumerTransition(&c.mu, &c.transition)
+
+	c.mu.Lock()
+	if c.running {
+		c.mu.Unlock()
+		return errors.New("timer is already running")
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
 	stopChan := make(chan struct{})
 	c.stopChan = stopChan
+	c.cancel = cancel
 	c.running = true
-
 	c.wg.Add(1)
-	go c.run(ctx, stopChan)
+	c.mu.Unlock()
 
+	go c.run(runCtx, cancel, stopChan)
 	return nil
 }
 
-// Stop stops the timer and waits for the firing goroutine (and any in-flight
-// exchange) to finish, so a subsequent Start cannot overlap with the previous run.
+// Stop stops the timer, cancels any in-flight exchange context, and waits for
+// the firing goroutine to finish so a subsequent Start cannot overlap with the
+// previous run.
 func (c *TimerConsumer) Stop() error {
+	acquireConsumerTransition(&c.mu, &c.transition)
+	defer releaseConsumerTransition(&c.mu, &c.transition)
+
 	c.mu.Lock()
-	if !c.running || c.stopping {
+	if !c.running {
 		c.mu.Unlock()
 		return nil
 	}
-
-	c.stopping = true
-	close(c.stopChan)
+	cancel := c.cancel
+	stopChan := c.stopChan
+	c.cancel = nil
 	c.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	closeStopCh(stopChan)
 	c.wg.Wait()
 
 	c.mu.Lock()
 	c.running = false
-	c.stopping = false
 	c.mu.Unlock()
 	return nil
 }
 
-func (c *TimerConsumer) run(ctx context.Context, stopChan <-chan struct{}) {
+func (c *TimerConsumer) run(ctx context.Context, cancel context.CancelFunc, stopChan <-chan struct{}) {
 	defer c.wg.Done()
+	defer cancel()
 
 	// Initial wait (delay).
 	delayDuration := time.Duration(c.endpoint.delay) * time.Millisecond
@@ -174,8 +200,6 @@ func (c *TimerConsumer) run(ctx context.Context, stopChan <-chan struct{}) {
 			delayTimer.Stop()
 			return
 		}
-	} else if delayDuration < 0 {
-		// Immediate start.
 	}
 
 	periodDuration := time.Duration(c.endpoint.period) * time.Millisecond
@@ -197,6 +221,16 @@ func (c *TimerConsumer) run(ctx context.Context, stopChan <-chan struct{}) {
 	}
 
 	for {
+		// Guard against delay <= 0 on an already-cancelled context and select
+		// ties between tick readiness and shutdown/cancellation.
+		select {
+		case <-stopChan:
+			return
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		// Check the repeat count limit.
 		if c.endpoint.repeatCount > 0 && counter >= c.endpoint.repeatCount {
 			return

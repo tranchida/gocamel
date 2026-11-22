@@ -75,7 +75,7 @@ func (e *DirectEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	defer e.mu.Unlock()
 
 	if e.consumer != nil {
-		return nil, fmt.Errorf("multiple consumers for the same direct endpoint are not allowed: %s", e.uri)
+		return nil, fmt.Errorf("multiple consumers for the same direct endpoint are not allowed: %s", RedactURI(e.uri))
 	}
 	e.consumer = &DirectConsumer{
 		endpoint:  e,
@@ -103,14 +103,12 @@ func (p *DirectProducer) Stop() error {
 func (p *DirectProducer) Send(exchange *Exchange) error {
 	p.endpoint.mu.RLock()
 	consumer := p.endpoint.consumer
-	if consumer != nil {
-		consumer.inFlight.Add(1)
+	if consumer == nil || !consumer.started {
+		p.endpoint.mu.RUnlock()
+		return fmt.Errorf("no consumers available on endpoint: %s", RedactURI(p.endpoint.uri))
 	}
+	consumer.inFlight.Add(1)
 	p.endpoint.mu.RUnlock()
-
-	if consumer == nil {
-		return fmt.Errorf("no consumers available on endpoint: %s", p.endpoint.uri)
-	}
 	defer consumer.inFlight.Done()
 	err := ProcessSafely(consumer.processor, exchange)
 	if errors.Is(err, ErrStopRouting) && !isRouteStopRequested(exchange) {
@@ -131,19 +129,40 @@ func isRouteStopRequested(exchange *Exchange) bool {
 
 // DirectConsumer represents a direct consumer
 type DirectConsumer struct {
-	endpoint  *DirectEndpoint
-	processor Processor
-	inFlight  sync.WaitGroup
+	endpoint   *DirectEndpoint
+	processor  Processor
+	mu         sync.Mutex
+	transition chan struct{}
+	started    bool // guarded by endpoint.mu
+	inFlight   sync.WaitGroup
 }
 
-// Start starts the consumer
+// Start activates the consumer and registers it on the endpoint when restarted.
 func (c *DirectConsumer) Start(ctx context.Context) error {
+	acquireConsumerTransition(&c.mu, &c.transition)
+	defer releaseConsumerTransition(&c.mu, &c.transition)
+
+	c.endpoint.mu.Lock()
+	defer c.endpoint.mu.Unlock()
+
+	if c.endpoint.consumer != nil && c.endpoint.consumer != c {
+		return fmt.Errorf("multiple consumers for the same direct endpoint are not allowed: %s", RedactURI(c.endpoint.uri))
+	}
+	if c.started {
+		return fmt.Errorf("direct consumer is already running: %s", RedactURI(c.endpoint.uri))
+	}
+	c.endpoint.consumer = c
+	c.started = true
 	return nil
 }
 
 // Stop stops the consumer and waits for any in-flight synchronous sends to finish.
 func (c *DirectConsumer) Stop() error {
+	acquireConsumerTransition(&c.mu, &c.transition)
+	defer releaseConsumerTransition(&c.mu, &c.transition)
+
 	c.endpoint.mu.Lock()
+	c.started = false
 	if c.endpoint.consumer == c {
 		c.endpoint.consumer = nil
 	}

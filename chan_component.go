@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
-	"time"
 )
 
 // ChanComponent represents the native Go channel component.
@@ -44,16 +43,16 @@ func (c *ChanComponent) CreateEndpoint(uri string) (Endpoint, error) {
 		channelName = u.Opaque
 	}
 	if channelName == "" {
-		return nil, fmt.Errorf("channel name is required in URI: %s", uri)
+		return nil, fmt.Errorf("channel name is required in URI: %s", RedactURI(uri))
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if endpoint, exists := c.endpoints[channelName]; exists {
-		if endpoint.uri != uri {
+		if u.RawQuery != "" && endpoint.uri != uri {
 			LogWarn("chan endpoint already exists; URI parameters ignored",
-				"channel", channelName, "existing", endpoint.uri, "requested", uri)
+				"channel", channelName, "existing", RedactURI(endpoint.uri), "requested", RedactURI(uri))
 		}
 		return endpoint, nil
 	}
@@ -68,9 +67,12 @@ func (c *ChanComponent) CreateEndpoint(uri string) (Endpoint, error) {
 	}
 
 	endpoint := &ChanEndpoint{
-		uri:             uri,
-		queue:           make(chan *Exchange, bufferSize),
-		shutdownTimeout: parseShutdownTimeout(u, "chan"),
+		queueEndpointBase: queueEndpointBase{
+			uri:             uri,
+			queue:           make(chan *Exchange, bufferSize),
+			shutdownTimeout: parseShutdownTimeout(u, "chan"),
+			stopCh:          make(chan struct{}),
+		},
 	}
 	c.endpoints[channelName] = endpoint
 	return endpoint, nil
@@ -78,21 +80,7 @@ func (c *ChanComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 // ChanEndpoint represents a Go channel endpoint.
 type ChanEndpoint struct {
-	polling  int // guarded by mu; active Poll calls, mutually exclusive with a continuous consumer
-	uri      string
-	queue    chan *Exchange
-	consumer *ChanConsumer
-	// shutdownTimeout bounds draining queued exchanges at Stop.
-	shutdownTimeout time.Duration
-	mu              sync.Mutex
-	stopCh          chan struct{}  // closed when the consumer stops; nil until first Start
-	stopped         bool           // true after Stop until the next Start
-	senders         sync.WaitGroup // in-flight Send calls; Add is guarded by mu
-}
-
-// URI returns the endpoint URI.
-func (e *ChanEndpoint) URI() string {
-	return e.uri
+	queueEndpointBase
 }
 
 // CreateProducer creates a ChanProducer.
@@ -106,14 +94,18 @@ func (e *ChanEndpoint) CreateConsumer(processor Processor) (Consumer, error) {
 	defer e.mu.Unlock()
 
 	if e.consumer != nil || e.polling > 0 {
-		return nil, fmt.Errorf("multiple consumers for the same channel endpoint are not allowed: %s", e.uri)
+		return nil, fmt.Errorf("multiple consumers for the same channel endpoint are not allowed: %s", RedactURI(e.uri))
 	}
 
-	e.consumer = &ChanConsumer{
-		endpoint:  e,
-		processor: processor,
+	c := &ChanConsumer{
+		endpoint: e,
+		queueConsumerBase: queueConsumerBase{
+			base:      &e.queueEndpointBase,
+			processor: processor,
+		},
 	}
-	return e.consumer, nil
+	e.consumer = c
+	return c, nil
 }
 
 // ChanProducer writes exchanges to the channel.
@@ -133,70 +125,18 @@ func (p *ChanProducer) Stop() error {
 
 // Send writes the exchange to the Go channel.
 func (p *ChanProducer) Send(exchange *Exchange) error {
-	ctx := exchange.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	// Deep-copy the exchange: the consumer runs on its own goroutine and may
-	// mutate the body/headers concurrently with the sender. A shallow Copy()
-	// would share mutable bodies ([]byte, map, ...) between the two goroutines
-	// — a data race. DeepCopy duplicates the common mutable container types.
-	copy := exchange.DeepCopy()
-
-	stopCh, err := p.endpoint.beginSend()
-	if err != nil {
-		return err
-	}
-	defer p.endpoint.senders.Done()
-	select {
-	case p.endpoint.queue <- copy:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-stopCh:
-		return fmt.Errorf("chan: consumer stopped: %s", p.endpoint.uri)
-	}
-}
-
-func (e *ChanEndpoint) beginSend() (<-chan struct{}, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.stopped {
-		return nil, fmt.Errorf("chan: consumer stopped: %s", e.uri)
-	}
-	e.senders.Add(1)
-	return e.stopCh, nil
+	return p.endpoint.send("chan", exchange)
 }
 
 // ChanConsumer reads exchanges from the channel and passes them to the route.
 type ChanConsumer struct {
-	endpoint  *ChanEndpoint
-	processor Processor
-	cancel    context.CancelFunc
-	drain     chan struct{} // closed by Stop: finish the queued exchanges, then exit
-	wg        sync.WaitGroup
+	queueConsumerBase
+	endpoint *ChanEndpoint
 }
 
 // Start starts the channel polling worker.
 func (c *ChanConsumer) Start(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	c.cancel = cancel
-	drain := make(chan struct{})
-	c.drain = drain
-
-	c.endpoint.mu.Lock()
-	c.endpoint.stopped = false
-	c.endpoint.stopCh = make(chan struct{})
-	c.endpoint.mu.Unlock()
-
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		runQueueWorker(ctx, drain, c.endpoint.queue, c.processor, "chan consumer processing error", c.endpoint.uri)
-	}()
-
-	return nil
+	return c.queueConsumerBase.start(ctx, c, "chan", "channel", 1, "chan consumer processing error")
 }
 
 // Stop rejects new sends and unblocks producers waiting on a full queue, then
@@ -204,31 +144,5 @@ func (c *ChanConsumer) Start(ctx context.Context) error {
 // the parent context is cancelled first, leftover exchanges are discarded as
 // failures so they cannot leak after shutdown (see SedaConsumer.Stop).
 func (c *ChanConsumer) Stop() error {
-	c.endpoint.mu.Lock()
-	c.endpoint.stopped = true
-	if c.endpoint.stopCh != nil {
-		select {
-		case <-c.endpoint.stopCh:
-		default:
-			close(c.endpoint.stopCh)
-		}
-	}
-	c.endpoint.mu.Unlock()
-
-	// Every Send that passed beginSend either enqueued or observed stopCh.
-	// Wait for them before the worker/drain touch the queue, so no exchange
-	// can be enqueued after the final drain.
-	c.endpoint.senders.Wait()
-
-	stopQueueWorkers(c.drain, &c.wg, c.cancel, c.endpoint.shutdownTimeout)
-	c.drain = nil
-
-	c.endpoint.mu.Lock()
-	if c.endpoint.consumer == c {
-		c.endpoint.consumer = nil
-	}
-	c.endpoint.mu.Unlock()
-
-	drainExchangeQueue(c.endpoint.queue, fmt.Errorf("chan: discarded because the consumer stopped"))
-	return nil
+	return c.queueConsumerBase.stop(c, "chan")
 }

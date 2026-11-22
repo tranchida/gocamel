@@ -56,7 +56,7 @@ func (c *NetComponent) CreateEndpoint(uri string) (Endpoint, error) {
 
 	protocol, address, err := netTarget(u)
 	if err != nil {
-		return nil, fmt.Errorf("invalid net URI %q: %w", uri, err)
+		return nil, fmt.Errorf("invalid net URI %q: %w", RedactURI(uri), err)
 	}
 
 	endpoint := &NetEndpoint{
@@ -316,6 +316,7 @@ type NetConsumer struct {
 	started    bool
 	conns      map[net.Conn]struct{}
 	stop       chan struct{}
+	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 
 	listener   net.Listener
@@ -326,26 +327,12 @@ type NetConsumer struct {
 // acquireTransition waits for an in-progress Start/Stop and claims the next
 // transition. It never holds c.mu while waiting.
 func (c *NetConsumer) acquireTransition() {
-	for {
-		c.mu.Lock()
-		if c.transition != nil {
-			done := c.transition
-			c.mu.Unlock()
-			<-done
-			continue
-		}
-		c.transition = make(chan struct{})
-		c.mu.Unlock()
-		return
-	}
+	acquireConsumerTransition(&c.mu, &c.transition)
 }
 
 // releaseTransition publishes the final state and wakes Start/Stop waiters.
 func (c *NetConsumer) releaseTransition() {
-	c.mu.Lock()
-	close(c.transition)
-	c.transition = nil
-	c.mu.Unlock()
+	releaseConsumerTransition(&c.mu, &c.transition)
 }
 
 // Address returns the address the consumer is bound to. Useful when the URI
@@ -374,42 +361,47 @@ func (c *NetConsumer) Start(ctx context.Context) error {
 	c.mu.Unlock()
 
 	stop := make(chan struct{})
+	runCtx, cancel := context.WithCancel(ctx)
 
 	if c.endpoint.protocol == "udp" {
 		pc, err := net.ListenPacket("udp", c.endpoint.address)
 		if err != nil {
+			cancel()
 			return fmt.Errorf("net: error listening on udp://%s: %w", c.endpoint.address, err)
 		}
 		c.mu.Lock()
 		c.started = true
 		c.stop = stop
+		c.cancel = cancel
 		c.packetConn = pc
 		c.addr = pc.LocalAddr()
 		c.wg.Add(1)
 		c.mu.Unlock()
-		go c.runUDP(ctx, pc, stop)
+		go c.runUDP(runCtx, pc, stop)
 		return nil
 	}
 
 	ln, err := net.Listen("tcp", c.endpoint.address)
 	if err != nil {
+		cancel()
 		return fmt.Errorf("net: error listening on tcp://%s: %w", c.endpoint.address, err)
 	}
 	c.mu.Lock()
 	c.started = true
 	c.stop = stop
+	c.cancel = cancel
 	c.listener = ln
 	c.addr = ln.Addr()
 	c.conns = make(map[net.Conn]struct{})
 	c.wg.Add(1)
 	c.mu.Unlock()
-	go c.acceptLoop(ctx, ln, stop)
+	go c.acceptLoop(runCtx, ln, stop)
 	return nil
 }
 
 // Stop gracefully shuts the consumer down: it stops accepting, closes the
-// listener and every tracked connection, and waits for the goroutines to
-// unwind. Safe to call multiple times.
+// listener and every tracked connection, cancels in-flight exchange contexts,
+// and waits for the goroutines to unwind. Safe to call multiple times.
 func (c *NetConsumer) Stop() error {
 	c.acquireTransition()
 	defer c.releaseTransition()
@@ -419,12 +411,16 @@ func (c *NetConsumer) Stop() error {
 		c.mu.Unlock()
 		return nil
 	}
+	cancel := c.cancel
+	c.cancel = nil
 	close(c.stop)
 	if c.listener != nil {
 		_ = c.listener.Close()
+		c.listener = nil
 	}
 	if c.packetConn != nil {
 		_ = c.packetConn.Close()
+		c.packetConn = nil
 	}
 	for conn := range c.conns {
 		_ = conn.Close()
@@ -432,6 +428,9 @@ func (c *NetConsumer) Stop() error {
 	c.started = false
 	c.mu.Unlock()
 
+	if cancel != nil {
+		cancel()
+	}
 	c.wg.Wait()
 	return nil
 }
@@ -519,6 +518,11 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn, stop <-chan
 		if c.endpoint.textline {
 			resp = withLineDelimiter(resp)
 		}
+		if c.endpoint.timeout > 0 {
+			if err := conn.SetWriteDeadline(time.Now().Add(c.endpoint.timeout)); err != nil {
+				return err
+			}
+		}
 		_, err := conn.Write(resp)
 		return err
 	}
@@ -553,10 +557,12 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn, stop <-chan
 
 		switch {
 		case err == nil:
-			c.processMessage(ctx, msg, conn.RemoteAddr().String(), writeReply)
+			if c.processMessage(ctx, msg, conn.RemoteAddr().String(), writeReply) != nil {
+				return
+			}
 		case len(msg) > 0 && errors.Is(err, io.EOF):
 			// Final unterminated line: process it, then close.
-			c.processMessage(ctx, msg, conn.RemoteAddr().String(), writeReply)
+			_ = c.processMessage(ctx, msg, conn.RemoteAddr().String(), writeReply)
 			return
 		case errors.Is(err, io.EOF), errors.Is(err, net.ErrClosed):
 			// Normal close, or the connection was closed by Stop.
@@ -565,13 +571,13 @@ func (c *NetConsumer) handleConn(ctx context.Context, conn net.Conn, stop <-chan
 			// Line longer than bufferSize: protocol error. Dropping the
 			// connection instead of buffering unbounded data.
 			LogWarn("net: message exceeds bufferSize; closing connection",
-				"uri", c.endpoint.uri,
+				"uri", RedactURI(c.endpoint.uri),
 				"remote", conn.RemoteAddr().String(),
 				"limit", c.endpoint.bufferSize)
 			return
 		default:
 			LogError("net: error reading from connection",
-				"uri", c.endpoint.uri,
+				"uri", RedactURI(c.endpoint.uri),
 				"remote", conn.RemoteAddr().String(),
 				"error", err)
 			return
@@ -589,14 +595,16 @@ func withLineDelimiter(b []byte) []byte {
 }
 
 // readTextLine reads one newline-terminated line, stripped of its trailing
-// \n and optional \r. An unterminated final line yields io.EOF alongside the
-// data; a line longer than the reader buffer yields bufio.ErrBufferFull.
+// \n and optional \r. The returned slice is cloned so callers cannot alias or
+// overwrite bufio.Reader's internal buffer. An unterminated final line yields
+// io.EOF alongside the data; a line longer than the reader buffer yields
+// bufio.ErrBufferFull.
 func readTextLine(r *bufio.Reader) ([]byte, error) {
 	line, err := r.ReadSlice('\n')
 	if errors.Is(err, bufio.ErrBufferFull) {
 		return nil, bufio.ErrBufferFull
 	}
-	return bytes.TrimRight(line, "\r\n"), err
+	return bytes.Clone(bytes.TrimRight(line, "\r\n")), err
 }
 
 // runUDP reads datagrams and runs the route for each. Each datagram is one
@@ -620,14 +628,19 @@ func (c *NetConsumer) runUDP(ctx context.Context, pc net.PacketConn, stop <-chan
 			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
 				return
 			}
-			LogError("net: UDP read error", "uri", c.endpoint.uri, "error", err)
+			LogError("net: UDP read error", "uri", RedactURI(c.endpoint.uri), "error", err)
 			continue
 		}
 
 		// Copy: buf is reused for the next datagram.
 		msg := make([]byte, n)
 		copy(msg, buf[:n])
-		c.processMessage(ctx, msg, remote.String(), func(resp []byte) error {
+		_ = c.processMessage(ctx, msg, remote.String(), func(resp []byte) error {
+			if c.endpoint.timeout > 0 {
+				if err := pc.SetWriteDeadline(time.Now().Add(c.endpoint.timeout)); err != nil {
+					return err
+				}
+			}
 			_, err := pc.WriteTo(resp, remote)
 			return err
 		})
@@ -636,9 +649,10 @@ func (c *NetConsumer) runUDP(ctx context.Context, pc net.PacketConn, stop <-chan
 
 // processMessage builds an exchange from a received message, runs the route
 // through the consumer's processor, and — in sync mode — delivers the route's
-// response via sendReply. Panics in user processors are contained by
-// safeProcess so a misbehaving route cannot crash the consumer.
-func (c *NetConsumer) processMessage(ctx context.Context, msg []byte, remote string, sendReply func([]byte) error) {
+// response via sendReply. It returns any sendReply error so TCP handlers can
+// tear down failed or timed-out connections. Panics in user processors are
+// contained by safeProcess so a misbehaving route cannot crash the consumer.
+func (c *NetConsumer) processMessage(ctx context.Context, msg []byte, remote string, sendReply func([]byte) error) error {
 	exchange := NewExchange(ctx)
 	exchange.SetBody(msg)
 	exchange.GetIn().SetHeader(CamelNetRemoteAddress, remote)
@@ -647,14 +661,14 @@ func (c *NetConsumer) processMessage(ctx context.Context, msg []byte, remote str
 	err := safeProcess(func() error { return c.processor.Process(exchange) })
 	if err := CompleteExchange(exchange, err); err != nil {
 		LogError("net consumer route error",
-			"uri", c.endpoint.uri,
+			"uri", RedactURI(c.endpoint.uri),
 			"exchange_id", exchange.ID,
 			"remote", remote,
 			"error", err)
-		return
+		return nil
 	}
 	if !c.endpoint.sync {
-		return
+		return nil
 	}
 
 	// Response: Out if set, otherwise In (Apache Camel InOut semantics).
@@ -665,14 +679,16 @@ func (c *NetConsumer) processMessage(ctx context.Context, msg []byte, remote str
 	case string:
 		payload = []byte(body)
 	case nil:
-		return
+		return nil
 	default:
 		payload = []byte(fmt.Sprintf("%v", body))
 	}
 	if err := sendReply(payload); err != nil {
 		LogError("net: error writing reply",
-			"uri", c.endpoint.uri,
+			"uri", RedactURI(c.endpoint.uri),
 			"remote", remote,
 			"error", err)
+		return err
 	}
+	return nil
 }
