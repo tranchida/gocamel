@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,9 +35,10 @@ const (
 // All CronEndpoints created from the same CronComponent share
 // a single scheduler instance (Apache Camel behavior).
 type CronComponent struct {
-	mu        sync.Mutex
-	scheduler *cron.Cron
-	started   bool
+	mu         sync.Mutex
+	scheduler  *cron.Cron
+	started    bool
+	activeJobs int
 }
 
 // NewCronComponent creates a CronComponent with a shared scheduler.
@@ -73,31 +76,55 @@ func (c *CronComponent) ensureStarted() {
 	}
 }
 
-func (c *CronComponent) addJob(spec string, cmd cron.Job) (cron.EntryID, error) {
+func (c *CronComponent) addJob(spec string, cmd cron.Job) (*cron.Cron, cron.EntryID, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	id, err := c.scheduler.AddJob(spec, cmd)
+	sched := c.scheduler
+	id, err := sched.AddJob(spec, cmd)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
+	c.activeJobs++
 	if !c.started {
-		c.scheduler.Start()
+		sched.Start()
 		c.started = true
 	}
-	return id, nil
+	return sched, id, nil
 }
 
-func (c *CronComponent) removeJob(id cron.EntryID) {
-	c.mu.Lock()
-	sched := c.scheduler
-	c.mu.Unlock()
+func (c *CronComponent) removeJob(sched *cron.Cron, id cron.EntryID) {
+	if sched == nil {
+		return
+	}
 	sched.Remove(id)
+
+	c.mu.Lock()
+	if sched != c.scheduler {
+		c.mu.Unlock()
+		return
+	}
+	if c.activeJobs > 0 {
+		c.activeJobs--
+	}
+	var stopCtx context.Context
+	if c.activeJobs == 0 && c.started {
+		// Rotate to a fresh scheduler and stop the idle one so no background
+		// goroutine remains running once all jobs have been removed.
+		c.scheduler = cron.New(cron.WithSeconds())
+		c.started = false
+		stopCtx = sched.Stop()
+	}
+	c.mu.Unlock()
+
+	if stopCtx != nil {
+		<-stopCtx.Done()
+	}
 }
 
-func (c *CronComponent) entry(id cron.EntryID) cron.Entry {
-	c.mu.Lock()
-	sched := c.scheduler
-	c.mu.Unlock()
+func (c *CronComponent) entry(sched *cron.Cron, id cron.EntryID) cron.Entry {
+	if sched == nil {
+		return cron.Entry{}
+	}
 	return sched.Entry(id)
 }
 
@@ -111,6 +138,7 @@ func (c *CronComponent) Stop() error {
 	sched := c.scheduler
 	c.scheduler = cron.New(cron.WithSeconds())
 	c.started = false
+	c.activeJobs = 0
 	stopCtx := sched.Stop()
 	c.mu.Unlock()
 
@@ -136,6 +164,28 @@ func (c *CronComponent) Stop() error {
 //	deleteJob             Remove the job on stop (default: true)
 //	pauseJob              Pause instead of removing (default: false)
 //	stateful              Prevent concurrent executions (default: false)
+const maxDurationMillis = math.MaxInt64 / int64(time.Millisecond)
+
+func parseCronBoolOption(q url.Values, key string, defaultVal bool) (bool, error) {
+	s := q.Get(key)
+	if s == "" {
+		return defaultVal, nil
+	}
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return false, fmt.Errorf("invalid boolean value %q for %s: %w", s, key, err)
+	}
+	return b, nil
+}
+
+func hasTZPrefix(spec string) bool {
+	return strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=")
+}
+
+func hasUnspacedTZPrefix(spec string) bool {
+	return hasTZPrefix(spec) && !strings.Contains(spec, " ")
+}
+
 func (c *CronComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	u, err := gocamel.ParseURI(uri)
 	if err != nil {
@@ -158,49 +208,78 @@ func (c *CronComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 	// triggerStartDelay in milliseconds (default 500ms)
 	triggerStartDelay := 500 * time.Millisecond
 	if s := q.Get("triggerStartDelay"); s != "" {
-		if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
-			triggerStartDelay = time.Duration(ms) * time.Millisecond
+		ms, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || ms < 0 || ms > maxDurationMillis {
+			return nil, fmt.Errorf("invalid triggerStartDelay %q: must be a non-negative integer within duration range", s)
 		}
+		triggerStartDelay = time.Duration(ms) * time.Millisecond
 	}
 
 	// repeatCount: -1 = infinite
 	repeatCount := int64(-1)
 	if s := q.Get("trigger.repeatCount"); s != "" {
-		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			repeatCount = n
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || n < -1 {
+			return nil, fmt.Errorf("invalid trigger.repeatCount %q: must be an integer >= -1", s)
 		}
+		repeatCount = n
 	}
 
 	// repeatInterval in milliseconds (SimpleTrigger)
 	repeatInterval := int64(0)
 	if s := q.Get("trigger.repeatInterval"); s != "" {
-		if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
-			repeatInterval = ms
+		ms, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || ms <= 0 || ms > maxDurationMillis {
+			return nil, fmt.Errorf("invalid trigger.repeatInterval %q: must be a positive integer within duration range", s)
 		}
+		repeatInterval = ms
+	}
+
+	deleteJob, err := parseCronBoolOption(q, "deleteJob", true)
+	if err != nil {
+		return nil, err
+	}
+	pauseJob, err := parseCronBoolOption(q, "pauseJob", false)
+	if err != nil {
+		return nil, err
+	}
+	stateful, err := parseCronBoolOption(q, "stateful", false)
+	if err != nil {
+		return nil, err
 	}
 
 	// Spaces in cron expressions are encoded as "+" in URIs
 	cronExpr := strings.ReplaceAll(q.Get("cron"), "+", " ")
-
-	// Validate the cron expression eagerly so an invalid schedule fails the
-	// route at Build time instead of silently failing when the job is added
-	// to the scheduler (fail-fast, no fail-open).
-	if cronExpr != "" {
-		if _, err := specParser.Parse(cronExpr); err != nil {
-			return nil, fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
-		}
-	}
 
 	// Validate the timezone eagerly. Whitespace is rejected explicitly: the
 	// timezone is later prepended to the cron spec as "TZ=<tz> <spec>", where
 	// a space would corrupt the expression.
 	timezone := q.Get("trigger.timeZone")
 	if timezone != "" {
-		if strings.ContainsAny(timezone, " \t") {
+		if strings.ContainsAny(timezone, " \t\r\n") {
 			return nil, fmt.Errorf("invalid trigger.timeZone %q: whitespace not allowed", timezone)
 		}
 		if _, err := time.LoadLocation(timezone); err != nil {
 			return nil, fmt.Errorf("invalid trigger.timeZone %q: %w", timezone, err)
+		}
+	}
+
+	// Validate the combined cron expression eagerly so an invalid schedule or an
+	// unspaced TZ=/CRON_TZ= prefix (which panics inside robfig/cron) fails the
+	// route at Build time instead of panicking or failing open later.
+	if cronExpr != "" {
+		if hasUnspacedTZPrefix(cronExpr) {
+			return nil, fmt.Errorf("invalid cron expression %q: missing space and schedule after timezone prefix", cronExpr)
+		}
+		spec := cronExpr
+		if timezone != "" {
+			if hasTZPrefix(cronExpr) {
+				return nil, fmt.Errorf("invalid cron expression %q: cannot combine inline timezone with trigger.timeZone", cronExpr)
+			}
+			spec = "TZ=" + timezone + " " + cronExpr
+		}
+		if _, err := specParser.Parse(spec); err != nil {
+			return nil, fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 		}
 	}
 
@@ -213,9 +292,9 @@ func (c *CronComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		repeatInterval:    repeatInterval,
 		repeatCount:       repeatCount,
 		triggerStartDelay: triggerStartDelay,
-		deleteJob:         q.Get("deleteJob") != "false",
-		pauseJob:          q.Get("pauseJob") == "true",
-		stateful:          q.Get("stateful") == "true",
+		deleteJob:         deleteJob,
+		pauseJob:          pauseJob,
+		stateful:          stateful,
 		component:         c,
 	}, nil
 }
@@ -265,9 +344,12 @@ type CronConsumer struct {
 	processor gocamel.Processor
 
 	// CronTrigger: entry in the shared scheduler
-	mu      sync.Mutex
-	entryID cron.EntryID
-	added   bool
+	mu         sync.Mutex
+	transition chan struct{}
+	started    bool
+	sched      *cron.Cron
+	entryID    cron.EntryID
+	added      bool
 
 	// Shared state
 	fireCount    atomic.Int64              // fire count (refireCount header)
@@ -312,8 +394,47 @@ func (c *CronConsumer) buildSpec() (string, error) {
 	}
 }
 
+// acquireTransition waits for an in-progress Start/Stop and claims the next
+// transition. It never holds c.mu while waiting.
+func (c *CronConsumer) acquireTransition() {
+	for {
+		c.mu.Lock()
+		if c.transition != nil {
+			done := c.transition
+			c.mu.Unlock()
+			<-done
+			continue
+		}
+		c.transition = make(chan struct{})
+		c.mu.Unlock()
+		return
+	}
+}
+
+// releaseTransition wakes any Start/Stop waiters after the transition finishes.
+func (c *CronConsumer) releaseTransition() {
+	c.mu.Lock()
+	close(c.transition)
+	c.transition = nil
+	c.mu.Unlock()
+}
+
 // Start starts the cron consumer.
 func (c *CronConsumer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.acquireTransition()
+	defer c.releaseTransition()
+
+	c.mu.Lock()
+	if c.started {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
+
 	ep := c.endpoint
 	if ep.cronExpr != "" {
 		return c.startCronTrigger(ctx)
@@ -331,7 +452,7 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	gCtx, cancel := context.WithCancel(ctx)
 	ep := c.endpoint
 
 	c.mu.Lock()
@@ -341,17 +462,26 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 	c.cancel = cancel
 	c.stopped = false
 	c.paused.Store(false)
-	var oldID cron.EntryID
+	c.fireCount.Store(0)
+	c.prevFireTime.Store(nil)
+	c.started = true
+	var (
+		oldSched *cron.Cron
+		oldID    cron.EntryID
+	)
 	wasAdded := c.added
 	if wasAdded {
+		oldSched = c.sched
 		oldID = c.entryID
+		c.sched = nil
+		c.entryID = 0
 		c.added = false
 	}
 	c.startWG.Add(1)
 	c.mu.Unlock()
 
 	if wasAdded {
-		ep.component.removeJob(oldID)
+		ep.component.removeJob(oldSched, oldID)
 	}
 
 	jobFn := func() {
@@ -360,13 +490,14 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 			c.mu.Unlock()
 			return
 		}
+		sched := c.sched
 		entryID := c.entryID
 		c.jobsWG.Add(1)
 		c.mu.Unlock()
 		defer c.jobsWG.Done()
 
 		now := time.Now()
-		entry := ep.component.entry(entryID)
+		entry := ep.component.entry(sched, entryID)
 
 		var prevTime time.Time
 		if p := c.prevFireTime.Load(); p != nil {
@@ -375,7 +506,7 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 
 		n := c.fireCount.Add(1)
 
-		exchange := gocamel.NewExchange(ctx)
+		exchange := gocamel.NewExchange(gCtx)
 		exchange.GetIn().SetHeader(CronFireTime, now)
 		exchange.GetIn().SetHeader(CronScheduledFireTime, entry.Prev)
 		exchange.GetIn().SetHeader(CronNextFireTime, entry.Next)
@@ -397,30 +528,36 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 		job = cron.NewChain(cron.SkipIfStillRunning(cron.DefaultLogger)).Then(job)
 	}
 
-	gCtx := ctx
-
 	go func() {
 		defer c.startWG.Done()
 
-		select {
-		case <-time.After(ep.triggerStartDelay):
-		case <-gCtx.Done():
+		if ep.triggerStartDelay > 0 {
+			timer := time.NewTimer(ep.triggerStartDelay)
+			select {
+			case <-timer.C:
+			case <-gCtx.Done():
+				timer.Stop()
+				return
+			}
+		} else if gCtx.Err() != nil {
 			return
 		}
 
-		// The add and the stopped/paused flags are decided under the same mutex
-		// Stop() holds, so a Stop() that raced this goroutine is honoured here.
+		// The add and the stopped/paused/ctx state are decided under the same
+		// mutex Stop() holds, so a Stop() or cancelled ctx racing this goroutine
+		// is honoured before registering on the shared scheduler.
 		c.mu.Lock()
-		if c.stopped || c.paused.Load() {
+		if c.stopped || c.paused.Load() || gCtx.Err() != nil {
 			c.mu.Unlock()
 			return
 		}
-		entryID, err := ep.component.addJob(spec, job)
+		sched, entryID, err := ep.component.addJob(spec, job)
 		if err != nil {
 			gocamel.LogError("Cron job add error", "group", ep.group, "name", ep.name, "error", err)
 			c.mu.Unlock()
 			return
 		}
+		c.sched = sched
 		c.entryID = entryID
 		c.added = true
 		c.mu.Unlock()
@@ -433,6 +570,17 @@ func (c *CronConsumer) startCronTrigger(ctx context.Context) error {
 // Unlike robfig/cron, this approach supports sub-second intervals.
 func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 	ep := c.endpoint
+	if ep.repeatCount == 0 {
+		c.mu.Lock()
+		c.stopped = false
+		c.paused.Store(false)
+		c.fireCount.Store(0)
+		c.prevFireTime.Store(nil)
+		c.started = true
+		c.mu.Unlock()
+		return nil
+	}
+
 	interval := time.Duration(ep.repeatInterval) * time.Millisecond
 
 	gCtx, cancel := context.WithCancel(ctx)
@@ -443,6 +591,9 @@ func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 	c.cancel = cancel
 	c.stopped = false
 	c.paused.Store(false)
+	c.fireCount.Store(0)
+	c.prevFireTime.Store(nil)
+	c.started = true
 	c.startWG.Add(1)
 	c.mu.Unlock()
 
@@ -450,9 +601,15 @@ func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 		defer c.startWG.Done()
 		defer cancel()
 
-		select {
-		case <-time.After(ep.triggerStartDelay):
-		case <-gCtx.Done():
+		if ep.triggerStartDelay > 0 {
+			timer := time.NewTimer(ep.triggerStartDelay)
+			select {
+			case <-timer.C:
+			case <-gCtx.Done():
+				timer.Stop()
+				return
+			}
+		} else if gCtx.Err() != nil {
 			return
 		}
 
@@ -460,9 +617,12 @@ func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 		defer ticker.Stop()
 
 		for {
+			if gCtx.Err() != nil {
+				return
+			}
 			select {
 			case tickTime := <-ticker.C:
-				c.fireSimpleJob(ctx, gCtx, tickTime)
+				c.fireSimpleJob(gCtx, cancel, tickTime)
 			case <-gCtx.Done():
 				return
 			}
@@ -473,7 +633,7 @@ func (c *CronConsumer) startSimpleTrigger(ctx context.Context) error {
 }
 
 // fireSimpleJob executes the processor for a SimpleTrigger fire.
-func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
+func (c *CronConsumer) fireSimpleJob(gCtx context.Context, cancel context.CancelFunc, now time.Time) {
 	c.mu.Lock()
 	if c.stopped || c.paused.Load() {
 		c.mu.Unlock()
@@ -488,22 +648,12 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 	// Handle repeatCount
 	n := c.fireCount.Add(1)
 	if ep.repeatCount >= 0 && n > ep.repeatCount {
+		cancel()
 		return
 	}
 	if ep.repeatCount >= 0 && n == ep.repeatCount {
-		// Last authorized trigger: stop the ticker after execution
-		defer func() {
-			select {
-			case <-gCtx.Done(): // already cancelled
-			default:
-				c.mu.Lock()
-				cancel := c.cancel
-				c.mu.Unlock()
-				if cancel != nil {
-					cancel()
-				}
-			}
-		}()
+		// Last authorized trigger: stop the ticker after execution via this run's local cancel.
+		defer cancel()
 	}
 
 	var prevTime time.Time
@@ -513,7 +663,7 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 
 	nextFireTime := now.Add(time.Duration(ep.repeatInterval) * time.Millisecond)
 
-	exchange := gocamel.NewExchange(ctx)
+	exchange := gocamel.NewExchange(gCtx)
 	exchange.GetIn().SetHeader(CronFireTime, now)
 	exchange.GetIn().SetHeader(CronScheduledFireTime, now)
 	exchange.GetIn().SetHeader(CronNextFireTime, nextFireTime)
@@ -532,8 +682,16 @@ func (c *CronConsumer) fireSimpleJob(ctx, gCtx context.Context, now time.Time) {
 
 // Stop stops the consumer according to the deleteJob / pauseJob options.
 func (c *CronConsumer) Stop() error {
+	c.acquireTransition()
+	defer c.releaseTransition()
+
 	c.mu.Lock()
+	if !c.started {
+		c.mu.Unlock()
+		return nil
+	}
 	pause := c.endpoint.pauseJob
+	deleteOnStop := c.endpoint.deleteJob
 	if pause {
 		c.paused.Store(true)
 	} else {
@@ -548,15 +706,21 @@ func (c *CronConsumer) Stop() error {
 	}
 	c.startWG.Wait()
 
-	if !pause {
+	if !pause && deleteOnStop {
 		c.mu.Lock()
-		added, entryID := c.added, c.entryID
+		added, sched, entryID := c.added, c.sched, c.entryID
 		c.added = false
+		c.sched = nil
+		c.entryID = 0
 		c.mu.Unlock()
 		if added {
-			c.endpoint.component.removeJob(entryID)
+			c.endpoint.component.removeJob(sched, entryID)
 		}
 	}
 	c.jobsWG.Wait()
+
+	c.mu.Lock()
+	c.started = false
+	c.mu.Unlock()
 	return nil
 }

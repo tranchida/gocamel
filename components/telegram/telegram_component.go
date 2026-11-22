@@ -2,10 +2,12 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,9 +50,11 @@ func (c *TelegramComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error)
 
 	allowHeaderOverride := false
 	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			allowHeaderOverride = b
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowHeaderOverride value %q: %w", v, err)
 		}
+		allowHeaderOverride = b
 	}
 
 	return &TelegramEndpoint{
@@ -76,23 +80,121 @@ func (e *TelegramEndpoint) URI() string {
 	return gocamel.RedactURI(e.uri)
 }
 
-func (e *TelegramEndpoint) getBot() (*tgbotapi.BotAPI, error) {
-	token := gocamel.GetConfigValue(e.url, "authorizationToken")
+// defaultTelegramHTTPTimeout bounds Telegram Bot API HTTP calls while remaining
+// comfortably above the 60s long-polling timeout used by GetUpdates.
+const defaultTelegramHTTPTimeout = 75 * time.Second
+
+type telegramHTTPClient struct {
+	client *http.Client
+	token  string
+	ctx    context.Context
+}
+
+func (c *telegramHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if req.URL == nil || req.URL.Scheme != "https" || req.URL.Host != "api.telegram.org" {
+		return nil, fmt.Errorf("unexpected Telegram API target")
+	}
+	if c.ctx != nil {
+		req = req.Clone(c.ctx)
+	}
+	resp, err := c.client.Do(req) // #nosec G704 -- URL scheme/host locked to https://api.telegram.org and token validated against URL delimiter injection
+	if err != nil {
+		return resp, redactTelegramError(err, c.token)
+	}
+	return resp, nil
+}
+
+func validateBotToken(token string) error {
 	if token == "" {
-		return nil, fmt.Errorf("authorizationToken missing for Telegram")
+		return fmt.Errorf("authorizationToken missing for Telegram")
+	}
+	for i := 0; i < len(token); i++ {
+		b := token[i]
+		if b <= 0x20 || b == 0x7f {
+			return fmt.Errorf("invalid authorizationToken: whitespace and control characters are not allowed")
+		}
+		switch b {
+		case '/', '\\', '?', '#', '@':
+			return fmt.Errorf("invalid authorizationToken: URL delimiter characters are not allowed")
+		}
+	}
+	return nil
+}
+
+type redactedTelegramError struct {
+	msg string
+	err error
+}
+
+func (e *redactedTelegramError) Error() string { return e.msg }
+func (e *redactedTelegramError) Unwrap() error { return e.err }
+
+func redactTelegramToken(s, token string) string {
+	if token == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, token, "xxxxx")
+	if escaped := url.PathEscape(token); escaped != "" && escaped != token {
+		s = strings.ReplaceAll(s, escaped, "xxxxx")
+	}
+	if queryEscaped := url.QueryEscape(token); queryEscaped != "" && queryEscaped != token {
+		s = strings.ReplaceAll(s, queryEscaped, "xxxxx")
+	}
+	return s
+}
+
+func redactTelegramError(err error, token string) error {
+	if err == nil || token == "" {
+		return err
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		cp := *urlErr
+		cp.URL = redactTelegramToken(cp.URL, token)
+		if cp.Err != nil {
+			cp.Err = redactTelegramError(cp.Err, token)
+		}
+		return &cp
+	}
+	msg := redactTelegramToken(err.Error(), token)
+	if msg == err.Error() {
+		return err
+	}
+	var cause error
+	switch {
+	case errors.Is(err, context.Canceled):
+		cause = context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		cause = context.DeadlineExceeded
+	}
+	return &redactedTelegramError{msg: msg, err: cause}
+}
+
+func (e *TelegramEndpoint) newHTTPClient(ctx context.Context, token string) *telegramHTTPClient {
+	base := e.httpClient
+	if base == nil {
+		base = &http.Client{Timeout: defaultTelegramHTTPTimeout}
+	}
+	return &telegramHTTPClient{
+		client: base,
+		token:  token,
+		ctx:    ctx,
+	}
+}
+
+func (e *TelegramEndpoint) getBot() (*tgbotapi.BotAPI, error) {
+	return e.getBotWithContext(context.Background())
+}
+
+func (e *TelegramEndpoint) getBotWithContext(ctx context.Context) (*tgbotapi.BotAPI, error) {
+	token := gocamel.GetConfigValue(e.url, "authorizationToken")
+	if err := validateBotToken(token); err != nil {
+		return nil, err
 	}
 
-	var (
-		bot *tgbotapi.BotAPI
-		err error
-	)
-	if e.httpClient != nil {
-		bot, err = tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, e.httpClient)
-	} else {
-		bot, err = tgbotapi.NewBotAPI(token)
-	}
+	bot, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, e.newHTTPClient(ctx, token))
 	if err != nil {
-		return nil, fmt.Errorf("error creating the Telegram bot: %w", err)
+		return nil, fmt.Errorf("error creating the Telegram bot: %w", redactTelegramError(err, token))
 	}
 
 	return bot, nil
@@ -119,20 +221,36 @@ type TelegramProducer struct {
 	bot      *tgbotapi.BotAPI
 	mu       sync.Mutex
 	stopped  bool
+	gen      uint64
 }
 
 func (p *TelegramProducer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.bot != nil && !p.stopped {
+		p.mu.Unlock()
 		return nil
 	}
-	bot, err := p.endpoint.getBot()
+	p.stopped = false
+	p.gen++
+	startGen := p.gen
+	p.mu.Unlock()
+
+	bot, err := p.endpoint.getBotWithContext(ctx)
 	if err != nil {
 		return err
 	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped || p.gen != startGen {
+		return fmt.Errorf("telegram producer stopped during start")
+	}
+	bot.Client = nil
 	p.bot = bot
-	p.stopped = false
 	return nil
 }
 
@@ -141,27 +259,60 @@ func (p *TelegramProducer) Stop() error {
 	defer p.mu.Unlock()
 	p.bot = nil
 	p.stopped = true
+	p.gen++
 	return nil
 }
 
-func (p *TelegramProducer) getBot() (*tgbotapi.BotAPI, error) {
+func (p *TelegramProducer) getBot(ctx context.Context) (*tgbotapi.BotAPI, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	p.mu.Lock()
+	if p.stopped {
+		p.mu.Unlock()
+		return nil, fmt.Errorf("telegram producer is stopped")
+	}
+	if p.bot != nil {
+		bot := p.bot
+		p.mu.Unlock()
+		return bot, nil
+	}
+	startGen := p.gen
+	p.mu.Unlock()
+
+	bot, err := p.endpoint.getBotWithContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.stopped {
 		return nil, fmt.Errorf("telegram producer is stopped")
 	}
-	if p.bot != nil {
-		return p.bot, nil
+	if p.gen != startGen {
+		if p.bot != nil {
+			return p.bot, nil
+		}
+		return nil, fmt.Errorf("telegram producer is stopped")
 	}
-	bot, err := p.endpoint.getBot()
-	if err != nil {
-		return nil, err
+	if p.bot == nil {
+		bot.Client = nil
+		p.bot = bot
 	}
-	p.bot = bot
-	return bot, nil
+	return p.bot, nil
 }
 
 func (p *TelegramProducer) Send(exchange *gocamel.Exchange) error {
+	if exchange == nil {
+		return fmt.Errorf("telegram: exchange cannot be nil")
+	}
+	ctx := exchange.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	p.mu.Lock()
 	stopped := p.stopped
 	p.mu.Unlock()
@@ -180,13 +331,18 @@ func (p *TelegramProducer) Send(exchange *gocamel.Exchange) error {
 
 	text := messageText(exchange.GetIn().GetBody())
 
-	bot, err := p.getBot()
+	bot, err := p.getBot(ctx)
 	if err != nil {
 		return err
 	}
 
-	if _, err := bot.Send(tgbotapi.NewMessage(chatID, text)); err != nil {
-		return fmt.Errorf("error sending the Telegram message: %w", err)
+	// Copy BotAPI value per call so each Send uses its own exchange.Context
+	// without mutating shared bot.Client state across concurrent senders.
+	callBot := *bot
+	callBot.Client = p.endpoint.newHTTPClient(ctx, bot.Token)
+
+	if _, err := callBot.Send(tgbotapi.NewMessage(chatID, text)); err != nil {
+		return fmt.Errorf("error sending the Telegram message: %w", redactTelegramError(err, bot.Token))
 	}
 
 	return nil
@@ -248,12 +404,11 @@ type TelegramConsumer struct {
 	// transition is non-nil while a Start or Stop is in progress. It serializes
 	// the two operations so a Stop racing a Start cannot observe started=false
 	// and return before the bot polling loop is up. Guarded by mu.
-	transition  chan struct{}
-	started     bool
-	stopUpdates sync.Once
-	cancel      context.CancelFunc
-	bot         *tgbotapi.BotAPI
-	wg          sync.WaitGroup
+	transition chan struct{}
+	started    bool
+	cancel     context.CancelFunc
+	bot        *tgbotapi.BotAPI
+	wg         sync.WaitGroup
 }
 
 // acquireTransition waits for an in-progress Start/Stop and claims the next
@@ -296,58 +451,63 @@ func (c *TelegramConsumer) Start(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	bot, err := c.endpoint.getBot()
+	pollCtx, cancel := context.WithCancel(ctx)
+	bot, err := c.endpoint.getBotWithContext(pollCtx)
 	if err != nil {
+		cancel()
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
-	c.stopUpdates = sync.Once{}
 	c.cancel = cancel
 	c.bot = bot
 	c.started = true
-
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-
-	updates := bot.GetUpdatesChan(u)
-
 	c.wg.Add(1)
 	c.mu.Unlock()
 
 	go func() {
-		defer func() {
-			c.stopUpdates.Do(func() {
-				bot.StopReceivingUpdates()
-			})
-			drained := make(chan struct{})
-			go func() {
-				for range updates {
-				}
-				close(drained)
-			}()
-			select {
-			case <-drained:
-			case <-time.After(100 * time.Millisecond):
-			}
-			c.wg.Done()
-		}()
+		defer c.wg.Done()
+		u := tgbotapi.NewUpdate(0)
+		u.Timeout = 60
+
 		for {
-			select {
-			case <-ctx.Done():
+			if pollCtx.Err() != nil {
 				return
-			case update, ok := <-updates:
-				if !ok {
+			}
+
+			updates, err := bot.GetUpdates(u)
+			if err != nil {
+				if pollCtx.Err() != nil {
 					return
 				}
+				gocamel.LogError("Error polling Telegram updates", "error", redactTelegramError(err, bot.Token))
+				timer := time.NewTimer(3 * time.Second)
+				select {
+				case <-pollCtx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+				continue
+			}
+
+			for _, update := range updates {
+				if pollCtx.Err() != nil {
+					return
+				}
+				if update.UpdateID < u.Offset {
+					continue
+				}
+				u.Offset = update.UpdateID + 1
 				if update.Message == nil { // ignore non-Message updates
 					continue
 				}
 
-				exchange := gocamel.NewExchange(ctx)
+				exchange := gocamel.NewExchange(pollCtx)
 				exchange.SetBody(update.Message.Text)
-				exchange.SetHeader(TelegramChatId, update.Message.Chat.ID)
+				if update.Message.Chat != nil {
+					exchange.SetHeader(TelegramChatId, update.Message.Chat.ID)
+				}
 				if update.Message.From != nil {
 					exchange.SetHeader("TelegramUsername", update.Message.From.UserName)
 				}
@@ -372,19 +532,10 @@ func (c *TelegramConsumer) Stop() error {
 		return nil
 	}
 	cancel := c.cancel
-	bot := c.bot
 	c.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
-	}
-	// Stop the library's long-polling goroutine and close its updates channel
-	// so the consumer goroutine exits (it would otherwise keep polling Telegram
-	// and block sending on the now-unread channel after Stop returns).
-	if bot != nil {
-		c.stopUpdates.Do(func() {
-			bot.StopReceivingUpdates()
-		})
 	}
 	c.wg.Wait()
 

@@ -2,10 +2,12 @@ package mongodb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -52,6 +54,10 @@ func NewMongoDBComponent() *MongoDBComponent {
 
 // RegisterConnection registers a MongoDB connection with a name.
 func (c *MongoDBComponent) RegisterConnection(name string, conn *MongoDBConnection) {
+	if conn == nil {
+		gocamel.LogWarn("mongodb: ignoring nil MongoDBConnection in RegisterConnection", "name", name)
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.connections[name] = conn
@@ -59,6 +65,10 @@ func (c *MongoDBComponent) RegisterConnection(name string, conn *MongoDBConnecti
 
 // SetDefaultConnection sets the default connection to use.
 func (c *MongoDBComponent) SetDefaultConnection(conn *MongoDBConnection) {
+	if conn == nil {
+		gocamel.LogWarn("mongodb: ignoring nil MongoDBConnection in SetDefaultConnection")
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.defaultConn = conn
@@ -68,7 +78,7 @@ func (c *MongoDBComponent) lookup(name string) (*MongoDBConnection, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if name != "" {
-		if conn, ok := c.connections[name]; ok {
+		if conn, ok := c.connections[name]; ok && conn != nil {
 			return conn, true
 		}
 	}
@@ -145,9 +155,10 @@ func (c *MongoDBComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) 
 	}
 
 	allowHeaderOverride := false
-	if v := gocamel.GetConfigValue(u, "allowHeaderOverride"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			allowHeaderOverride = b
+	if raw := gocamel.GetConfigValue(u, "allowHeaderOverride"); raw != "" {
+		allowHeaderOverride, err = strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowHeaderOverride value %q: %w", raw, err)
 		}
 	}
 
@@ -216,6 +227,9 @@ type MongoDBProducer struct {
 func (p *MongoDBProducer) Start(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.endpoint == nil || p.endpoint.connection == nil {
+		return fmt.Errorf("no MongoDB connection configured for endpoint")
+	}
 	p.client = p.endpoint.connection.client
 	if p.client == nil {
 		return fmt.Errorf("no MongoDB client available for connection '%s'", p.endpoint.connName)
@@ -235,9 +249,13 @@ func (p *MongoDBProducer) Stop() error {
 // getCollection returns the MongoDB collection to use.
 // This method is thread-safe as it computes everything locally.
 func (p *MongoDBProducer) getCollection(exchange *gocamel.Exchange) (*mongo.Collection, error) {
+	if p.endpoint == nil {
+		return nil, fmt.Errorf("mongodb producer has no endpoint")
+	}
+
 	// Start with the endpoint values
 	dbName := p.endpoint.dbConfig
-	if dbName == "" {
+	if dbName == "" && p.endpoint.connection != nil {
 		dbName = p.endpoint.connection.database
 	}
 	collName := p.endpoint.collConfig
@@ -292,6 +310,9 @@ func (p *MongoDBProducer) getOperation(exchange *gocamel.Exchange) string {
 
 // Send executes the MongoDB operation and fills the Out message with results.
 func (p *MongoDBProducer) Send(exchange *gocamel.Exchange) error {
+	if exchange == nil {
+		return fmt.Errorf("mongodb: exchange cannot be nil")
+	}
 	ctx := exchange.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -367,12 +388,14 @@ func (p *MongoDBProducer) execFind(ctx context.Context, exchange *gocamel.Exchan
 		}
 	}
 
-	// Sort support via header (map[string]interface{} or bson.M)
+	// Sort support via header (map[string]interface{}, bson.M, or bson.D)
 	if v, ok := exchange.GetIn().GetHeader(CamelMongoDbSort); ok {
 		switch sort := v.(type) {
 		case map[string]interface{}:
 			opts.SetSort(sort)
 		case bson.M:
+			opts.SetSort(sort)
+		case bson.D:
 			opts.SetSort(sort)
 		}
 	}
@@ -388,7 +411,11 @@ func (p *MongoDBProducer) execFind(ctx context.Context, exchange *gocamel.Exchan
 	if err != nil {
 		return fmt.Errorf("find error: %w", err)
 	}
-	defer cursor.Close(ctx)
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = cursor.Close(closeCtx)
+	}()
 
 	results, truncated, err := drainCursor(ctx, cursor, maxResults)
 	if err != nil {
@@ -443,14 +470,19 @@ func (p *MongoDBProducer) execFindOne(ctx context.Context, exchange *gocamel.Exc
 
 	var result map[string]interface{}
 	err = coll.FindOne(ctx, filter, opts).Decode(&result)
-	if err == mongo.ErrNoDocuments {
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		// Clear both In.Body and Out.Body so downstream steps and GetResponse()
+		// do not retain the query filter when no document matched.
+		exchange.GetIn().SetBody(nil)
 		exchange.GetOut().SetBody(nil)
+		exchange.GetOut().SetHeader(CamelMongoDbResultTotal, 0)
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("findOne error: %w", err)
 	}
 
+	exchange.GetOut().SetHeader(CamelMongoDbResultTotal, 1)
 	exchange.GetOut().SetBody(result)
 	return nil
 }
@@ -458,17 +490,22 @@ func (p *MongoDBProducer) execFindOne(ctx context.Context, exchange *gocamel.Exc
 // execInsert executes an insertMany.
 func (p *MongoDBProducer) execInsert(ctx context.Context, exchange *gocamel.Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
-	docs, ok := body.([]interface{})
-	if !ok {
-		// Try converting []map[string]interface{}
-		if maps, ok := body.([]map[string]interface{}); ok {
-			docs = make([]interface{}, len(maps))
-			for i, m := range maps {
-				docs[i] = m
-			}
-		} else {
-			return fmt.Errorf("insert: body must be []interface{} or []map[string]interface{}, got %T", body)
+	var docs []interface{}
+	switch v := body.(type) {
+	case []interface{}:
+		docs = v
+	case []map[string]interface{}:
+		docs = make([]interface{}, len(v))
+		for i, m := range v {
+			docs[i] = m
 		}
+	case []bson.M:
+		docs = make([]interface{}, len(v))
+		for i, m := range v {
+			docs[i] = m
+		}
+	default:
+		return fmt.Errorf("insert: body must be []interface{}, []map[string]interface{}, or []bson.M, got %T", body)
 	}
 
 	if len(docs) == 0 {
@@ -490,12 +527,13 @@ func (p *MongoDBProducer) execInsert(ctx context.Context, exchange *gocamel.Exch
 // execInsertOne executes an insertOne.
 func (p *MongoDBProducer) execInsertOne(ctx context.Context, exchange *gocamel.Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
-	doc, ok := body.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("insertOne: body must be map[string]interface{}, got %T", body)
+	switch body.(type) {
+	case map[string]interface{}, bson.M:
+	default:
+		return fmt.Errorf("insertOne: body must be map[string]interface{} or bson.M, got %T", body)
 	}
 
-	result, err := coll.InsertOne(ctx, doc)
+	result, err := coll.InsertOne(ctx, body)
 	if err != nil {
 		return fmt.Errorf("insertOne error: %w", err)
 	}
@@ -510,9 +548,14 @@ func (p *MongoDBProducer) execInsertOne(ctx context.Context, exchange *gocamel.E
 // Otherwise, use insertOne to create a new document.
 func (p *MongoDBProducer) execSave(ctx context.Context, exchange *gocamel.Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
-	doc, ok := body.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("save: body must be map[string]interface{}, got %T", body)
+	var doc map[string]interface{}
+	switch v := body.(type) {
+	case map[string]interface{}:
+		doc = v
+	case bson.M:
+		doc = map[string]interface{}(v)
+	default:
+		return fmt.Errorf("save: body must be map[string]interface{} or bson.M, got %T", body)
 	}
 
 	// Extract _id for the filter
@@ -547,7 +590,7 @@ func (p *MongoDBProducer) execSave(ctx context.Context, exchange *gocamel.Exchan
 
 // execUpdate executes an updateMany.
 // Expects either:
-// - A body of type map[string]interface{} with "filter" and "update" keys
+// - A body of type map[string]interface{} or bson.M with "filter" and "update" keys
 // - A body with the update document and the filter in the CamelMongoDbCriteria header
 func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *gocamel.Exchange, coll *mongo.Collection) error {
 	body := exchange.GetIn().GetBody()
@@ -555,37 +598,42 @@ func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *gocamel.Exch
 	// Get the filter — header takes priority (with allowHeaderOverride), then body
 	var filter interface{}
 	if p.endpoint.allowHeaderOverride {
-		if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
-			filter = crit
+		if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok && crit != nil {
+			normalized, err := normalizeUpdateFilter(crit)
+			if err != nil {
+				return fmt.Errorf("update: invalid criteria filter: %w", err)
+			}
+			filter = normalized
 		}
 	}
 
-	// Get the update from the body
+	// Get the update (and fallback filter) from the body
 	var update interface{}
+	extractBodyMap := func(m map[string]interface{}) error {
+		if rawFilter, exists := m["filter"]; exists && filter == nil {
+			normalized, err := normalizeUpdateFilter(rawFilter)
+			if err != nil {
+				return fmt.Errorf("update: invalid body filter: %w", err)
+			}
+			filter = normalized
+		}
+		if rawUpdate, exists := m["update"]; exists {
+			update = rawUpdate
+		}
+		if update == nil {
+			update = m
+		}
+		return nil
+	}
 
 	switch v := body.(type) {
 	case map[string]interface{}:
-		// Check if body contains "filter" and "update"
-		if rawFilter, exists := v["filter"]; exists {
-			filter = rawFilter
-		}
-		if rawUpdate, exists := v["update"]; exists {
-			update = rawUpdate
-		}
-		// If no "update" key, use the entire body
-		if update == nil {
-			update = v
+		if err := extractBodyMap(v); err != nil {
+			return err
 		}
 	case bson.M:
-		// Same logic for bson.M
-		if rawFilter, exists := v["filter"]; exists {
-			filter = rawFilter
-		}
-		if rawUpdate, exists := v["update"]; exists {
-			update = rawUpdate
-		}
-		if update == nil {
-			update = v
+		if err := extractBodyMap(map[string]interface{}(v)); err != nil {
+			return err
 		}
 	default:
 		// Use the body as-is for the update
@@ -597,9 +645,7 @@ func (p *MongoDBProducer) execUpdate(ctx context.Context, exchange *gocamel.Exch
 		if !p.endpoint.allowUpdateAll {
 			return fmt.Errorf("update: empty filter rejected; set allowUpdateAll=true on the endpoint to update all documents")
 		}
-		if filter == nil {
-			filter = bson.M{}
-		}
+		filter = bson.M{}
 	}
 	if update == nil {
 		return fmt.Errorf("update: no update document found (use the body or CamelMongoDbCriteria for the filter)")
@@ -640,17 +686,71 @@ func isEmptyMongoFilter(filter interface{}) bool {
 	if filter == nil {
 		return true
 	}
-	switch v := filter.(type) {
+	if s, ok := filter.(string); ok {
+		doc, err := parseJSONMongoFilter(s)
+		if err != nil {
+			return true
+		}
+		filter = doc
+	}
+	raw, err := bson.Marshal(filter)
+	if err != nil {
+		return true
+	}
+	// An empty BSON document encodes as 5 bytes (int32 length + trailing NUL).
+	return len(raw) <= 5
+}
+
+func parseJSONMongoFilter(raw string) (bson.M, error) {
+	if strings.TrimSpace(raw) == "" {
+		return bson.M{}, nil
+	}
+	var res bson.M
+	if err := bson.UnmarshalExtJSON([]byte(raw), true, &res); err != nil {
+		return nil, fmt.Errorf("cannot parse JSON filter: %w", err)
+	}
+	if res == nil {
+		res = bson.M{}
+	}
+	return res, nil
+}
+
+func normalizeUpdateFilter(raw interface{}) (interface{}, error) {
+	if s, ok := raw.(string); ok {
+		return parseJSONMongoFilter(s)
+	}
+	return raw, nil
+}
+
+func normalizeFilter(raw interface{}) (interface{}, error) {
+	if raw == nil {
+		return bson.M{}, nil
+	}
+	switch v := raw.(type) {
 	case map[string]interface{}:
-		return len(v) == 0
+		if v == nil {
+			return bson.M{}, nil
+		}
+		return v, nil
 	case bson.M:
-		return len(v) == 0
+		if v == nil {
+			return bson.M{}, nil
+		}
+		return v, nil
 	case bson.D:
-		return len(v) == 0
+		if v == nil {
+			return bson.D{}, nil
+		}
+		return v, nil
+	case bson.Raw:
+		if len(v) == 0 {
+			return bson.M{}, nil
+		}
+		return v, nil
 	case string:
-		return strings.TrimSpace(v) == ""
+		return parseJSONMongoFilter(v)
 	default:
-		return false
+		return nil, fmt.Errorf("unsupported filter type: %T", v)
 	}
 }
 
@@ -680,35 +780,11 @@ func (p *MongoDBProducer) extractFilter(exchange *gocamel.Exchange) (interface{}
 	// Criteria header takes priority (opt-in via allowHeaderOverride)
 	if p.endpoint.allowHeaderOverride {
 		if crit, ok := exchange.GetIn().GetHeader(CamelMongoDbCriteria); ok {
-			return crit, nil
+			return normalizeFilter(crit)
 		}
 	}
 
-	body := exchange.GetIn().GetBody()
-	if body == nil {
-		return bson.M{}, nil
-	}
-
-	switch v := body.(type) {
-	case map[string]interface{}:
-		return v, nil
-	case bson.M:
-		return v, nil
-	case bson.D:
-		return v, nil
-	case string:
-		if v == "" {
-			return bson.M{}, nil
-		}
-		// Try parsing the string as BSON JSON
-		var res bson.M
-		if err := bson.UnmarshalExtJSON([]byte(v), true, &res); err != nil {
-			return nil, fmt.Errorf("cannot parse JSON filter: %w", err)
-		}
-		return res, nil
-	default:
-		return nil, fmt.Errorf("unsupported filter type: %T", v)
-	}
+	return normalizeFilter(exchange.GetIn().GetBody())
 }
 
 // CreateMongoDBConnection creates a new MongoDB connection.

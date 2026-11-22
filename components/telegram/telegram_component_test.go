@@ -2,8 +2,10 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -276,4 +278,432 @@ func TestProducer_SendRejectedAfterStopUntilRestarted(t *testing.T) {
 	if err := prod.Send(ex); err != nil {
 		t.Fatalf("Send after restart: %v", err)
 	}
+}
+
+func TestTelegram_RedactsBotTokenOnHTTPError(t *testing.T) {
+	const secretToken = "99887766:SUPER-SECRET-BOT-TOKEN"
+
+	t.Run("rejects invalid allowHeaderOverride and delimiter-injecting tokens", func(t *testing.T) {
+		if _, err := NewTelegramComponent().CreateEndpoint("telegram://bots?authorizationToken=" + secretToken + "&allowHeaderOverride=maybe"); err == nil {
+			t.Fatal("expected CreateEndpoint to reject invalid allowHeaderOverride boolean")
+		}
+		for _, badToken := range []string{"123@evil.example/bot", "123/foo", "123?x=1", "123#frag", "123 token"} {
+			ep := newEndpoint(t, "telegram://bots?authorizationToken="+url.QueryEscape(badToken)+"&chatId=42")
+			if _, err := ep.getBot(); err == nil {
+				t.Fatalf("expected getBot to reject malicious token %q", badToken)
+			}
+		}
+	})
+
+	t.Run("redacts bot token in getBot url.Error", func(t *testing.T) {
+		ep := newEndpoint(t, "telegram://bots?authorizationToken="+secretToken+"&chatId=42")
+		ep.httpClient = &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				return nil, errors.New("dial tcp: connection refused")
+			}),
+		}
+
+		_, err := ep.getBot()
+		if err == nil {
+			t.Fatal("expected getBot error when transport fails")
+		}
+		if strings.Contains(err.Error(), secretToken) {
+			t.Fatalf("getBot error leaked bot token: %v", err)
+		}
+	})
+
+	t.Run("redacts bot token in Send url.Error and uses bounded default timeout", func(t *testing.T) {
+		epDefault := newEndpoint(t, "telegram://bots?authorizationToken="+secretToken+"&chatId=42")
+		defaultWrapper := epDefault.newHTTPClient(context.Background(), secretToken)
+		if defaultWrapper.client.Timeout <= 0 {
+			t.Fatalf("expected bounded default HTTP timeout, got %v", defaultWrapper.client.Timeout)
+		}
+
+		// Also verify redactedTelegramError preserves context sentinel while redacting inner token strings.
+		wrappedCtxErr := redactTelegramError(
+			errors.Join(errors.New("https://api.telegram.org/bot"+secretToken+"/getMe"), context.Canceled),
+			secretToken,
+		)
+		if strings.Contains(wrappedCtxErr.Error(), secretToken) {
+			t.Fatalf("redactedTelegramError leaked token: %v", wrappedCtxErr)
+		}
+		if !errors.Is(wrappedCtxErr, context.Canceled) {
+			t.Fatalf("expected redactedTelegramError to preserve context.Canceled sentinel")
+		}
+
+		epSend := newEndpoint(t, "telegram://bots?authorizationToken="+secretToken+"&chatId=42")
+		epSend.httpClient = &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, "/getMe") {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)),
+					}, nil
+				}
+				return nil, errors.New("send failed")
+			}),
+		}
+
+		prod, err := epSend.CreateProducer()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := prod.Send(nil); err == nil {
+			t.Fatal("expected Send(nil) to fail")
+		}
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("hello")
+		err = prod.Send(ex)
+		if err == nil {
+			t.Fatal("expected Send error when transport fails")
+		}
+		if strings.Contains(err.Error(), secretToken) {
+			t.Fatalf("Send error leaked bot token: %v", err)
+		}
+	})
+}
+
+func TestTelegramConsumer_PollErrorsNonMessageAndUsernameHeader(t *testing.T) {
+	ep := newEndpoint(t, "telegram://bots?authorizationToken=123:SECRET&chatId=42")
+	var pollStep int
+	var mu sync.Mutex
+	ep.httpClient = &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			if strings.HasSuffix(r.URL.Path, "/getMe") {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)),
+				}, nil
+			}
+			if strings.HasSuffix(r.URL.Path, "/getUpdates") {
+				mu.Lock()
+				pollStep++
+				step := pollStep
+				mu.Unlock()
+				switch step {
+				case 1:
+					// Non-message update + valid message with From username
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":[{"update_id":1},{"update_id":2,"message":{"message_id":2,"from":{"id":9,"is_bot":false,"first_name":"Alice","username":"alice"},"chat":{"id":42,"type":"private"},"text":"hi"}}]}`)),
+					}, nil
+				default:
+					// Simulate transient poll error; Stop cancels backoff timer promptly
+					return nil, errors.New("temporary network error")
+				}
+			}
+			return nil, errors.New("unexpected request")
+		}),
+	}
+
+	gotUser := make(chan string, 1)
+	consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+		if u, ok := ex.GetIn().GetHeaderAsString("TelegramUsername"); ok {
+			select {
+			case gotUser <- u:
+			default:
+			}
+		}
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case u := <-gotUser:
+		if u != "alice" {
+			t.Fatalf("TelegramUsername = %q, want %q", u, "alice")
+		}
+	case <-time.After(time.Second):
+		_ = consumer.Stop()
+		t.Fatal("timed out waiting for message with username")
+	}
+
+	// Give pollStep 2 a moment to enter backoff, then verify Stop interrupts the 3s retry timer promptly.
+	time.Sleep(20 * time.Millisecond)
+	startStop := time.Now()
+	if err := consumer.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if time.Since(startStop) > 500*time.Millisecond {
+		t.Fatalf("Stop waited for retry backoff timer (%v)", time.Since(startStop))
+	}
+}
+
+func TestTelegramConsumer_StopAbortsInFlightPollPromptlyAndNilChatSafe(t *testing.T) {
+	t.Run("Stop aborts in-flight getUpdates promptly", func(t *testing.T) {
+		ep := newEndpoint(t, "telegram://bots?authorizationToken=123:test&chatId=42")
+		pollingStarted := make(chan struct{}, 1)
+		pollExited := make(chan error, 1)
+		releasePoll := make(chan struct{})
+		t.Cleanup(func() {
+			select {
+			case <-releasePoll:
+			default:
+				close(releasePoll)
+			}
+		})
+
+		ep.httpClient = &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, "/getMe") {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)),
+					}, nil
+				}
+				if strings.HasSuffix(r.URL.Path, "/getUpdates") {
+					select {
+					case pollingStarted <- struct{}{}:
+					default:
+					}
+					select {
+					case <-r.Context().Done():
+						pollExited <- r.Context().Err()
+						return nil, r.Context().Err()
+					case <-releasePoll:
+						pollExited <- nil
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     http.Header{"Content-Type": []string{"application/json"}},
+							Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":[]}`)),
+						}, nil
+					}
+				}
+				return nil, errors.New("unexpected request")
+			}),
+		}
+
+		consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(*gocamel.Exchange) error { return nil }))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := consumer.Start(context.Background()); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+
+		select {
+		case <-pollingStarted:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for getUpdates poll to start")
+		}
+
+		stopDone := make(chan error, 1)
+		go func() {
+			stopDone <- consumer.Stop()
+		}()
+
+		select {
+		case err := <-stopDone:
+			if err != nil {
+				t.Fatalf("Stop returned error: %v", err)
+			}
+		case <-time.After(400 * time.Millisecond):
+			close(releasePoll)
+			t.Fatal("Stop did not abort in-flight getUpdates request promptly")
+		}
+
+		select {
+		case pollErr := <-pollExited:
+			if !errors.Is(pollErr, context.Canceled) {
+				t.Fatalf("expected in-flight getUpdates to exit with context.Canceled, got %v", pollErr)
+			}
+		case <-time.After(200 * time.Millisecond):
+			close(releasePoll)
+			t.Fatal("Stop returned while getUpdates goroutine was still leaked in flight")
+		}
+	})
+
+	t.Run("nil Message.Chat does not panic", func(t *testing.T) {
+		ep := newEndpoint(t, "telegram://bots?authorizationToken=123:test&chatId=42")
+		var once sync.Once
+		ep.httpClient = &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, "/getMe") {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)),
+					}, nil
+				}
+				if strings.HasSuffix(r.URL.Path, "/getUpdates") {
+					body := `{"ok":true,"result":[]}`
+					once.Do(func() {
+						body = `{"ok":true,"result":[{"update_id":10,"message":{"message_id":1,"text":"no-chat"}}]}`
+					})
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(body)),
+					}, nil
+				}
+				return nil, errors.New("unexpected request")
+			}),
+		}
+
+		gotBody := make(chan string, 1)
+		gotHasChat := make(chan bool, 1)
+		consumer, err := ep.CreateConsumer(gocamel.ProcessorFunc(func(ex *gocamel.Exchange) error {
+			s, _ := ex.GetIn().GetBodyAsString()
+			_, hasChat := ex.GetIn().GetHeader(TelegramChatId)
+			select {
+			case gotBody <- s:
+				gotHasChat <- hasChat
+			default:
+			}
+			return nil
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := consumer.Start(context.Background()); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		defer func() { _ = consumer.Stop() }()
+
+		select {
+		case msg := <-gotBody:
+			if msg != "no-chat" {
+				t.Fatalf("got body %q, want %q", msg, "no-chat")
+			}
+			if <-gotHasChat {
+				t.Fatal("did not expect TelegramChatId header when Message.Chat is nil")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for nil-chat message")
+		}
+	})
+}
+
+func TestTelegramProducer_NoLockDuringGetMeAndRespectsCtx(t *testing.T) {
+	t.Run("Stop does not block on p.mu while getMe is in flight", func(t *testing.T) {
+		ep := newEndpoint(t, "telegram://bots?authorizationToken=123:test&chatId=42")
+		getMeEntered := make(chan struct{}, 1)
+		releaseGetMe := make(chan struct{})
+		t.Cleanup(func() {
+			select {
+			case <-releaseGetMe:
+			default:
+				close(releaseGetMe)
+			}
+		})
+
+		ep.httpClient = &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, "/getMe") {
+					select {
+					case getMeEntered <- struct{}{}:
+					default:
+					}
+					select {
+					case <-releaseGetMe:
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     http.Header{"Content-Type": []string{"application/json"}},
+							Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)),
+						}, nil
+					case <-r.Context().Done():
+						return nil, r.Context().Err()
+					}
+				}
+				return nil, errors.New("unexpected call")
+			}),
+		}
+
+		prod, err := ep.CreateProducer()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		startDone := make(chan error, 1)
+		go func() {
+			startDone <- prod.Start(context.Background())
+		}()
+
+		select {
+		case <-getMeEntered:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for getMe")
+		}
+
+		stopDone := make(chan error, 1)
+		go func() {
+			stopDone <- prod.Stop()
+		}()
+
+		select {
+		case err := <-stopDone:
+			if err != nil {
+				t.Fatalf("Stop error: %v", err)
+			}
+		case <-time.After(300 * time.Millisecond):
+			close(releaseGetMe)
+			t.Fatal("Stop blocked while getMe was in flight (p.mu held across network call)")
+		}
+
+		close(releaseGetMe)
+		<-startDone
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody("after concurrent stop")
+		if err := prod.Send(ex); err == nil {
+			t.Fatal("expected Send to fail when producer was stopped during Start")
+		}
+	})
+
+	t.Run("Start and Send respect context cancellation", func(t *testing.T) {
+		ep := newEndpoint(t, "telegram://bots?authorizationToken=123:test&chatId=42")
+		ep.httpClient = &http.Client{
+			Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, "/getMe") {
+					if r.Context().Err() != nil {
+						return nil, r.Context().Err()
+					}
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)),
+					}, nil
+				}
+				if strings.HasSuffix(r.URL.Path, "/sendMessage") {
+					<-r.Context().Done()
+					return nil, r.Context().Err()
+				}
+				return nil, errors.New("unexpected call")
+			}),
+		}
+
+		prod, err := ep.CreateProducer()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cancelledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := prod.Start(cancelledCtx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected Start with cancelled context to fail with context.Canceled, got %v", err)
+		}
+
+		if err := prod.Start(context.Background()); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		defer func() { _ = prod.Stop() }()
+
+		sendCtx, sendCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer sendCancel()
+		ex := gocamel.NewExchange(sendCtx)
+		ex.SetBody("hello")
+		err = prod.Send(ex)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expected Send to abort with context.DeadlineExceeded, got %v", err)
+		}
+	})
 }
