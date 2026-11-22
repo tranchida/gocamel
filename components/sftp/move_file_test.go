@@ -11,12 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// faultyCmder wraps the in-memory handler, failing Mkdir on one path and
-// counting rename requests.
+// faultyCmder wraps the in-memory handler, failing Mkdir on one path, optionally
+// failing PosixRename, and counting rename requests.
 type faultyCmder struct {
 	sftp.FileCmder
-	failMkdir string
-	renames   atomic.Int32
+	failMkdir      string
+	posixRenameErr error
+	renames        atomic.Int32
+	posixRenames   atomic.Int32
 }
 
 func (f *faultyCmder) Filecmd(r *sftp.Request) error {
@@ -26,6 +28,17 @@ func (f *faultyCmder) Filecmd(r *sftp.Request) error {
 	}
 	if r.Method == "Rename" || r.Method == "PosixRename" {
 		f.renames.Add(1)
+	}
+	return f.FileCmder.Filecmd(r)
+}
+
+func (f *faultyCmder) PosixRename(r *sftp.Request) error {
+	f.posixRenames.Add(1)
+	if f.posixRenameErr != nil {
+		return f.posixRenameErr
+	}
+	if pr, ok := f.FileCmder.(sftp.PosixRenameFileCmder); ok {
+		return pr.PosixRename(r)
 	}
 	return f.FileCmder.Filecmd(r)
 }
@@ -94,4 +107,34 @@ func TestMoveSFTPFile_DoesNotRenameWhenDestinationCannotBeCreated(t *testing.T) 
 	assert.Zero(t, cmder.renames.Load(), "no rename must be attempted without a destination directory")
 	_, err := client.Stat("/in/a.txt")
 	assert.NoError(t, err, "source file must be left in place")
+}
+
+func TestMoveSFTPFile_FallsBackToRenameOnOpUnsupported(t *testing.T) {
+	client, cmder := newInMemorySFTPClient(t, "")
+	cmder.posixRenameErr = sftp.ErrSSHFxOpUnsupported
+	require.NoError(t, client.Mkdir("/in"))
+	writeRemoteFile(t, client, "/in/a.txt")
+
+	moveSFTPFile(client, "/in/a.txt", "/done/")
+
+	assert.Equal(t, int32(1), cmder.posixRenames.Load())
+	assert.Equal(t, int32(1), cmder.renames.Load())
+	_, err := client.Stat("/done/a.txt")
+	assert.NoError(t, err)
+	_, err = client.Stat("/in/a.txt")
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestMoveSFTPFile_DoesNotFallbackOnOtherPosixRenameError(t *testing.T) {
+	client, cmder := newInMemorySFTPClient(t, "")
+	cmder.posixRenameErr = os.ErrPermission
+	require.NoError(t, client.Mkdir("/in"))
+	writeRemoteFile(t, client, "/in/a.txt")
+
+	moveSFTPFile(client, "/in/a.txt", "/done")
+
+	assert.Equal(t, int32(1), cmder.posixRenames.Load())
+	assert.Zero(t, cmder.renames.Load(), "non-unsupported errors must not fall back to Rename")
+	_, err := client.Stat("/in/a.txt")
+	assert.NoError(t, err)
 }
