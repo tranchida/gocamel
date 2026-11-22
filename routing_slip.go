@@ -48,7 +48,7 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("routing slip URI function error: %w", err)
 		}
-		LogDebug("routing slip resolved URIs via function", "count", len(uris), "uris", uris)
+		LogDebug("routing slip resolved URIs via function", "count", len(uris), "uris", redactURIs(uris))
 		return uris, nil
 	}
 
@@ -61,7 +61,7 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 		LogDebug("routing slip resolved URIs via simple expression",
 			"expression", r.SimpleExpression,
 			"count", len(uris),
-			"uris", uris,
+			"uris", redactURIs(uris),
 		)
 		return uris, nil
 	}
@@ -72,7 +72,7 @@ func (r *RoutingSlip) resolveURIs(exchange *Exchange) ([]string, error) {
 		for _, raw := range rawList {
 			uris = append(uris, InterpolateURI(raw, exchange))
 		}
-		LogDebug("routing slip resolved URIs via static string", "count", len(uris), "uris", uris)
+		LogDebug("routing slip resolved URIs via static string", "count", len(uris), "uris", redactURIs(uris))
 		return uris, nil
 	}
 
@@ -101,7 +101,7 @@ func (r *RoutingSlip) Process(exchange *Exchange) error {
 		// leaked a producer (and its connection) on every slip step.
 		producer, release, err := r.context.acquireProducer(uri)
 		if err != nil {
-			return fmt.Errorf("routing slip producer error for %s: %w", uri, err)
+			return fmt.Errorf("routing slip producer error for %s: %w", RedactURI(uri), err)
 		}
 		propagateOutToInAndReset(exchange)
 		err = producer.Send(exchange)
@@ -110,7 +110,7 @@ func (r *RoutingSlip) Process(exchange *Exchange) error {
 			if errors.Is(err, ErrStopRouting) {
 				return err
 			}
-			return fmt.Errorf("routing slip error sending to %s: %w", uri, err)
+			return fmt.Errorf("routing slip error sending to %s: %w", RedactURI(uri), err)
 		}
 		propagateOutToInAndReset(exchange)
 	}

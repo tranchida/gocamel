@@ -201,13 +201,52 @@ func patternToRegex(pattern string) *regexp.Regexp {
 }
 
 // defaultSensitiveURIKeys are query parameter names whose values are masked
-// by RedactURI when no explicit list is provided. The match is
+// by RedactURI when no explicit list is provided, and treated as credential
+// keys by GetConfigValue when resolved from a URI query string. The match is
 // case-insensitive because components read options with mixed cases
 // (apiKey vs apikey, authorizationToken vs AuthorizationToken).
 var defaultSensitiveURIKeys = []string{
-	"password", "passwd", "secret", "token", "passcode",
-	"apikey", "apitoken", "authorizationtoken", "accesstoken",
-	"privatekey", "clientsecret",
+	"password",
+	"pass",
+	"passwd",
+	"secret",
+	"token",
+	"passcode",
+	"apikey",
+	"api_key",
+	"apitoken",
+	"authorizationtoken",
+	"accesstoken",
+	"access_token",
+	"accesskey",
+	"access_key",
+	"clientsecret",
+	"client_secret",
+	"privatekey",
+	"private_key",
+}
+
+var defaultSensitiveURIKeySet = func() map[string]struct{} {
+	set := make(map[string]struct{}, len(defaultSensitiveURIKeys))
+	for _, key := range defaultSensitiveURIKeys {
+		set[key] = struct{}{}
+	}
+	return set
+}()
+
+// isSensitiveKey reports whether name matches keys (case-insensitively), or
+// defaultSensitiveURIKeySet when keys is empty.
+func isSensitiveKey(name string, keys []string) bool {
+	if len(keys) == 0 {
+		_, ok := defaultSensitiveURIKeySet[strings.ToLower(name)]
+		return ok
+	}
+	for _, k := range keys {
+		if strings.EqualFold(name, k) {
+			return true
+		}
+	}
+	return false
 }
 
 // RedactURI masks sensitive credentials in an endpoint URI so that it can be
@@ -235,19 +274,24 @@ func RedactURI(uri string, keys ...string) string {
 		}
 	}
 
-	sensitive := defaultSensitiveURIKeys
-	if len(keys) > 0 {
-		sensitive = keys
+	q, qErr := url.ParseQuery(u.RawQuery)
+	if qErr != nil {
+		if redactedQuery, queryChanged := redactRawQuery(u.RawQuery, keys); queryChanged {
+			u.RawQuery = redactedQuery
+			changed = true
+		}
+		if changed {
+			return u.String()
+		}
+		return uri
 	}
-	q := u.Query()
+
 	for name, values := range q {
-		for _, s := range sensitive {
-			if strings.EqualFold(name, s) {
-				for i, v := range values {
-					if v != "" {
-						values[i] = "xxxxx"
-						changed = true
-					}
+		if isSensitiveKey(name, keys) {
+			for i, v := range values {
+				if v != "" {
+					values[i] = "xxxxx"
+					changed = true
 				}
 			}
 		}
@@ -259,50 +303,145 @@ func RedactURI(uri string, keys ...string) string {
 	return uri
 }
 
+// redactURIs returns a copy of uris with each element masked via RedactURI.
+func redactURIs(uris []string) []string {
+	if uris == nil {
+		return nil
+	}
+	redacted := make([]string, len(uris))
+	for i, uri := range uris {
+		redacted[i] = RedactURI(uri)
+	}
+	return redacted
+}
+
 // redactUnparsedURI masks the userinfo password and the sensitive query
 // parameters of a URI that url.Parse rejects, working on the raw text.
 func redactUnparsedURI(uri string, keys []string) string {
-	sensitive := defaultSensitiveURIKeys
-	if len(keys) > 0 {
-		sensitive = keys
-	}
+	masked := redactUnparsedUserinfo(uri)
 
-	rest, fragment, hasFragment := strings.Cut(uri, "#")
+	rest, fragment, hasFragment := strings.Cut(masked, "#")
 	base, query, hasQuery := strings.Cut(rest, "?")
 
-	// Userinfo: scheme://user:PASSWORD@host. The authority ends at the first
-	// '/'; the userinfo ends at its last '@' (a password may contain one).
-	if i := strings.Index(base, "://"); i >= 0 {
-		authority, path := base[i+3:], ""
-		if j := strings.IndexByte(authority, '/'); j >= 0 {
-			authority, path = authority[:j], authority[j:]
-		}
-		if at := strings.LastIndexByte(authority, '@'); at >= 0 {
-			if colon := strings.IndexByte(authority[:at], ':'); colon >= 0 {
-				authority = authority[:colon+1] + "xxxxx" + authority[at:]
-			}
-		}
-		base = base[:i+3] + authority + path
-	}
-
 	if hasQuery {
-		pairs := strings.Split(query, "&")
-		for i, pair := range pairs {
-			name, value, ok := strings.Cut(pair, "=")
-			if !ok || value == "" {
-				continue
-			}
-			for _, s := range sensitive {
-				if strings.EqualFold(name, s) {
-					pairs[i] = name + "=xxxxx"
-					break
-				}
-			}
+		if redactedQuery, changed := redactRawQuery(query, keys); changed {
+			query = redactedQuery
 		}
-		base += "?" + strings.Join(pairs, "&")
+		base += "?" + query
 	}
 	if hasFragment {
 		base += "#" + fragment
 	}
 	return base
+}
+
+// redactUnparsedUserinfo masks the password in scheme://user:PASSWORD@host even
+// when unescaped '/', '?', or '#' in PASSWORD shift '@' past them.
+func redactUnparsedUserinfo(uri string) string {
+	i := strings.Index(uri, "://")
+	if i < 0 {
+		return uri
+	}
+	afterScheme := uri[i+3:]
+	at := findUnparsedUserinfoEnd(afterScheme)
+	if at < 0 {
+		return uri
+	}
+	delim := strings.IndexAny(afterScheme, "/?#")
+	colon := strings.IndexByte(afterScheme[:at], ':')
+	if colon < 0 || (delim >= 0 && colon > delim) {
+		return uri
+	}
+	return uri[:i+3] + afterScheme[:colon+1] + "xxxxx" + afterScheme[at:]
+}
+
+func findUnparsedUserinfoEnd(afterScheme string) int {
+	delim := strings.IndexAny(afterScheme, "/?#")
+	if delim < 0 {
+		return strings.LastIndexByte(afterScheme, '@')
+	}
+	// If '@' already appears before the first '/', '?', or '#', the authority
+	// boundary is unambiguous and later '@' signs belong to path/query/fragment.
+	if prefixAt := strings.LastIndexByte(afterScheme[:delim], '@'); prefixAt >= 0 {
+		return prefixAt
+	}
+	// When '@' appears only after '/', '?', or '#', a password may contain those
+	// delimiters (e.g. user:p#ss@host/dir). Avoid crossing into a trailing
+	// '?key=val@...' query parameter or a '?query'/'#fragment' after '@host'.
+	if afterScheme[delim] == '/' {
+		if q := strings.IndexAny(afterScheme, "?#"); q >= 0 {
+			if strings.IndexByte(afterScheme[:q], '@') >= 0 {
+				return strings.LastIndexByte(afterScheme[:q], '@')
+			}
+			firstAt := strings.IndexByte(afterScheme[q:], '@')
+			if firstAt < 0 || strings.Contains(afterScheme[q:q+firstAt], "=") {
+				return -1
+			}
+		}
+	}
+	searchEnd := len(afterScheme)
+	if firstAt := strings.IndexByte(afterScheme, '@'); firstAt >= 0 {
+		if q := strings.IndexAny(afterScheme[firstAt+1:], "?#"); q >= 0 {
+			searchEnd = firstAt + 1 + q
+		}
+	}
+	return strings.LastIndexByte(afterScheme[:searchEnd], '@')
+}
+
+// redactRawQuery masks sensitive values in a raw query string split on '&' and ';'.
+func redactRawQuery(query string, keys []string) (string, bool) {
+	if query == "" {
+		return query, false
+	}
+	changed := false
+	ampParts := strings.Split(query, "&")
+	for i, ampPart := range ampParts {
+		if !strings.ContainsRune(ampPart, ';') {
+			if redacted, partChanged := redactQueryPair(ampPart, keys); partChanged {
+				ampParts[i] = redacted
+				changed = true
+			}
+			continue
+		}
+
+		subParts := strings.Split(ampPart, ";")
+		kept := make([]string, 0, len(subParts))
+		inSensitive := false
+		for _, sub := range subParts {
+			if redacted, partChanged := redactQueryPair(sub, keys); partChanged {
+				kept = append(kept, redacted)
+				changed = true
+				inSensitive = true
+				continue
+			}
+			if _, _, hasEq := strings.Cut(sub, "="); !hasEq && inSensitive {
+				// Trailing ';token' without '=' after a redacted parameter is the
+				// remainder of that parameter's unescaped value (e.g. password=sec;ret).
+				changed = true
+				continue
+			}
+			kept = append(kept, sub)
+			inSensitive = false
+		}
+		ampParts[i] = strings.Join(kept, ";")
+	}
+	if !changed {
+		return query, false
+	}
+	return strings.Join(ampParts, "&"), true
+}
+
+func redactQueryPair(pair string, keys []string) (string, bool) {
+	name, value, ok := strings.Cut(pair, "=")
+	if !ok || value == "" {
+		return pair, false
+	}
+	lookupName := name
+	if decoded, err := url.QueryUnescape(name); err == nil {
+		lookupName = decoded
+	}
+	if isSensitiveKey(lookupName, keys) {
+		return name + "=xxxxx", true
+	}
+	return pair, false
 }

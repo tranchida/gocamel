@@ -83,7 +83,7 @@ func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 		}
 		LogDebug("recipient list resolved URIs via function",
 			"count", len(uris),
-			"uris", uris,
+			"uris", redactURIs(uris),
 		)
 		return uris, nil
 	}
@@ -98,7 +98,7 @@ func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 		LogDebug("recipient list resolved URIs via simple expression",
 			"expression", r.SimpleExpression,
 			"count", len(uris),
-			"uris", uris,
+			"uris", redactURIs(uris),
 		)
 		return uris, nil
 	}
@@ -111,7 +111,7 @@ func (r *RecipientList) resolveURIs(exchange *Exchange) ([]string, error) {
 		}
 		LogDebug("recipient list resolved URIs via static string",
 			"count", len(uris),
-			"uris", uris,
+			"uris", redactURIs(uris),
 		)
 		return uris, nil
 	}
@@ -169,7 +169,7 @@ func (r *RecipientList) Process(exchange *Exchange) error {
 func (r *RecipientList) sendToURI(uri string, exchange *Exchange) error {
 	producer, release, err := r.context.acquireProducer(uri)
 	if err != nil {
-		return fmt.Errorf("recipient list: producer error for %s: %w", uri, err)
+		return fmt.Errorf("recipient list: producer error for %s: %w", RedactURI(uri), err)
 	}
 	defer release()
 	propagateOutToInAndReset(exchange)

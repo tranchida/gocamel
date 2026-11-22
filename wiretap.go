@@ -67,14 +67,14 @@ func (w *WireTap) Process(exchange *Exchange) error {
 		err := safeProcess(func() error { return w.sendTap(tapExchange) })
 		if err := CompleteExchange(tapExchange, err); err != nil {
 			LogWarn("WireTap: tap delivery failed",
-				"uri", w.uri,
+				"uri", RedactURI(w.uri),
 				"error", err,
 			)
 			return
 		}
 
 		LogDebug("WireTap: tap delivered successfully",
-			"uri", w.uri,
+			"uri", RedactURI(w.uri),
 		)
 	}()
 

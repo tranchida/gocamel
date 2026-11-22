@@ -50,14 +50,14 @@ func (p *DynamicRouter) Process(exchange *Exchange) error {
 			return nil
 		}
 
-		LogDebug("dynamic router: sending to next endpoint", "uri", uri)
+		LogDebug("dynamic router: sending to next endpoint", "uri", RedactURI(uri))
 		// Reuse the started producer from the CamelContext cache (created once
 		// per URI, stopped with the context) instead of creating and tearing
 		// down a producer — and potentially a connection — on every step of
 		// every message. Mirrors ToD and WireTap.
 		propagateOutToInAndReset(exchange)
 		if err := p.context.sendToURI(uri, exchange); err != nil {
-			return fmt.Errorf("dynamic router: error sending to %s: %w", uri, err)
+			return fmt.Errorf("dynamic router: error sending to %s: %w", RedactURI(uri), err)
 		}
 
 		// The step's response becomes the input of the next step (and of the

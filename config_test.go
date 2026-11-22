@@ -136,3 +136,39 @@ func TestGetConfigValue_CredentialFromUserinfoNoWarn(t *testing.T) {
 	assert.Equal(t, "secret", GetConfigValue(u, "password"))
 	assert.Empty(t, buf.String())
 }
+
+func TestGetConfigValue_UnifiedCredentialsAndNilURL(t *testing.T) {
+	assert.NotPanics(t, func() {
+		assert.Equal(t, "", GetConfigValue(nil, "UNSET_KEY"))
+	})
+
+	t.Setenv("NIL_URL_EXACT", "exact-value")
+	assert.Equal(t, "exact-value", GetConfigValue(nil, "NIL_URL_EXACT"))
+
+	assert.True(t, isCredentialKey("authorizationToken"))
+	assert.True(t, isCredentialKey("passcode"))
+	assert.True(t, isCredentialKey("passwd"))
+	assert.True(t, isCredentialKey("apitoken"))
+	assert.True(t, isCredentialKey("accesstoken"))
+	assert.True(t, isCredentialKey("access_token"))
+	assert.True(t, isCredentialKey("client_secret"))
+	assert.True(t, isCredentialKey("private_key"))
+	assert.False(t, isCredentialKey("folderName"))
+
+	buf := withCapturedLogger(t)
+	_ = GetConfigValue(mustParseURL(t, "warn-unified-auth://host?authorizationToken=tok-secret"), "authorizationToken")
+	_ = GetConfigValue(mustParseURL(t, "warn-unified-passcode://host?passcode=pc-secret"), "passcode")
+	out := buf.String()
+	assert.Contains(t, out, "key=authorizationToken")
+	assert.Contains(t, out, "key=passcode")
+	assert.NotContains(t, out, "tok-secret")
+	assert.NotContains(t, out, "pc-secret")
+
+	t.Setenv("SQL_STORED_PROCEDURE", "sp_from_env")
+	u := mustParseURL(t, "sql-stored://db?procedure=sp_from_query")
+	assert.Equal(t, "sp_from_env", GetConfigValue(u, "procedure"))
+
+	t.Setenv("CUSTOM-SCHEME_OPT", "legacy-env")
+	uLegacy := mustParseURL(t, "custom-scheme://host?opt=from-query")
+	assert.Equal(t, "legacy-env", GetConfigValue(uLegacy, "opt"))
+}

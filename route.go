@@ -154,7 +154,7 @@ func (lp *lazyProducer) producer() (Producer, error) {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
 	if lp.stopped {
-		return nil, fmt.Errorf("producer for %s is stopped", lp.uri)
+		return nil, fmt.Errorf("producer for %s is stopped", RedactURI(lp.uri))
 	}
 	if lp.p != nil {
 		return lp.p, nil
@@ -509,7 +509,7 @@ func (r *Route) Stop() error {
 
 	for _, lp := range r.lazyProducers {
 		if err := lp.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("error stopping producer for %s: %w", lp.uri, err))
+			errs = append(errs, fmt.Errorf("error stopping producer for %s: %w", RedactURI(lp.uri), err))
 		}
 	}
 

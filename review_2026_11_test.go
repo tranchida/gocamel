@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -293,4 +294,203 @@ func TestHTTPConsumer_RoutesShareAPort(t *testing.T) {
 	l, err = net.Listen("tcp", addr)
 	require.NoError(t, err)
 	require.NoError(t, l.Close())
+}
+
+type redactionTestComponent struct {
+	sendErr error
+	stopErr error
+	pollErr error
+	polling bool
+}
+
+func (c *redactionTestComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &redactionTestEndpoint{uri: uri, cfg: c}, nil
+}
+
+type redactionTestEndpoint struct {
+	uri string
+	cfg *redactionTestComponent
+}
+
+func (e *redactionTestEndpoint) URI() string { return e.uri }
+func (e *redactionTestEndpoint) CreateProducer() (Producer, error) {
+	return &redactionTestProducer{cfg: e.cfg}, nil
+}
+func (e *redactionTestEndpoint) CreateConsumer(Processor) (Consumer, error) {
+	return nil, errors.New("not supported")
+}
+func (e *redactionTestEndpoint) Poll(context.Context, time.Duration) (*Exchange, error) {
+	if !e.cfg.polling {
+		return nil, errors.New("not polling")
+	}
+	return nil, e.cfg.pollErr
+}
+
+type nonPollingRedactionComponent struct{}
+
+func (nonPollingRedactionComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return nonPollingRedactionEndpoint{uri: uri}, nil
+}
+
+type nonPollingRedactionEndpoint struct{ uri string }
+
+func (e nonPollingRedactionEndpoint) URI() string { return e.uri }
+func (e nonPollingRedactionEndpoint) CreateProducer() (Producer, error) {
+	return &redactionTestProducer{cfg: &redactionTestComponent{}}, nil
+}
+func (e nonPollingRedactionEndpoint) CreateConsumer(Processor) (Consumer, error) {
+	return nil, errors.New("not supported")
+}
+
+type redactionTestProducer struct{ cfg *redactionTestComponent }
+
+func (p *redactionTestProducer) Start(context.Context) error { return nil }
+func (p *redactionTestProducer) Stop() error                 { return p.cfg.stopErr }
+func (p *redactionTestProducer) Send(*Exchange) error        { return p.cfg.sendErr }
+
+func TestCreateEndpointAndEIPs_RedactURIsInErrors(t *testing.T) {
+	const (
+		userSecret  = "s3cr3tPass"
+		querySecret = "s3cr3tQuery"
+		badURI      = "ftp://user:my%pass@host/dir"
+		secretURI   = "unknown://user:" + userSecret + "@host/dir?password=" + querySecret
+	)
+
+	t.Run("ComponentRegistry.CreateEndpoint", func(t *testing.T) {
+		reg := NewComponentRegistry()
+		_, err := reg.CreateEndpoint(badURI)
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "my%pass")
+	})
+
+	ctx := NewCamelContext()
+	ctx.AddComponent("stopfail", &redactionTestComponent{stopErr: errors.New("stop boom")})
+	ctx.AddComponent("sendfail", &redactionTestComponent{sendErr: errors.New("send boom")})
+	ctx.AddComponent("pollfail", &redactionTestComponent{polling: true, pollErr: errors.New("poll boom")})
+	ctx.AddComponent("nopoll", nonPollingRedactionComponent{})
+
+	t.Run("lazyProducer stop and stopped errors", func(t *testing.T) {
+		stopFailURI := "stopfail://user:" + userSecret + "@host/dir?password=" + querySecret
+		r, err := ctx.CreateRouteBuilder().
+			From("direct:lp-redact").
+			To(stopFailURI).
+			Build()
+		require.NoError(t, err)
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+
+		require.NoError(t, r.Process(NewExchange(context.Background())))
+
+		stopErr := r.Stop()
+		require.Error(t, stopErr)
+		assert.NotContains(t, stopErr.Error(), userSecret)
+		assert.NotContains(t, stopErr.Error(), querySecret)
+
+		stoppedErr := r.Process(NewExchange(context.Background()))
+		require.Error(t, stoppedErr)
+		assert.NotContains(t, stoppedErr.Error(), userSecret)
+		assert.NotContains(t, stoppedErr.Error(), querySecret)
+	})
+
+	t.Run("RecipientList errors and debug logs", func(t *testing.T) {
+		buf := withCapturedLogger(t)
+		ex := NewExchange(context.Background())
+		ex.SetHeader("target", secretURI)
+
+		for _, rl := range []*RecipientList{
+			NewRecipientList(ctx).SetStaticURIs(secretURI),
+			NewRecipientList(ctx).SetSimpleExpression("${header.target}"),
+			NewRecipientList(ctx).SetURIFunc(func(*Exchange) ([]string, error) { return []string{secretURI}, nil }),
+		} {
+			err := rl.Process(ex.Copy())
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), userSecret)
+			assert.NotContains(t, err.Error(), querySecret)
+		}
+
+		logs := buf.String()
+		assert.NotContains(t, logs, userSecret)
+		assert.NotContains(t, logs, querySecret)
+	})
+
+	t.Run("RoutingSlip errors and debug logs", func(t *testing.T) {
+		buf := withCapturedLogger(t)
+		sendFailURI := "sendfail://user:" + userSecret + "@host/dir?password=" + querySecret
+		ex := NewExchange(context.Background())
+		ex.SetHeader("target", secretURI)
+
+		for _, rs := range []*RoutingSlip{
+			NewRoutingSlip(ctx).SetStaticURIs(secretURI),
+			NewRoutingSlip(ctx).SetSimpleExpression("${header.target}"),
+			NewRoutingSlip(ctx).SetURIFunc(func(*Exchange) ([]string, error) { return []string{secretURI}, nil }),
+			NewRoutingSlip(ctx).SetStaticURIs(sendFailURI),
+		} {
+			err := rs.Process(ex.Copy())
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), userSecret)
+			assert.NotContains(t, err.Error(), querySecret)
+		}
+
+		logs := buf.String()
+		assert.NotContains(t, logs, userSecret)
+		assert.NotContains(t, logs, querySecret)
+	})
+
+	t.Run("DynamicRouter error and debug log", func(t *testing.T) {
+		buf := withCapturedLogger(t)
+		dr := NewDynamicRouter(ctx, func(*Exchange) (string, error) {
+			return secretURI, nil
+		})
+		err := dr.Process(NewExchange(context.Background()))
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), userSecret)
+		assert.NotContains(t, err.Error(), querySecret)
+
+		logs := buf.String()
+		assert.NotContains(t, logs, userSecret)
+		assert.NotContains(t, logs, querySecret)
+	})
+
+	t.Run("ContentEnricher errors", func(t *testing.T) {
+		for _, u := range []string{
+			secretURI,
+			"sendfail://user:" + userSecret + "@host/dir?password=" + querySecret,
+		} {
+			err := NewContentEnricher(ctx, u, nil).Process(NewExchange(context.Background()))
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), userSecret)
+			assert.NotContains(t, err.Error(), querySecret)
+		}
+	})
+
+	t.Run("PollEnricher errors", func(t *testing.T) {
+		for _, u := range []string{
+			secretURI,
+			"nopoll://user:" + userSecret + "@host/dir?password=" + querySecret,
+			"pollfail://user:" + userSecret + "@host/dir?password=" + querySecret,
+		} {
+			err := NewPollEnricher(ctx, u, nil, 10*time.Millisecond).Process(NewExchange(context.Background()))
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), userSecret)
+			assert.NotContains(t, err.Error(), querySecret)
+		}
+	})
+
+	t.Run("WireTap warn and debug logs", func(t *testing.T) {
+		buf := withCapturedLogger(t)
+
+		wtFail := NewWireTap(ctx, secretURI)
+		require.NoError(t, wtFail.Process(NewExchange(context.Background())))
+		require.NoError(t, wtFail.Stop())
+
+		wtOk := NewWireTap(ctx, "mock:tap?password="+querySecret)
+		require.NoError(t, wtOk.Process(NewExchange(context.Background())))
+		require.NoError(t, wtOk.Stop())
+
+		logs := buf.String()
+		assert.Contains(t, logs, "WireTap: tap delivery failed")
+		assert.Contains(t, logs, "WireTap: tap delivered successfully")
+		assert.NotContains(t, logs, userSecret)
+		assert.NotContains(t, logs, querySecret)
+	})
 }

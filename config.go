@@ -15,8 +15,10 @@ import (
 //     Example: GetConfigValue(_, "OPENAI_API_KEY") reads os.Getenv("OPENAI_API_KEY").
 //
 //  2. Scheme-prefixed environment variable. Built by uppercasing
-//     scheme + "_" + key. Example: for an ftp:// URI and key "password",
-//     reads os.Getenv("FTP_PASSWORD").
+//     scheme + "_" + key with hyphens normalized to underscores (e.g.
+//     sql-stored:// reads SQL_STORED_PROCEDURE; a legacy unnormalized name
+//     such as SQL-STORED_PROCEDURE is checked as fallback if non-empty).
+//     Example: for an ftp:// URI and key "password", reads os.Getenv("FTP_PASSWORD").
 //
 //  3. URI query parameter. Example: ftp://host?password=secret.
 //     This is the LEAST secure source for credentials — the full URI
@@ -29,17 +31,31 @@ import (
 //  4. URI userinfo, but only for the well-known credential keys
 //     "username"/"user" and "password"/"pass". Example: ftp://user:pass@host.
 //
-// Returns the empty string when none of the sources holds the key.
+// Returns the empty string when u is nil (after checking exact env var) or
+// when none of the sources holds the key.
 func GetConfigValue(u *url.URL, key string) string {
 	// 1. Exact env var (e.g. "OPENAI_API_KEY")
 	if val := os.Getenv(key); val != "" {
 		return val
 	}
 
-	// 2. Scheme-prefixed env var (e.g. "FTP_PASSWORD")
-	envKey := strings.ToUpper(u.Scheme + "_" + key)
-	if val := os.Getenv(envKey); val != "" {
-		return val
+	if u == nil {
+		return ""
+	}
+
+	// 2. Scheme-prefixed env var (e.g. "FTP_PASSWORD", "SQL_STORED_PROCEDURE")
+	if u.Scheme != "" {
+		normalizedScheme := strings.ReplaceAll(u.Scheme, "-", "_")
+		envKey := strings.ToUpper(normalizedScheme + "_" + key)
+		if val := os.Getenv(envKey); val != "" {
+			return val
+		}
+		if normalizedScheme != u.Scheme {
+			legacyEnvKey := strings.ToUpper(u.Scheme + "_" + key)
+			if val := os.Getenv(legacyEnvKey); val != "" {
+				return val
+			}
+		}
 	}
 
 	// 3. URI query parameter (e.g. ?password=secret)
@@ -65,27 +81,10 @@ func GetConfigValue(u *url.URL, key string) string {
 	return ""
 }
 
-// credentialKeys lists the configuration keys treated as secrets when they
-// appear in a URI query string. The match is case-insensitive. Components
-// that introduce a new secret-bearing option should add it here.
-var credentialKeys = map[string]struct{}{
-	"password":     {},
-	"pass":         {},
-	"secret":       {},
-	"token":        {},
-	"apikey":       {},
-	"api_key":      {},
-	"accesskey":    {},
-	"access_key":   {},
-	"clientsecret": {},
-	"privatekey":   {},
-}
-
 // isCredentialKey reports whether key is a known credential key, matched
-// case-insensitively against credentialKeys.
+// case-insensitively against the canonical sensitive key set in utils.go.
 func isCredentialKey(key string) bool {
-	_, ok := credentialKeys[strings.ToLower(key)]
-	return ok
+	return isSensitiveKey(key, nil)
 }
 
 // credentialWarningOnce dedupes the "credential in query param" warning so

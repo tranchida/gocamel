@@ -79,16 +79,16 @@ func (p *PollEnricher) Process(exchange *Exchange) (resultErr error) {
 
 	endpoint, err := p.context.CreateEndpoint(targetURI)
 	if err != nil {
-		return fmt.Errorf("pollEnrich: failed to create endpoint %q: %w", targetURI, err)
+		return fmt.Errorf("pollEnrich: failed to create endpoint %q: %w", RedactURI(targetURI), err)
 	}
 
 	polling, ok := endpoint.(PollingEndpoint)
 	if !ok {
-		return fmt.Errorf("pollEnrich: endpoint %q does not support single-message polling", targetURI)
+		return fmt.Errorf("pollEnrich: endpoint %q does not support single-message polling", RedactURI(targetURI))
 	}
 	polledExchange, err := polling.Poll(ctx, p.timeout)
 	if err != nil {
-		return fmt.Errorf("pollEnrich: receive from %q: %w", targetURI, err)
+		return fmt.Errorf("pollEnrich: receive from %q: %w", RedactURI(targetURI), err)
 	}
 	if polledExchange != nil {
 		defer func() { resultErr = CompleteExchange(polledExchange, resultErr) }()
