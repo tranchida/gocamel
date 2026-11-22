@@ -134,13 +134,15 @@ func JoinRemotePath(dir, name string) (string, error) {
 // rejecting them produced false positives without adding real protection given
 // parameterised binding.
 //
-// Only ';' characters that fall OUTSIDE string literals are considered, so a
-// semicolon inside a quoted value does not trip the check. Whether a backslash
-// escapes a quote depends on the dialect (MySQL: yes; standard SQL, SQLite,
-// PostgreSQL: no), so the query is scanned both ways and rejected if either
-// reading stacks statements: "SELECT 'a\'; DROP TABLE t; --'" is one statement
-// for MySQL but two for SQLite. Escape a quote by doubling it, which is
-// portable.
+// Only ';' characters that fall OUTSIDE string literals and comments are
+// considered, so a semicolon inside a quoted value does not trip the check.
+// Because validateSQLQuery has no database-driver context, it scans the query
+// under standard/SQLite, PostgreSQL, and MySQL lexical rules (including both
+// active and version-skipped MySQL '/*! ... */' executable comments) and
+// rejects if ANY dialect reading observes stacked statements. Consequently,
+// dialect-specific constructs that another dialect parses as stacked code
+// (e.g. \' or \", PostgreSQL $$...$$ containing ';', or MySQL trailing '#'
+// comments) are rejected unless written portably (for example, doubling quotes).
 //
 // IMPORTANT: this is NOT a security boundary. When an endpoint opts in with
 // allowHeaderOverride=true, the CamelSqlQuery header replaces the statement
@@ -149,18 +151,38 @@ func JoinRemotePath(dir, name string) (string, error) {
 // this check unchanged. The real boundary is the opt-in flag, which defaults to
 // false — do not enable it where headers can be influenced by untrusted input.
 func validateSQLQuery(query string) error {
-	if hasNonTrailingSemicolonOutsideStrings(query, true) || hasNonTrailingSemicolonOutsideStrings(query, false) {
-		return fmt.Errorf("query contains stacked SQL statements: %s", query)
+	for _, dialect := range sqlDialects {
+		if hasNonTrailingSemicolonOutsideStrings(query, dialect) {
+			return fmt.Errorf("query contains stacked SQL statements: %s", query)
+		}
 	}
 	return nil
 }
 
+type sqlDialect struct {
+	backslashEscapes bool // \' and \" escape quotes inside '...' and "..." (MySQL)
+	dollarQuotes     bool // $$ and $tag$ dollar-quoted string literals (PostgreSQL)
+	hashComments     bool // '#' opens a line comment (MySQL)
+	execComments     bool // /*! ... */ executes as SQL (MySQL matching server version)
+	crEndsComment    bool // '\r' terminates '--' line comments (PostgreSQL)
+}
+
+var sqlDialects = []sqlDialect{
+	// Standard SQL / SQLite / Oracle / SQL Server
+	{backslashEscapes: false, dollarQuotes: false, hashComments: false, execComments: false, crEndsComment: false},
+	// PostgreSQL
+	{backslashEscapes: false, dollarQuotes: true, hashComments: false, execComments: false, crEndsComment: true},
+	// MySQL with active executable comments (/*! ... */)
+	{backslashEscapes: true, dollarQuotes: false, hashComments: true, execComments: true, crEndsComment: false},
+	// MySQL when /*!version ... */ is skipped as a normal block comment
+	{backslashEscapes: true, dollarQuotes: false, hashComments: true, execComments: false, crEndsComment: false},
+}
+
 // hasNonTrailingSemicolonOutsideStrings reports whether a statement terminator
-// is followed by SQL code. Whitespace and comments may follow a single trailing
-// semicolon, while "SELECT 1; DROP TABLE t" is rejected. backslashEscapes
-// selects whether a backslash escapes quotes in '...' / "..." literals and
-// whether '#' opens a MySQL line comment before a statement terminator.
-func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) bool {
+// is followed by SQL code under the given dialect's lexical rules. Whitespace
+// and benign comments may follow a single trailing semicolon, while
+// "SELECT 1; DROP TABLE t" is rejected.
+func hasNonTrailingSemicolonOutsideStrings(query string, dialect sqlDialect) bool {
 	inSingle := false
 	inDouble := false
 	inBacktick := false
@@ -171,7 +193,7 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 	for i := 0; i < len(query); i++ {
 		c := query[i]
 		if inLineComment {
-			if c == '\n' {
+			if c == '\n' || (dialect.crEndsComment && c == '\r') {
 				inLineComment = false
 			}
 			continue
@@ -184,7 +206,7 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 			continue
 		}
 		if inSingle {
-			if backslashEscapes && c == '\\' && i+1 < len(query) {
+			if dialect.backslashEscapes && c == '\\' && i+1 < len(query) {
 				i++
 				continue
 			}
@@ -198,7 +220,7 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 			continue
 		}
 		if inDouble {
-			if backslashEscapes && c == '\\' && i+1 < len(query) {
+			if dialect.backslashEscapes && c == '\\' && i+1 < len(query) {
 				i++
 				continue
 			}
@@ -242,18 +264,18 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 			if seenTerminator {
 				return true
 			}
-			if tag, ok := matchDollarQuoteTag(query[i:]); ok {
-				if endRel := strings.Index(query[i+len(tag):], tag); endRel >= 0 {
-					i += len(tag) + endRel + len(tag) - 1
+			if dialect.dollarQuotes {
+				if tag, ok := matchDollarQuoteTag(query[i:]); ok {
+					if endRel := strings.Index(query[i+len(tag):], tag); endRel >= 0 {
+						i += len(tag) + endRel + len(tag) - 1
+					}
 				}
 			}
 		case '#':
-			// MySQL treats '#' as a line comment, whereas PostgreSQL uses '#' as an
-			// operator. When scanning in MySQL mode (or after a terminator), treat
-			// '#' as a line comment; in PostgreSQL mode before ';', leave it as a
-			// token so quotes on the same line remain parsed as string literals.
-			if backslashEscapes || seenTerminator {
+			if dialect.hashComments {
 				inLineComment = true
+			} else if seenTerminator {
+				return true
 			}
 		case '-':
 			if i+1 < len(query) && query[i+1] == '-' {
@@ -264,7 +286,7 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 			}
 		case '/':
 			if i+1 < len(query) && query[i+1] == '*' {
-				if i+2 < len(query) && query[i+2] == '!' {
+				if dialect.execComments && i+2 < len(query) && query[i+2] == '!' {
 					// MySQL executable comments (/*! ... */) are executed as SQL.
 					if seenTerminator {
 						return true
@@ -301,8 +323,18 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 	return false
 }
 
+func isDollarQuoteStart(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || b >= 0x80
+}
+
+func isDollarQuoteCont(b byte) bool {
+	return isDollarQuoteStart(b) || (b >= '0' && b <= '9')
+}
+
 // matchDollarQuoteTag returns the PostgreSQL dollar-quote delimiter ($tag$) at
-// the start of s when tag is empty or a valid unquoted ASCII identifier.
+// the start of s when tag is empty or matches PostgreSQL's dolq_start/dolq_cont
+// rules (ASCII letters, '_', non-ASCII bytes 0x80-0xff, and digits after the
+// first byte).
 func matchDollarQuoteTag(s string) (string, bool) {
 	if len(s) < 2 || s[0] != '$' {
 		return "", false
@@ -310,16 +342,14 @@ func matchDollarQuoteTag(s string) (string, bool) {
 	if s[1] == '$' {
 		return "$$", true
 	}
-	first := s[1]
-	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+	if !isDollarQuoteStart(s[1]) {
 		return "", false
 	}
 	for j := 2; j < len(s); j++ {
-		c := s[j]
-		if c == '$' {
+		if s[j] == '$' {
 			return s[:j+1], true
 		}
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+		if !isDollarQuoteCont(s[j]) {
 			return "", false
 		}
 	}

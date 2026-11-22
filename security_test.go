@@ -409,14 +409,27 @@ func TestValidateSQLQuery_DialectBypasses(t *testing.T) {
 		{"PostgreSQL dollar-quote with single-quote desync", "SELECT $$; '$$; DROP TABLE t -- '"},
 		{"PostgreSQL dollar-quote concealing quote", "SELECT $$ ' $$; DROP TABLE t -- '"},
 		{"PostgreSQL named dollar-quote", "SELECT $tag$';$tag$; DROP TABLE t"},
+		{"PostgreSQL non-ASCII dollar-quote", "SELECT $é$' $é$; DROP TABLE t -- '"},
+		{"PostgreSQL CR terminates line comment", "SELECT 1 -- x\r; DROP TABLE t"},
 		{"PostgreSQL positional params stacked", "SELECT $1, $2; DROP TABLE t"},
 		{"PostgreSQL hash operator before quoted string", "SELECT x # 'a'; DROP TABLE t"},
+		{"PostgreSQL dollar-quote rejected by SQLite/MySQL modes", "SELECT $$a;b$$;"},
+		{"PostgreSQL named dollar-quote rejected by SQLite/MySQL modes", "SELECT $body$a;b$body$;"},
+		{"PostgreSQL multi-line hash operator + quote rejected by MySQL mode", "SELECT data #>> '{\n;x}' FROM docs;"},
+		{"SQLite/MySQL $$ identifier bypass", "SELECT 1 AS $$; DROP TABLE t -- $$"},
+		{"SQLite/MySQL $a$ parameter bypass", "SELECT $a$; DROP TABLE t -- $a$"},
 		{"MySQL double-quote backslash escape", `SELECT "a\""; DROP TABLE t; -- "`},
 		{"MySQL hash line comment quote desync", "SELECT 1 # '\n; DROP TABLE t -- '"},
 		{"MySQL hash line comment stacked", "SELECT 1; # c\nDROP TABLE t"},
+		{"MySQL trailing hash comment rejected by standard/PostgreSQL modes", "SELECT 1; # trailing comment"},
 		{"MySQL executable comment after terminator", "SELECT 1; /*! DROP TABLE t */"},
 		{"MySQL versioned executable comment stacked inside", "SELECT 1 /*!50000 ; DROP TABLE t */"},
 		{"MySQL executable comment stacked inside", "SELECT 1 /*! ; DROP TABLE t */"},
+		{"executable comment single-quote desync", "SELECT 1 /*! ' */ ; DROP TABLE t -- '"},
+		{"executable comment double-quote desync", `SELECT 1 /*! " */ ; DROP TABLE t -- "`},
+		{"executable comment dollar-quote desync", "SELECT 1 /*! $$ */ ; DROP TABLE t -- $$"},
+		{"executable comment line-comment desync", "SELECT 1 /*! -- */ ; DROP TABLE t"},
+		{"executable comment high-version quote desync", "SELECT 1 /*!99999 ' */ ; DROP TABLE t -- '"},
 		{"single-quoted token after terminator", "SELECT 1; 'DROP TABLE t'"},
 		{"double-quoted token after terminator", `SELECT 1; "x"`},
 		{"backtick token after terminator", "SELECT 1; `x`"},
@@ -434,12 +447,10 @@ func TestValidateSQLQuery_DialectBypasses(t *testing.T) {
 		name  string
 		query string
 	}{
-		{"PostgreSQL dollar-quoted semicolon", "SELECT $$a;b$$;"},
-		{"PostgreSQL named dollar-quoted semicolon", "SELECT $body$a;b$body$;"},
 		{"PostgreSQL positional params", "SELECT $1, $2 FROM t WHERE id = $3;"},
-		{"MySQL trailing hash comment", "SELECT 1; # trailing comment"},
 		{"MySQL trailing semicolon in executable comment", "SELECT 1 /*! ; */"},
 		{"PostgreSQL JSON operator with semicolon in path", "SELECT data #>> '{a;b}' FROM docs;"},
+		{"PostgreSQL CR line comment with trailing semicolon only", "SELECT 1; -- done\r"},
 	}
 	for _, tt := range allowed {
 		t.Run("allow/"+tt.name, func(t *testing.T) {
