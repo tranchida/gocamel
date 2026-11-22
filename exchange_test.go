@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -260,5 +261,56 @@ func TestExchange_Copy(t *testing.T) {
 	}
 	if !copy.Modified.After(exchange.Modified) {
 		t.Error("Copy should have a new Modified time")
+	}
+}
+
+func TestMessage_GetHeaderAndBodyAsInt(t *testing.T) {
+	ex := NewExchange(context.Background())
+
+	// Header int types
+	ex.SetHeader("int", 42)
+	ex.SetHeader("int64", int64(4096))
+	ex.SetHeader("int32", int32(128))
+	ex.SetHeader("float64", float64(77.0))
+	ex.SetHeader("nan", math.NaN())
+	ex.SetHeader("str", "123")
+
+	for key, want := range map[string]int{
+		"int":     42,
+		"int64":   4096,
+		"int32":   128,
+		"float64": 77,
+	} {
+		got, ok := ex.GetHeaderAsInt(key)
+		if !ok || got != want {
+			t.Errorf("GetHeaderAsInt(%q) = (%d, %v), want (%d, true)", key, got, ok, want)
+		}
+	}
+
+	for _, key := range []string{"missing", "nan", "str"} {
+		if got, ok := ex.GetHeaderAsInt(key); ok || got != 0 {
+			t.Errorf("GetHeaderAsInt(%q) = (%d, %v), want (0, false)", key, got, ok)
+		}
+	}
+
+	// Body int types
+	for _, tc := range []struct {
+		body any
+		want int
+		ok   bool
+	}{
+		{42, 42, true},
+		{int64(4096), 4096, true},
+		{int32(128), 128, true},
+		{float64(77.0), 77, true},
+		{math.NaN(), 0, false},
+		{"123", 0, false},
+		{nil, 0, false},
+	} {
+		ex.SetBody(tc.body)
+		got, ok := ex.GetBodyAsInt()
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("GetBodyAsInt(%T(%v)) = (%d, %v), want (%d, %v)", tc.body, tc.body, got, ok, tc.want, tc.ok)
+		}
 	}
 }

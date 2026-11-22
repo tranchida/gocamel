@@ -3,9 +3,11 @@ package gocamel
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2041,5 +2043,272 @@ func TestSimple_ReflectionAndChainSafety(t *testing.T) {
 		s, err = tmplNonNilCI.EvaluateAsString(ex)
 		require.NoError(t, err)
 		assert.Equal(t, "resolved", s)
+	})
+}
+
+func TestSimple_NoTypeJugglingAndToBoolAndNullType(t *testing.T) {
+	t.Run("exact string equality prevents type juggling", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+
+		cases := []struct {
+			expr string
+			want bool
+		}{
+			{"${'0e12345' == '0e99999'}", false},
+			{"${'0e12345' != '0e99999'}", true},
+			{"${'0042' == '42'}", false},
+			{"${'0042' != '42'}", true},
+			{"${'NaN' == 'NaN'}", true},
+			{"${'Inf' == 'Infinity'}", false},
+		}
+
+		for _, tc := range cases {
+			tmpl, err := ParseSimpleTemplate(tc.expr)
+			require.NoError(t, err, tc.expr)
+			got, err := tmpl.EvaluateAsBool(ex)
+			require.NoError(t, err, tc.expr)
+			assert.Equal(t, tc.want, got, tc.expr)
+		}
+	})
+
+	t.Run("int64 and uint64 precision preserved in comparisons", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("id1", int64(9007199254740993))
+		ex.GetIn().SetHeader("id2", int64(9007199254740992))
+		ex.GetIn().SetHeader("u1", uint64(18446744073709551615))
+		ex.GetIn().SetHeader("u2", uint64(18446744073709551614))
+		ex.GetIn().SetHeader("neg", int64(-1))
+		ex.GetIn().SetHeader("f2", float64(9007199254740992))
+		ex.GetIn().SetHeader("nanVal", math.NaN())
+
+		cases := []struct {
+			expr string
+			want bool
+		}{
+			{"${header.id1 == header.id2}", false},
+			{"${header.id1 != header.id2}", true},
+			{"${header.id1 > header.id2}", true},
+			{"${header.u1 == header.u2}", false},
+			{"${header.u1 > header.u2}", true},
+			{"${header.neg < header.u1}", true},
+			{"${header.id1 == header.f2}", false},
+			{"${header.id1 > header.f2}", true},
+			{"${header.nanVal == 'NaN'}", false},
+			{"${header.nanVal == 0}", false},
+			{"${'NaN' == 0}", false},
+		}
+
+		for _, tc := range cases {
+			tmpl, err := ParseSimpleTemplate(tc.expr)
+			require.NoError(t, err, tc.expr)
+			got, err := tmpl.EvaluateAsBool(ex)
+			require.NoError(t, err, tc.expr)
+			assert.Equal(t, tc.want, got, tc.expr)
+		}
+
+		// Direct compareValues edge cases: Inf, MinInt64 vs float64, unknown operator
+		ok, err := compareValues(int64(math.MinInt64), "==", float64(-9223372036854775808.0))
+		require.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = compareValues(int64(1), "<", math.Inf(1))
+		require.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = compareValues(int64(1), ">", math.Inf(-1))
+		require.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = compareValues("9007199254740993", ">", "9007199254740992")
+		require.NoError(t, err)
+		assert.True(t, ok)
+		_, err = compareValues(1, "~=", 2)
+		require.Error(t, err)
+	})
+
+	t.Run("toBool handles all numeric kinds and NaN", func(t *testing.T) {
+		type customInt int64
+		type customUint uint32
+		type customFloat float64
+
+		assert.False(t, toBool(int8(0)))
+		assert.False(t, toBool(int16(0)))
+		assert.False(t, toBool(int32(0)))
+		assert.False(t, toBool(int64(0)))
+		assert.False(t, toBool(uint(0)))
+		assert.False(t, toBool(uint8(0)))
+		assert.False(t, toBool(uint16(0)))
+		assert.False(t, toBool(uint32(0)))
+		assert.False(t, toBool(uint64(0)))
+		assert.False(t, toBool(uintptr(0)))
+		assert.False(t, toBool(float32(0)))
+		assert.False(t, toBool(float32(math.NaN())))
+		assert.False(t, toBool(math.NaN()))
+		assert.False(t, toBool(customInt(0)))
+		assert.False(t, toBool(customUint(0)))
+		assert.False(t, toBool(customFloat(math.NaN())))
+
+		assert.True(t, toBool(int64(1)))
+		assert.True(t, toBool(uint64(42)))
+		assert.True(t, toBool(float32(1.5)))
+		assert.True(t, toBool(customInt(-3)))
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("zero64", int64(0))
+		ex.GetIn().SetHeader("nanVal", math.NaN())
+
+		for _, expr := range []string{"${!header.zero64}", "${!header.nanVal}"} {
+			tmpl, err := ParseSimpleTemplate(expr)
+			require.NoError(t, err, expr)
+			got, err := tmpl.EvaluateAsBool(ex)
+			require.NoError(t, err, expr)
+			assert.True(t, got, expr)
+		}
+	})
+
+	t.Run("is operator supports case-insensitive null and nil", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		for _, expr := range []string{
+			"${header.missing is 'null'}",
+			"${header.missing is 'Null'}",
+			"${header.missing is 'NULL'}",
+			"${header.missing is 'nil'}",
+			"${header.missing is 'NIL'}",
+		} {
+			tmpl, err := ParseSimpleTemplate(expr)
+			require.NoError(t, err, expr)
+			got, err := tmpl.EvaluateAsBool(ex)
+			require.NoError(t, err, expr)
+			assert.True(t, got, expr)
+		}
+	})
+}
+
+func TestSimple_UTF8StringsAndQuotedBraces(t *testing.T) {
+	t.Run("capitalize is UTF-8 rune-safe", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody("école")
+
+		tmpl, err := ParseSimpleTemplate("${body.capitalize()}")
+		require.NoError(t, err)
+		got, err := tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "École", got)
+		assert.True(t, utf8.ValidString(got))
+
+		ex.GetIn().SetBody("ÉCOLE")
+		got, err = tmpl.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "École", got)
+	})
+
+	t.Run("padstart and padend are UTF-8 rune-safe", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody("a")
+
+		tmplStart, err := ParseSimpleTemplate("${body.padstart(4, 'é')}")
+		require.NoError(t, err)
+		gotStart, err := tmplStart.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.True(t, utf8.ValidString(gotStart))
+		assert.Equal(t, "éééa", gotStart)
+		assert.Equal(t, 4, utf8.RuneCountInString(gotStart))
+
+		tmplEnd, err := ParseSimpleTemplate("${body.padend(4, 'é')}")
+		require.NoError(t, err)
+		gotEnd, err := tmplEnd.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.True(t, utf8.ValidString(gotEnd))
+		assert.Equal(t, "aééé", gotEnd)
+		assert.Equal(t, 4, utf8.RuneCountInString(gotEnd))
+
+		// Multi-rune pad string and multi-byte body
+		ex.GetIn().SetBody("é")
+		tmplMixed, err := ParseSimpleTemplate("${body.padstart(4, 'éx')}")
+		require.NoError(t, err)
+		gotMixed, err := tmplMixed.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.True(t, utf8.ValidString(gotMixed))
+		assert.Equal(t, "éxéé", gotMixed)
+
+		// Negative and NaN target length return original string cleanly
+		gotNeg, err := applyStringFunction("padstart", "é", []interface{}{-5, "0"})
+		require.NoError(t, err)
+		assert.Equal(t, "é", gotNeg)
+		gotNaN, err := applyStringFunction("padend", "é", []interface{}{math.NaN(), "0"})
+		require.NoError(t, err)
+		assert.Equal(t, "é", gotNaN)
+	})
+
+	t.Run("quote-aware placeholder scanner handles braces in quoted strings", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader("code", "123")
+		ex.GetIn().SetBody(`{"ok":true}`)
+
+		tmplRegex, err := ParseSimpleTemplate(`${header.code regex '^\d{3}$'}`)
+		require.NoError(t, err)
+		matched, err := tmplRegex.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, matched)
+
+		ex.GetIn().SetHeader("code", "12a")
+		matched, err = tmplRegex.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.False(t, matched)
+
+		tmplContains, err := ParseSimpleTemplate(`${body contains '{"ok":true}'}`)
+		require.NoError(t, err)
+		containsMatch, err := tmplContains.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, containsMatch)
+
+		// Mixed template with literal text, escaped quotes, double quotes, and multiple placeholders with braces
+		ex.GetIn().SetHeader("code", "404")
+		tmplMulti, err := ParseSimpleTemplate(`prefix ${header.code regex '^\d{3}$'} mid ${body contains "{\"ok\":true}"} suffix`)
+		require.NoError(t, err)
+		multiOut, err := tmplMulti.EvaluateAsString(ex)
+		require.NoError(t, err)
+		assert.Equal(t, "prefix true mid true suffix", multiOut)
+
+		// Escaped single quote inside single-quoted string containing '}'
+		ex.GetIn().SetBody("it's } ok")
+		tmplEsc, err := ParseSimpleTemplate(`${body contains 'it\'s } ok'}`)
+		require.NoError(t, err)
+		escMatch, err := tmplEsc.EvaluateAsBool(ex)
+		require.NoError(t, err)
+		assert.True(t, escMatch)
+
+		// Malformed templates still fail cleanly
+		for _, bad := range []string{"direct:${header.x", "direct:${}", "direct:${   }", "${body == 'unclosed}"} {
+			_, badErr := ParseSimpleTemplate(bad)
+			require.Error(t, badErr, bad)
+		}
+	})
+
+	t.Run("regex operator uses bounded cache", func(t *testing.T) {
+		savedCap := MaxSimpleTemplateCacheEntries
+		t.Cleanup(func() {
+			MaxSimpleTemplateCacheEntries = savedCap
+		})
+
+		base := simpleRegexCacheSize.Load()
+		MaxSimpleTemplateCacheEntries = int(base + 3)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody("abc123")
+
+		for i := 0; i < 6; i++ {
+			expr := fmt.Sprintf(`${body regex '^abc\d{%d}$'}`, i+1)
+			tmpl, err := ParseSimpleTemplate(expr)
+			require.NoError(t, err, expr)
+			got, err := tmpl.EvaluateAsBool(ex)
+			require.NoError(t, err, expr)
+			assert.Equal(t, i+1 == 3, got, expr)
+		}
+		assert.Equal(t, base+3, simpleRegexCacheSize.Load())
+
+		// Invalid regex returns an error without inflating the cache
+		badTmpl, err := ParseSimpleTemplate(`${body regex '[invalid'}`)
+		require.NoError(t, err)
+		_, err = badTmpl.EvaluateAsBool(ex)
+		require.Error(t, err)
+		assert.Equal(t, base+3, simpleRegexCacheSize.Load())
 	})
 }

@@ -20,37 +20,29 @@ func evaluateFileFunction(fn string, exchange *Exchange) (interface{}, error) {
 	length, _ := exchange.GetHeaderAsInt(CamelFileLength)
 	modified, _ := exchange.GetHeader(CamelFileLastModified)
 
+	lastSep := strings.LastIndexAny(name, "/\\")
+	lastDot := strings.LastIndex(name, ".")
+	hasExt := lastDot > lastSep
+	onlyName := name[lastSep+1:]
+
 	switch fn {
 	case "name":
 		return name, nil
 	case "name.noext":
-		if idx := strings.LastIndex(name, "."); idx != -1 {
-			return name[:idx], nil
+		if hasExt {
+			return name[:lastDot], nil
 		}
 		return name, nil
 	case "name.ext", "ext":
-		if idx := strings.LastIndex(name, "."); idx != -1 {
-			return name[idx+1:], nil
+		if hasExt {
+			return name[lastDot+1:], nil
 		}
 		return "", nil
 	case "onlyname":
-		// Only name without path
-		if idx := strings.LastIndex(name, "/"); idx != -1 {
-			return name[idx+1:], nil
-		}
-		if idx := strings.LastIndex(name, "\\"); idx != -1 {
-			return name[idx+1:], nil
-		}
-		return name, nil
+		return onlyName, nil
 	case "onlyname.noext":
-		onlyName := name
-		if idx := strings.LastIndex(name, "/"); idx != -1 {
-			onlyName = name[idx+1:]
-		} else if idx := strings.LastIndex(name, "\\"); idx != -1 {
-			onlyName = name[idx+1:]
-		}
-		if idx := strings.LastIndex(onlyName, "."); idx != -1 {
-			return onlyName[:idx], nil
+		if hasExt {
+			return onlyName[:lastDot-(lastSep+1)], nil
 		}
 		return onlyName, nil
 	case "path":

@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"maps"
+	"math"
 	"regexp"
 )
 
@@ -36,17 +37,32 @@ func (m *Message) GetBodyAsString() (string, bool) {
 	return "", false
 }
 
+func valueAsInt(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		if v < math.MinInt || v > math.MaxInt {
+			return 0, false
+		}
+		return int(v), true
+	case int32:
+		return int(v), true
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
 func (m *Message) GetBodyAsInt() (int, bool) {
 	if m.Body == nil {
 		return 0, false
 	}
-	if i, ok := m.Body.(int); ok {
-		return i, true
-	}
-	if f, ok := m.Body.(float64); ok {
-		return int(f), true
-	}
-	return 0, false
+	return valueAsInt(m.Body)
 }
 
 func (m *Message) GetBodyAsBool() (bool, bool) {
@@ -79,12 +95,7 @@ func (m *Message) GetHeaderAsString(key string) (string, bool) {
 
 func (m *Message) GetHeaderAsInt(key string) (int, bool) {
 	if value, exists := m.Headers[key]; exists {
-		if i, ok := value.(int); ok {
-			return i, true
-		}
-		if f, ok := value.(float64); ok {
-			return int(f), true
-		}
+		return valueAsInt(value)
 	}
 	return 0, false
 }

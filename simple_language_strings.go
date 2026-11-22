@@ -2,9 +2,11 @@ package gocamel
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 var multipleSpacesRegex = regexp.MustCompile(` +`)
@@ -101,60 +103,52 @@ func applyStringFunction(funcName string, val interface{}, args []interface{}) (
 		}
 		return result, nil
 	case "capitalize":
-		// Uppercase first letter, lowercase rest
-		if len(strVal) == 0 {
+		// Uppercase first rune, lowercase rest
+		if strVal == "" {
 			return strVal, nil
 		}
-		return strings.ToUpper(string(strVal[0])) + strings.ToLower(strVal[1:]), nil
+		_, size := utf8.DecodeRuneInString(strVal)
+		return strings.ToUpper(strVal[:size]) + strings.ToLower(strVal[size:]), nil
 	case "title":
 		// Title case each word separated by spaces
 		//lint:ignore SA1019 strings.Title has no dependency-free Unicode equivalent in the zero-dep core
 		return strings.Title(strVal), nil
 	case "padstart":
-		if len(args) < 1 {
-			return strVal, nil
-		}
-		targetLen := int(toFloat64(args[0]))
-		padChar := " "
-		if len(args) >= 2 {
-			padChar = fmt.Sprintf("%v", args[1])
-		}
-		if len(strVal) >= targetLen || padChar == "" {
-			return strVal, nil
-		}
-		if targetLen > MaxSimpleInputBytes || len(strVal) > MaxSimpleInputBytes {
-			return nil, fmt.Errorf("padstart target length %d exceeds MaxSimpleInputBytes (%d)", targetLen, MaxSimpleInputBytes)
-		}
-		needed := targetLen - len(strVal)
-		repeats := (needed + len(padChar) - 1) / len(padChar)
-		padding := strings.Repeat(padChar, repeats)
-		if len(padding) > needed {
-			padding = padding[:needed]
-		}
-		return padding + strVal, nil
+		return padString("padstart", strVal, args, true)
 	case "padend":
-		if len(args) < 1 {
-			return strVal, nil
-		}
-		targetLen := int(toFloat64(args[0]))
-		padChar := " "
-		if len(args) >= 2 {
-			padChar = fmt.Sprintf("%v", args[1])
-		}
-		if len(strVal) >= targetLen || padChar == "" {
-			return strVal, nil
-		}
-		if targetLen > MaxSimpleInputBytes || len(strVal) > MaxSimpleInputBytes {
-			return nil, fmt.Errorf("padend target length %d exceeds MaxSimpleInputBytes (%d)", targetLen, MaxSimpleInputBytes)
-		}
-		needed := targetLen - len(strVal)
-		repeats := (needed + len(padChar) - 1) / len(padChar)
-		padding := strings.Repeat(padChar, repeats)
-		if len(padding) > needed {
-			padding = padding[:needed]
-		}
-		return strVal + padding, nil
+		return padString("padend", strVal, args, false)
 	default:
 		return nil, fmt.Errorf("unknown function: %s", funcName)
 	}
+}
+
+func padString(funcName, strVal string, args []interface{}, atStart bool) (string, error) {
+	if len(args) < 1 {
+		return strVal, nil
+	}
+	targetFloat := toFloat64(args[0])
+	if math.IsNaN(targetFloat) || targetFloat <= 0 {
+		return strVal, nil
+	}
+	if targetFloat > float64(MaxSimpleInputBytes) || len(strVal) > MaxSimpleInputBytes {
+		return "", fmt.Errorf("%s target length %.0f exceeds MaxSimpleInputBytes (%d)", funcName, targetFloat, MaxSimpleInputBytes)
+	}
+	targetLen := int(targetFloat)
+	padChar := " "
+	if len(args) >= 2 {
+		padChar = fmt.Sprintf("%v", args[1])
+	}
+	strRuneLen := utf8.RuneCountInString(strVal)
+	if strRuneLen >= targetLen || padChar == "" {
+		return strVal, nil
+	}
+	padRunes := []rune(padChar)
+	needed := targetLen - strRuneLen
+	repeats := needed / len(padRunes)
+	rem := needed % len(padRunes)
+	padding := strings.Repeat(padChar, repeats) + string(padRunes[:rem])
+	if atStart {
+		return padding + strVal, nil
+	}
+	return strVal + padding, nil
 }

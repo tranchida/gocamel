@@ -3,6 +3,7 @@ package gocamel
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -65,7 +66,7 @@ func (p *PollEnricher) Process(exchange *Exchange) (resultErr error) {
 	// escaped by position so they cannot inject endpoint options. A URI
 	// without placeholders is used as-is.
 	targetURI := p.uri
-	if placeholderRegex.MatchString(p.uri) {
+	if strings.Contains(p.uri, "${") {
 		template, err := ParseSimpleTemplate(p.uri)
 		if err != nil {
 			return fmt.Errorf("pollEnrich: failed to parse URI expression: %w", err)

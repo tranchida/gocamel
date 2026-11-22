@@ -5,7 +5,6 @@ import (
 	"math"
 	"math/rand"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -1875,12 +1874,9 @@ func evalSimpleNode(node simpleNode, exchange *Exchange, sliceState *bracketSlic
 		case "endsWith":
 			matched = strings.HasSuffix(leftStr, rightStr)
 		case "regex":
-			if len(rightStr) > MaxSimpleInputBytes {
-				return false, fmt.Errorf("regex pattern length %d exceeds MaxSimpleInputBytes (%d)", len(rightStr), MaxSimpleInputBytes)
-			}
-			re, err := regexp.Compile(rightStr)
+			re, err := compileSimpleRegex(rightStr)
 			if err != nil {
-				return false, fmt.Errorf("invalid regex pattern: %w", err)
+				return false, err
 			}
 			matched = re.MatchString(leftStr)
 		default:

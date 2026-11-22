@@ -68,9 +68,6 @@ type templatePart struct {
 // `go test ./...` (or `go vet`/`go build`) is enough to detect a malformed
 // pattern introduced by a PR — no dedicated regex test is needed.
 var (
-	// Matches ${expression}
-	placeholderRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
-
 	// Null-safe dot notation: body?.field or header?.name
 	nullSafeDotNotationRegex = regexp.MustCompile(`^(body|header|exchangeProperty)\?\.([a-zA-Z0-9_\-]+)(.*)$`)
 
@@ -112,6 +109,34 @@ var MaxSimpleTemplateCacheEntries = 10_000
 
 var simpleCacheSize atomic.Int64
 
+var (
+	simpleRegexCache     sync.Map
+	simpleRegexCacheSize atomic.Int64
+)
+
+func compileSimpleRegex(pattern string) (*regexp.Regexp, error) {
+	if len(pattern) > MaxSimpleInputBytes {
+		return nil, fmt.Errorf("regex pattern length %d exceeds MaxSimpleInputBytes (%d)", len(pattern), MaxSimpleInputBytes)
+	}
+	if MaxSimpleTemplateCacheEntries > 0 {
+		if cached, ok := simpleRegexCache.Load(pattern); ok {
+			return cached.(*regexp.Regexp), nil
+		}
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern: %w", err)
+	}
+
+	if MaxSimpleTemplateCacheEntries > 0 && simpleRegexCacheSize.Load() < int64(MaxSimpleTemplateCacheEntries) {
+		if _, loaded := simpleRegexCache.LoadOrStore(pattern, re); !loaded {
+			simpleRegexCacheSize.Add(1)
+		}
+	}
+	return re, nil
+}
+
 func cacheSimpleTemplate(expression string, template *SimpleTemplate) {
 	if MaxSimpleTemplateCacheEntries <= 0 {
 		return // cache disabled
@@ -144,64 +169,117 @@ func ParseSimpleTemplate(expression string) (*SimpleTemplate, error) {
 		return val.(*SimpleTemplate), nil
 	}
 
+	parts, isLiteral, err := splitSimpleTemplateParts(expression)
+	if err != nil {
+		return nil, err
+	}
+
 	template := &SimpleTemplate{
 		expression: expression,
-		parts:      make([]templatePart, 0),
-	}
-
-	// Check if it's a simple literal (no placeholders)
-	if !placeholderRegex.MatchString(expression) {
-		if strings.Contains(expression, "${") {
-			return nil, fmt.Errorf("malformed simple template: unclosed or empty ${...} placeholder")
-		}
-		template.isLiteral = true
-		template.parts = append(template.parts, templatePart{isVariable: false, content: expression})
-		cacheSimpleTemplate(expression, template)
-		return template, nil
-	}
-
-	// Parse the template and extract placeholders
-	lastIndex := 0
-	matches := placeholderRegex.FindAllStringIndex(expression, -1)
-	for _, match := range matches {
-		start, end := match[0], match[1]
-
-		// Add literal text before the placeholder
-		if start > lastIndex {
-			lit := expression[lastIndex:start]
-			if strings.Contains(lit, "${") {
-				return nil, fmt.Errorf("malformed simple template: unclosed or empty ${...} placeholder")
-			}
-			template.parts = append(template.parts, templatePart{
-				isVariable: false,
-				content:    lit,
-			})
-		}
-
-		// Extract the expression inside ${...}
-		innerExpr := expression[start+2 : end-1]
-		template.parts = append(template.parts, templatePart{
-			isVariable: true,
-			content:    strings.TrimSpace(innerExpr),
-		})
-
-		lastIndex = end
-	}
-
-	// Add remaining literal text
-	if lastIndex < len(expression) {
-		lit := expression[lastIndex:]
-		if strings.Contains(lit, "${") {
-			return nil, fmt.Errorf("malformed simple template: unclosed or empty ${...} placeholder")
-		}
-		template.parts = append(template.parts, templatePart{
-			isVariable: false,
-			content:    lit,
-		})
+		isLiteral:  isLiteral,
+		parts:      parts,
 	}
 
 	cacheSimpleTemplate(expression, template)
 	return template, nil
+}
+
+func splitSimpleTemplateParts(expression string) ([]templatePart, bool, error) {
+	var parts []templatePart
+	hasPlaceholder := false
+	n := len(expression)
+	lastIndex := 0
+
+	for i := 0; i < n; {
+		if i+1 < n && expression[i] == '$' && expression[i+1] == '{' {
+			hasPlaceholder = true
+			if i > lastIndex {
+				parts = append(parts, templatePart{
+					isVariable: false,
+					content:    expression[lastIndex:i],
+				})
+			}
+
+			innerStart := i + 2
+			closeIdx, err := findSimplePlaceholderEnd(expression, innerStart)
+			if err != nil {
+				return nil, false, err
+			}
+
+			inner := strings.TrimSpace(expression[innerStart:closeIdx])
+			if inner == "" {
+				return nil, false, fmt.Errorf("malformed simple template: unclosed or empty ${...} placeholder")
+			}
+
+			parts = append(parts, templatePart{
+				isVariable: true,
+				content:    inner,
+			})
+			i = closeIdx + 1
+			lastIndex = i
+			continue
+		}
+		i++
+	}
+
+	if !hasPlaceholder {
+		return []templatePart{{isVariable: false, content: expression}}, true, nil
+	}
+
+	if lastIndex < n {
+		parts = append(parts, templatePart{
+			isVariable: false,
+			content:    expression[lastIndex:],
+		})
+	}
+	return parts, false, nil
+}
+
+func findSimplePlaceholderEnd(expr string, start int) (int, error) {
+	braceDepth := 1
+	inSingle := false
+	inDouble := false
+	n := len(expr)
+
+	for i := start; i < n; i++ {
+		ch := expr[i]
+		if inSingle {
+			if ch == '\\' && i+1 < n {
+				i++
+				continue
+			}
+			if ch == '\'' {
+				inSingle = false
+			}
+			continue
+		}
+		if inDouble {
+			if ch == '\\' && i+1 < n {
+				i++
+				continue
+			}
+			if ch == '"' {
+				inDouble = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '\'':
+			inSingle = true
+		case '"':
+			inDouble = true
+		case '{':
+			braceDepth++
+		case '}':
+			braceDepth--
+			if braceDepth == 0 {
+				return i, nil
+			}
+		}
+	}
+
+	return -1, fmt.Errorf("malformed simple template: unclosed or empty ${...} placeholder")
 }
 
 // Evaluate evaluates the template and returns the result
