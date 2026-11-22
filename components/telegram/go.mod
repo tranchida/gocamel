@@ -6,8 +6,3 @@ require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/tranchida/gocamel v1.0.0
 )
-
-require (
-	github.com/stretchr/testify v1.12.1 // indirect
-	golang.org/x/sys v0.50.0 // indirect
-)

@@ -22,8 +22,8 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/tranchida/gocamel v0.20.0 h1:r7La6fskYzSuoKkbvkRyZAxQ07HYpF8LVi/NpXyaqrU=
-github.com/tranchida/gocamel v0.20.0/go.mod h1:7h32bhTuUkgvKDxGh44WYREc9F7yDfyeZMzJYENrLmE=
+github.com/tranchida/gocamel v1.0.0 h1:81v860dfl9tPU8/A2iRDVSyNtkxcLqIHFpmn17pPC6E=
+github.com/tranchida/gocamel v1.0.0/go.mod h1:Bm4ZaAhA7IDh6NiOyjXNvxDlAVoO09qa7XAkd/JOL4M=
 github.com/yuin/gopher-lua v1.1.1 h1:kYKnWBjvbNP4XLT3+bPEwAXJx262OhaHDWDVOPjL46M=
 github.com/yuin/gopher-lua v1.1.1/go.mod h1:GBR0iDaNXjAgGg9zfCvksxSRnQx76gclCIb7kdAd1Pw=
 github.com/zeebo/xxh3 v1.1.0 h1:s7DLGDK45Dyfg7++yxI0khrfwq9661w9EN78eP/UZVs=

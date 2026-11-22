@@ -12,8 +12,8 @@ github.com/sashabaranov/go-openai v1.41.2 h1:vfPRBZNMpnqu8ELsclWcAvF19lDNgh1t6TV
 github.com/sashabaranov/go-openai v1.41.2/go.mod h1:lj5b/K+zjTSFxVLijLSTDZuP7adOgerWeFyZLUhAKRg=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/tranchida/gocamel v0.20.0 h1:r7La6fskYzSuoKkbvkRyZAxQ07HYpF8LVi/NpXyaqrU=
-github.com/tranchida/gocamel v0.20.0/go.mod h1:7h32bhTuUkgvKDxGh44WYREc9F7yDfyeZMzJYENrLmE=
+github.com/tranchida/gocamel v1.0.0 h1:81v860dfl9tPU8/A2iRDVSyNtkxcLqIHFpmn17pPC6E=
+github.com/tranchida/gocamel v1.0.0/go.mod h1:Bm4ZaAhA7IDh6NiOyjXNvxDlAVoO09qa7XAkd/JOL4M=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
 go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
 golang.org/x/sys v0.50.0 h1:dkKZEFTEKaLr1sjhs0WiKqoi8Jj5nHbS3Njmx1UoMJs=
