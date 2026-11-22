@@ -104,7 +104,7 @@ pour extraire des parties du nom de fichier, du chemin, de la taille, etc.
 | `<=`      | Inférieur ou égal   | `${header.count} <= 100` |
 | `&&`      | ET logique          | `a > 5 && b == 'x'`      |
 | `||`      | OU logique          | `a > 5 || b == 'y'`      |
-| `!`       | NON logique         | `!${header.disabled}`    |
+| `!`       | NON logique         | `${!header.disabled}`    |
 
 Simple Language utilise un analyseur récursif descendant avec un scanner `${...}` sensible aux guillemets. Les comparaisons appliquent une sémantique numérique/typée exacte (sans conversion flottante implicite sur `==`/`!=` entre chaînes et nombres), et `file:size` / `file:length` conservent la précision `int64`.
 

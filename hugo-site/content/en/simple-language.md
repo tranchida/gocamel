@@ -103,7 +103,7 @@ extract parts of the filename, path, size, etc.
 | `<=`     | Less or equal    | `${header.count} <= 100` |
 | `&&`     | Logical AND      | `a > 5 && b == 'x'`      |
 | `||`     | Logical OR       | `a > 5 || b == 'y'`      |
-| `!`      | Logical NOT      | `!${header.disabled}`    |
+| `!`      | Logical NOT      | `${!header.disabled}`    |
 
 Simple Language uses a recursive-descent parser with a quote-aware `${...}` scanner. Comparisons use exact numeric/type semantics (no string-to-float type juggling on `==`/`!=`), and `file:size` / `file:length` preserve `int64` precision.
 
