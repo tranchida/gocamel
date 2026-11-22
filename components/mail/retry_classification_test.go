@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -37,6 +38,8 @@ func TestIsNonRetryableError(t *testing.T) {
 		{"fallback: server without AUTH", errors.New("smtp: server doesn't support AUTH"), true},
 		{"fallback: invalid address", errors.New("smtp: invalid address"), true},
 		{"fallback: unknown error is retried", errors.New("something odd happened"), false},
+		{"context.Canceled is non-retryable", fmt.Errorf("aborted: %w", context.Canceled), true},
+		{"context.DeadlineExceeded is non-retryable", fmt.Errorf("timed out: %w", context.DeadlineExceeded), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

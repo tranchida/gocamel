@@ -2,6 +2,7 @@ package mail
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -160,7 +161,7 @@ func (c *MailComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		host = u.Host
 	}
 	if host == "" {
-		return nil, fmt.Errorf("host required in mail URI: %s", uri)
+		return nil, fmt.Errorf("host required in mail URI: %s", gocamel.RedactURI(uri))
 	}
 
 	port := u.Port()
@@ -210,7 +211,7 @@ func (c *MailComponent) CreateEndpoint(uri string) (gocamel.Endpoint, error) {
 		closeFolder:         q.Get("closeFolder") != "false", // default: true
 		useIdle:             q.Get("idle") == "true",
 		connectionTimeout:   parseDurationMs(q.Get("connectionTimeout"), connTimeout),
-		pollDelay:           parseDurationMs(q.Get("pollDelay"), DefaultPollDelay),
+		pollDelay:           parseDurationMs(q.Get("pollDelay"), DefaultPollDelay*time.Millisecond),
 		fetchSize:           parseInt(q.Get("fetchSize"), DefaultFetchSize),
 		skipFailedMessage:   q.Get("skipFailedMessage") == "true",
 		handleFailedMessage: q.Get("handleFailedMessage") == "true",
@@ -281,7 +282,7 @@ func parseDurationMs(s string, defaultVal time.Duration) time.Duration {
 		return defaultVal
 	}
 	ms, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
+	if err != nil || ms <= 0 || ms > math.MaxInt64/int64(time.Millisecond) {
 		return defaultVal
 	}
 	return time.Duration(ms) * time.Millisecond

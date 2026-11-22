@@ -5,33 +5,35 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	"github.com/emersion/go-message/charset"
 
 	gocamel "github.com/tranchida/gocamel"
 )
 
 // MailConsumer implements email reception via IMAP (using go-imap v2).
 type MailConsumer struct {
-	endpoint  *MailEndpoint
-	processor gocamel.Processor
-	stopChan  chan struct{}
-	stopOnce  sync.Once
-	wg        sync.WaitGroup
-	client    *imapclient.Client
-	conn      net.Conn
-	mu        sync.Mutex
-	started   bool
-	stopping  bool
-	stopped   bool
-	cancel    context.CancelFunc
-	changes   chan struct{} // initialized before connecting; notifications are coalesced
+	endpoint   *MailEndpoint
+	processor  gocamel.Processor
+	stopChan   chan struct{}
+	stopClosed bool
+	wg         sync.WaitGroup
+	client     *imapclient.Client
+	conn       net.Conn
+	tlsConfig  *tls.Config // optional test override; nil uses default TLS config
+	mu         sync.Mutex
+	started    bool
+	stopping   bool
+	stopped    bool
+	cancel     context.CancelFunc
+	changes    chan struct{} // initialized before connecting; notifications are coalesced
 }
 
 func (c *MailConsumer) getClient() *imapclient.Client {
@@ -46,6 +48,20 @@ func (c *MailConsumer) getConn() net.Conn {
 	return c.conn
 }
 
+func (c *MailConsumer) getStopChan() chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stopChan
+}
+
+// closeStopChanLocked closes c.stopChan at most once. Must be called with c.mu held.
+func (c *MailConsumer) closeStopChanLocked() {
+	if c.stopChan != nil && !c.stopClosed {
+		close(c.stopChan)
+		c.stopClosed = true
+	}
+}
+
 func (c *MailConsumer) isStopping(ctx context.Context) bool {
 	if ctx != nil && ctx.Err() != nil {
 		return true
@@ -53,8 +69,9 @@ func (c *MailConsumer) isStopping(ctx context.Context) bool {
 	c.mu.Lock()
 	stopping := c.stopping || c.stopped
 	stopCh := c.stopChan
+	stopClosed := c.stopClosed
 	c.mu.Unlock()
-	if stopping {
+	if stopping || stopClosed {
 		return true
 	}
 	if stopCh != nil {
@@ -82,26 +99,27 @@ func (c *MailConsumer) Start(ctx context.Context) error {
 		c.mu.Unlock()
 		return nil
 	}
-	if c.stopped || c.stopChan == nil {
+	if c.stopped || c.stopChan == nil || c.stopClosed {
 		c.stopChan = make(chan struct{})
-		c.stopOnce = sync.Once{}
+		c.stopClosed = false
 		c.stopped = false
 	}
 	if c.changes == nil {
 		c.changes = make(chan struct{}, 1)
 	}
+	stopCh := c.stopChan
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.started = true
 	c.wg.Add(1)
 	c.mu.Unlock()
 
-	go c.run(ctx)
+	go c.run(ctx, stopCh)
 	return nil
 }
 
 // run executes the polling or IDLE loop based on configuration.
-func (c *MailConsumer) run(ctx context.Context) {
+func (c *MailConsumer) run(ctx context.Context, stopCh chan struct{}) {
 	defer c.wg.Done()
 	defer c.disconnect()
 
@@ -117,25 +135,25 @@ func (c *MailConsumer) run(ctx context.Context) {
 				gocamel.LogError("Mail IDLE failed, fallback to polling", "error", err)
 			}
 			// Fall back to standard polling
-			c.runPolling(ctx)
+			c.runPolling(ctx, stopCh)
 		}
 	} else {
-		c.runPolling(ctx)
+		c.runPolling(ctx, stopCh)
 	}
 }
 
 // runPolling executes the standard polling loop.
-func (c *MailConsumer) runPolling(ctx context.Context) {
+func (c *MailConsumer) runPolling(ctx context.Context, stopCh chan struct{}) {
 	for {
 		select {
-		case <-c.stopChan:
+		case <-stopCh:
 			return
 		case <-ctx.Done():
 			return
 		default:
 			c.poll(ctx)
 			select {
-			case <-c.stopChan:
+			case <-stopCh:
 				return
 			case <-ctx.Done():
 				return
@@ -155,6 +173,7 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 		c.changes = make(chan struct{}, 1)
 	}
 	changes := c.changes
+	stopCh := c.stopChan
 	c.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(parentCtx, ep.connectionTimeout)
@@ -181,7 +200,7 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 	}
 	for {
 		select {
-		case <-c.stopChan:
+		case <-stopCh:
 			return nil
 		case <-parentCtx.Done():
 			return nil
@@ -205,7 +224,7 @@ func (c *MailConsumer) runWithIdle(parentCtx context.Context) error {
 		go func() { done <- idle.Wait() }()
 		stopping := false
 		select {
-		case <-c.stopChan:
+		case <-stopCh:
 			stopping = true
 		case <-parentCtx.Done():
 			stopping = true
@@ -285,7 +304,6 @@ func (c *MailConsumer) mailboxChanged(data *imapclient.UnilateralDataMailbox) {
 func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 	ep := c.endpoint
 
-	// Search for unread messages
 	var uids []imap.UID
 	var err error
 
@@ -312,10 +330,10 @@ func (c *MailConsumer) processNewMessages(parentCtx context.Context) error {
 		uids = uids[:ep.fetchSize]
 	}
 
-	// Process each message
+	stopCh := c.getStopChan()
 	for _, uid := range uids {
 		select {
-		case <-c.stopChan:
+		case <-stopCh:
 			return nil
 		case <-parentCtx.Done():
 			return nil
@@ -374,22 +392,14 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 	var uids []imap.UID
 	if ep.unseen {
 		uids, err = c.searchUnseen()
-		if err != nil {
-			if ep.debugMode {
-				gocamel.LogError("Mail search error", "error", err)
-			}
-			// Fallback: use Fetch with range
-			uids = nil
-		}
 	} else {
-		// Otherwise search all messages
 		uids, err = c.searchAll()
-		if err != nil {
-			if ep.debugMode {
-				gocamel.LogError("Mail search all error", "error", err)
-			}
-			uids = nil
+	}
+	if err != nil {
+		if !ep.skipFailedMessage {
+			gocamel.LogError("Mail search error", "error", err)
 		}
+		return
 	}
 
 	// If no results, return
@@ -409,10 +419,10 @@ func (c *MailConsumer) poll(parentCtx context.Context) {
 		uids = uids[:ep.fetchSize]
 	}
 
-	// Process messages
+	stopCh := c.getStopChan()
 	for _, uid := range uids {
 		select {
-		case <-c.stopChan:
+		case <-stopCh:
 			return
 		case <-parentCtx.Done():
 			return
@@ -479,10 +489,14 @@ func (c *MailConsumer) connect(ctx context.Context) error {
 		return err
 	}
 
-	// Connection options — TLS config
-	tlsConfig := &tls.Config{
-		ServerName: ep.host,
-		MinVersion: tls.VersionTLS12,
+	var tlsConfig *tls.Config
+	if c.tlsConfig != nil {
+		tlsConfig = c.tlsConfig.Clone()
+	} else {
+		tlsConfig = &tls.Config{
+			ServerName: ep.host,
+			MinVersion: tls.VersionTLS12,
+		}
 	}
 
 	dialer := &net.Dialer{Timeout: ep.connectionTimeout}
@@ -502,6 +516,7 @@ func (c *MailConsumer) connect(ctx context.Context) error {
 	opts := &imapclient.Options{
 		TLSConfig:             tlsConfig,
 		UnilateralDataHandler: &imapclient.UnilateralDataHandler{Mailbox: c.mailboxChanged},
+		WordDecoder:           &mime.WordDecoder{CharsetReader: charset.Reader},
 		Dialer:                dialer,
 	}
 
@@ -631,34 +646,81 @@ func (c *MailConsumer) searchAll() ([]imap.UID, error) {
 	return searchData.AllUIDs(), nil
 }
 
-// fetchMessage retrieves the content of a message.
+// fetchMessage retrieves a message, streaming body literals through gocamel.ReadLimited
+// so oversized literals cannot exhaust memory even if RFC822.SIZE is inaccurate.
 func (c *MailConsumer) fetchMessage(uid imap.UID, options *imap.FetchOptions) (*imapclient.FetchMessageBuffer, error) {
 	client := c.getClient()
 	if client == nil {
 		return nil, errors.New("client not connected")
 	}
 
-	// Use UID as sequence set
-	uidSet := imap.UIDSetNum(uid)
+	var maxBytes int64
+	if c.endpoint != nil {
+		maxBytes = c.endpoint.maxMessageSize
+	}
 
+	uidSet := imap.UIDSetNum(uid)
 	cmd := client.Fetch(uidSet, options)
-	messages, err := cmd.Collect()
-	if err != nil {
+
+	var result *imapclient.FetchMessageBuffer
+	for {
+		msg := cmd.Next()
+		if msg == nil {
+			break
+		}
+		buf := &imapclient.FetchMessageBuffer{SeqNum: msg.SeqNum}
+		for {
+			item := msg.Next()
+			if item == nil {
+				break
+			}
+			switch it := item.(type) {
+			case imapclient.FetchItemDataUID:
+				buf.UID = it.UID
+			case imapclient.FetchItemDataFlags:
+				buf.Flags = it.Flags
+			case imapclient.FetchItemDataEnvelope:
+				buf.Envelope = it.Envelope
+			case imapclient.FetchItemDataInternalDate:
+				buf.InternalDate = it.Time
+			case imapclient.FetchItemDataRFC822Size:
+				buf.RFC822Size = it.Size
+			case imapclient.FetchItemDataBodySection:
+				var b []byte
+				if it.Literal != nil {
+					var err error
+					b, err = gocamel.ReadLimited(it.Literal, maxBytes)
+					if err != nil {
+						_ = cmd.Close()
+						return nil, fmt.Errorf("message %d body read error: %w", uid, err)
+					}
+				}
+				buf.BodySection = append(buf.BodySection, imapclient.FetchBodySectionBuffer{
+					Section: it.Section,
+					Bytes:   b,
+				})
+			}
+		}
+		if result == nil {
+			result = buf
+		}
+	}
+
+	if err := cmd.Close(); err != nil {
 		return nil, err
 	}
-
-	if len(messages) == 0 {
+	if result == nil {
 		return nil, fmt.Errorf("message %d not found", uid)
 	}
-
-	return messages[0], nil
+	return result, nil
 }
 
 // processMessage fetches and processes a message.
-func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selected *imap.SelectData) error {
+func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, _ *imap.SelectData) error {
 	ep := c.endpoint
 
 	var msg *imapclient.FetchMessageBuffer
+	bodySection := &imap.FetchItemBodySection{Peek: ep.peek}
 
 	if ep.maxMessageSize > 0 {
 		// Fetch metadata (envelope, flags, size) first so an oversized message
@@ -679,7 +741,7 @@ func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selecte
 
 		// Fetch the body and merge it into the metadata buffer for parsing.
 		body, err := c.fetchMessage(uid, &imap.FetchOptions{
-			BodySection: []*imap.FetchItemBodySection{{}}, // full body
+			BodySection: []*imap.FetchItemBodySection{bodySection},
 		})
 		if err != nil {
 			return fmt.Errorf("message body retrieval error: %w", err)
@@ -693,7 +755,7 @@ func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selecte
 			UID:         true,
 			Flags:       true,
 			Envelope:    true,
-			BodySection: []*imap.FetchItemBodySection{{}}, // full body
+			BodySection: []*imap.FetchItemBodySection{bodySection},
 		})
 		if err != nil {
 			return fmt.Errorf("message retrieval error: %w", err)
@@ -710,22 +772,17 @@ func (c *MailConsumer) processMessage(ctx context.Context, uid imap.UID, selecte
 	exchange := gocamel.NewExchange(ctx)
 	c.populateExchange(exchange, mailMsg)
 
-	// Mark as seen if peek=false
-	if !ep.peek {
+	// Process via processor
+	if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
+		return err
+	}
+
+	// When peek=true, BODY.PEEK[] left \Seen untouched during FETCH; mark \Seen
+	// only now that route processing succeeded.
+	if ep.peek && !mailMsg.Seen {
 		if err := c.markSeen(uid); err != nil {
 			gocamel.LogError("Mail SEEN marking error", "error", err)
 		}
-	}
-
-	// Process via processor
-	if err := gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange)); err != nil {
-		// Processing failed — rollback if peek=true
-		if ep.peek {
-			if err2 := c.markUnseen(uid); err2 != nil {
-				gocamel.LogError("Mail SEEN rollback error", "error", err2)
-			}
-		}
-		return err
 	}
 
 	// Post-processing based on headers set by the processor
@@ -738,7 +795,6 @@ func (c *MailConsumer) parseMessage(msg *imapclient.FetchMessageBuffer) (*MailMe
 		UID:         uint32(msg.UID),
 		Headers:     make(map[string]string),
 		Attachments: make(map[string][]byte),
-		Date:        time.Now(),
 	}
 
 	// Extract info from IMAP envelope if available
@@ -774,18 +830,17 @@ func (c *MailConsumer) parseMessage(msg *imapclient.FetchMessageBuffer) (*MailMe
 		}
 	}
 
-	// Extract body from BodySection
-	if len(msg.BodySection) > 0 {
-		bodyData := msg.BodySection[0].Bytes
+	maxSize := gocamel.DefaultMaxBodySize
+	if c.endpoint != nil {
+		maxSize = c.endpoint.maxMessageSize
+	}
 
-		// Parse with go-message if this is a MIME message
-		if len(bodyData) > 0 {
-			mailMsg.Body, mailMsg.BodyHTML, mailMsg.Attachments = parseMimeMessageCommon(bodyData)
-			if mailMsg.Body == nil {
-				// Fallback: raw content
-				mailMsg.Body = bodyData
-			}
-		}
+	// Extract headers, Content-Type, body, and attachments from BodySection
+	if len(msg.BodySection) > 0 && len(msg.BodySection[0].Bytes) > 0 {
+		parseRawEmailMessage(msg.BodySection[0].Bytes, maxSize, mailMsg)
+	}
+	if mailMsg.Date.IsZero() {
+		mailMsg.Date = time.Now()
 	}
 
 	return mailMsg, nil
@@ -793,35 +848,7 @@ func (c *MailConsumer) parseMessage(msg *imapclient.FetchMessageBuffer) (*MailMe
 
 // populateExchange populates the exchange with message data.
 func (c *MailConsumer) populateExchange(exchange *gocamel.Exchange, msg *MailMessage) {
-	exchange.SetBody(msg.Body)
-	exchange.SetHeader(MailFrom, msg.From)
-	exchange.SetHeader(MailReplyTo, msg.ReplyTo)
-	exchange.SetHeader(MailTo, strings.Join(msg.To, ", "))
-	exchange.SetHeader(MailCC, strings.Join(msg.Cc, ", "))
-	exchange.SetHeader(MailSubject, msg.Subject)
-	exchange.SetHeader(MailMessageID, msg.MessageID)
-	exchange.SetHeader(MailDate, msg.Date.Format(time.RFC3339))
-	exchange.SetHeader(MailContentType, msg.ContentType)
-	exchange.SetHeader(MailSize, strconv.Itoa(len(msg.Body)))
-	exchange.SetHeader(MailUID, strconv.FormatUint(uint64(msg.UID), 10))
-
-	// If an HTML version exists, add it as a property
-	if msg.BodyHTML != nil {
-		exchange.SetProperty("CamelMailBodyHTML", msg.BodyHTML)
-	}
-
-	for k, v := range msg.Headers {
-		if k != MailFrom && k != MailTo && k != MailSubject && k != MailDate && k != MailContentType {
-			// SECURITY: prefix raw envelope headers so they cannot collide
-			// with the well-known producer-side headers ("From", "To", ...).
-			exchange.SetHeader(MailHeaderPrefix+k, v)
-		}
-	}
-
-	// Attachments as special headers
-	for name, data := range msg.Attachments {
-		exchange.SetHeader(MailAttachmentPrefix+"_"+name, data)
-	}
+	populateMailExchange(exchange, msg)
 }
 
 // markSeen marks a message as read.
@@ -839,29 +866,7 @@ func (c *MailConsumer) markSeen(uid imap.UID) error {
 	}
 
 	cmd := client.Store(uidSet, store, nil)
-	// Wait for the command to finish by consuming data
 	_, err := cmd.Collect()
-	cmd.Close()
-	return err
-}
-
-// markUnseen removes the SEEN flag.
-func (c *MailConsumer) markUnseen(uid imap.UID) error {
-	client := c.getClient()
-	if client == nil {
-		return errors.New("client not connected")
-	}
-
-	uidSet := imap.UIDSetNum(uid)
-	store := &imap.StoreFlags{
-		Op:     imap.StoreFlagsDel,
-		Silent: true,
-		Flags:  []imap.Flag{imap.FlagSeen},
-	}
-
-	cmd := client.Store(uidSet, store, nil)
-	_, err := cmd.Collect()
-	cmd.Close()
 	return err
 }
 
@@ -910,7 +915,7 @@ func (c *MailConsumer) postProcess(uid imap.UID, exchange *gocamel.Exchange) err
 	return nil
 }
 
-// deleteMessage deletes a message.
+// deleteMessage deletes a message using UIDEXPUNGE when supported by the server.
 func (c *MailConsumer) deleteMessage(uid imap.UID) error {
 	client := c.getClient()
 	if client == nil {
@@ -927,20 +932,23 @@ func (c *MailConsumer) deleteMessage(uid imap.UID) error {
 	}
 
 	cmd := client.Store(uidSet, store, nil)
-	_, err := cmd.Collect()
-	cmd.Close()
-	if err != nil {
+	if _, err := cmd.Collect(); err != nil {
 		return err
 	}
 
-	// Expunge (permanent deletion)
-	expungeCmd := client.Expunge()
-	_, err = expungeCmd.Collect()
-	expungeCmd.Close()
+	caps := client.Caps()
+	var expungeCmd *imapclient.ExpungeCommand
+	if caps.Has(imap.CapUIDPlus) || caps.Has(imap.CapIMAP4rev2) {
+		expungeCmd = client.UIDExpunge(uidSet)
+	} else {
+		expungeCmd = client.Expunge()
+	}
+	_, err := expungeCmd.Collect()
 	return err
 }
 
-// moveMessage moves a message to another folder.
+// moveMessage moves a message to another folder. go-imap v2's Client.Move
+// automatically falls back to COPY + STORE + (UID)EXPUNGE when CapMove is absent.
 func (c *MailConsumer) moveMessage(uid imap.UID, folder string) error {
 	client := c.getClient()
 	if client == nil {
@@ -948,35 +956,8 @@ func (c *MailConsumer) moveMessage(uid imap.UID, folder string) error {
 	}
 
 	uidSet := imap.UIDSetNum(uid)
-
-	// Use MOVE if supported by the server; otherwise fall back to COPY + DELETE.
-	// In go-imap v2, Move returns MoveData.
 	_, err := client.Move(uidSet, folder).Wait()
-	if err != nil {
-		// MOVE not supported — fall back to COPY + DELETE
-		_, err := client.Copy(uidSet, folder).Wait()
-		if err != nil {
-			return err
-		}
-		// Mark as deleted in the source folder
-		store := &imap.StoreFlags{
-			Op:     imap.StoreFlagsAdd,
-			Silent: true,
-			Flags:  []imap.Flag{imap.FlagDeleted},
-		}
-		cmd := client.Store(uidSet, store, nil)
-		_, err = cmd.Collect()
-		cmd.Close()
-		if err != nil {
-			return err
-		}
-		expungeCmd := client.Expunge()
-		_, err = expungeCmd.Collect()
-		expungeCmd.Close()
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // copyMessage copies a message to another folder.
@@ -1000,37 +981,19 @@ func (c *MailConsumer) handleFailedMessage(ctx context.Context, uid imap.UID, ms
 	return gocamel.CompleteExchange(exchange, gocamel.ProcessSafely(c.processor, exchange))
 }
 
-// getStringHeader retrieves a string value from a header.
+// getStringHeader retrieves a string value from Out then In headers.
 func (c *MailConsumer) getStringHeader(exchange *gocamel.Exchange, header string) string {
-	if v, exists := exchange.GetOut().GetHeader(header); exists {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	if v, exists := exchange.GetIn().GetHeader(header); exists {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	return getStringHeaderFromExchange(exchange, header)
 }
 
-// getBoolHeader retrieves a bool value from a header.
+// getBoolHeader retrieves a bool value from Out then In headers.
 func (c *MailConsumer) getBoolHeader(exchange *gocamel.Exchange, header string) bool {
-	if v, exists := exchange.GetOut().GetHeader(header); exists {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-		if s, ok := v.(string); ok {
-			return strings.EqualFold(s, "true")
-		}
-	}
-	return false
+	return getBoolHeaderFromExchange(exchange, header)
 }
 
-// Stop stops the mail consumer. Safe to call multiple times: the stop channel
-// is closed at most once via sync.Once to prevent a "close of closed channel"
-// panic when Stop() is invoked more than once (e.g. during CamelContext rollback).
+// Stop stops the mail consumer. Safe to call multiple times: stopChan is
+// closed at most once under c.mu to prevent data races when Stop() is invoked
+// concurrently or across Start/Stop cycles.
 func (c *MailConsumer) Stop() error {
 	c.mu.Lock()
 	if c.stopping {
@@ -1040,28 +1003,20 @@ func (c *MailConsumer) Stop() error {
 	}
 	if !c.started {
 		c.stopped = true
+		c.closeStopChanLocked()
 		c.mu.Unlock()
-		c.stopOnce.Do(func() {
-			if c.stopChan != nil {
-				close(c.stopChan)
-			}
-		})
 		c.disconnect()
 		return nil
 	}
 	c.stopping = true
 	cancel := c.cancel
 	conn := c.conn
+	c.closeStopChanLocked()
 	c.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
-	c.stopOnce.Do(func() {
-		if c.stopChan != nil {
-			close(c.stopChan)
-		}
-	})
 	deadline := c.disconnectDeadline()
 	if conn != nil {
 		_ = conn.SetDeadline(time.Now().Add(deadline))

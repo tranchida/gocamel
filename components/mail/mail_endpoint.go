@@ -2,6 +2,8 @@ package mail
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
 	gocamel "github.com/tranchida/gocamel"
@@ -96,7 +98,7 @@ func (e *MailEndpoint) CreateConsumer(processor gocamel.Processor) (gocamel.Cons
 
 // address returns the full host:port address.
 func (e *MailEndpoint) address() string {
-	return fmt.Sprintf("%s:%d", e.host, e.port)
+	return net.JoinHostPort(e.host, strconv.Itoa(e.port))
 }
 
 // isSecure returns true if the protocol uses SSL/TLS.

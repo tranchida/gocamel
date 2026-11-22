@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	gomail "github.com/emersion/go-message/mail"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -679,4 +681,150 @@ func TestIMAPConsumerWithIdle(t *testing.T) {
 
 	mailConsumer := consumer.(*MailConsumer)
 	assert.True(t, mailConsumer.endpoint.useIdle)
+}
+
+func TestMailComponent_DefaultPollDelayIs60SecondsAndRedactsMissingHost(t *testing.T) {
+	comp := NewMailComponent()
+
+	// Default pollDelay must be 60s, not 60µs.
+	ep, err := comp.CreateEndpoint("imap://localhost:143?username=u&password=p")
+	require.NoError(t, err)
+	mailEp := ep.(*MailEndpoint)
+	assert.Equal(t, 60*time.Second, mailEp.pollDelay)
+
+	// Zero or negative pollDelay must be rejected / defaulted to 60s.
+	epZero, err := comp.CreateEndpoint("imap://localhost:143?pollDelay=0")
+	require.NoError(t, err)
+	assert.Equal(t, 60*time.Second, epZero.(*MailEndpoint).pollDelay)
+
+	epNeg, err := comp.CreateEndpoint("imap://localhost:143?pollDelay=-500")
+	require.NoError(t, err)
+	assert.Equal(t, 60*time.Second, epNeg.(*MailEndpoint).pollDelay)
+
+	// Missing host error must redact credentials.
+	_, err = comp.CreateEndpoint("smtp://?password=sec")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "sec")
+	assert.Contains(t, err.Error(), "xxxxx")
+
+	// IPv6 address must be bracketed via net.JoinHostPort.
+	ep6, err := comp.CreateEndpoint("smtp://[::1]:587?to=dest@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "[::1]:587", ep6.(*MailEndpoint).address())
+}
+
+func TestMailMime_NonUTF8CharsetAndContentDispositionFilenameAndSanitization(t *testing.T) {
+	// iso-8859-1 multipart email with "Café" (\xe9) and attachment with traversal filename.
+	raw := "From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: Non-UTF8\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=\"b1\"\r\n" +
+		"\r\n" +
+		"--b1\r\n" +
+		"Content-Type: text/plain; charset=iso-8859-1\r\n" +
+		"\r\n" +
+		"Caf\xe9\r\n" +
+		"--b1\r\n" +
+		"Content-Type: application/octet-stream\r\n" +
+		"Content-Disposition: attachment; filename=\"../evil.txt\"\r\n" +
+		"\r\n" +
+		"payload\r\n" +
+		"--b1--\r\n"
+
+	bodyText, bodyHTML, attachments := parseMimeMessageCommon([]byte(raw))
+	require.NotNil(t, bodyText)
+	assert.Equal(t, "Café", strings.TrimSpace(string(bodyText)))
+	assert.Nil(t, bodyHTML)
+	require.Contains(t, attachments, "evil.txt")
+	assert.NotContains(t, attachments, "../evil.txt")
+	assert.Equal(t, "payload", strings.TrimSpace(string(attachments["evil.txt"])))
+
+	// Unknown charset must also not drop the part/attachment.
+	unknownRaw := "From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=\"b2\"\r\n" +
+		"\r\n" +
+		"--b2\r\n" +
+		"Content-Type: text/plain; charset=x-unknown-test\r\n" +
+		"\r\n" +
+		"raw-text\r\n" +
+		"--b2\r\n" +
+		"Content-Type: application/octet-stream\r\n" +
+		"Content-Disposition: attachment; filename=\"report.bin\"\r\n" +
+		"\r\n" +
+		"bin-data\r\n" +
+		"--b2--\r\n"
+
+	uText, _, uAtt := parseMimeMessageCommon([]byte(unknownRaw))
+	assert.Contains(t, string(uText), "raw-text")
+	assert.Contains(t, uAtt, "report.bin")
+
+	// extractFilenameCommon must read params["filename"] from ContentDisposition and sanitize traversal.
+	reader, err := gomail.CreateReader(bytes.NewReader([]byte(
+		"Content-Type: application/octet-stream\r\n" +
+			"Content-Disposition: attachment; filename=\"../evil.txt\"\r\n\r\nhello",
+	)))
+	require.NoError(t, err)
+	assert.Equal(t, "evil.txt", extractFilenameCommon(reader.Header))
+
+	reader2, err := gomail.CreateReader(bytes.NewReader([]byte(
+		"Content-Type: application/pdf\r\n" +
+			"Content-Disposition: attachment; filename=\"invoice.pdf\"\r\n\r\nhello",
+	)))
+	require.NoError(t, err)
+	assert.Equal(t, "invoice.pdf", extractFilenameCommon(reader2.Header))
+}
+
+func TestMailMime_LeafAttachmentAndMaxSizeAndRawFallback(t *testing.T) {
+	// Leaf non-text entity (covers handleAttachmentEntityCommon + Content-Type name fallback).
+	leaf := "From: sender@example.com\r\n" +
+		"Content-Type: application/pdf; name=\"../secret/doc.pdf\"\r\n" +
+		"\r\n" +
+		"PDFDATA"
+	bodyText, bodyHTML, attachments := parseMimeMessageCommon([]byte(leaf))
+	assert.Nil(t, bodyText)
+	assert.Nil(t, bodyHTML)
+	assert.Equal(t, []byte("PDFDATA"), attachments["doc.pdf"])
+
+	// Custom maxSize rejects part exceeding maxSize instead of hardcoding DefaultMaxBodySize.
+	smallBody, _, _ := parseMimeMessageWithLimit([]byte(
+		"Content-Type: text/plain\r\n\r\n0123456789ABCDEF",
+	), 5)
+	assert.Nil(t, smallBody)
+
+	// Non-MIME raw payload falls back to raw body in parseRawEmailMessage.
+	msg := &MailMessage{}
+	parseRawEmailMessage([]byte("just raw bytes without headers"), 1024, msg)
+	assert.Equal(t, []byte("just raw bytes without headers"), msg.Body)
+	assert.False(t, msg.Date.IsZero())
+
+	// Full RFC 5322 header extraction via parseRawEmailMessage.
+	full := "From: a@example.com\r\n" +
+		"Reply-To: reply@example.com\r\n" +
+		"To: b@example.com\r\n" +
+		"Cc: c@example.com\r\n" +
+		"Message-ID: <id-1@example.com>\r\n" +
+		"Subject: Greetings\r\n" +
+		"Date: Wed, 04 Jan 2006 12:30:00 +0000\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n" +
+		"X-Env: prod\r\n" +
+		"\r\n" +
+		"Hello!"
+	msg2 := &MailMessage{}
+	parseRawEmailMessage([]byte(full), 4096, msg2)
+	assert.Equal(t, "a@example.com", msg2.From)
+	assert.Equal(t, "reply@example.com", msg2.ReplyTo)
+	assert.Equal(t, []string{"b@example.com"}, msg2.To)
+	assert.Equal(t, []string{"c@example.com"}, msg2.Cc)
+	assert.Equal(t, "<id-1@example.com>", msg2.MessageID)
+	assert.Equal(t, "Greetings", msg2.Subject)
+	assert.Equal(t, 2006, msg2.Date.Year())
+	assert.Equal(t, "prod", msg2.Headers["X-Env"])
+	assert.Equal(t, []byte("Hello!"), msg2.Body)
+
+	// Overflow value in parseDurationMs defaults safely.
+	def := 5 * time.Second
+	assert.Equal(t, def, parseDurationMs("9999999999999999999", def))
 }
