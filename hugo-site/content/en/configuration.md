@@ -50,10 +50,13 @@ builder.From("ftp://host?username=admin&password=secret")
 
 > [!caution] Credentials in URI queries are flagged at runtime
 > URI strings routinely leak into connection-error logs, audit trails,
-> crash reports and proxy access logs. When `GetConfigValue` resolves a
-> credential-like key (`password`, `pass`, `secret`, `token`, `apikey`,
-> `api_key`, `accesskey`, `access_key`, `clientsecret`, `privatekey`) from
-> a query parameter, it emits a `WARN` log recommending env vars. The
+> crash reports and proxy access logs. When `GetConfigValue` resolves any of the
+> 18 unified credential keys (`password`, `pass`, `passwd`, `secret`, `token`,
+> `passcode`, `apikey`, `api_key`, `apitoken`, `authorizationtoken`,
+> `accesstoken`, `access_token`, `accesskey`, `access_key`, `clientsecret`,
+> `client_secret`, `privatekey`, `private_key`) from
+> a query parameter, it emits a `WARN` log recommending env vars (and `RedactURI`
+> masks all 18 keys across errors and logs). The
 > warning carries only the scheme and the key name — never the value — and
 > is deduped per `(scheme, key)` pairing so a polling consumer cannot flood
 > the logs.
@@ -61,6 +64,10 @@ builder.From("ftp://host?username=admin&password=secret")
 > Use environment variables in production. The userinfo form
 > (`user:pass@host`) is treated as the conventional URI way of carrying
 > credentials and is **not** warned about — you opted into it explicitly.
+
+Note: `sql` and `sql-stored` read all endpoint options strictly from URI query
+parameters and ignore environment variables so process env vars cannot alter
+SQL queries, procedures, or `allowHeaderOverride`.
 
 
 ### Direct in URI (userinfo form)
@@ -202,9 +209,13 @@ builder.To("http://api?httpMethod=POST")
 |-----------|-----------------------------------------------------------|-------------------|
 | FTP       | `FTP_USERNAME`, `FTP_PASSWORD`                            | FTP credentials   |
 | SFTP      | `SFTP_USERNAME`, `SFTP_PASSWORD`, `SFTP_PRIVATE_KEY_FILE` | SSH credentials   |
+| STOMP     | `STOMP_LOGIN`, `STOMP_PASSCODE`, `STOMP_USERNAME`, `STOMP_PASSWORD` | Broker credentials |
 | Telegram  | `TELEGRAM_AUTHORIZATIONTOKEN`                             | Bot token         |
 | OpenAI    | `OPENAI_AUTHORIZATIONTOKEN`, `OPENAI_API_KEY`             | API keys          |
-| Mail      | `MAIL_USERNAME`, `MAIL_PASSWORD`                          | Email credentials |
+| Anthropic | `ANTHROPIC_AUTHORIZATIONTOKEN`, `ANTHROPIC_API_KEY`       | API keys          |
+| Jev       | `JEV_AUTHORIZATIONTOKEN`, `OPENROUTER_API_KEY`            | API keys          |
+| Ollama    | `OLLAMA_HOST`, `OLLAMA_API_KEY` (Ollama Cloud only)       | Host and cloud key |
+| Mail      | URI query parameters (`username`, `password`)             | Email credentials |
 
 ## Best Practices
 

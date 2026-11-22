@@ -180,7 +180,7 @@ builder.From("direct:start").
 | **Ollama**     | LLMs locaux et Ollama Cloud (chat/generate/embed, API native) |
 | **Mail**       | Email SMTP/IMAP/POP3           |
 | **SQL**        | Requêtes base de données       |
-| **SQL-Stored** | Appels de procédures stockées (paramètres IN/OUT/INOUT) |
+| **SQL-Stored** | Appels de procédures stockées (`[]StoredProcedureParam`, paramètres `IN`) |
 | **MongoDB**    | Opérations CRUD MongoDB        |
 | **Template**   | Templates Go natifs            |
 | **Exec**       | Exécution commandes système    |
@@ -211,18 +211,18 @@ GoCamel inclut des utilitaires de sécurité intégrés pour se protéger contre
 
 ### Fonctionnalités de Sécurité
 
-- **Protection contre les Traversées de Répertoire** - Prévient les attaques de traversée de répertoire (ex.
-  `../etc/passwd`)
-- **Prévention des Injections SQL** - La requête est une configuration de confiance, jamais interpolée avec les données du message ; les valeurs dynamiques sont liées en paramètres positionnels. Les requêtes superposées sont rejetées, les guillemets simples/doubles, backticks et commentaires restent autorisés
+- **Protection contre les Traversées de Répertoire** - Prévient les attaques de traversée de répertoire et zip/tar-slip (`ConfineFileName`, `ValidatePathInDir`, `ValidateRemotePath`, rejet des entrées d'archive commençant par `/` ou `\`)
+- **Prévention des Injections SQL** - La requête est une configuration de confiance, jamais interpolée avec les données du message ; les valeurs dynamiques sont liées en paramètres positionnels. L'analyse lexicale multi-dialecte rejette les requêtes superposées tout en acceptant guillemets, backticks, dollar-quoting et commentaires
 - **Assainissement des Entrées** - Supprime les octets nuls et caractères de contrôle des entrées utilisateur
-- **Validation des Chemins** - Garantit que les chemins restent dans les répertoires autorisés, en résolvant les liens symboliques pour qu'un lien placé dans le répertoire de base ne puisse pas s'en échapper
+- **Validation des Chemins** - Garantit que les chemins restent dans les répertoires autorisés, en résolvant les liens symboliques (`O_NOFOLLOW` / `EvalSymlinks`) pour qu'un lien placé dans le répertoire de base ne puisse pas s'en échapper
 - **Aucune Réflexion d'Identifiants** - Le consommateur HTTP ne renvoie jamais les en-têtes de la requête entrante (`Cookie`, `Authorization`, ...) dans sa réponse
-- **Lectures de Corps Bornées** - Les corps de requête et de réponse HTTP sont limités en taille (32 Mio par défaut) pour prévenir l'épuisement mémoire
+- **Isolation des Redirections et Identifiants** - `HTTPComponent` bloque les redirections HTTPS→HTTP et retire les en-têtes sensibles lors des redirections cross-origin par défaut (`SetCheckRedirect`) ; les composants IA refusent les redirections 3xx ; `RedactURI` unifie 18 clés sensibles dans les journaux et erreurs
+- **Lectures de Corps Bornées** - Les corps HTTP, IA, d'archives, mail et fichiers sont limités en taille (`DefaultMaxBodySize`, 32 Mio par défaut) pour prévenir l'épuisement mémoire
 - **Confinement des Panics** - Un processeur qui panique fait échouer son exchange, pas le processus entier
-- **URI Dynamiques Échappées** - `ToD` échappe les valeurs de l'exchange selon leur position : un en-tête ne peut pas injecter d'option d'endpoint comme `allowHeaderOverride=true`
-- **Isolation des En-têtes** - Les en-têtes internes `Camel*` ne franchissent jamais la frontière HTTP, les `Authorization`/`Cookie` d'un client ne sont pas relayés vers un service amont sans activation explicite, et les en-têtes de réponse comme `Set-Cookie` ne sont pas renvoyés à l'appel HTTP suivant
-- **Ressources Bornées** - Le cache partagé de producers (1000 producers), les connexions du consommateur TCP (`maxConnections=1024`) et les branches d'un Split/RecipientList parallèle (`MaxConcurrency`, 10) sont bornés par défaut
-- **Liste Blanche Exec** - Un en-tête `CamelExecCommandExecutable` ne peut choisir que l'exécutable de l'URI ou l'un de ceux listés dans `allowedExecutables`
+- **URI Dynamiques Échappées** - `ToD`, `PollEnrich`, `RecipientList`, `RoutingSlip` et `DynamicRouter` évaluent les templates avec un échappement par position (`InterpolateURI` / `EvaluateURI`), bloquant l'injection d'options d'endpoint et le SSRF d'autorité
+- **Isolation des En-têtes** - Les en-têtes internes `Camel*` ne franchissent jamais les frontières HTTP, gRPC, Kafka ou STOMP, les en-têtes protocolaires STOMP réservés et octets `\x00` sont bloqués, les `Authorization`/`Cookie` d'un client ne sont pas relayés sans activation explicite, et `Set-Cookie` n'est pas renvoyé à l'appel HTTP suivant
+- **Ressources Bornées** - Le cache partagé de producers (1000), `MemoryIdempotentRepository` (`100_000`), `MemoryClaimCheckRepository` (`10_000`), les connexions du consommateur TCP (`maxConnections=1024`), la traversée JSONPath et les branches parallèles Split/RecipientList/WireTap (`MaxConcurrency`, 10) sont bornés par défaut
+- **Liste Blanche et Confinement Exec** - Un en-tête `CamelExecCommandExecutable` ne peut choisir que l'exécutable de l'URI ou l'un de ceux listés dans `allowedExecutables`, et `workingDir` / `outFile` sont confinés contre la traversée et les liens symboliques
 - **API de Management Protégée** - Protection contre le DNS rebinding et le CSRF, jeton bearer optionnel (`SetAuthToken`)
 
 ### Utilitaires de Sécurité (`security.go`)
@@ -295,8 +295,25 @@ corps `[]byte` produit désormais une seule part au lieu d'un exchange par
 octet, et le consommateur HTTP ne renvoie plus les en-têtes entrants inchangés
 dans sa réponse.
 
-**Correctifs de la revue de sécurité (non publiés).** Ces changements peuvent
-affecter des routes existantes :
+**Changements à venir pour la remédiation v0.21.0 (non publiés).** Ces correctifs de sécurité, concurrence et sémantique introduisent des changements visibles ou incompatibles :
+
+- **Paramètres `sql-stored` :** les corps `map[string]any` non ordonnés sont rejetés (passez une slice ordonnée `[]gocamel.StoredProcedureParam`), et les paramètres `ParamDirectionOut` / `ParamDirectionInOut` retournent une erreur au lieu d'être liés silencieusement en `IN`.
+- **Options URI `sql` et `sql-stored` :** les options (`query`, `procedure`, `allowHeaderOverride`, etc.) sont lues uniquement depuis la query string de l'URI, en ignorant les variables d'environnement.
+- **Effacement de `In.Body` sans résultat (`sql`, `mongodb`, `redis`) :** `sql` (`outputType=SelectOne` à 0 ligne), `mongodb` (`operation=findOne` sur `mongo.ErrNoDocuments`, avec `CamelMongoDbResultTotal=0`) et `redis` (`command=GET` sur `redis.Nil`) mettent `In.Body` et `Out.Body` à `nil` pour ne pas conserver la requête, le filtre ou la clé en aval.
+- **TLS et statut du consommateur `grpc` :** `GRPCConsumer` impose TLS 1.2+ et rejette `insecure=false` sans `certFile` et `keyFile` ; il lit `exchange.GetResponse()`, exige `CamelGrpcStatusCode > 0` pour les erreurs et assainit les détails internes. `GRPCProducer` applique `timeout` et filtre les en-têtes `Camel*`.
+- **Cycle de vie `direct` :** `DirectProducer.Send` exige que le `DirectConsumer` cible soit démarré (`Start()`).
+- **Redirections et gzip `http` :** `NewHTTPComponent` bloque les redirections HTTPS→HTTP et retire les en-têtes d'authentification lors des redirections cross-origin par défaut (`SetCheckRedirect`) ; le producteur retire `Accept-Encoding` sortant afin que `http.Transport` gère gzip de façon transparente.
+- **Extraction d'archives (`zip`, `tar.gz`) :** rejette les entrées commençant par `/` ou `\` au lieu de retirer les slashs initiaux ; impose le contrôle CRC ZipCrypto et la vérification MAC avant déchiffrement WinZip AES.
+- **Encodage et confinement `template` :** un `encoding` non UTF-8 échoue immédiatement à la création de l'endpoint, et `CamelTemplatePath` est confiné au répertoire du template de l'endpoint.
+- **Composants IA (`anthropic`, `openai`, `ollama`, `jev`) :** rejettent les corps `nil` et les `baseURL` sans hôte/opaques, refusent les redirections 3xx et bornent les réponses à 32 Mio. `anthropic` désactive le chargement automatique d'environnement du SDK (`WithoutEnvironmentDefaults()`), lit `ANTHROPIC_API_KEY` et valide `temperature` dans `[0, 1]` ; `openai` lit `OPENAI_API_KEY`.
+- **Interrogation et lecture `mail` :** `DefaultPollDelay` passe de `60µs` à `60s`, `maxMessageSize` vaut 32 Mio par défaut si `<= 0`, IMAP utilise `BODY.PEEK[]` et `UIDExpunge`, et POP3 utilise `RetrRaw`/MIME avec limites `LIST` et `QUIT` après `DELE`.
+- **Écriture dans un répertoire `file` :** `CamelFileName` est obligatoire lorsque l'URI du producteur désigne un répertoire.
+- **Dépôts en mémoire :** `MemoryIdempotentRepository` (`100_000`) et `MemoryClaimCheckRepository` (`10_000`, clés UUID) sont bornés par défaut.
+- **`cron` :** `trigger.repeatCount=0` retourne sans planifier ; `deleteJob=false` conserve l'entrée lors de `Stop()` ; les préfixes `TZ=`/`CRON_TZ=` sans espace sont rejetés.
+- **Simple Language et JSONPath :** le parseur récursif supprime les comparaisons ambiguës chaîne/flottant `==`/`!=` et utilise `int64` pour `file:length` ; JSONPath applique des bornes de cycle, profondeur (`1000`), résultats (`100_000`) et visites (`1_000_000`).
+
+**Correctifs de la revue de sécurité précédente (depuis la v0.14.0).** Ces changements peuvent
+aussi affecter des routes existantes :
 
 - `ToD` échappe les valeurs interpolées selon leur position (échappement de
   requête dans la query string ; `?` et `#` échappés dans le chemin). Un

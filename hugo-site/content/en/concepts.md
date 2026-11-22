@@ -153,6 +153,10 @@ it starts (a `file:` consumer finding a backlog, a `timer:` with `delay=0`)
 therefore finds the `direct:` routes it calls already running, whatever the
 order the routes were declared in.
 
+`RemoveRoute` and `RemoveRouteByID` track route references so active or
+re-added routes are not orphaned, and `Stop()` tears down context resources
+in reverse registration order (`stopResources`).
+
 ### Graceful Shutdown
 
 `Stop()` has no deadline: if a consumer's `Stop()` blocks (for example an HTTP
@@ -178,14 +182,14 @@ if err := context.GracefulStop(30 * time.Second); err != nil {
 that would otherwise surface only on the first matching message:
 
 - the accumulated construction error from `From()` (e.g. an unknown component
-  scheme),
+  scheme); `RouteBuilder.Build()` is fail-closed and automatically detaches any
+  broken route from the context on error,
 - construction errors recorded on nested `Split` / `Loop` / `Multicast` /
-  `Pipeline` / `DoTry` builders (copied to the parent at `End()`),
+  `Pipeline` / `DoTry` builders (copied to the parent at `End()`, with explicit
+  forwarding methods preventing accidental parent mutation),
 - the absence of a source endpoint,
-- validation errors from any processor implementing the `Validator` interface
-  (notably `ChoiceProcessor`, whose When-clause Simple expressions are
-  re-parsed to surface syntax errors, and `Aggregator`, which requires at
-  least one completion condition).
+- validation errors walked recursively from any processor implementing the `Validator`
+  interface (including `ChoiceProcessor`, `Aggregator`, `CircuitBreaker`, and `DynamicRouter`).
 
 `Start()` does **not** call `Validate()` automatically — opt in from tests or
 CI to fail fast on broken routes:
@@ -248,7 +252,7 @@ Enable distributed tracing with the interceptor from the
 providing:
 
 - Route and Exchange identifiers in span attributes.
-- Automatic trace context propagation through the pipeline.
+- Automatic trace context propagation through the pipeline (and clean restoration across `ErrStopRouting`).
 - Error recording on the span if processing fails.
 
 ```go
@@ -280,7 +284,7 @@ successfully.
 - **Synchronization**: You can register callbacks (`OnComplete`, `OnFailure`) on an `Exchange`
   via `AddSynchronization`. **Every** consumer that creates exchanges (direct, seda, chan, timer,
   cron, http, file, ftp, sftp, smb, mail, redis, nats, telegram, ...) fires these callbacks when
-  route processing completes. The `ErrStopRouting` control signal (Stop EIP, idempotent
+  route processing completes (with panics inside callbacks safely isolated). The `ErrStopRouting` control signal (Stop EIP, idempotent
   duplicates, aggregation buffering) counts as **success**, not failure.
 - **Transacted Route**: Mark a route as transactional using `.Transacted()` in the DSL.
 - **Transactional Components**: Components like `file`, `ftp`, `sftp`, `smb`, and `mail` support this model by delaying

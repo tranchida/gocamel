@@ -20,7 +20,7 @@ builder.From("direct:start").To("direct:process")
 
 Les endpoints sont identifiés par **leur nom uniquement** — les paramètres de requête sont ignorés pour l'identité, donc
 `direct:start` et `direct:start?x=1` correspondent au même endpoint. Un seul consumer par
-endpoint est autorisé.
+endpoint est autorisé, et `DirectProducer.Send` exige que le `DirectConsumer` cible soit démarré (`Start()`).
 
 ---
 
@@ -150,9 +150,9 @@ arrière-plan : `Start()` n'attend pas la fin de l'arriéré.
 - `CamelFileLastModified` : Date et heure de dernière modification (`time.Time`)
 
 ##### Consommés par le Producer
-- `CamelFileName` : Surcharge le nom du fichier lorsque l'URI cible pointe vers un répertoire. Doit être un chemin **relatif** : nom vide, chemin absolu, volume Windows et composants `..` qui sortent du répertoire de l'endpoint sont rejetés.
+- `CamelFileName` : Nom du fichier de destination dans le répertoire cible. **Obligatoire** lorsque l'URI du producer pointe vers un répertoire (y compris se terminant par `/`). Doit être un chemin **relatif** (`ConfineFileName`) : nom vide, chemin absolu, volume Windows et composants `..` qui sortent du répertoire de l'endpoint sont rejetés.
 
-Le consumer ignore les liens symboliques et refuse les fichiers de plus de 32 Mio
+Le consumer ignore les liens symboliques (avec pré-vérification `Lstat` et `O_NOFOLLOW` sous Unix contre le TOCTOU) et refuse les fichiers de plus de 32 Mio
 (`DefaultMaxBodySize`).
 
 #### Verrou de lecture (Read Lock)
@@ -197,19 +197,18 @@ builder.To("ftp://host:21/outgoing?binary=true")
 | `password`              | string   | `""`   | Mot de passe FTP                                                   |
 | `binary`                | bool     | `true` | Mode de transfert binaire                                          |
 | `passiveMode`           | bool     | `true` | Utiliser le mode passif                                            |
-| `maxMessageSize`        | int      | `0`    | Taille max d'un fichier pollé en octets (0 = illimité)             |
+| `maxMessageSize`        | int      | `33554432` | Taille max d'un fichier pollé ou écrit en octets (`DefaultMaxBodySize`, 32 Mio si omis ou `<= 0`) |
 | `readLock`              | string   | `none` | Stratégie de verrou (`none`, `changed`, `rename`, `markerFile`)    |
 | `readLockTimeout`       | Duration | `10s`  | Délai maximal d'attente pour acquérir le verrou                    |
 | `readLockCheckInterval` | Duration | `1s`   | Intervalle entre les vérifications du verrou                       |
 | `readLockMinLength`     | int64    | `0`    | Taille minimale du fichier en octets                               |
 | `readLockMinAge`        | Duration | `0`    | Âge minimal du fichier                                             |
 
-Avec `fileExist=Append`, le producer télécharge le fichier distant existant
-puis renvoie l'envoi de la concaténation. Un téléchargement partiel fait
-échouer l'envoi plutôt que de renvoyer silencieusement un contenu tronqué.
-
-Lorsque le chemin de l'URI est un répertoire, `CamelFileName` est joint avec
-`JoinRemotePath` : noms absolus et traversée de répertoires sont rejetés.
+Avec `fileExist=Append`, le producer utilise la commande FTP native `APPE` (`Append`).
+`CamelFileName` et les chemins distants sont validés avec `ValidateRemotePath` /
+`JoinRemotePath` : les caractères CR/LF, les noms absolus et la traversée `..`
+sont rejetés. Les sockets de handshake et de données sont bornées par des délais
+et suivies pour un arrêt propre, et les hôtes IPv6 reçoivent un port par défaut.
 
 ---
 
@@ -232,16 +231,19 @@ builder.From("sftp://host:22/data?username=scott&readLock=changed&readLockTimeou
 | `password`              | string   | `""`   | Mot de passe SSH                                                   |
 | `privateKeyFile`        | string   | `""`   | Chemin vers la clé privée                                          |
 | `privateKeyPassphrase`  | string   | `""`   | Phrase secrète de la clé privée                                    |
-| `maxMessageSize`        | int      | `0`    | Taille max d'un fichier pollé en octets (0 = illimité)             |
+| `maxMessageSize`        | int      | `33554432` | Taille max d'un fichier pollé ou écrit en octets (`DefaultMaxBodySize`, 32 Mio si omis ou `<= 0`) |
 | `readLock`              | string   | `none` | Stratégie de verrou (`none`, `changed`, `rename`, `markerFile`)    |
 | `readLockTimeout`       | Duration | `10s`  | Délai maximal d'attente pour acquérir le verrou                    |
 | `readLockCheckInterval` | Duration | `1s`   | Intervalle entre les vérifications du verrou                       |
 | `readLockMinLength`     | int64    | `0`    | Taille minimale du fichier en octets                               |
 | `readLockMinAge`        | Duration | `0`    | Âge minimal du fichier                                             |
 
-Comme pour FTP, `fileExist=Append` concatène au fichier distant existant et
-fait échouer l'envoi si sa lecture échoue en cours de route. `CamelFileName`
-est confiné comme pour FTP (`JoinRemotePath`).
+`fileExist=Append` ouvre le fichier distant avec `O_APPEND` atomique et se
+place en fin de fichier, `Fail`/`Ignore` utilisent `O_EXCL` atomique, et les
+erreurs de `file.Close()` sont propagées. `CamelFileName` est confiné en chemins
+POSIX avec `JoinRemotePath` (CR/LF, noms absolus et `..` rejetés).
+`readLock=rename` utilise `Rename`, et les déplacements basculent de
+`PosixRename` vers `Rename`.
 
 ---
 
@@ -258,17 +260,18 @@ builder.From("smb://server/share/folder?username=user&readLock=changed")
 | `username`              | string   | `""`      | Nom d'utilisateur du domaine                                       |
 | `password`              | string   | `""`      | Mot de passe du domaine                                            |
 | `share`                 | string   | requis    | Nom du partage                                                     |
-| `maxMessageSize`        | int      | `0`       | Taille max d'un fichier pollé en octets (0 = illimité)             |
+| `maxMessageSize`        | int      | `33554432` | Taille max d'un fichier pollé ou écrit en octets (`DefaultMaxBodySize`, 32 Mio si omis ou `<= 0`) |
 | `readLock`              | string   | `none`    | Stratégie de verrou (`none`, `changed`, `rename`, `markerFile`)    |
 | `readLockTimeout`       | Duration | `10s`     | Délai maximal d'attente pour acquérir le verrou                    |
 | `readLockCheckInterval` | Duration | `1s`      | Intervalle entre les vérifications du verrou                       |
 | `readLockMinLength`     | int64    | `0`       | Taille minimale du fichier en octets                               |
 | `readLockMinAge`        | Duration | `0`       | Âge minimal du fichier                                             |
 
-La sémantique de `fileExist=Append` est identique à celle de FTP/SFTP.
-`CamelFileName` est confiné avec `JoinRemotePath` (noms absolus et `..`
-rejetés ; le producer n'utilise pas `filepath.Join`, qui jetterait le chemin
-du partage si le header était absolu).
+`fileExist=Append` utilise `O_APPEND` atomique, `Fail`/`Ignore` utilisent
+`O_EXCL` atomique, les erreurs de `file.Close()` sont propagées et le consumer
+ignore les liens symboliques. `CamelFileName` est confiné en chemins POSIX via
+`JoinRemotePath` (sûr sous Unix comme sous Windows ; noms absolus et `..`
+rejetés).
 
 ---
 
@@ -387,7 +390,9 @@ non plus : dans `To("http://a").To("http://b")`, les headers de réponse de `a`
 restent sur le message et parvenaient à `b`, ce qui transmettait le cookie de
 session de `a` à un autre service.
 
-Le producer n'envoie jamais les headers internes `Camel*` au service amont. Il
+Le producer n'envoie jamais les headers internes `Camel*` au service amont et
+retire tout en-tête sortant `Accept-Encoding` afin que `http.Transport` gère la
+négociation gzip et la décompression transparente automatiquement. Il
 transmet les autres headers, avec une exception pour les identifiants : les
 valeurs `Authorization` et `Cookie` envoyées par un client au consumer HTTP ne
 sont **pas** relayées telles quelles vers l'amont, afin qu'un pont
@@ -455,8 +460,15 @@ Le producer renseigne également `CamelHttpResponseCode` (int) et
 #### Durcissement
 
 - Le serveur embarqué définit un `ReadHeaderTimeout` de 10 secondes (attaques
-  d'en-têtes lents), un `ReadTimeout` de 60 secondes (attaques de corps lents)
-  et un `IdleTimeout` de 60 secondes (connexions keep-alive inactives).
+  d'en-têtes lents), un `ReadTimeout` de 60 secondes (attaques de corps lents),
+  un `WriteTimeout` / échéance d'écriture par réponse de 60 secondes
+  (`httpWriteTimeout`), et un `IdleTimeout` de 60 secondes (connexions
+  keep-alive inactives).
+- `NewHTTPComponent` installe par défaut une politique `CheckRedirect` qui
+  refuse les redirections de déclassement HTTPS→HTTP et supprime les en-têtes
+  sensibles (`Authorization`, `Cookie`, `Cookie2`, `Proxy-Authorization`,
+  `X-Api-Key`, `Api-Key`, `X-Auth-Token`) lors des redirections cross-origin ;
+  personnalisez ou restaurez cette politique avec `HTTPComponent.SetCheckRedirect`.
 - Les corps de requête et de réponse sont lus au travers d'une limite de taille
   — `DefaultMaxBodySize` (32 Mio) — afin qu'une charge utile surdimensionnée ne
   puisse pas épuiser la mémoire du processus (CWE-400). Une requête trop
@@ -587,6 +599,8 @@ builder.To("telegram:bots")
 |----------------------|--------|--------|--------------------|
 | `authorizationToken` | string | env var | Token de l'API Bot |
 
+Les jetons de bot sont validés contre les espaces, caractères de contrôle et délimiteurs d'URL, et masqués dans les erreurs du client HTTP. Le client HTTP utilise un timeout borné de `75s`, le consumer interroge l'API avec une boucle `GetUpdates` sensible au contexte et ignore sans panic les messages sans `Chat`.
+
 ---
 
 ### NATS
@@ -625,6 +639,8 @@ exchange.In.SetHeader(nats.CamelNATSSubject, "urgent-orders")
 **Headers d'Exchange :**
 
 - `CamelNATSSubject` - Sujet du message reçu ou sujet cible pour la publication.
+
+Les identifiants intégrés dans `servers` (tels que `user:pass@` ou `token@`) sont masqués dans `URI()` et les journaux. Les connexions sont établies sans verrou avec prise en charge du contexte tout en préservant la reconnexion automatique après le démarrage.
 
 ### Kafka
 
@@ -716,8 +732,8 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 |---|---|---|---|
 | `host` | string | `localhost:61613` | Adresse du broker `host:port` (connecteur STOMP ActiveMQ) |
 | `destination` | string | analysée depuis le chemin | Destination STOMP (`/queue/...`, `/topic/...`) |
-| `login` | string | `""` | Identifiant envoyé dans la trame CONNECT STOMP |
-| `passcode` | string | `""` | Mot de passe envoyé dans la trame CONNECT STOMP (préférez la variable d'environnement `STOMP_PASSCODE`) |
+| `login` | string | `""` | Identifiant envoyé dans la trame CONNECT STOMP (se replie sur `username` et l'userinfo de l'URI) |
+| `passcode` | string | `""` | Mot de passe envoyé dans la trame CONNECT STOMP (se replie sur `password` et l'userinfo de l'URI ; préférez `STOMP_PASSCODE`) |
 | `ack` | string | `auto` | Mode d'accusé de réception : `auto`, `client`, `client-individual` (consommateur uniquement) |
 | `allowHeaderOverride` | bool | `false` | Autorise `CamelStompDestination` à remplacer l'URI en production |
 | `forwardHeaders` | string | `""` | Liste de noms de headers (séparés par des virgules) propagés comme headers de trame STOMP ; si définie, SEULS ces headers sont propagés |
@@ -752,8 +768,14 @@ exchange.In.SetHeader("CamelStompDestination", "/queue/urgent-orders")
 > ignorés par le consommateur : un client qui envoie vers la destination ne
 > doit pas piloter des headers internes comme `CamelFileName` ou
 > `CamelHttpMethod`.
+>
+> 19 headers de protocole STOMP 1.0/1.1/1.2 réservés (tels que `destination`,
+> `content-length`, `receipt`, `ack`, `id`, `transaction`) et les octets `\x00`
+> de cadrage dans les destinations, hôtes, identifiants ou headers sont bloqués
+> pour empêcher l'injection de trames.
 
-Avec `ack=client` ou `ack=client-individual`, un message n'est accusé reçu
+Le consommateur utilise une connexion dédiée au broker et vide proprement les
+acquittements en attente lors de l'arrêt. Avec `ack=client` ou `ack=client-individual`, un message n'est accusé reçu
 qu'après que la route l'ait traité avec succès ; un échec de traitement est
 retenté (voir `maxRedeliveries`) avant tout accusé de réception, le broker redélivre donc le message si
 la connexion tombe entre-temps. Avec `ack=auto` (défaut), le broker considère
@@ -805,20 +827,24 @@ builder.From("direct:invoke").
 |---|---|---|---|
 | `service` | string | parsé depuis le chemin | Nom complet du service gRPC |
 | `method` | string | parsé depuis le chemin | Nom de la méthode RPC |
-| `insecure` | bool | `true` | Utiliser un transport texte en clair sans TLS ; à `false`, TLS 1.2+ est utilisé avec le pool de CA système |
-| `caCert` | string | `""` | Chemin d'un certificat CA au format PEM approuvé pour la vérification du serveur quand `insecure=false` (ex. serveur auto-signé) |
+| `insecure` | bool | `true` | Utiliser un transport texte en clair sans TLS ; à `false`, TLS 1.2+ est utilisé (`certFile`+`keyFile` requis côté consommateur ; CA système ou `caCert` côté producteur) |
+| `caCert` | string | `""` | Chemin d'un certificat CA au format PEM approuvé pour la vérification du serveur quand `insecure=false` (producteur) |
+| `certFile` | string | `""` | Chemin d'un certificat TLS serveur PEM requis par `GRPCConsumer` quand `insecure=false` (exige `keyFile`, validé par `IsSafePath`) |
+| `keyFile` | string | `""` | Chemin d'une clé privée TLS serveur PEM requise par `GRPCConsumer` quand `insecure=false` (exige `certFile`, validé par `IsSafePath`) |
+| `timeout` | Duration | `5s` | Délai maximal par appel RPC appliqué par `GRPCProducer` |
 | `forwardHeaders` | string | `""` | Liste de noms de headers (séparés par des virgules) propagés comme métadonnées RPC sortantes ; si définie, SEULS ces headers sont propagés |
+| `allowHeaderOverride` | bool | `false` | Autorise `CamelGrpcMethod` à remplacer la méthode configurée |
 
 **Headers d'Exchange :**
 - `CamelGrpcMethod` - Méthode gRPC invoquée.
-- `CamelGrpcStatusCode` - Code d'état gRPC (ex: 0 pour OK).
-- `CamelGrpcStatusDescription` - Message descriptif du statut gRPC.
+- `CamelGrpcStatusCode` - Code d'état gRPC (`0` pour OK ; côté consommateur, les valeurs `> 0` fixent le code d'erreur gRPC retourné).
+- `CamelGrpcStatusDescription` - Message descriptif du statut gRPC (assaini dans les réponses d'erreur du consommateur).
 
-> ⚠️ Sécurité : les headers sortants de l'exchange sont filtrés avant d'être
-> envoyés comme métadonnées RPC : `Authorization`, `Cookie`,
-> `Proxy-Authorization`, `Set-Cookie` et `WWW-Authenticate` (insensible à la
-> casse) ne sont jamais propagés, afin qu'un producteur en aval du
-> consommateur HTTP ne fuite pas les identifiants du client. Définissez
+> ⚠️ Sécurité : `GRPCConsumer` rejette `insecure=false` sans `certFile` et
+> `keyFile`, lit la réponse finale via `exchange.GetResponse()` et assainit les
+> détails d'erreur internes. `GRPCProducer` supprime les en-têtes `Camel*` et
+> les identifiants sensibles (`Authorization`, `Cookie`, `Proxy-Authorization`,
+> `Set-Cookie`, `WWW-Authenticate`) des métadonnées RPC sortantes. Définissez
 > `forwardHeaders` pour une liste explicite si vous souhaitez un contrôle plus
 > strict.
 
@@ -843,10 +869,10 @@ builder.To("redis://localhost:6379?command=SET&key=mykey")
 
 **Commandes supportées :**
 
-- `SET` : Enregistre le corps de l'exchange comme valeur de `key`.
-- `GET` : Récupère la valeur de `key` et l'écrit dans `Out.Body`.
+- `SET` : Enregistre le corps de l'exchange (`string`, `[]byte` ou scalaire formaté) comme valeur de `key` (binaire sûr pour `[]byte`).
+- `GET` : Récupère la valeur de `key` et l'écrit dans `Out.Body`. En cas d'absence (`redis.Nil`), `In.Body` et `Out.Body` sont mis à `nil`.
 - `DEL` : Supprime `key` et écrit le nombre de clés affectées dans `Out.Body`.
-- `PUBLISH` : Publie le corps de l'exchange vers le canal/clé spécifié.
+- `PUBLISH` : Publie le corps de l'exchange (binaire sûr pour `[]byte`) vers le canal/clé spécifié.
 
 **Headers d'Exchange (surcharge des paramètres URI) :**
 
@@ -876,7 +902,7 @@ import (
 )
 
 rdb := goredis.NewClient(&goredis.Options{Addr: "localhost:6379"})
-// Préfixe de clé "idempotent:" avec TTL d'expiration de 24 heures
+// Préfixe de clé "idempotent:" (non vide) avec TTL d'expiration de 24 heures ; Clear échappe les caractères glob
 repo := redis.NewRedisIdempotentRepository(rdb, "idempotent:", 24*time.Hour)
 
 builder.From("direct:start").
@@ -935,9 +961,11 @@ import "github.com/tranchida/gocamel/components/openai"
 
 ctx.AddComponent("openai", openai.NewOpenAIComponent())
 
-// Producer uniquement - envoyer une requête de chat completion
+// Producer uniquement - envoyer une requête de chat completion (lit OPENAI_API_KEY automatiquement)
 endpoint, _ := ctx.CreateEndpoint("openai:chat?model=gpt-4")
 producer, _ := endpoint.CreateProducer()
+_ = producer.Start(context.Background())
+defer producer.Stop()
 
 exchange := gocamel.NewExchange(context.Background())
 exchange.GetIn().SetBody("Bonjour, comment allez-vous ?")
@@ -953,7 +981,7 @@ Utiliser un fournisseur compatible OpenAI :
 endpoint, _ := ctx.CreateEndpoint(
     "openai:chat?model=openai/gpt-4o" +
         "&baseURL=https://openrouter.ai/api/v1" +
-        "&apiKey=$OPENROUTER_API_KEY")
+        "&apiKey=" + url.QueryEscape(os.Getenv("OPENROUTER_API_KEY")))
 ```
 
 **Variables d'environnement :**
@@ -964,10 +992,9 @@ endpoint, _ := ctx.CreateEndpoint(
 |----------------------|--------|----------------------|-----------------------------------------------------------------|
 | `model`              | string | `gpt-3.5-turbo`      | Modèle à utiliser                                               |
 | `authorizationToken` | string | variable d'env       | Clé API (alias : `apiKey`)                                      |
-| `baseURL`            | string | `https://api.openai.com/v1` | URL de base compatible OpenAI personnalisée (OpenRouter, Groq, ...) |
+| `baseURL`            | string | `https://api.openai.com/v1` | URL de base compatible OpenAI personnalisée (OpenRouter, Groq, ...). Doit être `http(s)` avec hôte. |
 
-Le timeout HTTP du SDK est de **60 secondes**. Bornez davantage les appels
-longs avec `exchange.Context`.
+Le timeout HTTP du SDK est de **60 secondes**, refuse les redirections 3xx susceptibles de faire fuiter les en-têtes d'autorisation et borne les corps de réponse à `DefaultMaxBodySize` (32 Mio). Les corps `nil` sont rejetés. Bornez davantage les appels longs avec `exchange.Context`.
 
 ### Anthropic
 
@@ -981,13 +1008,14 @@ import "github.com/tranchida/gocamel/components/anthropic"
 
 ctx.AddComponent("anthropic", anthropic.NewAnthropicComponent())
 
-// Producer uniquement - envoyer une requête Messages
+// Producer uniquement - envoyer une requête Messages (lit ANTHROPIC_API_KEY automatiquement)
 endpoint, _ := ctx.CreateEndpoint(
     "anthropic:messages?model=claude-sonnet-4-5" +
-        "&apiKey=$ANTHROPIC_API_KEY" +
         "&maxTokens=1024" +
-        "&system=Tu es un assistant concis")
+        "&system=Tu+es+un+assistant+concis")
 producer, _ := endpoint.CreateProducer()
+_ = producer.Start(context.Background())
+defer producer.Stop()
 
 exchange := gocamel.NewExchange(context.Background())
 exchange.GetIn().SetBody("Explique EIP en une phrase.")
@@ -998,7 +1026,7 @@ fmt.Println(exchange.GetOut().GetBody()) // Réponse de Claude
 
 **Variables d'environnement :**
 
-- `ANTHROPIC_API_KEY` - Clé API (recommandé plutôt que l'intégrer dans l'URI)
+- `ANTHROPIC_API_KEY` - Clé API (repli quand `apiKey`/`authorizationToken` sont omis ; le chargement automatique d'environnement du SDK tel que `ANTHROPIC_BASE_URL` est désactivé via `option.WithoutEnvironmentDefaults()`)
 
 | Option               | Type   | Défaut      | Description                                                    |
 |----------------------|--------|-------------|----------------------------------------------------------------|
@@ -1006,11 +1034,11 @@ fmt.Println(exchange.GetOut().GetBody()) // Réponse de Claude
 | `model`              | string | requis      | Nom du modèle, ex. `claude-sonnet-4-5`                         |
 | `maxTokens`          | int    | `1024`      | Nombre maximum de tokens à générer                             |
 | `system`             | string | `""`        | Prompt système                                                |
-| `temperature`         | float  | non défini  | Température d'échantillonnage (0.0-1.0)                       |
-| `baseURL`            | string | API Anthropic | URL de base personnalisée (proxies, passerelles). Doit être `http(s)`. |
+| `temperature`         | float  | non défini  | Température d'échantillonnage (nombre fini dans `0.0-1.0`)    |
+| `baseURL`            | string | API Anthropic | URL de base personnalisée (proxies, passerelles). Doit être `http(s)` avec hôte. |
 | `allowHeaderOverride` | bool  | `false`     | Autorise les en-têtes de surcharge `Anthropic*` ci-dessous à remplacer la configuration de l'URI |
 
-Le timeout HTTP du SDK est de **60 secondes**.
+Le timeout HTTP du SDK est de **60 secondes**, refuse les redirections 3xx, borne les réponses à `DefaultMaxBodySize` (32 Mio) et rejette les corps `nil` ainsi que les réponses SDK nulles.
 
 **En-têtes de surcharge par message** (message In, pris en compte uniquement avec `allowHeaderOverride=true`) :
 
@@ -1078,11 +1106,13 @@ identifiant de question. `Answer.Type` vaut `noul` (renseigne `Noul`), `choice`
 | `apiKey`             | string   | variable d'env       | Clé API (alias : `authorizationToken`). Masquée par `RedactURI`. |
 | `questions`          | JSON     | requis*              | Objet associant identifiants de questions et questions Jev, envoyé tel quel |
 | `model`              | string   | `typesafe/jev-1.13`  | Modèle Jev |
-| `baseURL`            | string   | `https://openrouter.ai/api/alpha` | Racine de l'API (proxies, tests). Doit être `http(s)`. |
+| `baseURL`            | string   | `https://openrouter.ai/api/alpha` | Racine de l'API (proxies, tests). Doit être `http(s)` avec hôte. |
 | `timeout`            | duration | `30s`                | Délai maximal par requête |
 | `allowHeaderOverride` | bool    | `false`              | Autorise les en-têtes `Jev*` à remplacer la configuration de l'URI |
 
 \* Facultatif avec `allowHeaderOverride=true` et l'en-tête `JevQuestions`.
+
+Les corps `nil` sont rejetés, les redirections 3xx sont refusées et les corps de réponse HTTP sont plafonnés à `DefaultMaxBodySize` (32 Mio).
 
 **En-têtes de surcharge** (message In, pris en compte uniquement avec `allowHeaderOverride=true`) :
 `JevQuestions` (chaîne JSON ou map) et `JevModel`.
@@ -1097,11 +1127,11 @@ identifiant de question. `Answer.Type` vaut `noul` (renseigne `Noul`), `choice`
 
 Intégration native avec un serveur [Ollama](https://ollama.com) local via son
 client Go officiel (`github.com/ollama/ollama/api`). Trois modes sont
-sélectionnés par le chemin de l'URI :
+sélectionnés par le chemin de l'URI (`ollama:mode` ou `ollama://mode`) :
 
-- `ollama:chat` (défaut) — API de chat multi-tours (`/api/chat`)
-- `ollama:generate` — génération one-shot (`/api/generate`)
-- `ollama:embed` — embeddings (`/api/embed`)
+- `ollama:chat` / `ollama://chat` (défaut) — API de chat multi-tours (`/api/chat`)
+- `ollama:generate` / `ollama://generate` — génération one-shot (`/api/generate`)
+- `ollama:embed` / `ollama://embed` — embeddings (`/api/embed`)
 
 ```go
 import "github.com/tranchida/gocamel/components/ollama"
@@ -1112,6 +1142,8 @@ ctx.AddComponent("ollama", ollama.NewOllamaComponent())
 endpoint, _ := ctx.CreateEndpoint(
     "ollama:chat?model=llama3.1&host=http://localhost:11434")
 producer, _ := endpoint.CreateProducer()
+_ = producer.Start(context.Background())
+defer producer.Stop()
 
 exchange := gocamel.NewExchange(context.Background())
 exchange.GetIn().SetBody("Résume EIP en une phrase.")
@@ -1135,10 +1167,10 @@ endpoint, _ := ctx.CreateEndpoint(
 | Option       | Type    | Défaut                    | Description                                                  |
 |--------------|---------|---------------------------|--------------------------------------------------------------|
 | `model`      | string  | requis (chat/generate)    | Nom du modèle                                                |
-| `host`       | string  | `http://localhost:11434`  | URL de base du serveur Ollama (doit être `http(s)`)           |
+| `host`       | string  | `http://localhost:11434`  | URL de base du serveur Ollama (doit être `http(s)` avec hôte) |
 | `system`     | string  | `""`                      | Prompt système (mode generate uniquement)                   |
 | `keepAlive`  | durée   | non défini                | Rétention du modèle en mémoire (ex. `5m`, `30s`)             |
-| `think`      | string  | non défini                | Effort de raisonnement : `true`/`false`/`low`/`medium`/`high`/`max` |
+| `think`      | string  | non défini                | Effort de raisonnement : `true`/`false`/`low`/`medium`/`high`/`max` (validé à la création) |
 | `format`     | string  | non défini                | Format de sortie structuré (ex. `json`)                      |
 | `allowHeaderOverride` | bool | `false`                | Autorise les en-têtes `OllamaModel` et `OllamaSystem` à remplacer la configuration de l'URI |
 
@@ -1172,7 +1204,9 @@ par un jeton Bearer. La clé n'est lue que depuis l'environnement (jamais depuis
 l'URI) et n'est envoyée qu'à `ollama.com` et à ses sous-domaines, en HTTPS
 (`http://ollama.com` échoue au `Start`). Tout autre hôte, par exemple un serveur
 Ollama local ou du réseau local, utilise le client standard et ne reçoit jamais
-la clé, même si la variable est définie.
+la clé, même si la variable est définie. Tous les clients HTTP Ollama refusent
+les redirections 3xx et plafonnent les réponses à 32 Mio ; les messages d'erreur
+cloud sont limités à 512 octets et les corps `nil` sont rejetés.
 
 ```go
 // export OLLAMA_API_KEY=...
@@ -1216,10 +1250,13 @@ cron=0 0 12 * * *  # Chaque jour à midi
 
 | Option                   | Type   | Défaut | Description                          |
 |--------------------------|--------|--------|--------------------------------------|
-| `cron`                   | string | `""`   | Expression cron à 6 champs           |
+| `cron`                   | string | `""`   | Expression cron à 6 champs (les préfixes `TZ=`/`CRON_TZ=` sans espace sont rejetés) |
+| `trigger.timeZone`       | string | `""`   | Fuseau horaire IANA de l'expression cron (sans espace) |
 | `trigger.repeatInterval` | int    | `""`   | Intervalle en ms (déclencheur simple) |
-| `trigger.repeatCount`    | int    | `-1`   | Nombre maximum de répétitions        |
+| `trigger.repeatCount`    | int    | `-1`   | Nombre maximum de répétitions (`-1` = infini, `0` = retour immédiat sans planification) |
 | `triggerStartDelay`      | int    | `500`  | Délai initial en ms                  |
+| `deleteJob`              | bool   | `true` | Supprimer le job lors de `Stop()` (`false` le conserve) |
+| `pauseJob`               | bool   | `false`| Mettre en pause la planification au démarrage |
 | `stateful`               | bool   | `false`| Empêcher l'exécution concurrente     |
 
 **Headers d'Exchange :**
@@ -1231,7 +1268,8 @@ cron=0 0 12 * * *  # Chaque jour à midi
 À l'appel de `Stop()`, un job dont le `triggerStartDelay` n'est pas encore
 écoulé n'est jamais enregistré sur le scheduler partagé : la demande d'arrêt
 gagne la course avec l'enregistrement différé, aucun job orphelin ne peut donc
-rester à se déclencher indéfiniment.
+rester à se déclencher indéfiniment. Chaque consommateur suit son scheduler
+`*cron.Cron` propriétaire et `Stop()` arrête proprement les schedulers inactifs.
 
 ---
 
@@ -1252,6 +1290,10 @@ builder.To("smtps://smtp.gmail.com:465?to=recipient@example.com&subject=Bonjour"
 | `to`          | string | `""`           | Destinataire(s) |
 | `subject`     | string | `""`           | Sujet de l'email |
 | `contentType` | string | `"text/plain"` | Type MIME      |
+| `allowHeaderOverride` | bool | `false`  | Autorise les en-têtes `From`/`To`/`Cc`/`Bcc`/`Subject`/`Content-Type` à surcharger l'URI |
+| `requireStartTLS`     | bool | `false`  | Refuse l'envoi si le serveur n'annonce pas `STARTTLS` |
+
+Les adresses sont validées strictement avec `net/mail` pour empêcher toute injection ESMTP. Une fois le message accepté par le serveur (`250 OK` après `DATA`), un échec de `QUIT` est journalisé sans relancer de réessai pour éviter les doublons.
 
 ---
 
@@ -1270,10 +1312,13 @@ builder.From("imaps://imap.gmail.com:993?folderName=INBOX&idle=true")
 | `folderName`     | string | `"INBOX"`| Dossier à surveiller      |
 | `unseen`         | bool   | `true`   | Messages non lus uniquement |
 | `idle`           | bool   | `false`  | Utiliser le mode IMAP IDLE |
-| `delete`         | bool   | `false`  | Supprimer après traitement |
+| `peek`           | bool   | `true`   | Récupérer avec `BODY.PEEK[]` et ne marquer `\Seen` qu'après succès |
+| `delete`         | bool   | `false`  | Supprimer après traitement (`UIDExpunge`) |
 | `fetchSize`      | int    | `-1`     | Messages par interrogation |
-| `pollDelay`      | int    | `60000`  | Intervalle d'interrogation (ms) |
-| `maxMessageSize` | int    | `0`      | Taille max d'un message en octets (0 = illimité) |
+| `pollDelay`      | int    | `60000`  | Intervalle d'interrogation (ms ; une valeur non positive retombe sur `60000` ms / `60s`) |
+| `maxMessageSize` | int    | `33554432` | Taille max d'un message en octets (`DefaultMaxBodySize`, 32 Mio si `<= 0`) |
+
+IMAP récupère les messages via `BODY.PEEK[]` (préservant `\Seen` en cas d'échec de la route) et applique une lecture en flux bornée à `maxMessageSize`. Le décodage MIME prend en charge les encodages non UTF-8 via `go-message/charset` et assainit les noms de pièces jointes dans `Content-Disposition`.
 
 ---
 
@@ -1285,8 +1330,10 @@ Réception d'emails via POP3.
 builder.From("pop3s://pop.gmail.com:995?username=user&password=pass")
 ```
 
-Le consumer POP3 accepte la même option `maxMessageSize` qu'IMAP (défaut `0` =
-illimité) pour borner la taille d'un message téléchargé.
+Le consumer POP3 accepte la même option `maxMessageSize` qu'IMAP (défaut
+`DefaultMaxBodySize`, 32 Mio si `<= 0`), vérifie la taille via `LIST` avant de
+télécharger le message brut RFC 5322 par `RetrRaw`/MIME et envoie `QUIT`
+proprement après `DELE` pour valider les suppressions.
 
 Avec `disconnect=false` (défaut), la connexion POP3 est conservée entre les
 polls, comme pour le consumer IMAP. Définissez `disconnect=true` pour vous
@@ -1338,18 +1385,21 @@ sql://logical?dataSourceRef=<datasourceName>&query=<SQL>
 
 | Option                | Type   | Défaut       | Description                                         |
 |-----------------------|--------|--------------|-----------------------------------------------------|
-| `query`               | string | requis       | Chaîne de requête SQL                               |
-| `dataSourceRef`       | string | chemin hôte  | Nom de la datasource                                |
-| `outputType`          | string | `SelectList` | `SelectList` ou `SelectOne`                         |
-| `batch`               | bool   | `false`      | Mode d'exécution par lot                            |
-| `transacted`          | bool   | `false`      | Encapsuler dans une transaction                     |
-| `allowHeaderOverride` | bool   | `false`      | Autoriser `CamelSqlQuery` à remplacer la requête    |
+| `query`               | string | requis       | Chaîne de requête SQL (query URI uniquement ; variables d'env ignorées) |
+| `dataSourceRef`       | string | chemin hôte  | Nom de la datasource (query URI uniquement)         |
+| `outputType`          | string | `SelectList` | `SelectList` ou `SelectOne` (query URI uniquement)  |
+| `batch`               | bool   | `false`      | Mode d'exécution par lot (query URI uniquement)     |
+| `transacted`          | bool   | `false`      | Encapsuler dans une transaction avec `defer tx.Rollback()` et mise à jour de `Out` après `tx.Commit()` (query URI uniquement) |
+| `allowHeaderOverride` | bool   | `false`      | Autoriser `CamelSqlQuery` à remplacer la requête (query URI uniquement) |
 
 **Paramètres de requête :**
 
 Fournis via le header `CamelSqlParameters` ou le corps comme `[]any`.
 
 > [!caution] La requête est une configuration de confiance
+> Les options SQL (`query`, `dataSourceRef`, `outputType`, `batch`,
+> `transacted`, `allowHeaderOverride`) sont lues **strictement depuis la query
+> string de l'URI** et ignorent les variables d'environnement.
 > La requête n'est **jamais** interpolée avec les données de l'Exchange :
 > substituer `${header.X}` dans la chaîne SQL annulerait le bénéfice des
 > requêtes paramétrées et ouvrirait la porte à l'injection SQL. Liez toujours
@@ -1371,7 +1421,9 @@ Fournis via le header `CamelSqlParameters` ou le corps comme `[]any`.
 > builder.To("sql://appdb?allowHeaderOverride=true&query=SELECT+1")
 > ```
 >
-> Une instruction suivie d'une autre (`SELECT 1; DROP TABLE t`) est rejetée.
+> Une instruction suivie d'une autre (`SELECT 1; DROP TABLE t`) est rejetée
+> selon quatre dialectes lexicaux SQL (guillemets simples, guillemets doubles,
+> backticks et chaînes dollar-quoted PostgreSQL, plus commentaires ligne/bloc).
 > Selon la base, `\'` échappe ou non une apostrophe (MySQL : oui ; SQLite,
 > PostgreSQL : non) ; un `;` hors littéral dans l'une ou l'autre lecture est
 > donc rejeté : échappez les apostrophes avec `''`, accepté partout.
@@ -1387,7 +1439,7 @@ Fournis via le header `CamelSqlParameters` ou le corps comme `[]any`.
 | Cas                     | Type de Out.Body           |
 |-------------------------|----------------------------|
 | `SELECT` + `SelectList` | `[]map[string]any`         |
-| `SELECT` + `SelectOne`  | `map[string]any` ou `nil`  |
+| `SELECT` + `SelectOne`  | `map[string]any` ou `nil` (efface `In.Body` et `Out.Body` à `nil` si 0 ligne correspond) |
 | `INSERT/UPDATE/DELETE`  | `int64` (lignes affectées) |
 
 **Classification des requêtes :**
@@ -1408,7 +1460,7 @@ INSERT INTO users(name) VALUES (?) RETURNING id   -- jeu de résultats
 
 ### SQL-Stored
 
-Exécution de procédures stockées avec support des paramètres IN, OUT et INOUT.
+Exécution de procédures stockées avec une slice ordonnée `[]gocamel.StoredProcedureParam` (paramètres `IN`).
 
 ```go
 import (
@@ -1422,7 +1474,7 @@ sqlStored := gocamel.NewSQLStoredComponent()
 sqlStored.RegisterDataSource("mydb", db)
 ctx.AddComponent("sql-stored", sqlStored)
 
-// Appel simple avec paramètres IN
+// Appel simple avec paramètres IN ordonnés
 builder.From("direct:call").
     SetBody([]gocamel.StoredProcedureParam{
         {Name: "userId", Direction: gocamel.ParamDirectionIn, Value: 42},
@@ -1440,14 +1492,16 @@ sql-stored://logical?dataSourceRef=dsName&procedure=NAME
 
 | Option                | Type   | Défaut       | Description                                                  |
 |-----------------------|--------|--------------|--------------------------------------------------------------|
-| `procedure`           | string | requis       | Nom de la procédure stockée                                  |
-| `dataSourceRef`       | string | chemin hôte  | Nom de la datasource                                         |
-| `outputType`          | string | `SelectList` | `SelectList` ou `SelectOne`                                  |
-| `transacted`          | bool   | `false`      | Exécuter dans une transaction                                |
-| `noop`                | bool   | `false`      | Mode test (pas d'exécution)                                  |
-| `allowHeaderOverride` | bool   | `false`      | Autoriser `CamelSqlStoredProcedureName` à remplacer le nom   |
+| `procedure`           | string | requis       | Nom de la procédure stockée (query URI uniquement ; variables d'env ignorées) |
+| `dataSourceRef`       | string | chemin hôte  | Nom de la datasource (query URI uniquement)                  |
+| `outputType`          | string | `SelectList` | `SelectList` ou `SelectOne` (query URI uniquement)           |
+| `transacted`          | bool   | `false`      | Exécuter dans une transaction (query URI uniquement)         |
+| `noop`                | bool   | `false`      | Mode test (pas d'exécution ; query URI uniquement)           |
+| `allowHeaderOverride` | bool   | `false`      | Autoriser `CamelSqlStoredProcedureName` à remplacer le nom (query URI uniquement) |
 
 > [!caution] Le nom de procédure est un identifiant de confiance
+> Comme `sql`, `sql-stored` lit toutes les options d'endpoint strictement
+> depuis la query string de l'URI (en ignorant les variables d'environnement).
 > Le nom de procédure est inséré dans la requête `CALL` et n'est **jamais**
 > interpolé avec les données de l'exchange. Le header
 > `CamelSqlStoredProcedureName` est ignoré sauf si l'endpoint opte avec
@@ -1456,21 +1510,22 @@ sql-stored://logical?dataSourceRef=dsName&procedure=NAME
 > surcharge que là où les headers ne peuvent pas être influencés par une entrée
 > non fiable.
 
-**Directions des paramètres :**
+**Règles et directions des paramètres :**
 
-| Direction             | Description           |
-|-----------------------|-----------------------|
-| `ParamDirectionIn`    | Entrée uniquement     |
-| `ParamDirectionOut`   | Sortie uniquement     |
-| `ParamDirectionInOut` | Entrée et sortie      |
+Passez les paramètres dans l'ordre positionnel déterministe via `[]gocamel.StoredProcedureParam`. Les corps `map[string]any` non ordonnés sont **rejetés** pour éviter toute transposition aléatoire des arguments.
+
+| Direction             | Statut                                                                   |
+|-----------------------|--------------------------------------------------------------------------|
+| `ParamDirectionIn`    | Supporté (paramètre positionnel d'entrée)                                |
+| `ParamDirectionOut`   | Rejeté (`database/sql` ne fournit pas de récupération générique `sql.Out`) |
+| `ParamDirectionInOut` | Rejeté (`database/sql` ne fournit pas de récupération générique `sql.Out`) |
 
 Exemple :
 
 ```go
 params := []gocamel.StoredProcedureParam{
-    {Name: "inParam", Direction: gocamel.ParamDirectionIn, Value: "input"},
-    {Name: "outParam", Direction: gocamel.ParamDirectionOut},
-    {Name: "inOutParam", Direction: gocamel.ParamDirectionInOut, Value: 123},
+    {Name: "tenantId", Direction: gocamel.ParamDirectionIn, Value: "acme"},
+    {Name: "userId", Direction: gocamel.ParamDirectionIn, Value: 42},
 }
 ```
 
@@ -1502,15 +1557,16 @@ mongodb://connectionName?database=mydb&collection=mycoll&operation=find
 Par sécurité, `remove` refuse les filtres nuls ou vides. Définissez
 `allowDeleteAll=true` explicitement uniquement si la suppression de toute la
 collection est intentionnelle. De même, `update` refuse un filtre absent ou
-vide (`nil`, `{}`, `bson.M` / `bson.D` vides, chaîne vide) : chacun
+vide (`nil`, `{}`, `bson.M` / `bson.D` / `bson.Raw` vides, chaîne vide, vérifié via `bson.Marshal`) : chacun
 mettrait à jour tous les documents. Définissez `allowUpdateAll=true`
 explicitement uniquement si c'est intentionnel.
+Avec `allowHeaderOverride=true`, `CamelMongoDbCriteria` prime sur `body["filter"]` pour `update`/`remove`. Sur `findOne`, `mongo.ErrNoDocuments` remet `In.Body` et `Out.Body` à `nil` et fixe `CamelMongoDbResultTotal` à `0`.
 
 > ⚠️ Sécurité : la base, la collection et l'opération configurées dans l'URI
 > constituent une configuration de confiance. Les headers
 > `CamelMongoDbDatabase`, `CamelMongoDbCollection`, `CamelMongoDbOperation` et
 > `CamelMongoDbCriteria` sont ignorés sauf si l'endpoint active explicitement
-> `allowHeaderOverride=true`. Ne l'activez que si les headers ne peuvent pas
+> `allowHeaderOverride=true` (booléen strict). Ne l'activez que si les headers ne peuvent pas
 > être influencés par une entrée non fiable.
 
 #### Headers d'entrée
@@ -1520,10 +1576,10 @@ explicitement uniquement si c'est intentionnel.
 | `CamelMongoDbDatabase`   | R/W   | Nom de la base de données                  |
 | `CamelMongoDbCollection` | R/W   | Nom de la collection                       |
 | `CamelMongoDbOperation`  | R/W   | Opération à exécuter                       |
-| `CamelMongoDbCriteria`   | Écriture | Filtre/critère (map[string]any ou JSON) |
+| `CamelMongoDbCriteria`   | Écriture | Filtre/critère (`map[string]any`, `bson.M`, `bson.D` ou JSON ; prime sur `body["filter"]`) |
 | `CamelMongoDbLimit`      | Écriture | Limite de résultats                        |
 | `CamelMongoDbSkip`       | Écriture | Sauter N documents                         |
-| `CamelMongoDbSort`       | Écriture | Ordre de tri (json: {"field": 1})          |
+| `CamelMongoDbSort`       | Écriture | Ordre de tri (JSON, `map[string]any`, `bson.M`, `[]bson.M` ou `bson.D`) |
 
 #### Headers de sortie
 
@@ -1587,8 +1643,9 @@ builder.To("template:default.tmpl?allowTemplateFromHeader=true")
 
 | Option                    | Type   | Défaut  | Description                                    |
 |---------------------------|--------|---------|------------------------------------------------|
-| `contentCache`            | bool   | `false` | Mettre en cache le template en mémoire         |
-| `allowTemplateFromHeader` | bool   | `false` | Autoriser la surcharge via le header `CamelTemplatePath` |
+| `contentCache`            | bool   | `false` | Mettre en cache le template compilé en mémoire (plafonné à 1024 entrées ; précompilé au `Start()`) |
+| `allowTemplateFromHeader` | bool   | `false` | Autoriser la surcharge via le header `CamelTemplatePath` (confinée au répertoire du template de l'endpoint via `ValidatePathInDir`) |
+| `encoding`                | string | `UTF-8` | Encodage du template (seul UTF-8 est pris en charge ; tout autre valeur échoue à la création de l'endpoint) |
 | `startDelimiter`          | string | `{{`    | Délimiteur de début                            |
 | `endDelimiter`            | string | `}}`    | Délimiteur de fin                              |
 
@@ -1659,8 +1716,9 @@ Quand `allowHeaderOverride=true`, ces headers surchargent les paramètres URI po
 > ne peuvent pas être influencés par une entrée non fiable (ex. headers provenant d'un consumer
 > HTTP ou mail).
 >
-> L'**exécutable** et le **répertoire de travail** sont validés contre les
-> métacaractères shell et le path traversal. Un exécutable fourni par header
+> L'**exécutable**, le **répertoire de travail** (`workingDir` / `CamelExecCommandWorkingDir`)
+> et **`outFile`** sont validés contre les
+> métacaractères shell, le path traversal et les évasions par liens symboliques. Un exécutable fourni par header
 > doit en outre être un **nom de commande simple** (sans chemin, résolu via
 > `PATH`), et soit l'exécutable de l'URI, soit l'un de ceux listés dans
 > `allowedExecutables` ; tout autre est rejeté. Un nom simple ne suffisait pas :
@@ -1765,12 +1823,13 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 
 ## Détails de livraison et de cycle de vie
 
-- **Kafka / STOMP :** un traitement en échec est réessayé avec un nouvel échange avant la lecture du record (Kafka) ou du message (STOMP) suivant, avec un backoff exponentiel de `redeliveryDelay` jusqu’à `maxRedeliveryDelay`. Après `maxRedeliveries` redélivraisons (`10` par défaut, environ 80 s avec les délais par défaut), le consommateur abandonne le message : il le journalise en erreur puis le commite/acquitte pour ne pas bloquer indéfiniment la partition ou l’abonnement. Utilisez un `DeadLetterChannel` pour conserver ces messages, ou `maxRedeliveries=-1` pour réessayer jusqu’au succès de la route (le consommateur reste alors bloqué sur un message en échec permanent). Un message que la route a envoyé dans un `DeadLetterChannel` est commité/acquitté immédiatement et jamais redélivré, même avec `DeadLetterHandled(false)` : le redélivrer l’enverrait en double dans la DLQ à chaque tentative. Un commit Kafka en échec est réessayé toutes les 100 ms sans refaire le traitement réussi. Les erreurs de lecture Kafka sont journalisées et réessayées toutes les 100 ms ; le consommateur ne s’arrête que lorsque l’arrêt de la route ferme son reader (une erreur contenant `closed` ou `EOF` l’arrêtait alors que la route semblait toujours démarrée). Le topic Kafka résolu est porté par chaque message ; les topics configurés et surchargés par en-tête fonctionnent ensemble.
+- **Direct :** `DirectProducer.Send` exige que le `DirectConsumer` cible soit démarré (`Start()`), et les transitions `Start`/`Stop` sont sérialisées.
+- **Kafka / STOMP :** un traitement en échec est réessayé avec un nouvel échange avant la lecture du record (Kafka) ou du message (STOMP) suivant, avec un backoff exponentiel de `redeliveryDelay` jusqu’à `maxRedeliveryDelay`. Après `maxRedeliveries` redélivraisons (`10` par défaut, environ 80 s avec les délais par défaut), le consommateur abandonne le message : il le journalise en erreur puis le commite/acquitte pour ne pas bloquer indéfiniment la partition ou l’abonnement. Utilisez un `DeadLetterChannel` pour conserver ces messages, ou `maxRedeliveries=-1` pour réessayer jusqu’au succès de la route (le consommateur reste alors bloqué sur un message en échec permanent). Un message que la route a envoyé dans un `DeadLetterChannel` est commité/acquitté immédiatement et jamais redélivré, même avec `DeadLetterHandled(false)` : le redélivrer l’enverrait en double dans la DLQ à chaque tentative. Les producteurs Kafka utilisent l'équilibreur `&kafka.Hash{}` et valident les bornes de partition (`[0, math.MaxInt32)`). Les commits d'offset Kafka utilisent des contextes sûrs à l'arrêt et réessaient sans répéter un traitement réussi ; les erreurs de lecture réessaient jusqu'à la fermeture du reader. Le topic Kafka résolu est porté par chaque message ; les topics configurés et surchargés par en-tête fonctionnent ensemble.
 - **FTP :** chaque producteur réserve sa connexion exclusivement pendant tout le transfert. Les envois concurrents et `Stop` ne peuvent pas entrelacer les commandes FTP ; un envoi en attente de réservation peut être annulé.
-- **MongoDB :** `save` préserve le `_id` du document entrant, même si le remplacement échoue ; le retry cible ainsi le même document.
-- **Mail :** IMAP IDLE réagit aux notifications de boîte en terminant IDLE, en recherchant les messages puis en reprenant IDLE. Une première recherche traite les messages déjà présents.
-- **Cron :** `Stop` empêche de nouvelles exécutions et attend les jobs actifs avant de retourner, y compris lors d’une pause.
+- **MongoDB :** `save` préserve le `_id` du document entrant, même si le remplacement échoue ; le retry cible ainsi le même document. `findOne` met `In.Body` et `Out.Body` à `nil` (`CamelMongoDbResultTotal=0`) lorsqu'aucun document ne correspond.
+- **Mail :** IMAP IDLE réagit aux notifications de boîte en terminant IDLE, en recherchant les messages puis en reprenant IDLE. Une première recherche traite les messages déjà présents via `BODY.PEEK[]` et la suppression utilise `UIDExpunge` ; POP3 lit via `RetrRaw` et envoie `QUIT` après `DELE`.
+- **Cron :** `Stop` empêche de nouvelles exécutions et attend les jobs actifs avant de retourner, y compris lors d’une pause ; les schedulers inactifs s'arrêtent proprement et chaque entrée suit son scheduler `*cron.Cron` propriétaire.
 - **Redis :** les producteurs et consommateurs actifs partagent leurs clients, fermés au départ du dernier utilisateur. Arrêter un producteur laisse les autres utilisables ; les consommateurs arrêtés libèrent leur enregistrement pour permettre le redémarrage de la route.
-- **File :** une URI terminée par `/` désigne un répertoire même s’il n’existe pas encore ; `CamelFileName` sélectionne le fichier à l’intérieur.
-- **Net :** le timeout configuré borne les écritures établies ainsi que la lecture des réponses. Annuler l’échange ferme sa connexion et interrompt ces opérations.
+- **File :** une URI terminée par `/` désigne un répertoire même s’il n’existe pas encore ; `CamelFileName` est obligatoire pour écrire dans un répertoire et confiné à l'intérieur.
+- **Net :** le timeout configuré borne les écritures établies ainsi que la lecture des réponses, et les tampons de lecture TCP entrants sont copiés par message (sans aliasing de slice). Annuler l’échange ferme sa connexion et interrompt ces opérations.
 - **Prometheus :** des appels répétés à `Metrics()` ou `MetricsWith(registry)` réutilisent les collecteurs compatibles déjà enregistrés, ce qui permet des intercepteurs distincts sur plusieurs routes. Les définitions incompatibles échouent toujours à l’enregistrement.

@@ -71,6 +71,8 @@ builder.From("direct:orders").
     EndChoice()
 ```
 
+JSONPath prend en charge les sélecteurs entre crochets sensibles aux guillemets, les tranches négatives et la descente récursive `$..[...]` / `$..*`, tout en protégeant contre les cycles et dénis de service combinatoires (profondeur max `1000`, résultats max `100_000`, visites de nœuds max `1_000_000`).
+
 ---
 
 ## File Language
@@ -102,6 +104,9 @@ pour extraire des parties du nom de fichier, du chemin, de la taille, etc.
 | `<=`      | Inférieur ou égal   | `${header.count} <= 100` |
 | `&&`      | ET logique          | `a > 5 && b == 'x'`      |
 | `||`      | OU logique          | `a > 5 || b == 'y'`      |
+| `!`       | NON logique         | `!${header.disabled}`    |
+
+Simple Language utilise un analyseur récursif descendant avec un scanner `${...}` sensible aux guillemets. Les comparaisons appliquent une sémantique numérique/typée exacte (sans conversion flottante implicite sur `==`/`!=` entre chaînes et nombres), et `file:size` / `file:length` conservent la précision `int64`.
 
 ## Navigation Null-safe
 
@@ -188,7 +193,7 @@ ${date:now:ISO8601}
 
 ### Fonctions de Chaîne
 
-Chaînables sur toute expression (`${body.trim().uppercase()}`) :
+Chaînables sur toute expression (`${body.trim().uppercase()}`) ; les fonctions sur chaînes opèrent en runes UTF-8 :
 
 ```go
 ${body.uppercase()}        // ou ${body.upper()}

@@ -11,9 +11,10 @@ import (
 )
 
 func main() {
-	// Create the templates directory if it does not exist.
-	templateDir := "templates"
-	if err := os.MkdirAll(templateDir, 0750); err != nil {
+	// Create a temporary directory for the generated templates so tracked
+	// files in templates/ are left untouched.
+	templateDir, err := os.MkdirTemp("", "gocamel-template-*")
+	if err != nil {
 		log.Fatal(err)
 	}
 	defer os.RemoveAll(templateDir)
@@ -29,18 +30,20 @@ Exchange ID: {{.Exchange.ID}}
 --
 This is an automated message from GoCamel
 `
-	if err := os.WriteFile(filepath.Join(templateDir, "email.tmpl"), []byte(emailTemplate), 0600); err != nil {
+	emailTemplatePath := filepath.Join(templateDir, "email.tmpl")
+	if err := os.WriteFile(emailTemplatePath, []byte(emailTemplate), 0600); err != nil {
 		log.Fatal(err)
 	}
 
 	// Create a template for a JSON report.
 	jsonTemplate := `{
   "timestamp": "{{now | formatDate "2006-01-02T15:04:05Z07:00"}}",
-  "content": {{.Body | toString | safeHTML}},
+  "content": {{.Body | toString | json}},
   "user": "{{.Headers.user}}",
   "status": {{if .Headers.status}}"{{.Headers.status | upper}}"{{else}}"UNKNOWN"{{end}}
 }`
-	if err := os.WriteFile(filepath.Join(templateDir, "report.json.tmpl"), []byte(jsonTemplate), 0600); err != nil {
+	jsonTemplatePath := filepath.Join(templateDir, "report.json.tmpl")
+	if err := os.WriteFile(jsonTemplatePath, []byte(jsonTemplate), 0600); err != nil {
 		log.Fatal(err)
 	}
 
@@ -63,7 +66,7 @@ This is an automated message from GoCamel
 
 	// Test 1: Simple email
 	fmt.Println("1. Simple email generation test")
-	emailEndpoint, err := camelCtx.CreateEndpoint("template:templates/email.tmpl")
+	emailEndpoint, err := camelCtx.CreateEndpoint("template:" + emailTemplatePath)
 	if err != nil {
 		log.Fatalf("Error creating email endpoint: %v", err)
 	}
@@ -88,7 +91,7 @@ This is an automated message from GoCamel
 
 	// Test 2: JSON Report
 	fmt.Println("\n2. JSON report generation test")
-	jsonEndpoint, err := camelCtx.CreateEndpoint("template:templates/report.json.tmpl")
+	jsonEndpoint, err := camelCtx.CreateEndpoint("template:" + jsonTemplatePath)
 	if err != nil {
 		log.Fatalf("Error creating JSON endpoint: %v", err)
 	}
@@ -114,7 +117,7 @@ This is an automated message from GoCamel
 
 	// Test 3: With cache
 	fmt.Println("\n3. Template cache test")
-	cachedEndpoint, err := camelCtx.CreateEndpoint("template:templates/email.tmpl?contentCache=true")
+	cachedEndpoint, err := camelCtx.CreateEndpoint("template:" + emailTemplatePath + "?contentCache=true")
 	if err != nil {
 		log.Fatalf("Error creating cached endpoint: %v", err)
 	}
@@ -139,5 +142,5 @@ This is an automated message from GoCamel
 
 	fmt.Println("\n==========================================")
 	fmt.Println("Demonstration finished!")
-	fmt.Println("Templates used are in the 'templates/' folder")
+	fmt.Printf("Temporary templates directory: %s (cleaned up on exit)\n", templateDir)
 }

@@ -178,7 +178,7 @@ EndChoice()
 | **Jev**        | Typed decisions (yes/no, choice, score) via OpenRouter |
 | **Mail**       | SMTP/IMAP/POP3 email          |
 | **SQL**        | Database queries              |
-| **SQL-Stored** | Stored procedure calls (IN/OUT/INOUT parameters) |
+| **SQL-Stored** | Stored procedure calls (`[]StoredProcedureParam`, `IN` parameters) |
 | **MongoDB**    | MongoDB CRUD operations       |
 | **Template**   | Go template processing        |
 | **Exec**       | System command execution      |
@@ -209,17 +209,18 @@ GoCamel includes built-in security utilities to protect against common vulnerabi
 
 ### Security Features
 
-- **Path Traversal Protection** - Prevents directory traversal attacks (e.g., `../etc/passwd`)
-- **SQL Injection Prevention** - The query is trusted configuration and is never interpolated with message data; dynamic values are bound as positional parameters. Stacked statements are rejected while single/double quotes, backticks and comments are supported
+- **Path Traversal Protection** - Prevents directory traversal and archive slip attacks (`ConfineFileName`, `ValidatePathInDir`, `ValidateRemotePath`, rejecting leading `/` and `\` archive entries)
+- **SQL Injection Prevention** - The query is trusted configuration and is never interpolated with message data; dynamic values are bound as positional parameters. Multi-dialect lexical scanning rejects stacked statements while supporting quotes, backticks, dollar-quoting and comments
 - **Input Sanitization** - Removes null bytes and control characters from user input
-- **Path Validation** - Ensures file paths stay within allowed directories, resolving symlinks so a link inside the base directory cannot escape it
+- **Path Validation** - Ensures file paths stay within allowed directories, resolving symlinks (`O_NOFOLLOW` / `EvalSymlinks`) so a link inside the base directory cannot escape it
 - **No Credential Reflection** - The HTTP consumer never echoes inbound request headers (`Cookie`, `Authorization`, ...) back in its response
-- **Bounded Body Reads** - HTTP request and response bodies are size-limited (32 MiB by default) to prevent memory exhaustion
+- **Redirect & Credential Isolation** - `HTTPComponent` blocks HTTPS→HTTP downgrade redirects and strips auth headers on cross-origin redirects by default (`SetCheckRedirect`); AI components refuse auth-leaking 3xx redirects; `RedactURI` unifies 18 sensitive URI keys across logs and errors
+- **Bounded Body Reads** - HTTP, AI, archive, mail and file bodies are size-limited (`DefaultMaxBodySize`, 32 MiB by default) to prevent memory exhaustion
 - **Panic Containment** - A panicking processor fails its exchange rather than the whole process
-- **Escaped Dynamic URIs** - `ToD` escapes exchange values by position, so a header cannot inject endpoint options such as `allowHeaderOverride=true`
-- **Header Isolation** - Internal `Camel*` headers never cross the HTTP boundary, a client's `Authorization`/`Cookie` are not relayed to an upstream unless opted in, and response headers such as `Set-Cookie` are not replayed to the next HTTP call
-- **Bounded Resources** - The shared producer cache (1000 producers), TCP consumer connections (`maxConnections=1024`) and parallel Split/RecipientList branches (`MaxConcurrency`, 10) are bounded by default
-- **Exec Allowlist** - A `CamelExecCommandExecutable` header may only select the URI executable or one listed in `allowedExecutables`
+- **Escaped Dynamic URIs** - `ToD`, `PollEnrich`, `RecipientList`, `RoutingSlip` and `DynamicRouter` evaluate templates with position-aware escaping (`InterpolateURI` / `EvaluateURI`), blocking endpoint option injection and authority SSRF
+- **Header Isolation** - Internal `Camel*` headers never cross HTTP, gRPC, Kafka or STOMP boundaries, reserved STOMP protocol headers and `\x00` bytes are blocked, a client's `Authorization`/`Cookie` are not relayed to an upstream unless opted in, and response headers such as `Set-Cookie` are not replayed to the next HTTP call
+- **Bounded Resources** - The shared producer cache (1000), `MemoryIdempotentRepository` (`100_000`), `MemoryClaimCheckRepository` (`10_000`), TCP consumer connections (`maxConnections=1024`), JSONPath traversal limits and parallel Split/RecipientList/WireTap branches (`MaxConcurrency`, 10) are bounded by default
+- **Exec Allowlist & Confinement** - A `CamelExecCommandExecutable` header may only select the URI executable or one listed in `allowedExecutables`, and `workingDir` / `outFile` are confined against traversal and symlinks
 - **Protected Management API** - DNS rebinding and CSRF protection, optional bearer token (`SetAuthToken`)
 
 ### Security Utilities (`security.go`)
@@ -292,7 +293,24 @@ Two further behaviour changes are unlikely to need action: splitting a
 the HTTP consumer no longer echoes unchanged inbound request headers in its
 response.
 
-**Security review fixes (unreleased).** These changes may affect existing routes:
+**Upcoming v0.21.0 remediation changes (unreleased).** These security, concurrency, and semantic fixes introduce breaking or visible behaviour changes:
+
+- **`sql-stored` parameters:** unordered `map[string]any` bodies are rejected (pass `[]gocamel.StoredProcedureParam` in deterministic positional order), and `ParamDirectionOut` / `ParamDirectionInOut` parameters return an error instead of being bound silently as plain `IN` values.
+- **`sql` and `sql-stored` URI options:** endpoint options (`query`, `procedure`, `allowHeaderOverride`, etc.) are read strictly from URI query parameters, ignoring environment variables.
+- **Empty-result `In.Body` clearing (`sql`, `mongodb`, `redis`):** `sql` (`outputType=SelectOne` with 0 rows), `mongodb` (`operation=findOne` on `mongo.ErrNoDocuments`, setting `CamelMongoDbResultTotal=0`), and `redis` (`command=GET` on `redis.Nil`) clear both `In.Body` and `Out.Body` to `nil` so downstream steps and `GetResponse()` do not retain the query, filter, or key.
+- **`grpc` consumer TLS & status:** `GRPCConsumer` enforces TLS 1.2+ and rejects `insecure=false` unless both `certFile` and `keyFile` are configured; it reads `exchange.GetResponse()`, requires `CamelGrpcStatusCode > 0` for errors, and sanitizes internal error details. `GRPCProducer` honors `timeout` and filters `Camel*` headers.
+- **`direct` consumer lifecycle:** `DirectProducer.Send` requires the target `DirectConsumer` to be started (`Start()`).
+- **`http` redirects & gzip:** `NewHTTPComponent` blocks HTTPS→HTTP downgrade redirects and strips credential headers on cross-origin redirects by default (`SetCheckRedirect`); the producer drops outbound `Accept-Encoding` so `http.Transport` handles gzip transparently.
+- **Archive unmarshaling (`zip`, `tar.gz`):** rejects entry names starting with `/` or `\` instead of stripping leading slashes; enforces ZipCrypto CRC and WinZip AES pre-decrypt MAC verification.
+- **`template` encoding & overrides:** non-UTF-8 `encoding` URI values fail fast at endpoint creation, and `CamelTemplatePath` overrides are confined to the endpoint template directory.
+- **AI components (`anthropic`, `openai`, `ollama`, `jev`):** reject `nil` bodies and hostless/opaque `baseURL`s, refuse 3xx redirects, and cap responses at 32 MiB. `anthropic` disables SDK environment auto-loading (`WithoutEnvironmentDefaults()`), reads `ANTHROPIC_API_KEY`, and validates `temperature` in `[0, 1]`; `openai` reads `OPENAI_API_KEY`.
+- **`mail` polling & fetch:** `DefaultPollDelay` is fixed from `60µs` to `60s`, `maxMessageSize` defaults to 32 MiB when `<= 0`, IMAP uses `BODY.PEEK[]` and `UIDExpunge`, and POP3 uses `RetrRaw`/MIME with `LIST` size limits and `QUIT` after `DELE`.
+- **`file` directory writes:** `CamelFileName` is required when the producer URI points to a directory.
+- **In-memory repositories:** `MemoryIdempotentRepository` (`100_000`) and `MemoryClaimCheckRepository` (`10_000`, UUID keys) are bounded by default.
+- **`cron`:** `trigger.repeatCount=0` returns immediately without scheduling; `deleteJob=false` retains the job entry on `Stop()`; unspaced `TZ=`/`CRON_TZ=` prefixes are rejected.
+- **Simple Language & JSONPath:** recursive-descent Simple parser removes string-vs-float `==`/`!=` type juggling and uses `int64` for `file:length`; JSONPath enforces cycle, depth (`1000`), result (`100_000`), and node-visit (`1_000_000`) bounds.
+
+**Earlier security review fixes (since v0.14.0).** These changes also affect route behaviour:
 
 - `ToD` escapes interpolated values by position (query-escaped in the query
   string; `?` and `#` escaped in the path). A template that relied on a header

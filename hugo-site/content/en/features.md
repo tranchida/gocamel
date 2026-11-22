@@ -88,16 +88,16 @@ When("${date:now:yyyy-MM-dd}")
 
 #### Security
 
-- **Path Validation** — Protection against directory traversal attacks
+- **Path Validation** — Protection against directory traversal and archive slip attacks (`ConfineFileName`, `ValidatePathInDir`, `ValidateRemotePath`, rejecting leading `/` or `\` archive entries)
 - **SQL Injection Prevention** — Parameter binding; the statement is trusted
-  configuration and is never interpolated with message data
+  configuration and is never interpolated with message data; multi-dialect lexical scanning blocks stacked statements
 - **Input Sanitization** — Null byte and control character removal
 - **Safe Path Operations** — Bounds-checking for file operations, with symlink
-  resolution so a link inside the base directory cannot escape it
-- **No credential reflection** — the HTTP consumer never echoes inbound
-  request headers back in its response
-- **Bounded body reads** — HTTP request and response bodies are size-limited
-  (32 MiB by default) to prevent memory exhaustion
+  resolution (`O_NOFOLLOW` / `EvalSymlinks`) so a link inside the base directory cannot escape it
+- **No credential reflection & redirect isolation** — the HTTP consumer never echoes inbound
+  request headers back in its response, `HTTPComponent` blocks HTTPS→HTTP downgrade redirects and strips auth headers on cross-origin redirects by default, and `RedactURI` unifies 18 sensitive URI keys across logs and errors
+- **Bounded body reads** — HTTP, AI, mail, archive and file bodies are size-limited
+  (`DefaultMaxBodySize`, 32 MiB by default) to prevent memory exhaustion
 - **Panic containment** — a panicking processor fails its exchange instead of
   the process
 
@@ -217,14 +217,16 @@ func TestRoute(t *testing.T) {
     route, err := ctx.CreateRouteBuilder().
         From("direct:test").
         SetBody("processed").
-        To("direct:result").
+        To("mock:result").
         Build()
     if err != nil {
         t.Fatal(err)
     }
     
     ctx.AddRoute(route)
-    ctx.Start()
+    if err := ctx.Start(); err != nil {
+        t.Fatal(err)
+    }
     defer ctx.Stop()
     
     // Send test message
@@ -233,11 +235,15 @@ func TestRoute(t *testing.T) {
     
     endpoint, _ := ctx.CreateEndpoint("direct:test")
     producer, _ := endpoint.CreateProducer()
-    producer.Send(exchange)
+    _ = producer.Start(context.Background())
+    defer producer.Stop()
+    if err := producer.Send(exchange); err != nil {
+        t.Fatal(err)
+    }
     
     // Assert
-    result := exchange.GetOut().GetBody()
-    if result != "processed" {
+    mock, _ := ctx.GetMockEndpoint("mock:result")
+    if mock.Body(0) != "processed" {
         t.Fail()
     }
 }

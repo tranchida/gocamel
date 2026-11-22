@@ -74,6 +74,8 @@ GoCamel Mail est un composant complet pour la gestion des emails via:
 | `bcc`         | string | ""           | Destinataire(s) en copie cachée     |
 | `subject`     | string | ""           | Sujet du message                    |
 | `contentType` | string | "text/plain" | Type MIME (text/plain ou text/html) |
+| `allowHeaderOverride` | bool | false  | Autorise la surcharge par en-têtes (défaut: false) |
+| `requireStartTLS`     | bool | false  | Refuse l'envoi sans STARTTLS (défaut: false)       |
 
 ### Options Consumer (réception)
 
@@ -84,7 +86,8 @@ GoCamel Mail est un composant complet pour la gestion des emails via:
 | `delete`     | bool   | false   | Supprimer les messages après traitement            |
 | `idle`       | bool   | false   | Activer IMAP IDLE (notifications push)             |
 | `fetchSize`  | int    | -1      | Nombre max de messages par poll (-1 = illimité)    |
-| `peek`       | bool   | true    | Marquer comme lu seulement après traitement réussi |
+| `peek`       | bool   | true    | Récupérer avec `BODY.PEEK[]` et marquer lu après succès |
+| `maxMessageSize` | int64 | 33554432 | Taille max d'un message en octets (32 Mio si <= 0) |
 
 ## Exemple complet
 

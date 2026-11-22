@@ -13,10 +13,13 @@ func NewCamelContext() *CamelContext
 | Méthode                         | Description                |
 |---------------------------------|----------------------------|
 | `AddRoute(route *Route)`        | Enregistrer une route      |
+| `RemoveRoute(route *Route) error` | Détacher et arrêter une route (comptage de références) |
+| `RemoveRouteByID(id string) error` | Détacher et arrêter une route par ID (comptage de références) |
 | `AddComponent(name, component)` | Enregistrer un composant   |
 | `CreateEndpoint(uri)`           | Créer un endpoint          |
-| `Start() error`               | Démarrer toutes les routes (valide après `Stop()`) |
-| `Stop() error`                | Arrêter toutes les routes ; installe un nouveau contexte racine |
+| `Start() error`                 | Démarrer toutes les routes (valide après `Stop()`) |
+| `Stop() error`                  | Arrêter toutes les routes en ordre inverse des ressources ; installe un nouveau contexte racine |
+| `GracefulStop(timeout time.Duration) error` | Annuler le contexte et attendre jusqu'à `timeout` l'arrêt des routes |
 | `CreateRouteBuilder()`          | Créer un route builder     |
 
 ## RouteBuilder
@@ -112,13 +115,15 @@ Options CSV principales : `CSVDelimiter`, `CSVHeader`, `CSVSkipHeaderRecord`, `C
 `CSVTrim`, `CSVIgnoreEmptyLines`.
 Options JSON principales : `JSONPrettyPrint`, `JSONIndent`, `JSONUnmarshalType`, `JSONUseNumber`.
 Options XML principales : `XMLPrettyPrint`, `XMLIndent`, `XMLUnmarshalType`, `XMLHeader`.
-Options ZIP principales : `ZipPassword` (WinZip AES-256 en écriture ; WinZip AES et ZipCrypto legacy en lecture),
+Options ZIP principales : `ZipPassword` (WinZip AES-256 en écriture ; WinZip AES avec vérification MAC avant déchiffrement et ZipCrypto legacy avec vérification CRC en lecture),
 `ZipEntryName`, `ZipFlat`, `ZipComment`, `ZipModTime`, `ZipMaxEntrySize` (garde anti zip-bomb, 512 Mio par entrée par défaut).
 Options tar.gz principales : `TarGzEntryName`, `TarGzFlat`, `TarGzCompressionLevel`, `TarGzMaxEntrySize`.
+`UnmarshalZip` et `UnmarshalTarGz` rejettent les noms d'entrées commençant par `/` ou `\`, la traversée (`..`) et les caractères nuls/de contrôle.
 
 ### Builder
 
 | Méthode     | Description              |
 |-------------|--------------------------|
 | `SetID(id)` | Définir l'ID de la route |
-| `Build() (*Route, error)` | Construire la route      |
+| `Build() (*Route, error)` | Construire la route (échoue proprement et détache la route en erreur) |
+| `(*Route).Validate() error` | Valider récursivement la route et ses processeurs imbriqués |

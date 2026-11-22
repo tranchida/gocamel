@@ -25,9 +25,9 @@ template:templates/item.tmpl?contentCache=true
 
 | Option                    | Type    | Défaut  | Description                                                                         |
 |---------------------------|---------|---------|-------------------------------------------------------------------------------------|
-| `contentCache`            | booléen | `false` | Mettre en cache le template en mémoire pour éviter les lectures répétées du fichier |
-| `allowTemplateFromHeader` | booléen | `false` | Permet de changer le template dynamiquement via le header `CamelTemplatePath`       |
-| `encoding`                | string  | `UTF-8` | Encodage du fichier template                                                        |
+| `contentCache`            | booléen | `false` | Mettre en cache le template compilé en mémoire (plafonné à 1024 entrées)           |
+| `allowTemplateFromHeader` | booléen | `false` | Permet de changer le template dynamiquement via `CamelTemplatePath` (confiné au répertoire du template) |
+| `encoding`                | string  | `UTF-8` | Encodage du fichier template (seul UTF-8 est supporté ; tout autre échoue)          |
 | `startDelimiter`          | string  | `{{`    | Délimiteur de début pour les expressions Go template                                |
 | `endDelimiter`            | string  | `}}`    | Délimiteur de fin pour les expressions Go template                                  |
 
@@ -148,7 +148,7 @@ Fichier `templates/response.json.tmpl` :
 ```json
 {
   "timestamp": "{{now | formatDate "2006-01-02T15:04:05Z07:00"}}",
-  "message": {{.Body | toString | safeHTML}},
+  "message": {{.Body | toString | json}},
   "user": "{{.Headers.user}}",
   "status": "{{.Headers.status | upper}}"
 }

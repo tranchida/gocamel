@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	mail "github.com/tranchida/gocamel/components/mail"
 	"log"
+	"net/url"
+	"os"
 	"time"
 
 	"github.com/tranchida/gocamel"
+	mail "github.com/tranchida/gocamel/components/mail"
 )
 
 // ExampleMailProducer shows how to send an email via SMTP.
@@ -62,9 +64,18 @@ func ExampleMailWithAttachments() {
 	mailComponent := mail.NewMailComponent()
 	ctx.AddComponent("smtp", mailComponent)
 	ctx.AddComponent("direct", gocamel.NewDirectComponent())
+
+	username := os.Getenv("MAIL_USERNAME")
+	password := os.Getenv("MAIL_PASSWORD")
+	smtpURI := fmt.Sprintf(
+		"smtp://smtp.gmail.com:587?username=%s&password=%s&to=dest@example.com&subject=Daily%%20Report",
+		url.QueryEscape(username),
+		url.QueryEscape(password),
+	)
+
 	_, err := ctx.CreateRouteBuilder().
 		From("direct:send-with-attachments").
-		To("smtp://smtp.gmail.com:587?username=user@gmail.com&password=mypassword&to=dest@example.com&subject=Daily%20Report").
+		To(smtpURI).
 		Build()
 	if err != nil {
 		log.Fatalf("Route build error: %v", err)
@@ -88,14 +99,21 @@ func ExampleMailWithAttachments() {
 
 // ExampleSMTPS shows secure sending via SMTPS (port 465).
 func ExampleSMTPS() {
-	// For Gmail, use smtps://smtp.gmail.com:465
-	uri := "smtps://smtp.gmail.com:465?username=user@gmail.com&password=apppassword&to=dest@example.com&subject=SMTPS%20Test"
+	username := os.Getenv("MAIL_USERNAME")
+	password := os.Getenv("MAIL_PASSWORD")
 
-	fmt.Printf("SMTPS URI: %s\n", uri)
+	// For Gmail, use smtps://smtp.gmail.com:465
+	uri := fmt.Sprintf(
+		"smtps://smtp.gmail.com:465?username=%s&password=%s&to=dest@example.com&subject=SMTPS%%20Test",
+		url.QueryEscape(username),
+		url.QueryEscape(password),
+	)
+
+	fmt.Printf("SMTPS URI: %s\n", gocamel.RedactURI(uri))
 
 	// TLS configuration is automatic for SMTPS
 	// For SMTP with STARTTLS (port 587), use smtp:// with the same options
-	// Go's net/smtp package automatically handles STARTTLS
+	// (add requireStartTLS=true to refuse unencrypted fallback)
 }
 
 // ExampleMailConsumer shows the configuration of an IMAP consumer.
@@ -106,9 +124,26 @@ func ExampleMailConsumer() {
 	ctx.AddComponent("imap", mailComponent)
 	ctx.AddComponent("imaps", mailComponent)
 
-	// Create a route that reads emails
+	// Register downstream direct:processed consumer before starting the IMAP route.
 	_, err := ctx.CreateRouteBuilder().
-		From("imaps://imap.gmail.com:993?folderName=INBOX&username=user@gmail.com&password=apppassword&unseen=true&delete=false").
+		From("direct:processed").
+		LogSimple("Processed email with subject: ${header.Subject}").
+		Build()
+	if err != nil {
+		log.Fatalf("Processed route build error: %v", err)
+	}
+
+	username := os.Getenv("MAIL_USERNAME")
+	password := os.Getenv("MAIL_PASSWORD")
+	imapURI := fmt.Sprintf(
+		"imaps://imap.gmail.com:993?folderName=INBOX&username=%s&password=%s&unseen=true&delete=false",
+		url.QueryEscape(username),
+		url.QueryEscape(password),
+	)
+
+	// Create a route that reads emails
+	_, err = ctx.CreateRouteBuilder().
+		From(imapURI).
 		ProcessFunc(func(exchange *gocamel.Exchange) error {
 			// Process received email
 			subject, _ := exchange.GetIn().GetHeader("Subject")
@@ -125,6 +160,11 @@ func ExampleMailConsumer() {
 		Build()
 	if err != nil {
 		log.Fatalf("Route build error: %v", err)
+	}
+
+	if username == "" || password == "" {
+		fmt.Println("IMAP consumer route configured (skipping live dial; set MAIL_USERNAME and MAIL_PASSWORD to connect).")
+		return
 	}
 
 	if err := ctx.Start(); err != nil {

@@ -70,6 +70,8 @@ builder.From("direct:orders").
     EndChoice()
 ```
 
+JSONPath supports quote-aware bracket selectors, negative slices, and `$..[...]` / `$..*` recursive descent, while guarding against cycles and combinatorial DoS (max depth `1000`, max results `100_000`, max node visits `1_000_000`).
+
 ---
 
 ## File Language
@@ -101,6 +103,9 @@ extract parts of the filename, path, size, etc.
 | `<=`     | Less or equal    | `${header.count} <= 100` |
 | `&&`     | Logical AND      | `a > 5 && b == 'x'`      |
 | `||`     | Logical OR       | `a > 5 || b == 'y'`      |
+| `!`      | Logical NOT      | `!${header.disabled}`    |
+
+Simple Language uses a recursive-descent parser with a quote-aware `${...}` scanner. Comparisons use exact numeric/type semantics (no string-to-float type juggling on `==`/`!=`), and `file:size` / `file:length` preserve `int64` precision.
 
 ## Null-safe Navigation
 
@@ -187,7 +192,7 @@ ${date:now:ISO8601}
 
 ### String Functions
 
-Chained on any expression (`${body.trim().uppercase()}`):
+Chained on any expression (`${body.trim().uppercase()}`); string functions operate on UTF-8 runes:
 
 ```go
 ${body.uppercase()}        // or ${body.upper()}

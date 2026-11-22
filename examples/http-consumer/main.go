@@ -24,7 +24,11 @@ func main() {
 		// CamelHttpResponseCode drives the HTTP status of the response.
 		// The legacy "Status-Code" header is still honoured.
 		SetHeader(gocamel.CamelHttpResponseCode, 200).
-		SetHeader("X-Processed-At", time.Now().Format(time.RFC3339)).
+		SetHeadersFunc(func(e *gocamel.Exchange) (map[string]any, error) {
+			return map[string]any{
+				"X-Processed-At": time.Now().Format(time.RFC3339),
+			}, nil
+		}).
 		Build()
 	if err != nil {
 		fmt.Printf("Error creating route: %v\n", err)

@@ -13,10 +13,13 @@ func NewCamelContext() *CamelContext
 | Method                                           | Description          |
 |--------------------------------------------------|----------------------|
 | `AddRoute(route *Route)`                         | Register a route     |
+| `RemoveRoute(route *Route) error`                | Detach and stop a route (refcounted) |
+| `RemoveRouteByID(id string) error`               | Detach and stop a route by ID (refcounted) |
 | `AddComponent(name string, component Component)` | Register a component |
 | `CreateEndpoint(uri string) (Endpoint, error)`   | Create endpoint      |
-| `Start() error`                               | Start all routes (safe after `Stop()`) |
-| `Stop() error`                                | Stop all routes; installs a fresh root context |
+| `Start() error`                                  | Start all routes (safe after `Stop()`) |
+| `Stop() error`                                   | Stop all routes in reverse resource order; installs a fresh root context |
+| `GracefulStop(timeout time.Duration) error`      | Cancel context and wait up to `timeout` for routes to stop |
 | `CreateRouteBuilder() *RouteBuilder`             | Create route builder |
 
 ## RouteBuilder
@@ -112,13 +115,15 @@ Main CSV options: `CSVDelimiter`, `CSVHeader`, `CSVSkipHeaderRecord`, `CSVCaptur
 `CSVIgnoreEmptyLines`.
 Main JSON options: `JSONPrettyPrint`, `JSONIndent`, `JSONUnmarshalType`, `JSONUseNumber`.
 Main XML options: `XMLPrettyPrint`, `XMLIndent`, `XMLUnmarshalType`, `XMLHeader`.
-Main ZIP options: `ZipPassword` (WinZip AES-256 on write; WinZip AES and legacy ZipCrypto on read),
+Main ZIP options: `ZipPassword` (WinZip AES-256 on write; WinZip AES with pre-decrypt MAC verification and legacy ZipCrypto with CRC verification on read),
 `ZipEntryName`, `ZipFlat`, `ZipComment`, `ZipModTime`, `ZipMaxEntrySize` (zip-bomb guard, default 512 MiB per entry).
 Main tar.gz options: `TarGzEntryName`, `TarGzFlat`, `TarGzCompressionLevel`, `TarGzMaxEntrySize`.
+Both `UnmarshalZip` and `UnmarshalTarGz` reject entry names starting with `/` or `\`, traversal (`..`), and control/null bytes.
 
 ### Builder
 
 | Method                    | Description  |
 |---------------------------|--------------|
 | `SetID(id) *RouteBuilder` | Set route ID |
-| `Build() (*Route, error)` | Build route  |
+| `Build() (*Route, error)` | Build route (fail-closed; detaches broken routes on error) |
+| `(*Route).Validate() error` | Recursively validate route and child processors |

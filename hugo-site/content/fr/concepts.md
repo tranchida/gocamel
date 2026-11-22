@@ -158,6 +158,10 @@ exchange dès son démarrage (un consumer `file:` qui trouve un arriéré, un
 `timer:` avec `delay=0`) trouve donc les routes `direct:` qu'il appelle déjà
 démarrées, quel que soit l'ordre de déclaration des routes.
 
+`RemoveRoute` et `RemoveRouteByID` suivent les références de route pour ne pas
+laisser de routes orphelines, et `Stop()` libère les ressources du contexte en
+ordre inverse d'enregistrement (`stopResources`).
+
 ### Arrêt propre (Graceful Shutdown)
 
 `Stop()` n'a pas de délai limite : si le `Stop()` d'un consumer bloque (par
@@ -185,14 +189,15 @@ if err := context.GracefulStop(30 * time.Second); err != nil {
 les problèmes qui n'apparaîtraient sinon qu'au premier message correspondant :
 
 - l'erreur de construction accumulée par `From()` (ex. un scheme de composant
-  inconnu),
+  inconnu) ; `RouteBuilder.Build()` échoue de manière sûre et détache
+  automatiquement toute route en erreur du contexte,
 - les erreurs de construction enregistrées sur les builders imbriqués `Split` /
-  `Loop` / `Multicast` / `Pipeline` / `DoTry` (recopiées sur le parent à `End()`),
+  `Loop` / `Multicast` / `Pipeline` / `DoTry` (recopiées sur le parent à `End()`,
+  avec méthodes de relais explicites),
 - l'absence d'endpoint source,
-- les erreurs de validation des processors implémentant l'interface
-  `Validator` (notamment `ChoiceProcessor`, dont les expressions Simple des
-  clauses `When` sont re-parsées pour faire remonter les erreurs de syntaxe,
-  et `Aggregator`, qui exige au moins une condition de complétion).
+- les erreurs de validation parcourues récursivement sur les processors implémentant
+  `Validator` (notamment `ChoiceProcessor`, `Aggregator`, `CircuitBreaker` et
+  `DynamicRouter`).
 
 `Start()` **n'appelle pas** `Validate()` automatiquement — c'est un opt-in
 destiné aux tests et à la CI pour échouer tôt sur des routes mal formées :
@@ -256,7 +261,7 @@ Activez le traçage distribué avec l'intercepteur du module
 incluant :
 
 - L'ID de la route et de l'échange.
-- La propagation automatique du contexte de trace.
+- La propagation automatique du contexte de trace (et sa restauration propre lors d'`ErrStopRouting`).
 - L'enregistrement des erreurs si le traitement échoue.
 
 ```go
@@ -288,7 +293,7 @@ que toute la route a été traitée avec succès.
 - **Synchronization**: Vous pouvez enregistrer des callbacks (`OnComplete`, `OnFailure`) sur un `Exchange` via
   `AddSynchronization`. **Tous** les consumers qui créent des exchanges (direct, seda, chan, timer, cron, http,
   file, ftp, sftp, smb, mail, redis, nats, telegram, ...) déclenchent ces callbacks à la fin du traitement de la
-  route. Le signal de contrôle `ErrStopRouting` (Stop EIP, doublons idempotents, bufferisation d'agrégation) compte
+  route (avec isolation des panics dans les callbacks). Le signal de contrôle `ErrStopRouting` (Stop EIP, doublons idempotents, bufferisation d'agrégation) compte
   comme un **succès**, pas comme un échec.
 - **Route Transactionnelle**: Marquez une route comme transactionnelle en utilisant `.Transacted()` dans le DSL.
 - **Composants Transactionnels**: Les composants tels que `file`, `ftp`, `sftp`, `smb` et `mail` supportent ce modèle en

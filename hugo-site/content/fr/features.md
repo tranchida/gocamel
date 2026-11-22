@@ -88,17 +88,17 @@ When("${date:now:yyyy-MM-dd}")
 
 #### Sécurité
 
-- **Validation des Chemins** — Protection contre les attaques de traversée de répertoire
+- **Validation des Chemins** — Protection contre les attaques de traversée de répertoire et zip/tar-slip (`ConfineFileName`, `ValidatePathInDir`, `ValidateRemotePath`, rejet des entrées d'archive commençant par `/` ou `\`)
 - **Prévention des Injections SQL** — Liaison de paramètres ; la requête est une
-  configuration de confiance, jamais interpolée avec les données du message
+  configuration de confiance, jamais interpolée avec les données du message ; l'analyse lexicale multi-dialecte bloque les requêtes superposées
 - **Assainissement des Entrées** — Suppression des octets nuls et caractères de contrôle
 - **Opérations de Chemins Sécurisées** — Vérification des limites pour les
-  opérations sur fichiers, avec résolution des liens symboliques pour qu'un lien
+  opérations sur fichiers, avec résolution des liens symboliques (`O_NOFOLLOW` / `EvalSymlinks`) pour qu'un lien
   placé dans le répertoire de base ne puisse pas s'en échapper
-- **Aucune Réflexion d'Identifiants** — le consumer HTTP ne renvoie jamais les
-  headers de la requête entrante dans sa réponse
-- **Lectures de Corps Bornées** — les corps de requête et de réponse HTTP sont
-  limités en taille (32 Mio par défaut) pour prévenir l'épuisement mémoire
+- **Aucune Réflexion d'Identifiants et Isolation des Redirections** — le consumer HTTP ne renvoie jamais les
+  headers de la requête entrante dans sa réponse, `HTTPComponent` bloque les redirections HTTPS→HTTP et retire les headers sensibles lors des redirections cross-origin par défaut, et `RedactURI` unifie 18 clés sensibles dans les journaux et erreurs
+- **Lectures de Corps Bornées** — les corps HTTP, IA, mail, d'archives et fichiers sont
+  limités en taille (`DefaultMaxBodySize`, 32 Mio par défaut) pour prévenir l'épuisement mémoire
 - **Confinement des Panics** — un processeur qui panique fait échouer son
   exchange, pas le processus
 
@@ -218,14 +218,16 @@ func TestRoute(t *testing.T) {
     route, err := ctx.CreateRouteBuilder().
         From("direct:test").
         SetBody("traité").
-        To("direct:result").
+        To("mock:result").
         Build()
     if err != nil {
         t.Fatal(err)
     }
 
     ctx.AddRoute(route)
-    ctx.Start()
+    if err := ctx.Start(); err != nil {
+        t.Fatal(err)
+    }
     defer ctx.Stop()
 
     // Envoyer le message de test
@@ -234,11 +236,15 @@ func TestRoute(t *testing.T) {
 
     endpoint, _ := ctx.CreateEndpoint("direct:test")
     producer, _ := endpoint.CreateProducer()
-    producer.Send(exchange)
+    _ = producer.Start(context.Background())
+    defer producer.Stop()
+    if err := producer.Send(exchange); err != nil {
+        t.Fatal(err)
+    }
 
     // Vérifier
-    result := exchange.GetOut().GetBody()
-    if result != "traité" {
+    mock, _ := ctx.GetMockEndpoint("mock:result")
+    if mock.Body(0) != "traité" {
         t.Fail()
     }
 }

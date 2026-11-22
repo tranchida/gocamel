@@ -64,7 +64,7 @@ func main() {
 		{"${body contains 'urgent'}", "body contains 'urgent' (case sensitive - false)"},
 		{"${header.filename startsWith '/data/'}", "filename starts with '/data/'"},
 		{"${header.filename endsWith '.json'}", "filename ends with '.json'"},
-		{"${header.email regex '^[a-z]+@[a-z]+\\\\.[a-z]+$'}", "email matches pattern"},
+		{"${header.email regex '^[a-z]+@[a-z]+\\.[a-z]+$'}", "email matches pattern"},
 		{"${body regex 'Order \\d+'}", "body matches 'Order \\d+' pattern"},
 	})
 	fmt.Println()
@@ -75,6 +75,7 @@ func main() {
 	exchange.GetIn().SetHeader("count", 150)
 	exchange.GetIn().SetHeader("type", "gold")
 	exchange.GetIn().SetHeader("status", "active")
+	exchange.GetIn().SetHeader("active", true)
 	demoExpressionsAsBool(exchange, []struct {
 		expr string
 		desc string
@@ -251,6 +252,7 @@ func demoChoiceWithLogicalOperators(ctx *gocamel.CamelContext) {
 		SetHeader("X-Priority", "urgent").
 		When("${header.category in 'A,B,C'}").
 		SimpleSetBody("Category ${header.category}: ${body}").
+		SetHeader("X-Priority", "category").
 		Otherwise().
 		SimpleSetBody("Standard: ${body}").
 		SetHeader("X-Priority", "normal").
@@ -288,9 +290,10 @@ func demoChoiceWithLogicalOperators(ctx *gocamel.CamelContext) {
 			continue
 		}
 
-		priority, _ := exchange.GetOut().GetHeader("X-Priority")
+		resp := exchange.GetResponse()
+		priority, _ := resp.GetHeader("X-Priority")
 		fmt.Printf("  priority=%s, amount=%d, category=%s\n", tc.priority, tc.amount, tc.category)
-		fmt.Printf("    → %s (prioritized as: %s)\n\n", exchange.GetOut().GetBody(), priority)
+		fmt.Printf("    → %s (prioritized as: %s)\n\n", resp.GetBody(), priority)
 	}
 }
 

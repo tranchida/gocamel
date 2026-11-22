@@ -52,11 +52,14 @@ builder.From("ftp://host?username=admin&password=secret")
 > [!caution] Credentials dans les query strings : signalés au runtime
 > Les URI fuitent régulièrement dans les logs d'erreur de connexion, les
 > pistes d'audit, les rapports de crash et les access logs de proxy.
-> Quand `GetConfigValue` résout une clé reconnue comme credential
-> (`password`, `pass`, `secret`, `token`, `apikey`, `api_key`, `accesskey`,
-> `access_key`, `clientsecret`, `privatekey`) depuis un paramètre de
+> Quand `GetConfigValue` résout l'une des 18 clés sensibles unifiées
+> (`password`, `pass`, `passwd`, `secret`, `token`, `passcode`, `apikey`,
+> `api_key`, `apitoken`, `authorizationtoken`, `accesstoken`, `access_token`,
+> `accesskey`, `access_key`, `clientsecret`, `client_secret`, `privatekey`,
+> `private_key`) depuis un paramètre de
 > query, un log `WARN` est émis avec une recommandation d'utiliser les
-> variables d'environnement. Le warning n'inclut que le scheme et le nom
+> variables d'environnement (et `RedactURI` masque ces 18 clés dans les
+> erreurs et journaux). Le warning n'inclut que le scheme et le nom
 > de la clé — **jamais la valeur** — et il est dédupé par couple
 > `(scheme, key)` pour qu'un consumer en polling ne sature pas les logs.
 >
@@ -64,6 +67,10 @@ builder.From("ftp://host?username=admin&password=secret")
 > (`user:pass@host`) est considérée comme la manière conventionnelle de
 > porter des credentials dans une URI et n'est **pas** signalée — vous y
 > avez explicitement consenti.
+
+Note : `sql` et `sql-stored` lisent toutes leurs options d'endpoint strictement
+depuis la query string de l'URI et ignorent les variables d'environnement afin
+qu'elles ne puissent pas altérer les requêtes, procédures ou `allowHeaderOverride`.
 
 
 ### Directement dans l'URI (forme userinfo)
@@ -205,9 +212,13 @@ builder.To("http://api?httpMethod=POST")
 |-----------|-----------------------------------------------------------|-------------------|
 | FTP       | `FTP_USERNAME`, `FTP_PASSWORD`                            | Credentials FTP   |
 | SFTP      | `SFTP_USERNAME`, `SFTP_PASSWORD`, `SFTP_PRIVATE_KEY_FILE` | Credentials SSH   |
+| STOMP     | `STOMP_LOGIN`, `STOMP_PASSCODE`, `STOMP_USERNAME`, `STOMP_PASSWORD` | Credentials broker |
 | Telegram  | `TELEGRAM_AUTHORIZATIONTOKEN`                             | Token du bot      |
 | OpenAI    | `OPENAI_AUTHORIZATIONTOKEN`, `OPENAI_API_KEY`             | Clés API          |
-| Mail      | `MAIL_USERNAME`, `MAIL_PASSWORD`                          | Credentials email |
+| Anthropic | `ANTHROPIC_AUTHORIZATIONTOKEN`, `ANTHROPIC_API_KEY`       | Clés API          |
+| Jev       | `JEV_AUTHORIZATIONTOKEN`, `OPENROUTER_API_KEY`            | Clés API          |
+| Ollama    | `OLLAMA_HOST`, `OLLAMA_API_KEY` (Ollama Cloud uniquement) | Hôte et clé cloud |
+| Mail      | Paramètres de query URI (`username`, `password`)          | Credentials email |
 
 ## Bonnes pratiques
 

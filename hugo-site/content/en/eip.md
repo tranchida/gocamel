@@ -285,7 +285,7 @@ builder.From("direct:start").
 
 **Repositories:**
 
-- `NewMemoryIdempotentRepository()`: In-memory store (default).
+- `NewMemoryIdempotentRepository()`: In-memory store bounded to `DefaultMemoryIdempotentRepositorySize` (`100_000` keys with FIFO eviction; use `NewMemoryIdempotentRepositoryWithCapacity(n)` for a custom limit or `0` for unbounded).
 - `redis.NewRedisIdempotentRepository(rdb, prefix, ttl)`: Distributed store backed by Redis
   (module `github.com/tranchida/gocamel/components/redis`; `rdb` is a `*redis.Client` from
   `github.com/redis/go-redis/v9`).
@@ -327,6 +327,9 @@ builder.From("direct:start").
 
 `ErrStopRouting` (Filter, incomplete aggregation, Stop EIP) is **not** a failure:
 it does not increment the failure count and does not open the circuit.
+`CircuitBreaker` implements `Validator` (`Route.Validate()` verifies thresholds
+and processors) and uses a generation counter to guard Half-Open transitions
+against ABA races.
 
 ---
 
@@ -453,10 +456,12 @@ builder.From("direct:start").
 
 **Operations:**
 
-- `ClaimCheckPush`: Stores the body and replaces it with a key. If no key is provided, one is generated.
+- `ClaimCheckPush`: Stores the body and replaces it with a key. If no key is provided, a UUID key is generated.
 - `ClaimCheckPop`: Retrieves the data by key, restores the body, and removes it from the repository.
 - `ClaimCheckGet`: Retrieves the data by key and restores the body (keeps it in the repository).
 - `ClaimCheckDiscard`: Removes the data from the repository without restoring it.
+
+`NewMemoryClaimCheckRepository()` is bounded to `DefaultMemoryClaimCheckRepositorySize` (`10_000` entries with FIFO eviction; use `NewMemoryClaimCheckRepositoryWithCapacity(n)` for a custom limit).
 
 ---
 
@@ -512,15 +517,15 @@ builder.From("direct:start").
 **How it works:**
 
 1. Creates a **deep copy** of the exchange.
-2. Launches a goroutine that sends the copy to the given endpoint.
+2. Acquires a concurrency slot (bounded to `DefaultMaxConcurrency` = 10, configurable via `SetMaxConcurrency`) and launches a goroutine that sends the copy to the given endpoint.
 3. Returns immediately — the main route carries on without waiting.
-4. The tapped exchange uses an independent context (`context.Background()`): it is not cancelled when the main route finishes.
+4. The tapped exchange runs under a cancellable child of the route lifecycle context: it outlives short-lived request contexts yet is cancelled cleanly when `Route.Stop()` runs.
 5. Tap errors are logged but not propagated to the main route.
 
 **Notes:**
 
 - Ideal for auditing, logging or monitoring without impacting performance.
-- `Route.Stop()` waits for all in-flight taps to finish before stopping (no message is lost on shutdown).
+- `Route.Stop()` cancels in-flight taps and waits for them to finish before stopping (none are leaked on shutdown).
 - Also available inside `Multicast`, `Pipeline`, `Split` and `Loop` contexts.
 
 ---
@@ -804,6 +809,8 @@ builder.From("direct:start").
     RecipientList("${header.recipients}").ParallelProcessing().MaxConcurrency(5).End()
 ```
 
+Simple language expressions in `RecipientList`, `RoutingSlip`, and `DynamicRouter` evaluate each candidate URI via `EvaluateURI` with position-aware escaping (`uriValueEscaper`), preventing endpoint option injection and authority SSRF (same model as `ToD` and `PollEnrich`).
+
 ---
 
 ### Dynamic Router
@@ -1064,7 +1071,9 @@ value drives the route:
 - any other error fails the exchange.
 
 `DeadLetterChannel` retries up to `MaxRedeliveries`, then sends the exchange to
-the dead letter endpoint and, by default, still returns the original error to
+the dead letter endpoint under a bounded `context.WithoutCancel` timeout (and
+skips exchanges already marked `IsDeadLettered` so they are never double-dead-lettered).
+By default it still returns the original error to
 the consumer (the HTTP consumer answers 500). With `DeadLetterHandled(true)` a
 dead-lettered exchange counts as handled, as in Apache Camel:
 
@@ -1146,7 +1155,7 @@ top-level step, e.g. a whole `Split` block — and have no `OnWhen` predicate.
 
 The Saga EIP provides a mechanism to coordinate a series of local transactions across distributed services without locking databases. It defines a set of actions and their corresponding compensating actions (rollbacks).
 
-If any action in the Saga block fails or returns an error, the Saga orchestrator automatically triggers the compensating steps for all completed actions in reverse order (LIFO - Last In, First Out). Action panics are recovered and treated as failures (compensations still run). `ErrStopRouting` from an action stops the saga **without** compensation — it is a control signal, not a failure.
+If any action in the Saga block fails or returns an error, the Saga orchestrator automatically triggers the compensating steps for all completed actions in reverse order (LIFO - Last In, First Out) under a detached context (`context.WithoutCancel`) so a cancelled caller context does not abort rollbacks. `Out` is propagated cleanly between steps, action panics are recovered and treated as failures (compensations still run), and `ErrStopRouting` from an action stops the saga **without** compensation — it is a control signal, not a failure.
 
 ```go
 builder.From("direct:saga-route").

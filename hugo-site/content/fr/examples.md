@@ -42,6 +42,7 @@ func main() {
 package main
 
 import (
+    "context"
     "fmt"
 
     "github.com/tranchida/gocamel"
@@ -52,11 +53,13 @@ func main() {
     ctx := gocamel.NewCamelContext()
     ctx.AddComponent("openai", openai.NewOpenAIComponent())
 
-    // Utilisation manuelle du producer
+    // Utilisation manuelle du producer (lit OPENAI_API_KEY depuis l'environnement)
     endpoint, _ := ctx.CreateEndpoint("openai:chat?model=gpt-3.5-turbo")
     producer, _ := endpoint.CreateProducer()
+    _ = producer.Start(context.Background())
+    defer producer.Stop()
 
-    exchange := gocamel.NewExchange(nil)
+    exchange := gocamel.NewExchange(context.Background())
     exchange.GetIn().SetBody("Explique l'intégration en Go")
 
     producer.Send(exchange)
@@ -758,6 +761,7 @@ To("template:templates/email.tmpl?contentCache=true")
 | `now`        | Date actuelle       | `{{now}}` |
 | `formatDate` | Formate date        | `{{now    | formatDate "2006-01-02"}}` |
 | `toString`   | Convertit en string | `{{.Body  | toString}}` |
+| `json`       | JSON sûr en HTML    | `{{.Body  | toString | json}}` |
 | `safeHTML`   | HTML non échappé    | `{{.Body  | safeHTML}}` |
 
 ---

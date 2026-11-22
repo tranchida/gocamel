@@ -193,15 +193,15 @@ builder.From("direct:start").
 **Fonctionnement :**
 
 1. Crée une **copie profonde** (deep copy) de l'exchange.
-2. Lance un goroutine qui envoie la copie à l'endpoint spécifié.
+2. Prend un créneau de concurrence (borné à `DefaultMaxConcurrency` = 10, configurable via `SetMaxConcurrency`) et lance une goroutine qui envoie la copie à l'endpoint spécifié.
 3. Retourne immédiatement — la route principale continue sans attendre.
-4. L'exchange tapé utilise un contexte indépendant (`context.Background()`) : il n'est pas annulé quand la route principale se termine.
+4. L'exchange tapé s'exécute sous un contexte enfant annulable du cycle de vie de la route : il survit aux contextes de requête courts tout en étant annulé proprement lors de `Route.Stop()`.
 5. Les erreurs lors du tap sont loggées mais ne sont pas propagées à la route principale.
 
 **Notes :**
 
 - Idéal pour l'audit, la journalisation ou la surveillance sans impact sur les performances.
-- `Route.Stop()` attend que tous les taps en cours soient terminés avant de s'arrêter (aucun message n'est perdu lors du shutdown).
+- `Route.Stop()` annule les taps en cours et attend qu'ils soient terminés avant de s'arrêter (aucune fuite lors du shutdown).
 - Disponible également dans les contextes `Multicast`, `Pipeline`, `Split` et `Loop`.
 
 ---
@@ -529,7 +529,7 @@ builder.From("direct:start").
 
 **Dépôts (Repositories) :**
 
-- `NewMemoryIdempotentRepository()` : Stockage en mémoire vive (par défaut).
+- `NewMemoryIdempotentRepository()` : Stockage en mémoire vive borné à `DefaultMemoryIdempotentRepositorySize` (`100_000` clés avec éviction FIFO ; utilisez `NewMemoryIdempotentRepositoryWithCapacity(n)` pour une limite personnalisée ou `0` pour illimité).
 - `redis.NewRedisIdempotentRepository(rdb, prefix, ttl)` : Stockage distribué via Redis
   (module `github.com/tranchida/gocamel/components/redis` ; `rdb` est un `*redis.Client` de
   `github.com/redis/go-redis/v9`).
@@ -570,6 +570,9 @@ builder.From("direct:start").
 
 `ErrStopRouting` (Filter, agrégation incomplète, Stop EIP) n'est **pas** un
 échec : il n'incrémente pas le compteur et n'ouvre pas le circuit.
+`CircuitBreaker` implémente `Validator` (`Route.Validate()` vérifie les seuils
+et processeurs) et utilise un compteur de génération pour protéger les
+transitions Half-Open contre les courses ABA.
 
 ---
 
@@ -701,10 +704,12 @@ builder.From("direct:start").
 
 **Opérations :**
 
-- `ClaimCheckPush` : Stocke le corps et le remplace par une clé. Si aucune clé n'est fournie, elle est générée.
+- `ClaimCheckPush` : Stocke le corps et le remplace par une clé. Si aucune clé n'est fournie, une clé UUID est générée.
 - `ClaimCheckPop` : Récupère les données par clé, restaure le corps et les supprime du dépôt.
 - `ClaimCheckGet` : Récupère les données par clé et restaure le corps (les garde dans le dépôt).
 - `ClaimCheckDiscard` : Supprime les données du dépôt sans les restaurer.
+
+`NewMemoryClaimCheckRepository()` est borné à `DefaultMemoryClaimCheckRepositorySize` (`10_000` entrées avec éviction FIFO ; utilisez `NewMemoryClaimCheckRepositoryWithCapacity(n)` pour une limite personnalisée).
 
 ---
 
@@ -782,6 +787,8 @@ builder.From("direct:start").
 builder.From("direct:start").
     RecipientList("${header.recipients}").ParallelProcessing().MaxConcurrency(5).End()
 ```
+
+Les expressions Simple Language dans `RecipientList`, `RoutingSlip` et `DynamicRouter` évaluent chaque URI candidate via `EvaluateURI` avec un échappement par position (`uriValueEscaper`), empêchant l'injection d'options d'endpoint et le SSRF d'autorité (même modèle que `ToD` et `PollEnrich`).
 
 ---
 
@@ -921,7 +928,9 @@ valeur de retour pilote la route :
 - toute autre erreur met l'exchange en échec.
 
 `DeadLetterChannel` réessaie jusqu'à `MaxRedeliveries`, envoie ensuite
-l'exchange vers l'endpoint dead letter et, par défaut, renvoie quand même
+l'exchange vers l'endpoint dead letter sous un timeout borné `context.WithoutCancel`
+(et ignore les exchanges déjà marqués `IsDeadLettered` pour éviter un double envoi en DLQ).
+Par défaut, il renvoie quand même
 l'erreur d'origine au consumer (le consumer HTTP répond 500). Avec
 `DeadLetterHandled(true)`, un exchange envoyé en dead letter est considéré comme
 traité, comme dans Apache Camel :
@@ -1074,7 +1083,7 @@ builder.From("direct:start").
 
 Le pattern Saga fournit un mécanisme pour coordonner une série de transactions locales à travers des services distribués sans verrouiller les bases de données. Il définit un ensemble d'actions et leurs actions de compensation correspondantes (annulations).
 
-Si une action dans le bloc Saga échoue ou retourne une erreur, l'orchestrateur de la Saga déclenche automatiquement les étapes de compensation pour toutes les actions terminées, dans l'ordre inverse (LIFO - Last In, First Out). Les panics d'action sont récupérés et traités comme des échecs (les compensations s'exécutent quand même). Un `ErrStopRouting` provenant d'une action arrête la saga **sans** compensation — c'est un signal de contrôle, pas un échec.
+Si une action dans le bloc Saga échoue ou retourne une erreur, l'orchestrateur de la Saga déclenche automatiquement les étapes de compensation pour toutes les actions terminées, dans l'ordre inverse (LIFO - Last In, First Out) sous un contexte détaché (`context.WithoutCancel`) afin qu'une annulation de l'appelant n'interrompe pas le rollback. `Out` est propagé proprement entre étapes, les panics d'action sont récupérés et traités comme des échecs (les compensations s'exécutent quand même), et un `ErrStopRouting` provenant d'une action arrête la saga **sans** compensation — c'est un signal de contrôle, pas un échec.
 
 ```go
 builder.From("direct:saga-route").
