@@ -21,7 +21,7 @@ type CamelContext struct {
 	stopping          bool         // true while Stop/GracefulStop is still tearing down
 	startLock         sync.RWMutex // Protects lifecycle state, ctx and cancel
 	routeCounter      int
-	usedRouteIDs      map[string]bool // ids already assigned; guarded by routesLock
+	usedRouteIDs      map[string]int // refcounts of assigned route IDs; guarded by routesLock
 	producerCache     *ProducerCache
 	mgmtLock          sync.Mutex
 	managementServers []*ManagementServer
@@ -62,6 +62,9 @@ func (c *CamelContext) registerStdlibComponents() {
 
 // AddRoute adds a route to the context
 func (c *CamelContext) AddRoute(route *Route) {
+	if route == nil {
+		return
+	}
 	c.routesLock.Lock()
 	defer c.routesLock.Unlock()
 
@@ -72,7 +75,7 @@ func (c *CamelContext) AddRoute(route *Route) {
 	}
 
 	if c.usedRouteIDs == nil {
-		c.usedRouteIDs = make(map[string]bool, len(c.routes)+1)
+		c.usedRouteIDs = make(map[string]int, len(c.routes)+1)
 	}
 	if route.ID == "" {
 		// Collision check against a set rather than a linear scan of every
@@ -80,41 +83,59 @@ func (c *CamelContext) AddRoute(route *Route) {
 		for {
 			c.routeCounter++
 			newID := fmt.Sprintf("route-%d", c.routeCounter)
-			if !c.usedRouteIDs[newID] {
+			if c.usedRouteIDs[newID] == 0 {
 				route.ID = newID
 				break
 			}
 		}
-	} else if c.usedRouteIDs[route.ID] {
+	} else if c.usedRouteIDs[route.ID] > 0 {
 		LogWarn("duplicate route ID; GetRoute returns the first route with this ID", "id", route.ID)
 	}
 
-	c.usedRouteIDs[route.ID] = true
+	c.claimRouteIDLocked(route.ID)
 	c.routes = append(c.routes, route)
 }
 
-// reassignRouteID updates a route's ID and the usedRouteIDs set. Called from
-// Route.SetID so a later auto-generated ID can reuse the previous value.
+func (c *CamelContext) claimRouteIDLocked(id string) {
+	if id == "" {
+		return
+	}
+	if c.usedRouteIDs == nil {
+		c.usedRouteIDs = make(map[string]int)
+	}
+	c.usedRouteIDs[id]++
+}
+
+func (c *CamelContext) releaseRouteIDLocked(id string) {
+	if id == "" || c.usedRouteIDs == nil {
+		return
+	}
+	if c.usedRouteIDs[id] <= 1 {
+		delete(c.usedRouteIDs, id)
+		return
+	}
+	c.usedRouteIDs[id]--
+}
+
+// reassignRouteID updates a route's ID and the usedRouteIDs refcounts. Called
+// from Route.SetID so a later auto-generated ID can reuse the previous value.
+// Detached routes are ignored so they cannot corrupt active route IDs.
 func (c *CamelContext) reassignRouteID(route *Route, newID string) {
 	c.routesLock.Lock()
 	defer c.routesLock.Unlock()
+	if !c.hasRouteLocked(route) {
+		return
+	}
 	old := route.ID
 	if old == newID {
 		return
 	}
-	if c.usedRouteIDs == nil {
-		c.usedRouteIDs = make(map[string]bool)
-	}
-	if old != "" {
-		delete(c.usedRouteIDs, old)
-	}
-	if newID != "" && c.usedRouteIDs[newID] {
+	c.releaseRouteIDLocked(old)
+	if newID != "" && c.usedRouteIDs[newID] > 0 {
 		LogWarn("duplicate route ID; GetRoute returns the first route with this ID", "id", newID)
 	}
 	route.ID = newID
-	if newID != "" {
-		c.usedRouteIDs[newID] = true
-	}
+	c.claimRouteIDLocked(newID)
 }
 
 // AddRoutes adds multiple routes to the context
@@ -149,7 +170,7 @@ func (c *CamelContext) GetRoutes() []*Route {
 
 // Start starts the context and all its routes.
 // If a route fails to start, previously started routes are stopped (rollback).
-func (c *CamelContext) Start() (err error) {
+func (c *CamelContext) Start() error {
 	c.startLock.Lock()
 	if c.stopping {
 		c.startLock.Unlock()
@@ -162,21 +183,23 @@ func (c *CamelContext) Start() (err error) {
 	c.starting = true
 	ctx := c.ctx
 	c.startLock.Unlock()
+	ok := false
 	defer func() {
 		c.startLock.Lock()
 		c.starting = false
-		c.started = err == nil
+		c.started = ok
 		c.startLock.Unlock()
 	}()
 	c.producerCache.Resume()
 	routes := startOrder(c.GetRoutes())
 	for i, route := range routes {
 		if err := route.Start(ctx); err != nil {
-			errs := []error{fmt.Errorf("error starting route %s: %w", route.ID, err)}
+			errs := []error{fmt.Errorf("error starting route %s: %w", c.routeID(route), err)}
 			for j := i - 1; j >= 0; j-- {
 				errs = append(errs, routes[j].Stop())
 			}
 			errs = append(errs, c.producerCache.Stop())
+			c.producerCache.Resume()
 			return errors.Join(errs...)
 		}
 	}
@@ -189,6 +212,7 @@ func (c *CamelContext) Start() (err error) {
 			}
 		})
 	}
+	ok = true
 	return nil
 }
 
@@ -251,9 +275,14 @@ func (c *CamelContext) stopResources() error {
 			errs = append(errs, fmt.Errorf("management server: %w", err))
 		}
 	}
-	for _, route := range c.GetRoutes() {
+	// Stop active routes in reverse startOrder before passive direct: routes
+	// so in-flight exchanges targeting direct: complete before direct consumers
+	// are torn down.
+	routes := startOrder(c.GetRoutes())
+	for i := len(routes) - 1; i >= 0; i-- {
+		route := routes[i]
 		if err := route.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("route %s: %w", route.ID, err))
+			errs = append(errs, fmt.Errorf("route %s: %w", c.routeID(route), err))
 		}
 	}
 	if err := c.producerCache.Stop(); err != nil {
@@ -359,10 +388,51 @@ func (c *CamelContext) GetComponent(name string) (Component, error) {
 	return c.registry.GetComponent(name)
 }
 
+func (c *CamelContext) hasRouteLocked(route *Route) bool {
+	for _, r := range c.routes {
+		if r == route {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *CamelContext) hasRoute(route *Route) bool {
+	c.routesLock.RLock()
+	defer c.routesLock.RUnlock()
+	return c.hasRouteLocked(route)
+}
+
+func (c *CamelContext) routeID(route *Route) string {
+	c.routesLock.RLock()
+	defer c.routesLock.RUnlock()
+	return route.ID
+}
+
+func (c *CamelContext) routeInfos() []RouteInfo {
+	c.routesLock.RLock()
+	infos := make([]RouteInfo, len(c.routes))
+	routes := make([]*Route, len(c.routes))
+	for i, route := range c.routes {
+		infos[i] = RouteInfo{
+			ID:          route.ID,
+			Description: route.Description,
+			Group:       route.Group,
+		}
+		routes[i] = route
+	}
+	c.routesLock.RUnlock()
+
+	for i, route := range routes {
+		infos[i].Started = route.IsStarted()
+	}
+	return infos
+}
+
 // RemoveRoute stops the route if it is running, then drops it from the context.
 // The route ID is released so a later auto-generated ID can reuse it.
 func (c *CamelContext) RemoveRoute(route *Route) error {
-	if route == nil {
+	if route == nil || !c.hasRoute(route) {
 		return nil
 	}
 	c.startLock.Lock()
@@ -373,10 +443,26 @@ func (c *CamelContext) RemoveRoute(route *Route) error {
 	c.stopping = true
 	c.startLock.Unlock()
 	defer func() { c.startLock.Lock(); c.stopping = false; c.startLock.Unlock() }()
+
+	if !c.hasRoute(route) {
+		return nil
+	}
 	stopErr := route.Stop()
+	if errors.Is(stopErr, errRouteChangingState) {
+		return stopErr
+	}
 
 	c.routesLock.Lock()
-	c.detachRouteLocked(route)
+	if c.hasRouteLocked(route) {
+		route.startLock.RLock()
+		activeOrTransitioning := route.started || route.starting || route.stopping
+		route.startLock.RUnlock()
+		if activeOrTransitioning {
+			c.routesLock.Unlock()
+			return errRouteChangingState
+		}
+		c.detachRouteLocked(route)
+	}
 	c.routesLock.Unlock()
 	return stopErr
 }
@@ -414,17 +500,15 @@ func (c *CamelContext) RemoveAllRoutes() error {
 	return errors.Join(errs...)
 }
 
-// detachRouteLocked removes route from the slice and frees its ID.
+// detachRouteLocked removes route from the slice and releases its ID refcount.
 // Caller must hold routesLock.
 func (c *CamelContext) detachRouteLocked(route *Route) {
 	for i, r := range c.routes {
 		if r == route {
 			c.routes = append(c.routes[:i], c.routes[i+1:]...)
-			break
+			c.releaseRouteIDLocked(route.ID)
+			return
 		}
-	}
-	if c.usedRouteIDs != nil && route.ID != "" {
-		delete(c.usedRouteIDs, route.ID)
 	}
 }
 

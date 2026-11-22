@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"sync/atomic"
 	"time"
 )
@@ -139,6 +138,9 @@ func NewExchange(ctx context.Context) *Exchange {
 
 // AddSynchronization adds a synchronization callback to the exchange.
 func (e *Exchange) AddSynchronization(s Synchronization) {
+	if s == nil {
+		return
+	}
 	e.synchronizations = append(e.synchronizations, s)
 }
 
@@ -147,11 +149,17 @@ func (e *Exchange) AddSynchronization(s Synchronization) {
 func (e *Exchange) Done(err error) {
 	e.Error = err
 	for _, s := range e.synchronizations {
-		if err != nil {
-			s.OnFailure(e)
-		} else {
-			s.OnComplete(e)
+		if s == nil {
+			continue
 		}
+		_ = safeProcess(func() error {
+			if err != nil {
+				s.OnFailure(e)
+			} else {
+				s.OnComplete(e)
+			}
+			return nil
+		})
 	}
 }
 
@@ -264,27 +272,14 @@ func (e *Exchange) RemoveProperty(key string) {
 // except those matching any of the exclusion patterns.
 // The pattern supports Apache Camel wildcards '*' (e.g. 'Camel*').
 func (e *Exchange) RemoveProperties(pattern string, excludePatterns ...string) {
-	mainRegex := patternToRegex(pattern)
+	e.removePropertiesWith(compileWildcardPattern(pattern), compileWildcardPatterns(excludePatterns))
+}
 
-	var excludeRegexes []*regexp.Regexp
-	for _, p := range excludePatterns {
-		excludeRegexes = append(excludeRegexes, patternToRegex(p))
-	}
-
+func (e *Exchange) removePropertiesWith(mainPattern wildcardPattern, excludePatterns []wildcardPattern) {
 	for key := range e.Properties {
-		if mainRegex.MatchString(key) {
-			shouldExclude := false
-			for _, exRegex := range excludeRegexes {
-				if exRegex.MatchString(key) {
-					shouldExclude = true
-					break
-				}
-			}
-
-			if !shouldExclude {
-				delete(e.Properties, key)
-				e.Modified = time.Now()
-			}
+		if matchesWildcardWithExcludes(key, mainPattern, excludePatterns) {
+			delete(e.Properties, key)
+			e.Modified = time.Now()
 		}
 	}
 }

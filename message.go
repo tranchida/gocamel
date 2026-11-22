@@ -3,7 +3,6 @@ package gocamel
 import (
 	"maps"
 	"math"
-	"regexp"
 )
 
 // Message represents a message flowing through a Camel route.
@@ -129,26 +128,13 @@ func (m *Message) RemoveHeader(key string) {
 // except those matching any of the provided exclusion patterns.
 // The pattern supports the Apache Camel wildcard '*' (e.g. 'Camel*').
 func (m *Message) RemoveHeaders(pattern string, excludePatterns ...string) {
-	mainRegex := patternToRegex(pattern)
+	m.removeHeadersWith(compileWildcardPattern(pattern), compileWildcardPatterns(excludePatterns))
+}
 
-	var excludeRegexes []*regexp.Regexp
-	for _, p := range excludePatterns {
-		excludeRegexes = append(excludeRegexes, patternToRegex(p))
-	}
-
+func (m *Message) removeHeadersWith(mainPattern wildcardPattern, excludePatterns []wildcardPattern) {
 	for key := range m.Headers {
-		if mainRegex.MatchString(key) {
-			shouldExclude := false
-			for _, exRegex := range excludeRegexes {
-				if exRegex.MatchString(key) {
-					shouldExclude = true
-					break
-				}
-			}
-
-			if !shouldExclude {
-				delete(m.Headers, key)
-			}
+		if matchesWildcardWithExcludes(key, mainPattern, excludePatterns) {
+			delete(m.Headers, key)
 		}
 	}
 }
@@ -281,6 +267,8 @@ func deepCopyValue(v any) any {
 		}
 		return cp
 	case []string:
+		return cloneSlice(val)
+	case []MessageHistoryEntry:
 		return cloneSlice(val)
 	case [][]string:
 		if val == nil {

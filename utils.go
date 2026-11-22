@@ -245,12 +245,77 @@ func (e *uriValueEscaper) escape(value string) string {
 	}
 }
 
-// patternToRegex converts a pattern with '*' wildcards into a Regexp.
-func patternToRegex(pattern string) *regexp.Regexp {
-	// Escape special regex characters, then replace '*' with '.*'.
-	quoted := regexp.QuoteMeta(pattern)
-	regexStr := "^" + strings.ReplaceAll(quoted, "\\*", ".*") + "$"
-	return regexp.MustCompile(regexStr)
+// wildcardPattern matches strings against a pattern where '*' matches zero or
+// more arbitrary characters, including newlines.
+type wildcardPattern struct {
+	exact     string
+	hasWild   bool
+	prefix    string
+	suffix    string
+	fragments []string
+}
+
+func compileWildcardPattern(pattern string) wildcardPattern {
+	if !strings.Contains(pattern, "*") {
+		return wildcardPattern{exact: pattern}
+	}
+	parts := strings.Split(pattern, "*")
+	var fragments []string
+	for _, part := range parts[1 : len(parts)-1] {
+		if part != "" {
+			fragments = append(fragments, part)
+		}
+	}
+	return wildcardPattern{
+		hasWild:   true,
+		prefix:    parts[0],
+		suffix:    parts[len(parts)-1],
+		fragments: fragments,
+	}
+}
+
+func compileWildcardPatterns(patterns []string) []wildcardPattern {
+	if len(patterns) == 0 {
+		return nil
+	}
+	compiled := make([]wildcardPattern, len(patterns))
+	for i, p := range patterns {
+		compiled[i] = compileWildcardPattern(p)
+	}
+	return compiled
+}
+
+func (p wildcardPattern) match(s string) bool {
+	if !p.hasWild {
+		return s == p.exact
+	}
+	if len(s) < len(p.prefix)+len(p.suffix) {
+		return false
+	}
+	if !strings.HasPrefix(s, p.prefix) || !strings.HasSuffix(s, p.suffix) {
+		return false
+	}
+	rem := s[len(p.prefix) : len(s)-len(p.suffix)]
+	for _, frag := range p.fragments {
+		idx := strings.Index(rem, frag)
+		if idx < 0 {
+			return false
+		}
+		rem = rem[idx+len(frag):]
+	}
+	return true
+}
+
+func matchesWildcardWithExcludes(key string, include wildcardPattern, excludes []wildcardPattern) bool {
+	if !include.match(key) {
+		return false
+	}
+	for _, ex := range excludes {
+		if ex.match(key) {
+			return false
+		}
+	}
+	return true
 }
 
 // defaultSensitiveURIKeys are query parameter names whose values are masked

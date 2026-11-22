@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -493,4 +494,380 @@ func TestCreateEndpointAndEIPs_RedactURIsInErrors(t *testing.T) {
 		assert.NotContains(t, logs, userSecret)
 		assert.NotContains(t, logs, querySecret)
 	})
+}
+
+func TestRouteValidate_RecursesIntoNestedContainersAndOnException(t *testing.T) {
+	cases := []struct {
+		name    string
+		wantErr string
+		build   func(*CamelContext) (*Route, error)
+	}{
+		{
+			name:    "Choice When",
+			wantErr: "period",
+			build: func(ctx *CamelContext) (*Route, error) {
+				return ctx.CreateRouteBuilder().
+					From("direct:choice-when").
+					Choice().
+					When("${body} == 'a'").
+					Process(NewSamplerPeriod(0)).
+					EndChoice().
+					Build()
+			},
+		},
+		{
+			name:    "Choice Otherwise",
+			wantErr: "period",
+			build: func(ctx *CamelContext) (*Route, error) {
+				return ctx.CreateRouteBuilder().
+					From("direct:choice-other").
+					Choice().
+					When("${body} == 'a'").
+					SetBody("ok").
+					Otherwise().
+					Process(NewSamplerPeriod(0)).
+					EndChoice().
+					Build()
+			},
+		},
+		{
+			name:    "Multicast",
+			wantErr: "period",
+			build: func(ctx *CamelContext) (*Route, error) {
+				return ctx.CreateRouteBuilder().
+					From("direct:multicast").
+					Multicast().
+					Process(NewSamplerPeriod(0)).
+					End().
+					Build()
+			},
+		},
+		{
+			name:    "Splitter",
+			wantErr: "period",
+			build: func(ctx *CamelContext) (*Route, error) {
+				return ctx.CreateRouteBuilder().
+					From("direct:splitter").
+					Split(func(e *Exchange) (any, error) { return []string{"a"}, nil }).
+					Process(NewSamplerPeriod(0)).
+					End().
+					Build()
+			},
+		},
+		{
+			name:    "Loop",
+			wantErr: "period",
+			build: func(ctx *CamelContext) (*Route, error) {
+				return ctx.CreateRouteBuilder().
+					From("direct:loop").
+					Loop(2).
+					Process(NewSamplerPeriod(0)).
+					End().
+					Build()
+			},
+		},
+		{
+			name:    "DoTry Try",
+			wantErr: "period",
+			build: func(ctx *CamelContext) (*Route, error) {
+				return ctx.CreateRouteBuilder().
+					From("direct:try").
+					DoTry().
+					Process(NewSamplerPeriod(0)).
+					End().
+					Build()
+			},
+		},
+		{
+			name:    "DoTry DoCatch",
+			wantErr: "period",
+			build: func(ctx *CamelContext) (*Route, error) {
+				return ctx.CreateRouteBuilder().
+					From("direct:catch").
+					DoTry().
+					ProcessFunc(func(*Exchange) error { return nil }).
+					DoCatch("").
+					Process(NewSamplerPeriod(0)).
+					End().
+					Build()
+			},
+		},
+		{
+			name:    "DoTry DoFinally",
+			wantErr: "period",
+			build: func(ctx *CamelContext) (*Route, error) {
+				return ctx.CreateRouteBuilder().
+					From("direct:finally").
+					DoTry().
+					ProcessFunc(func(*Exchange) error { return nil }).
+					DoFinally().
+					Process(NewSamplerPeriod(0)).
+					End().
+					Build()
+			},
+		},
+		{
+			name:    "OnException",
+			wantErr: "period",
+			build: func(ctx *CamelContext) (*Route, error) {
+				return ctx.CreateRouteBuilder().
+					OnException(errors.New("boom")).
+					Process(NewSamplerPeriod(0)).
+					End().
+					From("direct:on-exception").
+					SetBody("ok").
+					Build()
+			},
+		},
+		{
+			name:    "Nested RecipientList in Multicast",
+			wantErr: "recipient list",
+			build: func(ctx *CamelContext) (*Route, error) {
+				oversize := "${header." + strings.Repeat("a", MaxSimpleInputBytes+1) + "}"
+				return ctx.CreateRouteBuilder().
+					From("direct:nested-rl").
+					Multicast().
+					Process(NewRecipientList(ctx).SetSimpleExpression(oversize)).
+					End().
+					Build()
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := NewCamelContext()
+			route, err := tc.build(ctx)
+			require.NoError(t, err)
+			valErr := route.Validate()
+			require.Error(t, valErr)
+			assert.Contains(t, valErr.Error(), tc.wantErr)
+		})
+	}
+}
+
+type panickingSync struct {
+	panicOnComplete bool
+	panicOnFailure  bool
+}
+
+func (s panickingSync) OnComplete(*Exchange) {
+	if s.panicOnComplete {
+		panic("sync complete panic")
+	}
+}
+
+func (s panickingSync) OnFailure(*Exchange) {
+	if s.panicOnFailure {
+		panic("sync failure panic")
+	}
+}
+
+type recordingSync struct {
+	completed atomic.Bool
+	failed    atomic.Bool
+}
+
+func (s *recordingSync) OnComplete(*Exchange) { s.completed.Store(true) }
+func (s *recordingSync) OnFailure(*Exchange)  { s.failed.Store(true) }
+
+func TestExchangeDone_RecoversPanickingSynchronization(t *testing.T) {
+	t.Run("OnComplete panic does not unwind or skip subsequent cleanup", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.AddSynchronization(nil)
+		ex.AddSynchronization(panickingSync{panicOnComplete: true})
+		cleanup := &recordingSync{}
+		ex.AddSynchronization(cleanup)
+
+		require.NotPanics(t, func() {
+			require.NoError(t, CompleteExchange(ex, nil))
+		})
+		assert.True(t, cleanup.completed.Load(), "cleanup synchronization must still run")
+	})
+
+	t.Run("OnFailure panic does not unwind or skip subsequent cleanup", func(t *testing.T) {
+		ex := NewExchange(context.Background())
+		ex.AddSynchronization(nil)
+		ex.AddSynchronization(panickingSync{panicOnFailure: true})
+		cleanup := &recordingSync{}
+		ex.AddSynchronization(cleanup)
+
+		sentinel := errors.New("boom")
+		require.NotPanics(t, func() {
+			err := CompleteExchange(ex, sentinel)
+			assert.ErrorIs(t, err, sentinel)
+		})
+		assert.True(t, cleanup.failed.Load(), "cleanup failure synchronization must still run")
+	})
+}
+
+type lpSlowStartComponent struct {
+	inStart      chan struct{}
+	releaseStart chan struct{}
+	stoppedCount atomic.Int32
+}
+
+func (c *lpSlowStartComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &lpSlowStartEndpoint{uri: uri, comp: c}, nil
+}
+
+type lpSlowStartEndpoint struct {
+	uri  string
+	comp *lpSlowStartComponent
+}
+
+func (e *lpSlowStartEndpoint) URI() string { return e.uri }
+func (e *lpSlowStartEndpoint) CreateProducer() (Producer, error) {
+	return &lpSlowStartProducer{comp: e.comp}, nil
+}
+func (e *lpSlowStartEndpoint) CreateConsumer(Processor) (Consumer, error) {
+	return nil, errors.New("not supported")
+}
+
+type lpSlowStartProducer struct {
+	comp *lpSlowStartComponent
+}
+
+func (p *lpSlowStartProducer) Start(context.Context) error {
+	close(p.comp.inStart)
+	<-p.comp.releaseStart
+	return nil
+}
+func (p *lpSlowStartProducer) Stop() error {
+	p.comp.stoppedCount.Add(1)
+	return nil
+}
+func (p *lpSlowStartProducer) Send(*Exchange) error { return nil }
+
+func TestLazyProducer_StopDoesNotBlockOnSlowStart(t *testing.T) {
+	ctx := NewCamelContext()
+	comp := &lpSlowStartComponent{
+		inStart:      make(chan struct{}),
+		releaseStart: make(chan struct{}),
+	}
+	ctx.AddComponent("blockstart", comp)
+
+	route, err := ctx.CreateRouteBuilder().
+		From("direct:lp-lockfree").
+		To("blockstart:target").
+		Build()
+	require.NoError(t, err)
+	require.NoError(t, ctx.Start())
+	t.Cleanup(func() { _ = ctx.Stop() })
+
+	sendErrCh := make(chan error, 1)
+	go func() {
+		sendErrCh <- route.Process(NewExchange(context.Background()))
+	}()
+
+	select {
+	case <-comp.inStart:
+	case <-time.After(2 * time.Second):
+		t.Fatal("producer did not enter Start")
+	}
+
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- route.Stop()
+	}()
+
+	select {
+	case err := <-stopDone:
+		require.NoError(t, err)
+	case <-time.After(200 * time.Millisecond):
+		close(comp.releaseStart)
+		t.Fatal("route.Stop() blocked on slow lazyProducer Start()")
+	}
+
+	close(comp.releaseStart)
+	select {
+	case err := <-sendErrCh:
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("send goroutine did not finish")
+	}
+	assert.EqualValues(t, 1, comp.stoppedCount.Load(), "late-started producer must be stopped and not leaked")
+}
+
+type failAfterSendComponent struct {
+	producerStopped atomic.Int32
+}
+
+func (c *failAfterSendComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &failAfterSendEndpoint{uri: uri, comp: c}, nil
+}
+
+type failAfterSendEndpoint struct {
+	uri  string
+	comp *failAfterSendComponent
+}
+
+func (e *failAfterSendEndpoint) URI() string { return e.uri }
+func (e *failAfterSendEndpoint) CreateProducer() (Producer, error) {
+	return &failAfterSendProducer{comp: e.comp}, nil
+}
+func (e *failAfterSendEndpoint) CreateConsumer(p Processor) (Consumer, error) {
+	return &failAfterSendConsumer{processor: p}, nil
+}
+
+type failAfterSendProducer struct{ comp *failAfterSendComponent }
+
+func (p *failAfterSendProducer) Start(context.Context) error { return nil }
+func (p *failAfterSendProducer) Stop() error {
+	p.comp.producerStopped.Add(1)
+	return nil
+}
+func (p *failAfterSendProducer) Send(*Exchange) error { return nil }
+
+type failAfterSendConsumer struct{ processor Processor }
+
+func (c *failAfterSendConsumer) Start(ctx context.Context) error {
+	_ = c.processor.Process(NewExchange(ctx))
+	return errors.New("consumer failed after dispatching")
+}
+func (c *failAfterSendConsumer) Stop() error { return nil }
+
+func TestRouteStart_ConsumerFailureRollsBackLazyProducersAndWireTap(t *testing.T) {
+	ctx := NewCamelContext()
+	comp := &failAfterSendComponent{}
+	ctx.AddComponent("failafter", comp)
+
+	route, err := ctx.CreateRouteBuilder().
+		From("failafter:in").
+		WireTap("mock:tap").
+		To("failafter:out").
+		Build()
+	require.NoError(t, err)
+
+	err = ctx.Start()
+	require.Error(t, err)
+	assert.False(t, route.IsStarted())
+	assert.EqualValues(t, 1, comp.producerStopped.Load(), "lazyProducer initialized during failed Start must be stopped on rollback")
+
+	// ProducerCache on CamelContext must remain usable after failed Start rollback.
+	_, cacheErr := ctx.GetProducer("mock:after-rollback")
+	assert.NoError(t, cacheErr)
+}
+
+func TestRemoveHeadersAndProperties_MatchesNewlines(t *testing.T) {
+	ctx := NewCamelContext()
+	route, err := ctx.CreateRouteBuilder().
+		From("direct:newline-remove").
+		RemoveHeaders("Camel*", "CamelHttp*").
+		RemoveProperties("Camel*", "CamelHttp*").
+		Build()
+	require.NoError(t, err)
+
+	ex := NewExchange(context.Background())
+	ex.GetIn().SetHeader("Camel\nLine", "remove")
+	ex.GetIn().SetHeader("CamelHttp\nKeep", "keep")
+	ex.SetProperty("Camel\nProp", "remove")
+	ex.SetProperty("CamelHttp\nPropKeep", "keep")
+
+	require.NoError(t, route.Process(ex))
+
+	assert.False(t, ex.GetIn().HasHeader("Camel\nLine"), "RemoveHeaders '*' must match across newlines")
+	assert.True(t, ex.GetIn().HasHeader("CamelHttp\nKeep"), "RemoveHeaders exclusion '*' must match across newlines")
+	assert.False(t, ex.HasProperty("Camel\nProp"), "RemoveProperties '*' must match across newlines")
+	assert.True(t, ex.HasProperty("CamelHttp\nPropKeep"), "RemoveProperties exclusion '*' must match across newlines")
 }

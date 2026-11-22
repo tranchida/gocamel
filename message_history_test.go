@@ -2,8 +2,13 @@ package gocamel
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMessageHistory_Enabled(t *testing.T) {
@@ -151,4 +156,180 @@ func TestMessageHistory_Disabled(t *testing.T) {
 	if len(history) != 0 {
 		t.Errorf("Expected empty message history when disabled, but got %d entries: %v", len(history), history)
 	}
+}
+
+func TestMessageHistory_ParallelMulticastNoRace(t *testing.T) {
+	ctx := NewCamelContext()
+
+	var (
+		mu        sync.Mutex
+		histories = make(map[string][]MessageHistoryEntry)
+		tapDone   = make(chan struct{})
+	)
+	record := func(branch string) ProcessorFunc {
+		return func(e *Exchange) error {
+			h := GetMessageHistory(e)
+			cp := make([]MessageHistoryEntry, len(h))
+			copy(cp, h)
+			mu.Lock()
+			histories[branch] = cp
+			mu.Unlock()
+			return nil
+		}
+	}
+
+	var capBeforeFanout int
+	var lenBeforeFanout int
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:hist-start").
+		EnableMessageHistory().
+		SetHeader("s1", 1).
+		SetHeader("s2", 2).
+		SetHeader("s3", 3).
+		SetHeader("s4", 4).
+		SetHeader("s5", 5).
+		ProcessFunc(func(e *Exchange) error {
+			h := GetMessageHistory(e)
+			lenBeforeFanout = len(h)
+			capBeforeFanout = cap(h)
+			if capBeforeFanout <= lenBeforeFanout {
+				return fmt.Errorf("expected cap > len before fan-out, got len=%d cap=%d", lenBeforeFanout, capBeforeFanout)
+			}
+			return nil
+		}).
+		WireTap("direct:hist-tap").
+		Multicast().
+		ParallelProcessing().
+		To("direct:hist-b1", "direct:hist-b2").
+		End().
+		Build()
+	require.NoError(t, err)
+
+	_, err = ctx.CreateRouteBuilder().
+		From("direct:hist-b1").
+		SetID("route-b1").
+		EnableMessageHistory().
+		SetHeader("branch", "b1").
+		Process(record("b1")).
+		Build()
+	require.NoError(t, err)
+
+	_, err = ctx.CreateRouteBuilder().
+		From("direct:hist-b2").
+		SetID("route-b2").
+		EnableMessageHistory().
+		SetHeader("branch", "b2").
+		Process(record("b2")).
+		Build()
+	require.NoError(t, err)
+
+	_, err = ctx.CreateRouteBuilder().
+		From("direct:hist-tap").
+		SetID("route-tap").
+		EnableMessageHistory().
+		SetHeader("branch", "tap").
+		Process(record("tap")).
+		ProcessFunc(func(*Exchange) error {
+			close(tapDone)
+			return nil
+		}).
+		Build()
+	require.NoError(t, err)
+
+	require.NoError(t, ctx.Start())
+	t.Cleanup(func() { _ = ctx.Stop() })
+
+	prod, err := ctx.GetProducer("direct:hist-start")
+	require.NoError(t, err)
+	ex := NewExchange(context.Background())
+	require.NoError(t, prod.Send(ex))
+
+	select {
+	case <-tapDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for wiretap")
+	}
+
+	assert.Greater(t, capBeforeFanout, lenBeforeFanout, "spare capacity must exist before fan-out to exercise aliasing")
+
+	mu.Lock()
+	b1 := histories["b1"]
+	b2 := histories["b2"]
+	tap := histories["tap"]
+	mu.Unlock()
+
+	require.NotEmpty(t, b1)
+	require.NotEmpty(t, b2)
+	require.NotEmpty(t, tap)
+
+	hasRoute := func(entries []MessageHistoryEntry, routeID string) bool {
+		for _, entry := range entries {
+			if entry.RouteID == routeID {
+				return true
+			}
+		}
+		return false
+	}
+	assert.True(t, hasRoute(b1, "route-b1"))
+	assert.False(t, hasRoute(b1, "route-b2"))
+	assert.False(t, hasRoute(b1, "route-tap"))
+
+	assert.True(t, hasRoute(b2, "route-b2"))
+	assert.False(t, hasRoute(b2, "route-b1"))
+	assert.False(t, hasRoute(b2, "route-tap"))
+
+	assert.True(t, hasRoute(tap, "route-tap"))
+	assert.False(t, hasRoute(tap, "route-b1"))
+	assert.False(t, hasRoute(tap, "route-b2"))
+
+	// Also verify sequential Multicast (which uses shallow exchange.Copy) clips
+	// slice capacity so later branches do not see or overwrite earlier branches.
+	seqCtx := NewCamelContext()
+	var seqMu sync.Mutex
+	seqHistories := make(map[string][]MessageHistoryEntry)
+	_, err = seqCtx.CreateRouteBuilder().
+		From("direct:seq-hist-start").
+		EnableMessageHistory().
+		SetHeader("s1", 1).
+		SetHeader("s2", 2).
+		SetHeader("s3", 3).
+		SetHeader("s4", 4).
+		SetHeader("s5", 5).
+		Multicast().
+		To("direct:seq-b1", "direct:seq-b2").
+		End().
+		Build()
+	require.NoError(t, err)
+
+	for _, id := range []string{"seq-b1", "seq-b2"} {
+		branchID := id
+		_, err = seqCtx.CreateRouteBuilder().
+			From("direct:"+branchID).
+			SetID("route-"+branchID).
+			EnableMessageHistory().
+			SetHeader("branch", branchID).
+			ProcessFunc(func(e *Exchange) error {
+				h := GetMessageHistory(e)
+				cp := make([]MessageHistoryEntry, len(h))
+				copy(cp, h)
+				seqMu.Lock()
+				seqHistories[branchID] = cp
+				seqMu.Unlock()
+				return nil
+			}).
+			Build()
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, seqCtx.Start())
+	t.Cleanup(func() { _ = seqCtx.Stop() })
+
+	seqProd, err := seqCtx.GetProducer("direct:seq-hist-start")
+	require.NoError(t, err)
+	require.NoError(t, seqProd.Send(NewExchange(context.Background())))
+
+	assert.True(t, hasRoute(seqHistories["seq-b1"], "route-seq-b1"))
+	assert.False(t, hasRoute(seqHistories["seq-b1"], "route-seq-b2"))
+	assert.True(t, hasRoute(seqHistories["seq-b2"], "route-seq-b2"))
+	assert.False(t, hasRoute(seqHistories["seq-b2"], "route-seq-b1"))
 }

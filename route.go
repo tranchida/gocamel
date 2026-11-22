@@ -19,6 +19,8 @@ var ErrStopRouting = errors.New("stop routing")
 // Routes can detect it with errors.Is.
 var ErrProcessorPanic = errors.New("processor panic")
 
+var errRouteChangingState = errors.New("route is changing lifecycle state")
+
 // safeProcess runs fn and converts a panic into an error instead of letting it
 // unwind the goroutine.
 //
@@ -132,13 +134,22 @@ func (r *Route) Intercept(interceptor RouteInterceptor) *Route {
 type lazyProducer struct {
 	context *CamelContext
 	uri     string
-	mu      sync.Mutex
+	mu      sync.Mutex // Protects uri, p, stopped, and epoch.
+	initMu  sync.Mutex // Serializes producer creation without holding mu across I/O.
 	p       Producer
 	stopped bool
+	epoch   uint64
 }
 
 func newLazyProducer(ctx *CamelContext, uri string) *lazyProducer {
 	return &lazyProducer{context: ctx, uri: uri}
+}
+
+func (lp *lazyProducer) redactedURI() string {
+	lp.mu.Lock()
+	uri := lp.uri
+	lp.mu.Unlock()
+	return RedactURI(uri)
 }
 
 func (lp *lazyProducer) Process(exchange *Exchange) error {
@@ -150,21 +161,39 @@ func (lp *lazyProducer) Process(exchange *Exchange) error {
 	return prod.Send(exchange)
 }
 
-func (lp *lazyProducer) producer() (Producer, error) {
+func (lp *lazyProducer) currentProducer() (p Producer, uri string, epoch uint64, err error) {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
 	if lp.stopped {
-		return nil, fmt.Errorf("producer for %s is stopped", RedactURI(lp.uri))
+		return nil, "", 0, fmt.Errorf("producer for %s is stopped", RedactURI(lp.uri))
 	}
-	if lp.p != nil {
-		return lp.p, nil
+	return lp.p, lp.uri, lp.epoch, nil
+}
+
+func (lp *lazyProducer) producer() (Producer, error) {
+	if p, _, _, err := lp.currentProducer(); err != nil || p != nil {
+		return p, err
 	}
 
-	endpoint, err := lp.context.CreateEndpoint(lp.uri)
+	// Single-flight producer creation without holding lp.mu across network I/O
+	// so Stop()/reset()/AdviceWith() never block behind a slow dial/handshake.
+	lp.initMu.Lock()
+	defer lp.initMu.Unlock()
+
+	p, uri, epoch, err := lp.currentProducer()
+	if err != nil || p != nil {
+		return p, err
+	}
+
+	if lp.context == nil {
+		return nil, errors.New("lazy producer has nil CamelContext")
+	}
+
+	endpoint, err := lp.context.CreateEndpoint(uri)
 	if err != nil {
 		return nil, err
 	}
-	p, err := endpoint.CreateProducer()
+	p, err = endpoint.CreateProducer()
 	if err != nil {
 		return nil, err
 	}
@@ -175,13 +204,23 @@ func (lp *lazyProducer) producer() (Producer, error) {
 	if err := p.Start(lp.context.GetContext()); err != nil {
 		return nil, err
 	}
+
+	lp.mu.Lock()
+	if lp.stopped || lp.epoch != epoch {
+		curURI := lp.uri
+		lp.mu.Unlock()
+		_ = p.Stop()
+		return nil, fmt.Errorf("producer for %s is stopped", RedactURI(curURI))
+	}
 	lp.p = p
+	lp.mu.Unlock()
 	return p, nil
 }
 
 func (lp *lazyProducer) Stop() error {
 	lp.mu.Lock()
 	lp.stopped = true
+	lp.epoch++
 	prod := lp.p
 	lp.p = nil
 	lp.mu.Unlock()
@@ -194,6 +233,7 @@ func (lp *lazyProducer) Stop() error {
 func (lp *lazyProducer) reset() {
 	lp.mu.Lock()
 	lp.stopped = false
+	lp.epoch++
 	lp.mu.Unlock()
 }
 
@@ -287,7 +327,7 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 				Elapsed:   elapsed,
 			}
 			history := GetMessageHistory(exchange)
-			history = append(history, entry)
+			history = append(history[:len(history):len(history)], entry)
 			exchange.SetProperty(CamelMessageHistory, history)
 		}
 
@@ -389,6 +429,17 @@ func (r *Route) resetErrorHandlerState(exchange *Exchange) {
 // All problems are returned via errors.Join. Start does NOT call Validate
 // automatically — that would change the timing of existing error reporting
 // and could turn previously latent issues into startup failures.
+func appendValidationErrors(errs []error, scope string, idx int, root Processor) []error {
+	walkProcessors(root, func(proc Processor) {
+		if v, ok := proc.(Validator); ok {
+			if err := v.Validate(); err != nil {
+				errs = append(errs, fmt.Errorf("%s[%d]: %w", scope, idx, err))
+			}
+		}
+	})
+	return errs
+}
+
 func (r *Route) Validate() error {
 	var errs []error
 	if r.err != nil {
@@ -398,30 +449,45 @@ func (r *Route) Validate() error {
 		errs = append(errs, fmt.Errorf("no source endpoint defined"))
 	}
 	for i, p := range r.processors {
-		v, ok := p.(Validator)
-		if !ok {
+		errs = appendValidationErrors(errs, "processor", i, p)
+	}
+	for i, clause := range r.onExceptions {
+		if clause == nil || clause.handler == nil {
 			continue
 		}
-		if err := v.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("processor[%d]: %w", i, err))
-		}
+		errs = appendValidationErrors(errs, "onException", i, clause.handler)
 	}
 	return errors.Join(errs...)
 }
 
-// Start starts the route.
-func (r *Route) Start(ctx context.Context) (err error) {
+func (r *Route) beginStart() error {
+	if r.context != nil {
+		r.context.routesLock.RLock()
+		defer r.context.routesLock.RUnlock()
+		if !r.context.hasRouteLocked(r) {
+			return fmt.Errorf("route %s is not attached to context", r.ID)
+		}
+	}
 	r.startLock.Lock()
+	defer r.startLock.Unlock()
 	if r.started || r.starting || r.stopping {
-		r.startLock.Unlock()
 		return fmt.Errorf("route is already started or changing lifecycle state")
 	}
 	r.starting = true
-	r.startLock.Unlock()
+	return nil
+}
+
+// Start starts the route.
+func (r *Route) Start(ctx context.Context) error {
+	if err := r.beginStart(); err != nil {
+		return err
+	}
+
+	ok := false
 	defer func() {
 		r.startLock.Lock()
 		r.starting = false
-		r.started = err == nil
+		r.started = ok
 		r.startLock.Unlock()
 	}()
 	if r.err != nil {
@@ -449,8 +515,11 @@ func (r *Route) Start(ctx context.Context) (err error) {
 	r.configureAggregatorTimeouts(ctx)
 	if err := consumer.Start(ctx); err != nil {
 		r.consumer = nil
-		return errors.Join(fmt.Errorf("error starting consumer: %w", err), consumer.Stop(), r.stopAggregatorTimeouts())
+		errs := []error{fmt.Errorf("error starting consumer: %w", err), consumer.Stop()}
+		errs = append(errs, r.stopProcessorsAndProducers()...)
+		return errors.Join(errs...)
 	}
+	ok = true
 	return nil
 }
 
@@ -461,7 +530,7 @@ func (r *Route) Stop() error {
 	r.startLock.Lock()
 	if r.starting || r.stopping {
 		r.startLock.Unlock()
-		return fmt.Errorf("route is changing lifecycle state")
+		return errRouteChangingState
 	}
 	if !r.started {
 		r.startLock.Unlock()
@@ -483,6 +552,13 @@ func (r *Route) Stop() error {
 		}
 		r.consumer = nil
 	}
+
+	errs = append(errs, r.stopProcessorsAndProducers()...)
+	return errors.Join(errs...)
+}
+
+func (r *Route) stopProcessorsAndProducers() []error {
+	var errs []error
 
 	// Aggregator timeouts can resume the downstream pipeline asynchronously.
 	// Cancel and join them before stopping producers they may still call.
@@ -509,11 +585,11 @@ func (r *Route) Stop() error {
 
 	for _, lp := range r.lazyProducers {
 		if err := lp.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("error stopping producer for %s: %w", RedactURI(lp.uri), err))
+			errs = append(errs, fmt.Errorf("error stopping producer for %s: %w", lp.redactedURI(), err))
 		}
 	}
 
-	return errors.Join(errs...)
+	return errs
 }
 
 func (r *Route) configureAggregatorTimeouts(ctx context.Context) {
@@ -584,11 +660,17 @@ func (r *Route) forEachProcessor(visit func(Processor)) {
 		walkProcessors(processor, visit)
 	}
 	for _, clause := range r.onExceptions {
+		if clause == nil || clause.handler == nil {
+			continue
+		}
 		walkProcessors(clause.handler, visit)
 	}
 }
 
 func walkProcessors(processor Processor, visit func(Processor)) {
+	if processor == nil {
+		return
+	}
 	visit(processor)
 	if container, ok := processor.(childProcessorContainer); ok {
 		for _, child := range container.childProcessors() {

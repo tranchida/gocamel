@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,8 +60,8 @@ func TestRouteSetID_ReleasesPreviousID(t *testing.T) {
 	old := route.ID
 	require.NotEmpty(t, old)
 	route.SetID("renamed")
-	assert.False(t, ctx.usedRouteIDs[old])
-	assert.True(t, ctx.usedRouteIDs["renamed"])
+	assert.Zero(t, ctx.usedRouteIDs[old])
+	assert.Equal(t, 1, ctx.usedRouteIDs["renamed"])
 	assert.Equal(t, "renamed", route.ID)
 }
 
@@ -271,5 +272,199 @@ func TestCamelContext_RemoveRouteStopsAndReleasesID(t *testing.T) {
 	// only for empty IDs; an explicit SetID of the same value is still allowed.
 	next := ctx.CreateRoute()
 	assert.NotEqual(t, "custom-id", next.ID)
-	assert.False(t, ctx.usedRouteIDs["custom-id"])
+	assert.Zero(t, ctx.usedRouteIDs["custom-id"])
+}
+
+type slowStartComponent struct {
+	delay time.Duration
+}
+
+func (c *slowStartComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &slowStartEndpoint{uri: uri, delay: c.delay}, nil
+}
+
+type slowStartEndpoint struct {
+	uri   string
+	delay time.Duration
+}
+
+func (e *slowStartEndpoint) URI() string                       { return e.uri }
+func (e *slowStartEndpoint) CreateProducer() (Producer, error) { return &stubProducer{}, nil }
+func (e *slowStartEndpoint) CreateConsumer(Processor) (Consumer, error) {
+	return &slowStartConsumer{delay: e.delay}, nil
+}
+
+type slowStartConsumer struct {
+	delay time.Duration
+}
+
+func (c *slowStartConsumer) Start(context.Context) error {
+	time.Sleep(c.delay)
+	return nil
+}
+func (c *slowStartConsumer) Stop() error { return nil }
+
+func TestRemoveRoute_RacingStartAndDuplicateIDs(t *testing.T) {
+	t.Run("racing Start and RemoveRoute never orphans a running route", func(t *testing.T) {
+		for i := 0; i < 20; i++ {
+			ctx := NewCamelContext()
+			ctx.AddComponent("slow", &slowStartComponent{delay: 10 * time.Millisecond})
+
+			route := ctx.CreateRoute().From("slow:source")
+			route.SetID("raced-route")
+			require.NoError(t, ctx.Start())
+			require.NoError(t, route.Stop())
+
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_ = route.Start(ctx.GetContext())
+			}()
+			go func() {
+				defer wg.Done()
+				time.Sleep(2 * time.Millisecond)
+				_ = ctx.RemoveRoute(route)
+			}()
+			wg.Wait()
+
+			if route.IsStarted() && ctx.GetRoute("raced-route") == nil {
+				t.Fatalf("iteration %d: route is running outside CamelContext (orphaned)", i)
+			}
+			require.NoError(t, ctx.Stop())
+			assert.False(t, route.IsStarted(), "iteration %d: CamelContext.Stop must stop any remaining route", i)
+		}
+	})
+
+	t.Run("usedRouteIDs tracks duplicates and ignores detached routes", func(t *testing.T) {
+		ctx := NewCamelContext()
+
+		r1 := NewRoute()
+		r1.ID = "route-1"
+		ctx.AddRoute(r1)
+
+		r2 := NewRoute()
+		r2.ID = "route-1"
+		ctx.AddRoute(r2)
+		assert.Equal(t, 2, ctx.usedRouteIDs["route-1"])
+
+		require.NoError(t, ctx.RemoveRoute(r1))
+		assert.Equal(t, 1, ctx.usedRouteIDs["route-1"])
+		// Calling RemoveRoute a second time on a detached route must be a no-op.
+		require.NoError(t, ctx.RemoveRoute(r1))
+		assert.Equal(t, 1, ctx.usedRouteIDs["route-1"])
+
+		// route-1 is still held by r2 while routeCounter == 0, so auto-ID must skip to route-2.
+		r3 := NewRoute()
+		ctx.AddRoute(r3)
+		assert.Equal(t, "route-2", r3.ID)
+		assert.Equal(t, r2, ctx.GetRoute("route-1"))
+
+		// Renaming a detached context-owned route must be ignored and must not leak.
+		r4 := ctx.CreateRoute()
+		origID := r4.ID
+		require.NoError(t, ctx.RemoveRoute(r4))
+		r4.SetID("detached-leak")
+		assert.Equal(t, origID, r4.ID)
+		assert.Zero(t, ctx.usedRouteIDs["detached-leak"])
+		assert.Zero(t, ctx.usedRouteIDs[origID])
+
+		// Removing r2 releases route-1 completely.
+		require.NoError(t, ctx.RemoveRoute(r2))
+		assert.Zero(t, ctx.usedRouteIDs["route-1"])
+	})
+}
+
+type activeLoopComponent struct {
+	started chan struct{}
+	sendErr atomic.Value
+}
+
+func (c *activeLoopComponent) CreateEndpoint(uri string) (Endpoint, error) {
+	return &activeLoopEndpoint{uri: uri, comp: c}, nil
+}
+
+type activeLoopEndpoint struct {
+	uri  string
+	comp *activeLoopComponent
+}
+
+func (e *activeLoopEndpoint) URI() string { return e.uri }
+func (e *activeLoopEndpoint) CreateProducer() (Producer, error) {
+	return nil, fmt.Errorf("not supported")
+}
+func (e *activeLoopEndpoint) CreateConsumer(p Processor) (Consumer, error) {
+	return &activeLoopConsumer{processor: p, comp: e.comp}, nil
+}
+
+type activeLoopConsumer struct {
+	processor Processor
+	comp      *activeLoopComponent
+	stopOnce  sync.Once
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
+}
+
+func (c *activeLoopConsumer) Start(ctx context.Context) error {
+	c.stopCh = make(chan struct{})
+	var firstOnce sync.Once
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		for {
+			select {
+			case <-c.stopCh:
+				return
+			case <-ctx.Done():
+				return
+			default:
+			}
+			ex := NewExchange(ctx)
+			if err := ProcessSafely(c.processor, ex); err != nil {
+				c.comp.sendErr.CompareAndSwap(nil, err)
+			}
+			firstOnce.Do(func() { close(c.comp.started) })
+		}
+	}()
+	return nil
+}
+
+func (c *activeLoopConsumer) Stop() error {
+	c.stopOnce.Do(func() {
+		if c.stopCh != nil {
+			close(c.stopCh)
+		}
+	})
+	c.wg.Wait()
+	return nil
+}
+
+func TestCamelContext_StopResourcesStopsActiveBeforeDirect(t *testing.T) {
+	ctx := NewCamelContext()
+	active := &activeLoopComponent{started: make(chan struct{})}
+	ctx.AddComponent("active", active)
+
+	// Declare direct:sub BEFORE the active consumer calling it.
+	_, err := ctx.CreateRouteBuilder().
+		From("direct:sub").
+		ProcessFunc(func(*Exchange) error {
+			time.Sleep(15 * time.Millisecond)
+			return nil
+		}).
+		Build()
+	require.NoError(t, err)
+
+	_, err = ctx.CreateRouteBuilder().
+		From("active:src").
+		To("direct:sub").
+		Build()
+	require.NoError(t, err)
+
+	require.NoError(t, ctx.Start())
+	<-active.started
+	require.NoError(t, ctx.Stop())
+
+	if v := active.sendErr.Load(); v != nil {
+		t.Fatalf("active route failed during Stop(): %v", v.(error))
+	}
 }

@@ -121,6 +121,9 @@ func (m *ManagementServer) SetAllowedHosts(hosts ...string) *ManagementServer {
 // Start starts the management REST server on the given address (e.g.
 // "127.0.0.1:8081"). It returns an error when the address cannot be bound.
 func (m *ManagementServer) Start(addr string) error {
+	if m.context == nil {
+		return errors.New("management server: nil CamelContext")
+	}
 	m.acquireTransition()
 	defer m.releaseTransition()
 
@@ -285,17 +288,7 @@ func (m *ManagementServer) handleRoutes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	routes := m.context.GetRoutes()
-	routesInfo := make([]RouteInfo, 0, len(routes))
-
-	for _, route := range routes {
-		routesInfo = append(routesInfo, RouteInfo{
-			ID:          route.ID,
-			Description: route.Description,
-			Group:       route.Group,
-			Started:     route.IsStarted(),
-		})
-	}
+	routesInfo := m.context.routeInfos()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(routesInfo)
@@ -327,17 +320,17 @@ func (m *ManagementServer) handleRouteAction(w http.ResponseWriter, r *http.Requ
 
 	switch action {
 	case "start":
-		m.handleStartAction(w, route)
+		m.handleStartAction(w, route, routeID)
 
 	case "stop":
-		m.handleStopAction(w, route)
+		m.handleStopAction(w, route, routeID)
 
 	default:
 		http.Error(w, "Unknown action", http.StatusBadRequest)
 	}
 }
 
-func (m *ManagementServer) handleStartAction(w http.ResponseWriter, route *Route) {
+func (m *ManagementServer) handleStartAction(w http.ResponseWriter, route *Route, routeID string) {
 	if route.IsStarted() {
 		http.Error(w, "Route already started", http.StatusBadRequest)
 		return
@@ -348,9 +341,21 @@ func (m *ManagementServer) handleStartAction(w http.ResponseWriter, route *Route
 		http.Error(w, "Camel context not started", http.StatusConflict)
 		return
 	}
+	if !m.context.hasRoute(route) {
+		http.Error(w, "Route not found", http.StatusNotFound)
+		return
+	}
 	if err := route.Start(m.context.GetContext()); err != nil {
+		if !m.context.hasRoute(route) {
+			http.Error(w, "Route not found", http.StatusNotFound)
+			return
+		}
+		if !m.context.canStartRoute() {
+			http.Error(w, "Camel context not started", http.StatusConflict)
+			return
+		}
 		// Details stay in the logs: they may expose hosts or credentials.
-		LogError("Management API: failed to start route", "route", route.ID, "error", err)
+		LogError("Management API: failed to start route", "route", routeID, "error", err)
 		http.Error(w, "Failed to start route", http.StatusInternalServerError)
 		return
 	}
@@ -359,20 +364,27 @@ func (m *ManagementServer) handleStartAction(w http.ResponseWriter, route *Route
 		http.Error(w, "Camel context not started", http.StatusConflict)
 		return
 	}
+	if !m.context.hasRoute(route) {
+		_ = route.Stop()
+		http.Error(w, "Route not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"started"}`))
+	_, _ = w.Write([]byte(`{"status":"started"}`))
 }
 
-func (m *ManagementServer) handleStopAction(w http.ResponseWriter, route *Route) {
+func (m *ManagementServer) handleStopAction(w http.ResponseWriter, route *Route, routeID string) {
 	if !route.IsStarted() {
 		http.Error(w, "Route not started", http.StatusBadRequest)
 		return
 	}
 	if err := route.Stop(); err != nil {
-		LogError("Management API: failed to stop route", "route", route.ID, "error", err)
+		LogError("Management API: failed to stop route", "route", routeID, "error", err)
 		http.Error(w, "Failed to stop route", http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"stopped"}`))
+	_, _ = w.Write([]byte(`{"status":"stopped"}`))
 }

@@ -3,9 +3,12 @@ package gocamel
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -291,4 +294,94 @@ func TestManagementServer_RouteAction(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Errorf("Expected status NotFound for unknown route, got %v", w.Code)
 	}
+}
+
+func TestManagementServer_ConcurrentRouteRenameAndRemoval(t *testing.T) {
+	t.Run("rejects nil context on Start", func(t *testing.T) {
+		m := NewManagementServer(nil)
+		err := m.Start("127.0.0.1:0")
+		require.Error(t, err)
+	})
+
+	t.Run("action responses carry application/json Content-Type", func(t *testing.T) {
+		ctx, route := newManagedContext(t)
+		h := NewManagementServer(ctx).handler()
+
+		w := managementRequest(h, http.MethodPost, "/api/routes/managed/stop", nil)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+		assert.False(t, route.IsStarted())
+
+		w = managementRequest(h, http.MethodPost, "/api/routes/managed/start", nil)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+		assert.True(t, route.IsStarted())
+	})
+
+	t.Run("concurrent route rename while polling /api/routes is race-free", func(t *testing.T) {
+		ctx := NewCamelContext()
+		ctx.AddComponent("stub", &stubComponent{})
+		route := ctx.CreateRoute()
+		route.SetID("rename-0")
+		route.From("stub:source")
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+
+		h := NewManagementServer(ctx).handler()
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := 1; i <= 50; i++ {
+				route.SetID(fmt.Sprintf("rename-%d", i))
+			}
+			close(stop)
+		}()
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				w := managementRequest(h, http.MethodGet, "/api/routes", nil)
+				assert.Equal(t, http.StatusOK, w.Code)
+			}
+		}()
+		wg.Wait()
+	})
+
+	t.Run("racing POST /start against RemoveRoute never orphans running route", func(t *testing.T) {
+		for i := 0; i < 20; i++ {
+			ctx := NewCamelContext()
+			ctx.AddComponent("slow", &slowStartComponent{delay: 10 * time.Millisecond})
+			route := ctx.CreateRoute().From("slow:source")
+			route.SetID("raced")
+			require.NoError(t, ctx.Start())
+			// Stop only the route while keeping context started.
+			require.NoError(t, route.Stop())
+
+			h := NewManagementServer(ctx).handler()
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_ = managementRequest(h, http.MethodPost, "/api/routes/raced/start", nil)
+			}()
+			go func() {
+				defer wg.Done()
+				time.Sleep(2 * time.Millisecond)
+				_ = ctx.RemoveRoute(route)
+			}()
+			wg.Wait()
+
+			if route.IsStarted() && ctx.GetRoute("raced") == nil {
+				t.Fatalf("iteration %d: route is running outside CamelContext (orphaned)", i)
+			}
+			require.NoError(t, ctx.Stop())
+			assert.False(t, route.IsStarted(), "iteration %d: context Stop must stop any remaining route", i)
+		}
+	})
 }

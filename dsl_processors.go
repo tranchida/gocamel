@@ -91,8 +91,10 @@ func removePropertyProcessor(key string) Processor {
 // matching pattern except those matching one of the exclusion patterns. The
 // Camel wildcard '*' is supported.
 func removePropertiesProcessor(pattern string, excludePatterns []string) Processor {
+	mainPattern := compileWildcardPattern(pattern)
+	excludes := compileWildcardPatterns(excludePatterns)
 	return ProcessorFunc(func(exchange *Exchange) error {
-		exchange.RemoveProperties(pattern, excludePatterns...)
+		exchange.removePropertiesWith(mainPattern, excludes)
 		return nil
 	})
 }
@@ -110,8 +112,10 @@ func removeHeaderProcessor(name string) Processor {
 // the In message matching pattern except those matching one of the exclusion
 // patterns.
 func removeHeadersProcessor(pattern string, excludePatterns []string) Processor {
+	mainPattern := compileWildcardPattern(pattern)
+	excludes := compileWildcardPatterns(excludePatterns)
 	return ProcessorFunc(func(exchange *Exchange) error {
-		exchange.GetIn().RemoveHeaders(pattern, excludePatterns...)
+		exchange.GetIn().removeHeadersWith(mainPattern, excludes)
 		return nil
 	})
 }
