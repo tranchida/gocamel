@@ -118,7 +118,8 @@ func compileSimpleRegex(pattern string) (*regexp.Regexp, error) {
 	if len(pattern) > MaxSimpleInputBytes {
 		return nil, fmt.Errorf("regex pattern length %d exceeds MaxSimpleInputBytes (%d)", len(pattern), MaxSimpleInputBytes)
 	}
-	if MaxSimpleTemplateCacheEntries > 0 {
+	maxEntries := MaxSimpleTemplateCacheEntries
+	if maxEntries > 0 {
 		if cached, ok := simpleRegexCache.Load(pattern); ok {
 			return cached.(*regexp.Regexp), nil
 		}
@@ -129,9 +130,20 @@ func compileSimpleRegex(pattern string) (*regexp.Regexp, error) {
 		return nil, fmt.Errorf("invalid regex pattern: %w", err)
 	}
 
-	if MaxSimpleTemplateCacheEntries > 0 && simpleRegexCacheSize.Load() < int64(MaxSimpleTemplateCacheEntries) {
-		if _, loaded := simpleRegexCache.LoadOrStore(pattern, re); !loaded {
-			simpleRegexCacheSize.Add(1)
+	if maxEntries > 0 {
+		for {
+			cur := simpleRegexCacheSize.Load()
+			if cur >= int64(maxEntries) {
+				break
+			}
+			if simpleRegexCacheSize.CompareAndSwap(cur, cur+1) {
+				actual, loaded := simpleRegexCache.LoadOrStore(pattern, re)
+				if loaded {
+					simpleRegexCacheSize.Add(-1)
+					return actual.(*regexp.Regexp), nil
+				}
+				break
+			}
 		}
 	}
 	return re, nil

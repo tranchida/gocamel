@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -2310,5 +2311,66 @@ func TestSimple_UTF8StringsAndQuotedBraces(t *testing.T) {
 		_, err = badTmpl.EvaluateAsBool(ex)
 		require.Error(t, err)
 		assert.Equal(t, base+3, simpleRegexCacheSize.Load())
+	})
+
+	t.Run("regex cache cap holds strictly under concurrency", func(t *testing.T) {
+		savedCap := MaxSimpleTemplateCacheEntries
+		t.Cleanup(func() {
+			MaxSimpleTemplateCacheEntries = savedCap
+		})
+
+		const waves = 25
+		const workers = 32
+
+		for wave := 0; wave < waves; wave++ {
+			base := simpleRegexCacheSize.Load()
+			capLimit := base + 1
+			MaxSimpleTemplateCacheEntries = int(capLimit)
+
+			// Pre-parse one template per worker so half the workers race via
+			// EvaluateAsBool and half race directly via compileSimpleRegex.
+			templates := make([]*SimpleTemplate, workers)
+			for w := 0; w < workers; w++ {
+				expr := fmt.Sprintf(`${body regex '^conc-%d-%d-[0-9]{1,3}$'}`, wave, w)
+				tmpl, err := ParseSimpleTemplate(expr)
+				require.NoError(t, err)
+				templates[w] = tmpl
+			}
+
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			errs := make(chan error, workers*2)
+
+			for w := 0; w < workers; w++ {
+				wg.Add(1)
+				go func(workerID int) {
+					defer wg.Done()
+					ex := NewExchange(context.Background())
+					ex.GetIn().SetBody(fmt.Sprintf("conc-%d-%d-42", wave, workerID))
+					<-start
+					if _, err := compileSimpleRegex(fmt.Sprintf(`^direct-%d-%d-\d+$`, wave, workerID)); err != nil {
+						errs <- err
+						return
+					}
+					got, err := templates[workerID].EvaluateAsBool(ex)
+					if err != nil {
+						errs <- err
+						return
+					}
+					if !got {
+						errs <- fmt.Errorf("wave %d worker %d: expected regex match", wave, workerID)
+					}
+				}(w)
+			}
+
+			close(start)
+			wg.Wait()
+			close(errs)
+
+			for err := range errs {
+				require.NoError(t, err)
+			}
+			assert.LessOrEqual(t, simpleRegexCacheSize.Load(), capLimit, "wave %d overshot cap", wave)
+		}
 	})
 }
