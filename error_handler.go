@@ -1,9 +1,12 @@
 package gocamel
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -51,6 +54,10 @@ func (h *NoErrorHandler) HandleError(exchange *Exchange, err error) error {
 	return err // bubble up
 }
 
+var globalDeadLetterID atomic.Uint64
+
+const deadLetterSendTimeout = 30 * time.Second
+
 // DeadLetterChannel implements the Dead Letter Channel EIP pattern.
 // When an exchange fails during routing, it is sent to a dead letter endpoint
 // after optionally retrying (redelivery). The original error is preserved in
@@ -69,9 +76,9 @@ type DeadLetterChannel struct {
 	useExponentialBackoff bool
 	backoffMultiplier     float64
 	handled               bool
+	syncPropertyKey       string
 	mu                    sync.Mutex
-	retryAttempts         map[string]int      // keyed by exchange.ID; protected by mu
-	synchronized          map[string]struct{} // exchange IDs with a cleanup callback registered
+	retryAttempts         map[string]int // keyed by exchange.ID; protected by mu
 }
 
 // DeadLetterChannelOption is a functional option for configuring DeadLetterChannel.
@@ -95,9 +102,15 @@ func RedeliveryDelay(d time.Duration) DeadLetterChannelOption {
 
 // ExponentialBackoff enables exponential backoff for redeliveries.
 // The delay is multiplied by backoffMultiplier on each attempt.
+// Non-positive, NaN, and infinite multipliers keep the default multiplier (2.0).
 func ExponentialBackoff(multiplier float64) DeadLetterChannelOption {
 	return func(dlc *DeadLetterChannel) {
 		dlc.useExponentialBackoff = true
+		if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier <= 0 {
+			LogWarn("dead letter channel: invalid exponential backoff multiplier; using default",
+				"multiplier", multiplier, "default", dlc.backoffMultiplier)
+			return
+		}
 		dlc.backoffMultiplier = multiplier
 	}
 }
@@ -125,8 +138,8 @@ func NewDeadLetterChannel(context *CamelContext, deadLetterURI string, opts ...D
 		redeliveryDelay:       1 * time.Second,
 		useExponentialBackoff: false,
 		backoffMultiplier:     2.0,
+		syncPropertyKey:       fmt.Sprintf("CamelDeadLetterSynchronized.%d", globalDeadLetterID.Add(1)),
 		retryAttempts:         make(map[string]int),
-		synchronized:          make(map[string]struct{}),
 	}
 	for _, opt := range opts {
 		opt(dlc)
@@ -137,50 +150,66 @@ func NewDeadLetterChannel(context *CamelContext, deadLetterURI string, opts ...D
 // deadLetterSynchronization cleans up retryAttempts when an exchange succeeds
 // after one or more retries — preventing a map leak on the happy path.
 type deadLetterSynchronization struct {
-	dlc        *DeadLetterChannel
-	exchangeID string
+	dlc         *DeadLetterChannel
+	exchangeID  string
+	syncPropKey string
 }
 
 func (s *deadLetterSynchronization) OnComplete(exchange *Exchange) {
 	s.dlc.mu.Lock()
 	delete(s.dlc.retryAttempts, s.exchangeID)
-	delete(s.dlc.synchronized, s.exchangeID)
 	s.dlc.mu.Unlock()
+	if exchange != nil && s.syncPropKey != "" {
+		exchange.RemoveProperty(s.syncPropKey)
+	}
 }
 
 func (s *deadLetterSynchronization) OnFailure(exchange *Exchange) {
-	s.dlc.mu.Lock()
-	delete(s.dlc.retryAttempts, s.exchangeID)
-	delete(s.dlc.synchronized, s.exchangeID)
-	s.dlc.mu.Unlock()
+	s.OnComplete(exchange)
 }
 
 // HandleError implements the ErrorHandler interface.
 // It first attempts redelivery (if configured), then sends the failed exchange
 // to the dead letter endpoint.
 func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
+	if exchange == nil {
+		return err
+	}
+	if IsDeadLettered(exchange) {
+		return err
+	}
+
 	exID := exchange.ID
 
 	dlc.mu.Lock()
+	if dlc.syncPropertyKey == "" {
+		dlc.syncPropertyKey = fmt.Sprintf("CamelDeadLetterSynchronized.%d", globalDeadLetterID.Add(1))
+	}
+	syncPropKey := dlc.syncPropertyKey
 	attempt := dlc.retryAttempts[exID]
-	_, alreadyTracked := dlc.synchronized[exID]
-	dlc.retryAttempts[exID] = attempt + 1
-	if !alreadyTracked {
-		dlc.synchronized[exID] = struct{}{}
+	canRetry := attempt < dlc.maxRedeliveries
+	if canRetry {
+		dlc.retryAttempts[exID] = attempt + 1
+	} else {
+		delete(dlc.retryAttempts, exID)
 	}
 	dlc.mu.Unlock()
 
-	// Register a one-time cleanup callback so that if the exchange eventually
-	// succeeds after retries the map entry is freed (avoids leak on happy path).
-	// Keyed on its own set rather than on attempt == 0: ResetRetryState clears
-	// the counter after every successful step, so a later failure of the same
-	// exchange would otherwise register a duplicate callback each time.
-	if !alreadyTracked {
-		exchange.AddSynchronization(&deadLetterSynchronization{dlc: dlc, exchangeID: exID})
-	}
-
 	// 1. Try redelivery
-	if attempt < dlc.maxRedeliveries {
+	if canRetry {
+		// Track synchronization registration on the exchange itself rather than in
+		// a map on DeadLetterChannel, so DirectProducer exchanges that never call
+		// Exchange.Done() cannot leak entries on the error handler.
+		syncedID, _ := exchange.GetPropertyAsString(syncPropKey)
+		if syncedID != exID {
+			exchange.SetProperty(syncPropKey, exID)
+			exchange.AddSynchronization(&deadLetterSynchronization{
+				dlc:         dlc,
+				exchangeID:  exID,
+				syncPropKey: syncPropKey,
+			})
+		}
+
 		// Wait before retrying: base delay for the first redelivery, then
 		// base * multiplier^attempt when exponential backoff is enabled.
 		delay := dlc.redeliveryDelay
@@ -192,9 +221,9 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 			// and surface the cancellation alongside the original error.
 			dlc.mu.Lock()
 			delete(dlc.retryAttempts, exID)
-			delete(dlc.synchronized, exID)
 			dlc.mu.Unlock()
-			return fmt.Errorf("dead letter channel: redelivery aborted: %w (original error: %v)", sleepErr, err)
+			exchange.RemoveProperty(syncPropKey)
+			return fmt.Errorf("dead letter channel: redelivery aborted: %w (original error: %w)", sleepErr, err)
 		}
 
 		// Reset the output message for the retry
@@ -202,16 +231,15 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 		return nil // signal to retry the exchange
 	}
 
-	// 2. Max redeliveries reached or no redelivery configured — clean up retry state
-	dlc.mu.Lock()
-	delete(dlc.retryAttempts, exID)
-	delete(dlc.synchronized, exID)
-	dlc.mu.Unlock()
+	// 2. Max redeliveries reached or no redelivery configured — clean up tracking property
+	exchange.RemoveProperty(syncPropKey)
+
+	redactedURI := RedactURI(dlc.deadLetterURI)
 
 	// Prepare exchange for dead letter — inject error details as properties and headers
 	exchange.SetProperty(CamelExceptionCaught, err)
 	exchange.SetProperty(CamelRedeliveryCounter, attempt)
-	exchange.SetProperty("CamelDeadLetterChannel", dlc.deadLetterURI)
+	exchange.SetProperty("CamelDeadLetterChannel", redactedURI)
 
 	// Try to preserve failure endpoint/route from existing properties if available
 	failureEndpoint, _ := exchange.GetProperty(CamelFailureEndpoint)
@@ -230,10 +258,17 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 	// Set error headers on the IN message for visibility
 	exchange.GetIn().SetHeader("CamelRedelivered", attempt > 0)
 	exchange.GetIn().SetHeader("CamelRedeliveryCounter", attempt)
-	exchange.GetIn().SetHeader("CamelExceptionMessage", err.Error())
+	if err != nil {
+		exchange.GetIn().SetHeader("CamelExceptionMessage", err.Error())
+	}
 
-	// Store the error on the exchange itself
+	// Store the error on the exchange itself and clear any partial output from the failed processor.
 	exchange.Error = err
+	exchange.Out = NewMessage()
+
+	if dlc.context == nil {
+		return fmt.Errorf("dead letter channel: CamelContext is nil (original error: %w)", err)
+	}
 
 	// Send to dead letter endpoint via the shared producer cache. Creating,
 	// starting and stopping a producer for every dead-lettered message would
@@ -242,16 +277,29 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 	// CamelContext.Stop() owns its lifecycle.
 	producer, release, prodErr := dlc.context.acquireProducer(dlc.deadLetterURI)
 	if prodErr != nil {
-		return fmt.Errorf("dead letter channel: failed to obtain producer for %s: %w (original error: %v)",
-			dlc.deadLetterURI, prodErr, err)
+		return fmt.Errorf("dead letter channel: failed to obtain producer for %s: %w (original error: %w)",
+			redactedURI, prodErr, err)
+	}
+	defer release()
+
+	// If the exchange context was already cancelled (or missing), send using a
+	// bounded WithoutCancel context so DLQ delivery still succeeds.
+	origCtx := exchange.Context
+	if origCtx == nil || origCtx.Err() != nil {
+		baseCtx := origCtx
+		if baseCtx == nil {
+			baseCtx = context.Background()
+		}
+		dlqCtx, cancel := context.WithTimeout(context.WithoutCancel(baseCtx), deadLetterSendTimeout)
+		defer cancel()
+		exchange.Context = dlqCtx
+		defer func() { exchange.Context = origCtx }()
 	}
 
 	// Send the failed exchange to the dead letter queue
-	sendErr := producer.Send(exchange)
-	release()
-	if sendErr != nil {
-		return fmt.Errorf("dead letter channel: failed to send to %s: %w (original error: %v)",
-			dlc.deadLetterURI, sendErr, err)
+	if sendErr := producer.Send(exchange); sendErr != nil {
+		return fmt.Errorf("dead letter channel: failed to send to %s: %w (original error: %w)",
+			redactedURI, sendErr, err)
 	}
 	exchange.SetProperty(CamelDeadLettered, true)
 
@@ -259,7 +307,7 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 	// original error is returned so the consumer knows processing failed;
 	// with DeadLetterHandled(true) the exchange counts as handled.
 	if dlc.handled {
-		return fmt.Errorf("%w: dead-lettered to %s: %w", ErrStopRouting, dlc.deadLetterURI, err)
+		return fmt.Errorf("%w: dead-lettered to %s: %w", ErrStopRouting, redactedURI, err)
 	}
 	return err
 }
@@ -270,6 +318,9 @@ func (dlc *DeadLetterChannel) HandleError(exchange *Exchange, err error) error {
 // care of: a broker consumer must acknowledge it rather than redeliver it,
 // otherwise every redelivery would dead-letter a duplicate.
 func IsDeadLettered(exchange *Exchange) bool {
+	if exchange == nil {
+		return false
+	}
 	v, _ := exchange.GetPropertyAsBool(CamelDeadLettered)
 	return v
 }
@@ -289,13 +340,25 @@ func exponentialBackoffDelay(base time.Duration, multiplier float64, attempt int
 	if base <= 0 {
 		return 0
 	}
+	if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier <= 0 {
+		if base > maxRedeliveryDelay {
+			return maxRedeliveryDelay
+		}
+		return base
+	}
 	delay := base
+	if delay > maxRedeliveryDelay {
+		delay = maxRedeliveryDelay
+	}
 	for i := 0; i < attempt; i++ {
 		next := float64(delay) * multiplier
-		if next <= 0 || next > float64(maxRedeliveryDelay) {
+		if math.IsNaN(next) || math.IsInf(next, 1) || next >= float64(maxRedeliveryDelay) {
 			return maxRedeliveryDelay
 		}
 		delay = time.Duration(next)
+		if delay <= 0 {
+			return 0
+		}
 	}
 	return delay
 }

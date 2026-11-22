@@ -70,7 +70,11 @@ func (s *SagaProcessor) AddStep(action, compensation Processor) {
 }
 
 // SetRepository sets the repository the saga state is persisted to.
+// A nil repository is ignored so the processor retains its active repository.
 func (s *SagaProcessor) SetRepository(repo SagaRepository) {
+	if isNilValue(repo) {
+		return
+	}
 	s.repository = repo
 }
 
@@ -104,6 +108,9 @@ func (s *SagaProcessor) childProcessors() []Processor {
 // If an action fails, it catches the error, triggers compensating steps for all
 // completed actions in reverse order (LIFO), and returns the action error.
 func (s *SagaProcessor) Process(exchange *Exchange) error {
+	if isNilValue(s.repository) {
+		return errors.New("saga: repository must not be nil")
+	}
 	sagaID, release := acquireSagaID(exchange)
 	defer release()
 	// Persisting must outlive a cancelled request context: the compensation
@@ -124,16 +131,19 @@ func (s *SagaProcessor) Process(exchange *Exchange) error {
 				}
 				return err
 			}
+			exchange.Out = NewMessage()
 			s.compensate(ctx, exchange, &state, saved, err)
 			return fmt.Errorf("saga action failed: %w", err)
 		}
 
+		propagateOutToInAndReset(exchange)
 		if step.Compensation == nil {
 			continue
 		}
 		state.CompletedSteps = append(state.CompletedSteps, completedStep(i, step.Compensation))
 		if err := s.checkpoint(ctx, &state, exchange); err != nil {
-			s.compensate(ctx, exchange, &state, false, err)
+			exchange.Out = NewMessage()
+			s.compensate(ctx, exchange, &state, saved, err)
 			return fmt.Errorf("saga %s: checkpoint after step %d failed: %w", sagaID, i, err)
 		}
 		saved = true
@@ -146,8 +156,9 @@ func (s *SagaProcessor) Process(exchange *Exchange) error {
 }
 
 // compensate runs the pending compensations last to first. Each one gets a
-// copy of the exchange. A failed compensation stays in the persisted state so
-// a later Recover can retry it; the saga state is removed once nothing is left.
+// deep copy of the exchange with the detached context. A failed compensation
+// stays in the persisted state so a later Recover can retry it; the saga state
+// is removed once nothing is left.
 func (s *SagaProcessor) compensate(ctx context.Context, exchange *Exchange, state *SagaState, persist bool, cause error) {
 	if len(state.CompletedSteps) == 0 {
 		return
@@ -160,7 +171,10 @@ func (s *SagaProcessor) compensate(ctx context.Context, exchange *Exchange, stat
 	for i := len(state.CompletedSteps) - 1; i >= 0; i-- {
 		completed := state.CompletedSteps[i]
 		comp := s.steps[completed.Index].Compensation
-		if compErr := s.run(comp, exchange.Copy(), false); compErr != nil {
+		compEx := exchange.DeepCopy()
+		compEx.Context = ctx
+		compEx.Out = NewMessage()
+		if compErr := CompleteExchange(compEx, s.run(comp, compEx, true)); compErr != nil {
 			LogError("saga: compensation failed",
 				"saga_id", state.SagaID,
 				"compensation_index", completed.Index,
@@ -218,7 +232,8 @@ func (s *SagaProcessor) run(p Processor, exchange *Exchange, apply bool) error {
 	if s.timeout <= 0 {
 		return ProcessSafely(p, exchange)
 	}
-	ctx, cancel := context.WithTimeout(exchangeContext(exchange), s.timeout)
+	timeoutCause := errors.New("saga step timeout")
+	ctx, cancel := context.WithTimeoutCause(exchangeContext(exchange), s.timeout, timeoutCause)
 	defer cancel()
 	work := exchange.DeepCopy()
 	work.Context = ctx
@@ -229,13 +244,19 @@ func (s *SagaProcessor) run(p Processor, exchange *Exchange, apply bool) error {
 	case err := <-done:
 		if apply {
 			exchange.In, exchange.Out, exchange.Properties, exchange.Error = work.In, work.Out, work.Properties, work.Error
+			if len(work.synchronizations) > 0 {
+				exchange.synchronizations = append(exchange.synchronizations, work.synchronizations...)
+			}
 		}
-		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if err != nil && errors.Is(context.Cause(ctx), timeoutCause) {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				return fmt.Errorf("%w after %s: %w: %w", ErrSagaStepTimeout, s.timeout, ctx.Err(), err)
+			}
 			return fmt.Errorf("%w after %s: %w", ErrSagaStepTimeout, s.timeout, err)
 		}
 		return err
 	case <-ctx.Done():
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if errors.Is(context.Cause(ctx), timeoutCause) {
 			return fmt.Errorf("%w after %s: %w", ErrSagaStepTimeout, s.timeout, ctx.Err())
 		}
 		return ctx.Err()
@@ -254,6 +275,9 @@ func (s *SagaProcessor) run(p Processor, exchange *Exchange, apply bool) error {
 // SagaCompensating, for manual handling. Remaining URI compensations still
 // run. The returned error joins every failure.
 func (s *SagaProcessor) Recover(ctx context.Context, camelCtx *CamelContext) error {
+	if isNilValue(s.repository) {
+		return errors.New("saga: repository must not be nil")
+	}
 	ids, err := s.repository.ListIncomplete(ctx)
 	if err != nil {
 		return fmt.Errorf("saga recovery: failed to list incomplete sagas: %w", err)
@@ -301,9 +325,11 @@ func (s *SagaProcessor) recoverSaga(ctx context.Context, camelCtx *CamelContext,
 		} else {
 			uri := completed.CompensationURI
 			send := ProcessorFunc(func(ex *Exchange) error { return camelCtx.sendToURI(uri, ex) })
-			if err := s.run(send, recoveryExchange(ctx, state), false); err != nil {
-				stepErr = fmt.Errorf("saga %s: compensation %s of step %d failed: %w", sagaID, uri, completed.Index, err)
-				LogError("saga: recovered compensation failed", "saga_id", sagaID, "uri", uri, "error", err)
+			recEx := recoveryExchange(ctx, state)
+			if err := CompleteExchange(recEx, s.run(send, recEx, true)); err != nil {
+				redactedURI := RedactURI(uri)
+				stepErr = fmt.Errorf("saga %s: compensation %s of step %d failed: %w", sagaID, redactedURI, completed.Index, err)
+				LogError("saga: recovered compensation failed", "saga_id", sagaID, "uri", redactedURI, "error", err)
 			}
 		}
 		if stepErr != nil {
@@ -324,6 +350,9 @@ func (s *SagaProcessor) recoverSaga(ctx context.Context, camelCtx *CamelContext,
 // recoverOnStart is called by CamelContext.Start once every route is
 // started, so that compensation endpoints served by routes are reachable.
 func (s *SagaProcessor) recoverOnStart(ctx context.Context, camelCtx *CamelContext) {
+	if isNilValue(s.repository) {
+		return
+	}
 	if s.recoverIncomplete {
 		if err := s.Recover(ctx, camelCtx); err != nil {
 			LogError("saga: recovery of incomplete sagas finished with errors", "error", err)
@@ -345,6 +374,9 @@ func (s *SagaProcessor) recoverOnStart(ctx context.Context, camelCtx *CamelConte
 }
 
 func recoveryExchange(ctx context.Context, state SagaState) *Exchange {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ex := NewExchange(ctx)
 	ex.GetIn().SetBody(state.Message.Body)
 	ex.GetIn().SetHeaders(state.Message.Headers)

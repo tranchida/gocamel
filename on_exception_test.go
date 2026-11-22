@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -603,3 +604,67 @@ func TestOnException_ConcurrentExchanges(t *testing.T) {
 	assert.Equal(t, int32(n*3), calls.Load())
 	assert.Equal(t, int32(n), handled.Load())
 }
+
+func TestOnException_ContinuedRespectsStopRouting(t *testing.T) {
+	t.Run("Stop EIP via direct route in Continued handler stops outer route", func(t *testing.T) {
+		ctx := NewCamelContext()
+		var after atomic.Int32
+
+		_, err := ctx.CreateRouteBuilder().
+			From("direct:stop-in-handler").
+			Stop().
+			Build()
+		require.NoError(t, err)
+
+		route, err := ctx.CreateRouteBuilder().
+			OnException(errOnExceptionSentinel).
+			Continued(true).
+			To("direct:stop-in-handler").
+			End().
+			From("direct:in").
+			ProcessFunc(func(*Exchange) error { return errOnExceptionSentinel }).
+			ProcessFunc(func(*Exchange) error { after.Add(1); return nil }).
+			Build()
+		require.NoError(t, err)
+		startOnExceptionContext(t, ctx)
+
+		routeErr := route.Process(NewExchange(context.Background()))
+		assert.ErrorIs(t, routeErr, ErrStopRouting)
+		assert.Equal(t, int32(0), after.Load(), "Stop() in Continued handler must stop the route")
+	})
+
+	t.Run("ErrStopRouting returned from Continued handler stops route", func(t *testing.T) {
+		ctx := NewCamelContext()
+		var after atomic.Int32
+
+		route, err := ctx.CreateRouteBuilder().
+			OnException(errOnExceptionSentinel).
+			Continued(true).
+			ProcessFunc(func(*Exchange) error { return ErrStopRouting }).
+			End().
+			From("direct:in").
+			ProcessFunc(func(*Exchange) error { return errOnExceptionSentinel }).
+			ProcessFunc(func(*Exchange) error { after.Add(1); return nil }).
+			Build()
+		require.NoError(t, err)
+
+		routeErr := route.Process(NewExchange(context.Background()))
+		assert.ErrorIs(t, routeErr, ErrStopRouting)
+		assert.Equal(t, int32(0), after.Load(), "ErrStopRouting from Continued handler must stop the route")
+	})
+}
+
+func TestOnException_BackOffMultiplierRejectsNaNAndInf(t *testing.T) {
+	for _, mult := range []float64{0, -1, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		ctx := NewCamelContext()
+		_, err := ctx.CreateRouteBuilder().
+			OnException(errOnExceptionSentinel).
+			BackOffMultiplier(mult).
+			End().
+			From("direct:in").
+			Build()
+		assert.Errorf(t, err, "BackOffMultiplier(%v) must fail Build", mult)
+		assert.Empty(t, ctx.GetRoutes(), "failed build must detach route from context")
+	}
+}
+

@@ -2,6 +2,7 @@ package gocamel
 
 import (
 	"context"
+	"math"
 	"net/url"
 	"strconv"
 	"time"
@@ -61,14 +62,20 @@ func ParseConsumerRedeliveryPolicy(u *url.URL) ConsumerRedeliveryPolicy {
 	return p
 }
 
+const maxMillisDuration = math.MaxInt64 / int64(time.Millisecond)
+
 func parseMillisOption(u *url.URL, key string, def time.Duration) time.Duration {
 	v := GetConfigValue(u, key)
 	if v == "" {
 		return def
 	}
+	scheme := ""
+	if u != nil {
+		scheme = u.Scheme
+	}
 	ms, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || ms < 0 {
-		LogWarn(u.Scheme+": invalid "+key+"; using default", "value", v, "default", def)
+	if err != nil || ms < 0 || ms > maxMillisDuration {
+		LogWarn(scheme+": invalid "+key+"; using default", "value", v, "default", def)
 		return def
 	}
 	return time.Duration(ms) * time.Millisecond
@@ -92,8 +99,19 @@ func (p ConsumerRedeliveryPolicy) Backoff(redeliveries int) time.Duration {
 // Wait sleeps for Backoff(redeliveries). It returns false when ctx is
 // cancelled first, i.e. the consumer is stopping.
 func (p ConsumerRedeliveryPolicy) Wait(ctx context.Context, redeliveries int) bool {
-	timer := time.NewTimer(p.Backoff(redeliveries))
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	delay := p.Backoff(redeliveries)
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
+	if ctx == nil {
+		<-timer.C
+		return true
+	}
 	select {
 	case <-ctx.Done():
 		return false

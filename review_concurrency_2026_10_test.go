@@ -435,11 +435,10 @@ func TestDeadLetterChannel_CleansUpSynchronizedMapAndEnricherCompletesChildExcha
 	ex := NewExchange(context.Background())
 	_ = dlc.HandleError(ex, errors.New("boom"))
 	dlc.mu.Lock()
-	syncLen := len(dlc.synchronized)
 	retryLen := len(dlc.retryAttempts)
 	dlc.mu.Unlock()
-	assert.Equal(t, 0, syncLen)
 	assert.Equal(t, 0, retryLen)
+	assert.Empty(t, ex.synchronizations)
 
 	enricher := NewContentEnricher(ctx, "direct:enrich-uow", nil)
 	parentEx := NewExchange(context.Background())

@@ -323,3 +323,23 @@ func TestSagaProcessor_DSLRejectsNilActionAndHandlesEmptyCompensation(t *testing
 		t.Errorf("expected no incomplete saga checkpoint for empty compensationURI, got %v", incomplete)
 	}
 }
+
+func TestSagaProcessor_SetRepositoryNilDoesNotPanic(t *testing.T) {
+	saga := NewSagaProcessor()
+	saga.SetRepository(nil)
+	saga.AddStep(
+		ProcessorFunc(func(*Exchange) error { return nil }),
+		ProcessorFunc(func(*Exchange) error { return nil }),
+	)
+	saga.AddStep(
+		ProcessorFunc(func(*Exchange) error { return errors.New("boom") }),
+		nil,
+	)
+
+	ex := NewExchange(context.Background())
+	err := saga.Process(ex)
+	if err == nil {
+		t.Fatal("expected saga to return failure error")
+	}
+}
+

@@ -23,6 +23,7 @@ var (
 // CircuitBreaker implements the Circuit Breaker EIP.
 type CircuitBreaker struct {
 	state             CircuitBreakerState
+	generation        uint64
 	failureThreshold  int
 	failureCount      int
 	successThreshold  int
@@ -48,33 +49,65 @@ func NewCircuitBreaker() *CircuitBreaker {
 
 // SetProcessor sets the main processor to be executed when the circuit is not open.
 func (cb *CircuitBreaker) SetProcessor(p Processor) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 	cb.processor = p
 }
 
 // SetFallbackProcessor sets the fallback processor to be executed when the circuit is open
 // or when the main processor fails.
 func (cb *CircuitBreaker) SetFallbackProcessor(p Processor) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 	cb.fallbackProcessor = p
 }
 
 // SetFailureThreshold sets the number of failures before opening the circuit.
 func (cb *CircuitBreaker) SetFailureThreshold(threshold int) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 	cb.failureThreshold = threshold
 }
 
 // SetSuccessThreshold sets the number of successes in Half-Open state before closing the circuit.
 func (cb *CircuitBreaker) SetSuccessThreshold(threshold int) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 	cb.successThreshold = threshold
 }
 
 // SetOpenTimeout sets the duration to wait in Open state before moving to Half-Open.
 func (cb *CircuitBreaker) SetOpenTimeout(timeout time.Duration) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 	cb.openTimeout = timeout
+}
+
+// Validate implements the Validator interface.
+func (cb *CircuitBreaker) Validate() error {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.validateLocked()
+}
+
+func (cb *CircuitBreaker) validateLocked() error {
+	if cb.failureThreshold <= 0 {
+		return fmt.Errorf("circuit breaker: failureThreshold must be > 0, got %d", cb.failureThreshold)
+	}
+	if cb.successThreshold <= 0 {
+		return fmt.Errorf("circuit breaker: successThreshold must be > 0, got %d", cb.successThreshold)
+	}
+	if cb.openTimeout <= 0 {
+		return fmt.Errorf("circuit breaker: openTimeout must be > 0, got %s", cb.openTimeout)
+	}
+	return nil
 }
 
 // childProcessors exposes the nested processors so the route can wire
 // completion timeouts for aggregators nested inside this circuit breaker.
 func (cb *CircuitBreaker) childProcessors() []Processor {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
 	var procs []Processor
 	if cb.processor != nil {
 		procs = append(procs, cb.processor)
@@ -87,20 +120,28 @@ func (cb *CircuitBreaker) childProcessors() []Processor {
 
 // Process implements the Processor interface.
 func (cb *CircuitBreaker) Process(exchange *Exchange) error {
+	cb.mu.Lock()
+	proc := cb.processor
 	// Guard the zero-configuration case: NewCircuitBreaker() leaves the main
 	// processor unset, and calling through it would panic.
-	if cb.processor == nil {
+	if isNilValue(proc) {
+		cb.mu.Unlock()
 		return fmt.Errorf("circuit breaker: no processor configured (call SetProcessor)")
 	}
+	if err := cb.validateLocked(); err != nil {
+		cb.mu.Unlock()
+		return err
+	}
 
-	cb.mu.Lock()
 	// Check if we should transition from Open to Half-Open
 	if cb.state == StateOpen && time.Since(cb.lastOpenTime) > cb.openTimeout {
 		cb.state = StateHalfOpen
+		cb.generation++
 		cb.successCount = 0
 		cb.halfOpenProbe = false
 	}
 	state := cb.state
+	gen := cb.generation
 	var fallback Processor
 
 	// In Half-Open only ONE trial request may probe the downstream at a time;
@@ -127,22 +168,29 @@ func (cb *CircuitBreaker) Process(exchange *Exchange) error {
 	// protected processor into an error so the post-call bookkeeping below
 	// (which clears halfOpenProbe) always runs — otherwise a panic would leave
 	// the breaker stuck in Half-Open diverting every request to the fallback.
-	err := safeProcess(func() error { return cb.processor.Process(exchange) })
+	err := safeProcess(func() error { return proc.Process(exchange) })
 
 	cb.mu.Lock()
-	if state == StateHalfOpen {
-		cb.halfOpenProbe = false
+	if cb.generation == gen {
+		if state == StateHalfOpen {
+			cb.halfOpenProbe = false
+		}
+		if err != nil {
+			if errors.Is(err, ErrStopRouting) {
+				cb.mu.Unlock()
+				return err
+			}
+			cb.onFailure(state)
+		} else {
+			cb.onSuccess(state)
+		}
+	} else if err != nil && errors.Is(err, ErrStopRouting) {
+		cb.mu.Unlock()
+		return err
 	}
 	var fb Processor
 	if err != nil {
-		if errors.Is(err, ErrStopRouting) {
-			cb.mu.Unlock()
-			return err
-		}
-		cb.onFailure(state)
 		fb = cb.fallbackProcessor
-	} else {
-		cb.onSuccess(state)
 	}
 	cb.mu.Unlock()
 
@@ -186,21 +234,27 @@ func (cb *CircuitBreaker) onSuccess(fromState CircuitBreakerState) {
 
 func (cb *CircuitBreaker) openCircuit() {
 	cb.state = StateOpen
+	cb.generation++
 	cb.lastOpenTime = time.Now()
 	cb.failureCount = 0
+	cb.successCount = 0
+	cb.halfOpenProbe = false
 }
 
 func (cb *CircuitBreaker) closeCircuit() {
 	cb.state = StateClosed
+	cb.generation++
 	cb.failureCount = 0
 	cb.successCount = 0
+	cb.halfOpenProbe = false
 }
 
 // doFallback calls the fallback processor if set, otherwise returns err.
 // Must be called without holding cb.mu to avoid deadlocks if the fallback
 // re-enters the circuit breaker.
 func (cb *CircuitBreaker) doFallback(exchange *Exchange, err error, fb Processor) error {
-	if fb != nil {
+	exchange.Out = NewMessage()
+	if !isNilValue(fb) {
 		exchange.SetProperty("CamelCircuitBreakerError", err)
 		return safeProcess(func() error { return fb.Process(exchange) })
 	}
@@ -214,20 +268,48 @@ type CircuitBreakerDefinition struct {
 	mainBuilder    *RouteBuilder
 }
 
+func (d *CircuitBreakerDefinition) fail(err error) {
+	if d == nil || d.parent == nil {
+		return
+	}
+	d.parent.recordErr(err)
+}
+
 // FailureThreshold sets the failure threshold.
 func (d *CircuitBreakerDefinition) FailureThreshold(threshold int) *CircuitBreakerDefinition {
+	if d == nil {
+		return nil
+	}
+	if threshold <= 0 {
+		d.fail(fmt.Errorf("CircuitBreaker: FailureThreshold must be > 0, got %d", threshold))
+		return d
+	}
 	d.circuitBreaker.SetFailureThreshold(threshold)
 	return d
 }
 
 // SuccessThreshold sets the success threshold.
 func (d *CircuitBreakerDefinition) SuccessThreshold(threshold int) *CircuitBreakerDefinition {
+	if d == nil {
+		return nil
+	}
+	if threshold <= 0 {
+		d.fail(fmt.Errorf("CircuitBreaker: SuccessThreshold must be > 0, got %d", threshold))
+		return d
+	}
 	d.circuitBreaker.SetSuccessThreshold(threshold)
 	return d
 }
 
 // OpenTimeout sets the open timeout.
 func (d *CircuitBreakerDefinition) OpenTimeout(timeout time.Duration) *CircuitBreakerDefinition {
+	if d == nil {
+		return nil
+	}
+	if timeout <= 0 {
+		d.fail(fmt.Errorf("CircuitBreaker: OpenTimeout must be > 0, got %s", timeout))
+		return d
+	}
 	d.circuitBreaker.SetOpenTimeout(timeout)
 	return d
 }

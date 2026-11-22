@@ -3,6 +3,7 @@ package gocamel
 import (
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"time"
 )
@@ -142,8 +143,13 @@ func (c *onExceptionClause) handle(r *Route, exchange *Exchange, err error, rede
 	// The handler sees the message the failed processor received, not a
 	// partial output it may have written before failing.
 	exchange.Out = NewMessage()
-	if herr := safeProcess(func() error { return c.handler.Process(exchange) }); herr != nil && !errors.Is(herr, ErrStopRouting) {
-		return onExceptionFail, fmt.Errorf("onException handler failed: %w (original error: %w)", herr, err)
+	if herr := safeProcess(func() error { return c.handler.Process(exchange) }); herr != nil {
+		if !errors.Is(herr, ErrStopRouting) {
+			return onExceptionFail, fmt.Errorf("onException handler failed: %w (original error: %w)", herr, err)
+		}
+		if c.continued {
+			return onExceptionFail, herr
+		}
 	}
 
 	switch {
@@ -198,8 +204,8 @@ func (d *OnExceptionDefinition) RedeliveryDelay(delay time.Duration) *OnExceptio
 // BackOffMultiplier sets the exponential backoff factor between redeliveries.
 // Default: 2. Use 1 for a fixed delay.
 func (d *OnExceptionDefinition) BackOffMultiplier(multiplier float64) *OnExceptionDefinition {
-	if multiplier < 1 {
-		d.fail(fmt.Errorf("OnException: BackOffMultiplier must be >= 1, got %v", multiplier))
+	if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier < 1 {
+		d.fail(fmt.Errorf("OnException: BackOffMultiplier must be a finite number >= 1, got %v", multiplier))
 		return d
 	}
 	d.clause.backOffMultiplier = multiplier

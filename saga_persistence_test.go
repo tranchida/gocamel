@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -566,3 +567,282 @@ func TestSaga_ConcurrentSagasAreIsolated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, ids)
 }
+
+type failOnSaveAttemptRepo struct {
+	*MemorySagaRepository
+	mu        sync.Mutex
+	saveCalls int
+	failOn    int
+}
+
+func (r *failOnSaveAttemptRepo) Save(ctx context.Context, sagaID string, state SagaState) error {
+	r.mu.Lock()
+	r.saveCalls++
+	n := r.saveCalls
+	r.mu.Unlock()
+	if n == r.failOn {
+		return errors.New("checkpoint save failed")
+	}
+	return r.MemorySagaRepository.Save(ctx, sagaID, state)
+}
+
+type sagaTestSync struct {
+	completed atomic.Bool
+	failed    atomic.Bool
+}
+
+func (s *sagaTestSync) OnComplete(*Exchange) { s.completed.Store(true) }
+func (s *sagaTestSync) OnFailure(*Exchange)  { s.failed.Store(true) }
+
+func TestSaga_CompensatesWithDetachedContextAndCheckpointPersistAndOutPropagation(t *testing.T) {
+	t.Run("cancelled exchange context still runs context-aware compensation", func(t *testing.T) {
+		for _, timeout := range []time.Duration{0, 250 * time.Millisecond} {
+			name := "no-timeout"
+			if timeout > 0 {
+				name = "with-timeout"
+			}
+			t.Run(name, func(t *testing.T) {
+				c := NewCamelContext()
+				var compCtxErr error
+				var compRan bool
+				exCtx, cancel := context.WithCancel(context.Background())
+
+				b := c.CreateRouteBuilder().From("direct:saga").Saga()
+				if timeout > 0 {
+					b = b.Timeout(timeout)
+				}
+				_, err := b.
+					ActionFunc(
+						func(*Exchange) error { return nil },
+						func(e *Exchange) error {
+							compRan = true
+							compCtxErr = e.Context.Err()
+							return compCtxErr
+						},
+					).
+					ActionFunc(
+						func(e *Exchange) error {
+							cancel()
+							return e.Context.Err()
+						},
+						nil,
+					).
+					End().
+					Build()
+				require.NoError(t, err)
+				startContext(t, c)
+
+				ex := NewExchange(exCtx)
+				err = sendTo(t, c, "direct:saga", ex)
+				require.Error(t, err)
+				assert.NotErrorIs(t, err, ErrSagaStepTimeout)
+				assert.True(t, compRan, "step 1 compensation must execute even after exchange context cancellation")
+				assert.NoError(t, compCtxErr, "compensation must receive a detached non-cancelled context")
+			})
+		}
+	})
+
+	t.Run("checkpoint failure after prior saved step removes saga row on successful compensation", func(t *testing.T) {
+		repo := &failOnSaveAttemptRepo{
+			MemorySagaRepository: NewMemorySagaRepository(),
+			failOn:               2, // Step 0 checkpoint succeeds (saved == true), Step 1 checkpoint fails.
+		}
+		c := NewCamelContext()
+		var comp1, comp0 bool
+		_, err := c.CreateRouteBuilder().From("direct:saga").
+			Saga().Repository(repo).
+			ActionFunc(func(*Exchange) error { return nil }, func(*Exchange) error { comp0 = true; return nil }).
+			ActionFunc(func(*Exchange) error { return nil }, func(*Exchange) error { comp1 = true; return nil }).
+			End().
+			Build()
+		require.NoError(t, err)
+		startContext(t, c)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetHeader(CamelSagaId, "saga-checkpoint-2")
+		err = sendTo(t, c, "direct:saga", ex)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "checkpoint")
+		assert.True(t, comp1)
+		assert.True(t, comp0)
+
+		_, loadErr := repo.Load(context.Background(), "saga-checkpoint-2")
+		assert.ErrorIs(t, loadErr, ErrSagaNotFound, "compensated saga must be removed so recovery does not replay it")
+		ids, listErr := repo.ListIncomplete(context.Background())
+		require.NoError(t, listErr)
+		assert.Empty(t, ids)
+	})
+
+	t.Run("Out propagates to step 2 and checkpoint and failed step 2 Out does not overwrite URI compensation In", func(t *testing.T) {
+		repo := NewMemorySagaRepository()
+		c := NewCamelContext()
+
+		var compBody any
+		var compHeader string
+		var compHasHeader bool
+		_, err := c.CreateRouteBuilder().From("direct:comp-uri").ProcessFunc(func(e *Exchange) error {
+			compBody = e.GetIn().GetBody()
+			compHeader, compHasHeader = e.GetIn().GetHeaderAsString("X-Step1")
+			return nil
+		}).Build()
+		require.NoError(t, err)
+
+		_, err = c.CreateRouteBuilder().From("direct:step1").ProcessFunc(func(e *Exchange) error {
+			e.GetOut().SetBody("step1-out")
+			e.GetOut().SetHeader("X-Step1", "from-step1")
+			return nil
+		}).Build()
+		require.NoError(t, err)
+
+		var step2InBody any
+		var step2Header string
+		var savedState SagaState
+		var loadErr error
+		_, err = c.CreateRouteBuilder().From("direct:saga").
+			Saga().Repository(repo).
+			Action("direct:step1", "direct:comp-uri").
+			ActionFunc(func(e *Exchange) error {
+				step2InBody = e.GetIn().GetBody()
+				step2Header, _ = e.GetIn().GetHeaderAsString("X-Step1")
+				id, _ := e.GetIn().GetHeaderAsString(CamelSagaId)
+				savedState, loadErr = repo.Load(context.Background(), id)
+				// Write partial error output before failing.
+				e.GetOut().SetBody("step2-error-out")
+				e.GetOut().SetHeader("X-Step1", "corrupted")
+				return errors.New("step 2 failed")
+			}, nil).
+			End().
+			Build()
+		require.NoError(t, err)
+		startContext(t, c)
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody("initial")
+		require.Error(t, sendTo(t, c, "direct:saga", ex))
+
+		assert.Equal(t, "step1-out", step2InBody)
+		assert.Equal(t, "from-step1", step2Header)
+		require.NoError(t, loadErr)
+		assert.Equal(t, "step1-out", savedState.Message.Body)
+		assert.Equal(t, "from-step1", savedState.Message.Headers["X-Step1"])
+
+		assert.Equal(t, "step1-out", compBody, "URI compensation must see step 1 In, not failed step 2 Out")
+		assert.True(t, compHasHeader)
+		assert.Equal(t, "from-step1", compHeader)
+	})
+
+	t.Run("Synchronization callbacks run on timed steps, compensations, and recovery", func(t *testing.T) {
+		c := NewCamelContext()
+		stepSyncFail := &sagaTestSync{}
+		compSync := &sagaTestSync{}
+		stepSyncOK := &sagaTestSync{}
+
+		_, err := c.CreateRouteBuilder().From("direct:saga-fail").
+			Saga().Timeout(500*time.Millisecond).
+			ActionFunc(
+				func(e *Exchange) error { e.AddSynchronization(stepSyncFail); return nil },
+				func(e *Exchange) error { e.AddSynchronization(compSync); return nil },
+			).
+			ActionFunc(func(*Exchange) error { return errors.New("boom") }, nil).
+			End().
+			Build()
+		require.NoError(t, err)
+
+		_, err = c.CreateRouteBuilder().From("direct:saga-ok").
+			Saga().Timeout(500*time.Millisecond).
+			ActionFunc(
+				func(e *Exchange) error { e.AddSynchronization(stepSyncOK); return nil },
+				nil,
+			).
+			End().
+			Build()
+		require.NoError(t, err)
+		startContext(t, c)
+
+		exFail := NewExchange(context.Background())
+		err = CompleteExchange(exFail, sendTo(t, c, "direct:saga-fail", exFail))
+		require.Error(t, err)
+		assert.True(t, stepSyncFail.failed.Load(), "timed step synchronization must run OnFailure")
+		assert.True(t, compSync.completed.Load(), "compensation synchronization must run OnComplete")
+
+		exOK := NewExchange(context.Background())
+		err = CompleteExchange(exOK, sendTo(t, c, "direct:saga-ok", exOK))
+		require.NoError(t, err)
+		assert.True(t, stepSyncOK.completed.Load(), "timed step synchronization must run OnComplete")
+
+		// Recovery exchange also runs Synchronization callbacks.
+		repo := NewMemorySagaRepository()
+		require.NoError(t, repo.Save(context.Background(), "rec-sync", SagaState{
+			SagaID:         "rec-sync",
+			Status:         SagaRunning,
+			CompletedSteps: []CompletedStep{{Index: 0, CompensationURI: "direct:rec-comp"}},
+			UpdatedAt:      time.Now().UTC(),
+		}))
+		recSync := &sagaTestSync{}
+		c2 := NewCamelContext()
+		_, err = c2.CreateRouteBuilder().From("direct:rec-comp").ProcessFunc(func(e *Exchange) error {
+			e.AddSynchronization(recSync)
+			return nil
+		}).Build()
+		require.NoError(t, err)
+		startContext(t, c2)
+
+		recSaga := NewSagaProcessor()
+		recSaga.SetRepository(repo)
+		require.NoError(t, recSaga.Recover(context.Background(), c2))
+		assert.True(t, recSync.completed.Load(), "recovery compensation synchronization must run")
+	})
+
+	t.Run("parent context deadline is distinguished from saga step timeout", func(t *testing.T) {
+		c := NewCamelContext()
+		_, err := c.CreateRouteBuilder().From("direct:saga-parent-deadline").
+			Saga().Timeout(5*time.Second).
+			ActionFunc(func(e *Exchange) error {
+				<-e.Context.Done()
+				return e.Context.Err()
+			}, nil).
+			End().
+			Build()
+		require.NoError(t, err)
+		startContext(t, c)
+
+		parentCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		err = sendTo(t, c, "direct:saga-parent-deadline", NewExchange(parentCtx))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.NotErrorIs(t, err, ErrSagaStepTimeout)
+	})
+}
+
+func TestSagaRecovery_RedactsCompensationURI(t *testing.T) {
+	repo := NewMemorySagaRepository()
+	secretURI := "missingcomp://user:s3cr3tpass@127.0.0.1:1/cancel?password=topsecret&token=tok123"
+	require.NoError(t, repo.Save(context.Background(), "saga-secret", SagaState{
+		SagaID:         "saga-secret",
+		Status:         SagaRunning,
+		CompletedSteps: []CompletedStep{{Index: 0, CompensationURI: secretURI}},
+		UpdatedAt:      time.Now().UTC(),
+	}))
+
+	logs := captureSagaLogs(t)
+	c := NewCamelContext()
+	startContext(t, c)
+
+	saga := NewSagaProcessor()
+	saga.SetRepository(repo)
+	err := saga.Recover(context.Background(), c)
+	require.Error(t, err)
+
+	assert.NotContains(t, err.Error(), "s3cr3tpass")
+	assert.NotContains(t, err.Error(), "topsecret")
+	assert.NotContains(t, err.Error(), "tok123")
+	assert.Contains(t, err.Error(), "xxxxx")
+
+	logOut := logs.String()
+	assert.NotContains(t, logOut, "s3cr3tpass")
+	assert.NotContains(t, logOut, "topsecret")
+	assert.NotContains(t, logOut, "tok123")
+	assert.Contains(t, logOut, "xxxxx")
+}
+

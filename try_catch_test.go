@@ -226,3 +226,133 @@ func TestTryCatch_PanicHandled(t *testing.T) {
 	assert.True(t, caught, "panic in try block should be caught by catch clause")
 	assert.True(t, finallyExecuted, "finally block should execute after caught panic")
 }
+
+func TestTryCatch_ClearsOutAndFinallyDoesNotSwallowError(t *testing.T) {
+	t.Run("clears Out before DoCatch", func(t *testing.T) {
+		ctx := NewCamelContext()
+		var catchInBody, catchOutBody any
+		var hasLeakedHeader bool
+
+		_, err := ctx.CreateRouteBuilder().
+			From("direct:catch-target").
+			ProcessFunc(func(e *Exchange) error {
+				catchInBody = e.GetIn().GetBody()
+				catchOutBody = e.GetOut().GetBody()
+				_, hasLeakedHeader = e.GetIn().GetHeader("X-Partial")
+				return nil
+			}).
+			Build()
+		require.NoError(t, err)
+
+		_, err = ctx.CreateRouteBuilder().
+			From("direct:try-clear-out").
+			DoTry().
+			ProcessFunc(func(e *Exchange) error {
+				e.GetOut().SetBody("partial-garbage")
+				e.GetOut().SetHeader("X-Partial", "bad")
+				return errors.New("try boom")
+			}).
+			DoCatch("try boom").
+			To("direct:catch-target").
+			End().
+			Build()
+		require.NoError(t, err)
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+
+		ex := NewExchange(context.Background())
+		ex.GetIn().SetBody("original")
+		prod, err := ctx.GetProducer("direct:try-clear-out")
+		require.NoError(t, err)
+		require.NoError(t, prod.Send(ex))
+
+		assert.Equal(t, "original", catchInBody)
+		assert.Nil(t, catchOutBody)
+		assert.False(t, hasLeakedHeader)
+	})
+
+	t.Run("nil catch clause processor does not panic", func(t *testing.T) {
+		tp := NewTryProcessor()
+		tp.SetTryBlock(ProcessorFunc(func(*Exchange) error { return errors.New("boom") }))
+		tp.AddCatchClause("boom", nil)
+
+		err := tp.Process(NewExchange(context.Background()))
+		assert.NoError(t, err)
+	})
+
+	t.Run("finally ErrStopRouting does not swallow real error", func(t *testing.T) {
+		tryErr := errors.New("uncaught try error")
+		tp := NewTryProcessor()
+		tp.SetTryBlock(ProcessorFunc(func(*Exchange) error { return tryErr }))
+		tp.SetFinallyBlock(ProcessorFunc(func(*Exchange) error { return ErrStopRouting }))
+
+		err := tp.Process(NewExchange(context.Background()))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, tryErr)
+		assert.NotErrorIs(t, err, ErrStopRouting)
+	})
+
+	t.Run("finally real error joins with try or catch error", func(t *testing.T) {
+		tryErr := errors.New("uncaught try error")
+		finErr := errors.New("finally error")
+		tp := NewTryProcessor()
+		tp.SetTryBlock(ProcessorFunc(func(*Exchange) error { return tryErr }))
+		tp.SetFinallyBlock(ProcessorFunc(func(*Exchange) error { return finErr }))
+
+		err := tp.Process(NewExchange(context.Background()))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, tryErr)
+		assert.ErrorIs(t, err, finErr)
+	})
+
+	t.Run("nested TryDefinition DoTry DSL exits cleanly to parent route builder", func(t *testing.T) {
+		ctx := NewCamelContext()
+		var order []string
+
+		route, err := ctx.CreateRouteBuilder().
+			From("direct:nested-try").
+			DoTry().
+			ProcessFunc(func(*Exchange) error {
+				order = append(order, "outer-before")
+				return nil
+			}).
+			DoTry().
+			ProcessFunc(func(*Exchange) error {
+				order = append(order, "inner-try")
+				return errors.New("inner-err")
+			}).
+			DoCatch("inner-err").
+			ProcessFunc(func(*Exchange) error {
+				order = append(order, "inner-catch")
+				return nil
+			}).
+			End().
+			ProcessFunc(func(*Exchange) error {
+				order = append(order, "after-outer")
+				return nil
+			}).
+			Build()
+		require.NoError(t, err)
+		assert.Len(t, route.processors, 2, "after-outer must be on the main route outside outer DoTry")
+
+		require.NoError(t, ctx.Start())
+		t.Cleanup(func() { _ = ctx.Stop() })
+		prod, err := ctx.GetProducer("direct:nested-try")
+		require.NoError(t, err)
+		require.NoError(t, prod.Send(NewExchange(context.Background())))
+		assert.Equal(t, []string{"outer-before", "inner-try", "inner-catch", "after-outer"}, order)
+
+		// Invalid nested configuration must propagate to Build() and detach the route.
+		ctxBad := NewCamelContext()
+		_, err = ctxBad.CreateRouteBuilder().
+			From("direct:nested-bad").
+			DoTry().
+			DoTry().
+			ProcessFunc(nil).
+			End().
+			Build()
+		assert.Error(t, err)
+		assert.Empty(t, ctxBad.GetRoutes())
+	})
+}
+

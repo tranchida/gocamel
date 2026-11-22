@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // SQLSagaRepository is a SQL-based implementation of SagaRepository, so the
@@ -48,16 +49,31 @@ func NewSQLSagaRepository(db *sql.DB, opts SQLSagaOptions) *SQLSagaRepository {
 	}
 	// SECURITY: the table name is spliced into every statement; see
 	// NewSQLAggregationRepository.
-	if !tableNamePattern.MatchString(tableName) {
+	if db == nil {
+		repo.initErr = fmt.Errorf("SQLSagaRepository: database connection must not be nil")
+	} else if !tableNamePattern.MatchString(tableName) {
 		repo.initErr = fmt.Errorf("invalid saga table name %q: must match %s", tableName, tableNamePattern)
 	}
 	return repo
 }
 
-// InitDB creates the table if it doesn't exist.
-func (r *SQLSagaRepository) InitDB(ctx context.Context) error {
+func (r *SQLSagaRepository) checkReady() error {
+	if r == nil {
+		return fmt.Errorf("SQLSagaRepository is nil")
+	}
 	if r.initErr != nil {
 		return r.initErr
+	}
+	if r.db == nil {
+		return fmt.Errorf("SQLSagaRepository: database connection must not be nil")
+	}
+	return nil
+}
+
+// InitDB creates the table and index if they don't exist.
+func (r *SQLSagaRepository) InitDB(ctx context.Context) error {
+	if err := r.checkReady(); err != nil {
+		return err
 	}
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -67,14 +83,21 @@ func (r *SQLSagaRepository) InitDB(ctx context.Context) error {
 			updated_at BIGINT NOT NULL
 		)
 	`, r.tableName)
-	_, err := r.db.ExecContext(ctx, query)
+	if _, err := r.db.ExecContext(ctx, query); err != nil {
+		return err
+	}
+	idxName := "idx_" + strings.ReplaceAll(r.tableName, ".", "_") + "_status_updated"
+	idxQuery := fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS %s ON %s (status, updated_at, saga_id)
+	`, idxName, r.tableName)
+	_, err := r.db.ExecContext(ctx, idxQuery)
 	return err
 }
 
 // Save inserts or replaces the saga state.
 func (r *SQLSagaRepository) Save(ctx context.Context, sagaID string, state SagaState) error {
-	if r.initErr != nil {
-		return r.initErr
+	if err := r.checkReady(); err != nil {
+		return err
 	}
 	jsonData, err := json.Marshal(state)
 	if err != nil {
@@ -96,7 +119,11 @@ func (r *SQLSagaRepository) Save(ctx context.Context, sagaID string, state SagaS
 		`, r.tableName)
 	}
 
-	if _, err := r.db.ExecContext(ctx, query, sagaID, string(state.Status), string(jsonData), state.UpdatedAt.UnixNano()); err != nil {
+	var updatedAt int64
+	if !state.UpdatedAt.IsZero() {
+		updatedAt = state.UpdatedAt.UnixNano()
+	}
+	if _, err := r.db.ExecContext(ctx, query, sagaID, string(state.Status), string(jsonData), updatedAt); err != nil {
 		return fmt.Errorf("failed to save saga %s: %w", sagaID, err)
 	}
 	return nil
@@ -104,8 +131,8 @@ func (r *SQLSagaRepository) Save(ctx context.Context, sagaID string, state SagaS
 
 // Load returns the saga state, or ErrSagaNotFound.
 func (r *SQLSagaRepository) Load(ctx context.Context, sagaID string) (SagaState, error) {
-	if r.initErr != nil {
-		return SagaState{}, r.initErr
+	if err := r.checkReady(); err != nil {
+		return SagaState{}, err
 	}
 	var query string
 	if r.UseDollarParam {
@@ -130,19 +157,18 @@ func (r *SQLSagaRepository) Load(ctx context.Context, sagaID string) (SagaState,
 }
 
 // ListIncomplete returns up to DefaultSagaListLimit running or compensating
-// saga IDs, oldest first. The bound is applied while reading rows rather than
-// with a dialect-specific LIMIT clause.
+// saga IDs, oldest first.
 func (r *SQLSagaRepository) ListIncomplete(ctx context.Context) ([]string, error) {
-	if r.initErr != nil {
-		return nil, r.initErr
+	if err := r.checkReady(); err != nil {
+		return nil, err
 	}
 	var query string
 	if r.UseDollarParam {
-		query = fmt.Sprintf("SELECT saga_id FROM %s WHERE status IN ($1, $2) ORDER BY updated_at, saga_id", r.tableName)
+		query = fmt.Sprintf("SELECT saga_id FROM %s WHERE status IN ($1, $2) ORDER BY updated_at, saga_id LIMIT $3", r.tableName)
 	} else {
-		query = fmt.Sprintf("SELECT saga_id FROM %s WHERE status IN (?, ?) ORDER BY updated_at, saga_id", r.tableName)
+		query = fmt.Sprintf("SELECT saga_id FROM %s WHERE status IN (?, ?) ORDER BY updated_at, saga_id LIMIT ?", r.tableName)
 	}
-	rows, err := r.db.QueryContext(ctx, query, string(SagaRunning), string(SagaCompensating))
+	rows, err := r.db.QueryContext(ctx, query, string(SagaRunning), string(SagaCompensating), DefaultSagaListLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list incomplete sagas: %w", err)
 	}
@@ -160,8 +186,8 @@ func (r *SQLSagaRepository) ListIncomplete(ctx context.Context) ([]string, error
 
 // Remove deletes the saga state.
 func (r *SQLSagaRepository) Remove(ctx context.Context, sagaID string) error {
-	if r.initErr != nil {
-		return r.initErr
+	if err := r.checkReady(); err != nil {
+		return err
 	}
 	var query string
 	if r.UseDollarParam {

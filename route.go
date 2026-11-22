@@ -355,8 +355,8 @@ func (r *Route) processFrom(exchange *Exchange, start int) error {
 					return outcomeErr
 				}
 			}
-			// Delegate to error handler if configured
-			if r.errorHandler != nil {
+			// Delegate to error handler if configured (skip if already dead-lettered)
+			if r.errorHandler != nil && !IsDeadLettered(exchange) {
 				if handleErr := r.errorHandler.HandleError(exchange, err); handleErr != nil {
 					return handleErr
 				}

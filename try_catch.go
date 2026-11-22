@@ -65,9 +65,21 @@ func (p *TryProcessor) childProcessors() []Processor {
 func (p *TryProcessor) Process(exchange *Exchange) (finalErr error) {
 	if p.finallyBlock != nil {
 		defer func() {
-			if finErr := safeProcess(func() error { return p.finallyBlock.Process(exchange) }); finErr != nil {
-				finalErr = finErr
+			finErr := safeProcess(func() error { return p.finallyBlock.Process(exchange) })
+			if finErr == nil {
+				return
 			}
+			if errors.Is(finErr, ErrStopRouting) {
+				if finalErr == nil {
+					finalErr = finErr
+				}
+				return
+			}
+			if finalErr == nil || errors.Is(finalErr, ErrStopRouting) {
+				finalErr = finErr
+				return
+			}
+			finalErr = errors.Join(finalErr, finErr)
 		}()
 	}
 
@@ -87,12 +99,20 @@ func (p *TryProcessor) Process(exchange *Exchange) (finalErr error) {
 	if tryErr != nil {
 		caught := false
 		for _, clause := range p.catchClauses {
+			if clause == nil {
+				continue
+			}
 			if clause.ErrorPattern == "" || strings.Contains(tryErr.Error(), clause.ErrorPattern) {
 				exchange.SetProperty(CamelExceptionCaught, tryErr)
-				if err := safeProcess(func() error { return clause.Processor.Process(exchange) }); err != nil {
-					finalErr = err
+				exchange.Out = NewMessage()
+				if !isNilValue(clause.Processor) {
+					if err := safeProcess(func() error { return clause.Processor.Process(exchange) }); err != nil {
+						finalErr = err
+					} else {
+						finalErr = nil // Error was caught and handled
+					}
 				} else {
-					finalErr = nil // Error was caught and handled
+					finalErr = nil
 				}
 				caught = true
 				break
@@ -111,6 +131,7 @@ func (p *TryProcessor) Process(exchange *Exchange) (finalErr error) {
 type TryDefinition struct {
 	routeBuilder *RouteBuilder
 	parent       *RouteBuilder
+	parentTry    *TryDefinition
 	tryProcessor *TryProcessor
 }
 
@@ -165,7 +186,15 @@ func (d *TryDefinition) DoFinally() *FinallyDefinition {
 }
 
 func (d *TryDefinition) End() *RouteBuilder {
-	d.parent.adoptErr(d.routeBuilder)
+	if d == nil {
+		return nil
+	}
+	if d.parent != nil {
+		d.parent.adoptErr(d.routeBuilder)
+	}
+	if d.parentTry != nil {
+		return d.parentTry.End()
+	}
 	return d.parent
 }
 
@@ -235,6 +264,9 @@ func (d *FinallyDefinition) End() *RouteBuilder {
 
 // DoTry starts a Do-Try-Catch-Finally EIP block.
 func (b *RouteBuilder) DoTry() *TryDefinition {
+	if b == nil {
+		return &TryDefinition{}
+	}
 	tp := NewTryProcessor()
 
 	p := NewPipeline()
@@ -255,5 +287,10 @@ func (b *RouteBuilder) DoTry() *TryDefinition {
 
 // DoTry nested support for TryDefinition
 func (d *TryDefinition) DoTry() *TryDefinition {
-	return d.routeBuilder.DoTry()
+	if d == nil || d.routeBuilder == nil {
+		return &TryDefinition{}
+	}
+	nested := d.routeBuilder.DoTry()
+	nested.parentTry = d
+	return nested
 }
