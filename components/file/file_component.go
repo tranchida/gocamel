@@ -155,13 +155,18 @@ func (p *FileProducer) Stop() error {
 func (p *FileProducer) Send(exchange *gocamel.Exchange) error {
 	targetPath := p.path
 	info, statErr := os.Stat(targetPath)
-	if (statErr == nil && info.IsDir()) || (statErr != nil && p.directory) {
-		if fileName, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName); ok {
-			name := fmt.Sprintf("%v", fileName)
-			if err := confinedFileName(name); err != nil {
-				return err
-			}
-			targetPath = filepath.Join(targetPath, name)
+	if (statErr == nil && info.IsDir()) || p.directory {
+		fileName, ok := exchange.GetIn().GetHeader(gocamel.CamelFileName)
+		if !ok || fileName == nil {
+			return fmt.Errorf("file producer: %s header is required when endpoint path %q is a directory", gocamel.CamelFileName, p.path)
+		}
+		name := fmt.Sprintf("%v", fileName)
+		if err := confinedFileName(name); err != nil {
+			return err
+		}
+		targetPath = filepath.Join(targetPath, name)
+		if filepath.Clean(targetPath) == filepath.Clean(p.path) {
+			return fmt.Errorf("file producer: %s must name a file inside %q, got %q", gocamel.CamelFileName, p.path, name)
 		}
 	}
 
@@ -456,9 +461,17 @@ func (s *fileSynchronization) OnComplete(exchange *gocamel.Exchange) {
 		return
 	}
 	if s.move != "" {
-		moveFilelocal(effectivePath, s.move)
+		if err := moveFilelocal(effectivePath, s.move); err == nil && s.consumer != nil {
+			s.consumer.forget(s.path)
+		}
 	} else if s.delete {
-		os.Remove(effectivePath)
+		if err := os.Remove(effectivePath); err == nil || errors.Is(err, os.ErrNotExist) {
+			if s.consumer != nil {
+				s.consumer.forget(s.path)
+			}
+		} else {
+			gocamel.LogError("error deleting file", "file", effectivePath, "error", err)
+		}
 	} else if s.lockPath != "" {
 		if s.consumer != nil {
 			s.consumer.ignoreNext(s.path)
@@ -480,7 +493,9 @@ func (s *fileSynchronization) OnFailure(exchange *gocamel.Exchange) {
 	}
 
 	if !s.noop && s.moveFailed != "" {
-		moveFilelocal(effectivePath, s.moveFailed)
+		if err := moveFilelocal(effectivePath, s.moveFailed); err == nil && s.consumer != nil {
+			s.consumer.forget(s.path)
+		}
 	} else if s.lockPath != "" {
 		if s.consumer != nil {
 			s.consumer.ignoreNext(s.path)
@@ -532,7 +547,7 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				return filepath.SkipAll
 			default:
 			}
-			if err != nil || path == c.path {
+			if err != nil || info == nil || path == c.path {
 				return nil
 			}
 			if info.IsDir() {
@@ -560,7 +575,13 @@ func (c *FileConsumer) watchDirectory(ctx context.Context) error {
 				return filepath.SkipAll
 			default:
 			}
-			if err != nil || info == nil || info.IsDir() {
+			if err != nil || info == nil {
+				return nil
+			}
+			if info.IsDir() {
+				if !opts.Recursive && path != c.path {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if !opts.Recursive && filepath.Dir(path) != c.path {
@@ -618,6 +639,14 @@ func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.Pol
 		}
 		return
 	}
+	if !info.Mode().IsRegular() {
+		gocamel.LogWarn("file consumer: skipping non-regular file", "file", path)
+		return
+	}
+	if err := gocamel.ValidatePathInDir(path, c.path); err != nil {
+		gocamel.LogWarn("file consumer: rejecting path outside directory", "file", path, "error", err)
+		return
+	}
 	if info.Size() > gocamel.DefaultMaxBodySize {
 		gocamel.LogWarn("file consumer: skipping oversized file", "file", path, "size", info.Size(), "limit", gocamel.DefaultMaxBodySize)
 		return
@@ -633,7 +662,7 @@ func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.Pol
 	// A file sitting in a move/moveFailed directory was put there by this
 	// consumer: with recursive=true that directory is watched too, and
 	// ingesting it again would process every file twice (or forever).
-	if inPostProcessDir(path, opts.Move) || inPostProcessDir(path, opts.MoveFailed) {
+	if inPostProcessDir(c.path, path, opts.Move) || inPostProcessDir(c.path, path, opts.MoveFailed) {
 		return
 	}
 	if c.alreadySeen(path, info.Size(), info.ModTime()) {
@@ -647,9 +676,12 @@ func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.Pol
 	case gocamel.ReadLockChanged:
 		if waitForLock {
 			statFn := func() (int64, time.Time, error) {
-				fi, err := os.Stat(path)
+				fi, err := os.Lstat(path)
 				if err != nil {
 					return 0, time.Time{}, err
+				}
+				if fi.Mode()&os.ModeSymlink != 0 || !fi.Mode().IsRegular() {
+					return 0, time.Time{}, fmt.Errorf("not a regular file: %s", path)
 				}
 				return fi.Size(), fi.ModTime(), nil
 			}
@@ -688,21 +720,23 @@ func (c *FileConsumer) ingest(ctx context.Context, path string, opts gocamel.Pol
 		readPath = lockPath
 	}
 
-	content, err := os.ReadFile(readPath) // #nosec G304
+	content, readInfo, err := readRegularFile(readPath, gocamel.DefaultMaxBodySize)
 	if err != nil {
 		gocamel.LogError("error reading file", "file", readPath, "error", err)
 		if markerPath != "" {
 			_ = os.Remove(markerPath)
 		}
 		if lockPath != "" {
-			_ = os.Rename(lockPath, path)
+			c.ignoreNext(path)
+			if renameErr := os.Rename(lockPath, path); renameErr != nil {
+				c.checkAndClearIgnored(path)
+				gocamel.LogError("error restoring file after read failure", "src", lockPath, "dest", path, "error", renameErr)
+			}
 		}
 		return
 	}
 
-	if restat, err := os.Stat(readPath); err == nil {
-		info = restat
-	}
+	info = readInfo
 	c.remember(path, info.Size(), info.ModTime())
 
 	exchange := gocamel.NewExchange(ctx)
@@ -752,6 +786,68 @@ func (c *FileConsumer) remember(path string, size int64, mod time.Time) {
 	}
 }
 
+func (c *FileConsumer) forget(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.seen[path]; !ok {
+		return
+	}
+	delete(c.seen, path)
+	for i, p := range c.seenOrder {
+		if p == path {
+			copy(c.seenOrder[i:], c.seenOrder[i+1:])
+			c.seenOrder[len(c.seenOrder)-1] = ""
+			c.seenOrder = c.seenOrder[:len(c.seenOrder)-1]
+			break
+		}
+	}
+	if len(c.seenOrder) == 0 {
+		c.seenOrder = nil
+	}
+}
+
+// readRegularFile safely reads a regular file up to maxSize bytes without
+// following symlinks (Lstat pre-check, confinedOpen with O_NOFOLLOW on Unix,
+// f.Stat on the open descriptor, and ReadLimited).
+func readRegularFile(path string, maxSize int64) ([]byte, os.FileInfo, error) {
+	linfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error reading file: %w", err)
+	}
+	if linfo.Mode()&os.ModeSymlink != 0 {
+		return nil, nil, fmt.Errorf("file consumer: refusing to read symlink %s", path)
+	}
+	if !linfo.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("file consumer: refusing to read non-regular file %s", path)
+	}
+	if maxSize > 0 && linfo.Size() > maxSize {
+		return nil, nil, fmt.Errorf("file consumer: file %s exceeds %d bytes", path, maxSize)
+	}
+
+	f, err := confinedOpen(path, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error reading file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, nil, fmt.Errorf("error reading file: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("file consumer: refusing to read non-regular file %s", path)
+	}
+	if maxSize > 0 && fi.Size() > maxSize {
+		return nil, nil, fmt.Errorf("file consumer: file %s exceeds %d bytes", path, maxSize)
+	}
+
+	content, err := gocamel.ReadLimited(f, maxSize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error reading file: %w", err)
+	}
+	return content, fi, nil
+}
+
 // watchFile reads and processes a single file, then applies post-processing options.
 func (c *FileConsumer) watchFile(ctx context.Context) error {
 	opts := gocamel.ParsePollingOptions(c.url)
@@ -760,26 +856,17 @@ func (c *FileConsumer) watchFile(ctx context.Context) error {
 		return nil
 	}
 
-	info, statErr := os.Lstat(c.path)
-	if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("file consumer: refusing to read symlink %s", c.path)
-	}
-	if statErr == nil && info.Size() > gocamel.DefaultMaxBodySize {
-		return fmt.Errorf("file consumer: file %s exceeds %d bytes", c.path, gocamel.DefaultMaxBodySize)
-	}
-	content, err := os.ReadFile(c.path)
+	content, info, err := readRegularFile(c.path, gocamel.DefaultMaxBodySize)
 	if err != nil {
-		return fmt.Errorf("error reading file: %w", err)
+		return err
 	}
 
 	exchange := gocamel.NewExchange(ctx)
 	exchange.SetBody(content)
 	exchange.SetHeader(gocamel.CamelFileName, filename)
 	exchange.SetHeader(gocamel.CamelFilePath, c.path)
-	if statErr == nil {
-		exchange.SetHeader(gocamel.CamelFileLength, info.Size())
-		exchange.SetHeader(gocamel.CamelFileLastModified, info.ModTime())
-	}
+	exchange.SetHeader(gocamel.CamelFileLength, info.Size())
+	exchange.SetHeader(gocamel.CamelFileLastModified, info.ModTime())
 	// Compatibility alias
 	exchange.SetHeader("FileName", filename)
 	exchange.SetHeader("FilePath", c.path)
@@ -846,8 +933,11 @@ func resolveMoveDir(src, destDir string) string {
 }
 
 // inPostProcessDir reports whether path lies directly in the directory that
-// the move (or moveFailed) option moveDir designates for a file of its parent.
-func inPostProcessDir(path, moveDir string) bool {
+// the move (or moveFailed) option moveDir designates relative to rootDir (or
+// as an absolute directory). Anchoring relative matching to filepath.Rel(rootDir, dir)
+// prevents a watched root whose own name matches moveDir (e.g. "/inbox/.done"
+// with move=.done) from suppressing top-level input files.
+func inPostProcessDir(rootDir, path, moveDir string) bool {
 	if moveDir == "" {
 		return false
 	}
@@ -855,28 +945,34 @@ func inPostProcessDir(path, moveDir string) bool {
 	if filepath.IsAbs(moveDir) {
 		return dir == filepath.Clean(moveDir)
 	}
-	rel := filepath.Clean(moveDir)
-	if rel == "." {
+	relMove := filepath.Clean(moveDir)
+	if relMove == "." {
 		return false
 	}
-	return dir == rel || strings.HasSuffix(dir, string(filepath.Separator)+rel)
+	relDir, err := filepath.Rel(filepath.Clean(rootDir), dir)
+	if err != nil || relDir == "." || relDir == ".." || strings.HasPrefix(relDir, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return relDir == relMove || strings.HasSuffix(relDir, string(filepath.Separator)+relMove)
 }
 
 // moveFilelocal moves src to destDir, creating the directory if needed.
-func moveFilelocal(src, destDir string) {
+func moveFilelocal(src, destDir string) error {
 	destDir = resolveMoveDir(src, destDir)
 	// 0755 is the deliberate default for move directories (see Send).
 	// #nosec G301
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		gocamel.LogError("error creating directory", "directory", destDir, "error", err)
-		return
+		return err
 	}
 	filename := filepath.Base(src)
 	filename = strings.TrimSuffix(filename, ".camelExclusiveReadLock")
 	dest := filepath.Join(destDir, filename)
 	if err := os.Rename(src, dest); err != nil {
 		gocamel.LogError("error moving file", "src", src, "dest", dest, "error", err)
+		return err
 	}
+	return nil
 }
 
 // confinedFileName rejects a CamelFileName that would escape the endpoint

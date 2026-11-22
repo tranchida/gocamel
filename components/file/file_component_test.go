@@ -709,3 +709,82 @@ func TestFileConsumer_ConcurrentStartStop(t *testing.T) {
 		}
 	}
 }
+
+func TestFileProducer_FileExistModesAndLifecycle(t *testing.T) {
+	c := NewFileComponent()
+	dir := t.TempDir()
+
+	// Append mode
+	appendURI := "file://" + filepath.Join(dir, "append.txt") + "?fileExist=Append"
+	ep, err := c.CreateEndpoint(appendURI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.URI() != appendURI {
+		t.Fatalf("got URI %q, want %q", ep.URI(), appendURI)
+	}
+	prod, err := ep.CreateProducer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prod.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer prod.Stop()
+
+	for _, part := range []string{"hello ", "world"} {
+		ex := gocamel.NewExchange(context.Background())
+		ex.SetBody([]byte(part))
+		if err := prod.Send(ex); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "append.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello world" {
+		t.Fatalf("got %q, want %q", got, "hello world")
+	}
+
+	// Fail mode on existing file
+	target := filepath.Join(dir, "exist.txt")
+	if err := os.WriteFile(target, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	failEp, err := c.CreateEndpoint("file://" + target + "?fileExist=Fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failProd, err := failEp.CreateProducer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exFail := gocamel.NewExchange(context.Background())
+	exFail.SetBody("overwrite")
+	if err := failProd.Send(exFail); err == nil {
+		t.Fatal("expected Fail mode to return error when file exists")
+	}
+
+	// Ignore mode on existing file preserves original content
+	ignEp, err := c.CreateEndpoint("file://" + target + "?fileExist=Ignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignProd, err := ignEp.CreateProducer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exIgn := gocamel.NewExchange(context.Background())
+	exIgn.SetBody("overwrite")
+	if err := ignProd.Send(exIgn); err != nil {
+		t.Fatal(err)
+	}
+	gotExist, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotExist) != "original" {
+		t.Fatalf("Ignore mode modified existing file: got %q, want %q", gotExist, "original")
+	}
+}
