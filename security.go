@@ -14,12 +14,22 @@ import (
 // ValidateRemotePath validates paths for remote protocols (FTP, SFTP, SMB)
 // These paths may be Unix-style even on Windows.
 //
-// It only rejects '..' traversal and null bytes: an absolute path such as
-// "/etc/passwd" is accepted. For a file name taken from a message header use
-// ConfineFileName or JoinRemotePath, which also reject absolute paths.
+// It rejects ASCII control characters (including null bytes and CR/LF) and '..'
+// traversal that escapes the base: an absolute path such as "/etc/passwd" is
+// accepted. For a file name taken from a message header use ConfineFileName or
+// JoinRemotePath, which also reject absolute paths, Windows drive prefixes,
+// and any '..' segment.
 func ValidateRemotePath(path string) error {
 	if path == "" {
 		return nil
+	}
+
+	// Check for embedded null bytes and ASCII control characters (CR/LF, etc.)
+	if strings.Contains(path, "\x00") {
+		return fmt.Errorf("path contains null byte")
+	}
+	if containsControlChar(path) {
+		return fmt.Errorf("path contains control character")
 	}
 
 	// Check for path traversal
@@ -41,18 +51,14 @@ func ValidateRemotePath(path string) error {
 		}
 	}
 
-	// Check for embedded null bytes
-	if strings.Contains(path, "\x00") {
-		return fmt.Errorf("path contains null byte")
-	}
-
 	return nil
 }
 
 // ConfineFileName rejects a payload file name that would escape a directory
-// when concatenated or filepath.Joined: empty names, null bytes, absolute
-// paths, Windows volume names, and '..' components that walk above the name's
-// own root.
+// when concatenated or filepath.Joined: empty names, null bytes, ASCII control
+// characters, absolute paths, Windows volume/drive prefixes, and any '..'
+// segment (even when balanced lexically, because an intermediate symlink could
+// traverse outside the confined directory).
 func ConfineFileName(name string) error {
 	if name == "" {
 		return fmt.Errorf("file name cannot be empty")
@@ -60,23 +66,48 @@ func ConfineFileName(name string) error {
 	if strings.Contains(name, "\x00") {
 		return fmt.Errorf("file name contains null byte")
 	}
-	if filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
+	if containsControlChar(name) {
+		return fmt.Errorf("file name contains control character")
+	}
+	if filepath.IsAbs(name) || filepath.VolumeName(name) != "" || hasWindowsDrivePrefix(name) {
 		return fmt.Errorf("file name must be a relative path: %s", name)
 	}
 	normalized := strings.ReplaceAll(name, "\\", "/")
 	if strings.HasPrefix(normalized, "/") {
 		return fmt.Errorf("file name must be a relative path: %s", name)
 	}
-	if containsTraversal(name) {
-		return fmt.Errorf("file name contains traversal: %s", name)
+	for _, part := range strings.Split(normalized, "/") {
+		if part == ".." {
+			return fmt.Errorf("file name contains traversal: %s", name)
+		}
 	}
 	return nil
+}
+
+func containsControlChar(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func isASCIIAlpha(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func hasWindowsDrivePrefix(s string) bool {
+	return len(s) >= 2 && isASCIIAlpha(s[0]) && s[1] == ':'
 }
 
 // JoinRemotePath concatenates a remote directory URI path with a payload file
 // name after ConfineFileName. dir should be the endpoint path (possibly with a
 // trailing slash). The result uses forward slashes.
 func JoinRemotePath(dir, name string) (string, error) {
+	if err := ValidateRemotePath(dir); err != nil {
+		return "", err
+	}
 	if err := ConfineFileName(name); err != nil {
 		return "", err
 	}
@@ -127,13 +158,15 @@ func validateSQLQuery(query string) error {
 // hasNonTrailingSemicolonOutsideStrings reports whether a statement terminator
 // is followed by SQL code. Whitespace and comments may follow a single trailing
 // semicolon, while "SELECT 1; DROP TABLE t" is rejected. backslashEscapes
-// selects whether a backslash escapes the next character in a '...' literal.
+// selects whether a backslash escapes quotes in '...' / "..." literals and
+// whether '#' opens a MySQL line comment before a statement terminator.
 func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) bool {
 	inSingle := false
 	inDouble := false
 	inBacktick := false
 	inLineComment := false
 	inBlockComment := false
+	inExecComment := false
 	seenTerminator := false
 	for i := 0; i < len(query); i++ {
 		c := query[i]
@@ -165,6 +198,10 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 			continue
 		}
 		if inDouble {
+			if backslashEscapes && c == '\\' && i+1 < len(query) {
+				i++
+				continue
+			}
 			if c == '"' {
 				if i+1 < len(query) && query[i+1] == '"' {
 					i++
@@ -187,11 +224,37 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 
 		switch c {
 		case '\'':
+			if seenTerminator {
+				return true
+			}
 			inSingle = true
 		case '"':
+			if seenTerminator {
+				return true
+			}
 			inDouble = true
 		case '`':
+			if seenTerminator {
+				return true
+			}
 			inBacktick = true
+		case '$':
+			if seenTerminator {
+				return true
+			}
+			if tag, ok := matchDollarQuoteTag(query[i:]); ok {
+				if endRel := strings.Index(query[i+len(tag):], tag); endRel >= 0 {
+					i += len(tag) + endRel + len(tag) - 1
+				}
+			}
+		case '#':
+			// MySQL treats '#' as a line comment, whereas PostgreSQL uses '#' as an
+			// operator. When scanning in MySQL mode (or after a terminator), treat
+			// '#' as a line comment; in PostgreSQL mode before ';', leave it as a
+			// token so quotes on the same line remain parsed as string literals.
+			if backslashEscapes || seenTerminator {
+				inLineComment = true
+			}
 		case '-':
 			if i+1 < len(query) && query[i+1] == '-' {
 				inLineComment = true
@@ -201,7 +264,23 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 			}
 		case '/':
 			if i+1 < len(query) && query[i+1] == '*' {
-				inBlockComment = true
+				if i+2 < len(query) && query[i+2] == '!' {
+					// MySQL executable comments (/*! ... */) are executed as SQL.
+					if seenTerminator {
+						return true
+					}
+					inExecComment = true
+					i += 2
+				} else {
+					inBlockComment = true
+					i++
+				}
+			} else if seenTerminator {
+				return true
+			}
+		case '*':
+			if inExecComment && i+1 < len(query) && query[i+1] == '/' {
+				inExecComment = false
 				i++
 			} else if seenTerminator {
 				return true
@@ -220,6 +299,31 @@ func hasNonTrailingSemicolonOutsideStrings(query string, backslashEscapes bool) 
 		}
 	}
 	return false
+}
+
+// matchDollarQuoteTag returns the PostgreSQL dollar-quote delimiter ($tag$) at
+// the start of s when tag is empty or a valid unquoted ASCII identifier.
+func matchDollarQuoteTag(s string) (string, bool) {
+	if len(s) < 2 || s[0] != '$' {
+		return "", false
+	}
+	if s[1] == '$' {
+		return "$$", true
+	}
+	first := s[1]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+		return "", false
+	}
+	for j := 2; j < len(s); j++ {
+		c := s[j]
+		if c == '$' {
+			return s[:j+1], true
+		}
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			return "", false
+		}
+	}
+	return "", false
 }
 
 // sanitizer is a regex-based sanitizer for common patterns.
@@ -339,61 +443,150 @@ func ValidatePathInDir(path, baseDir string) error {
 		return err
 	}
 
-	absBase, err := filepath.Abs(filepath.Clean(baseDir))
+	// Resolve symlinks left-to-right component-by-component BEFORE folding '..'
+	// (filepath.Clean/Abs fold '<symlink>/..' lexically before symlink resolution).
+	// Both baseDir and path are resolved through their longest existing prefix so
+	// not-yet-created subdirectories remain comparable in the real namespace.
+	resolvedBase, err := resolveExistingPrefix(baseDir)
 	if err != nil {
 		return fmt.Errorf("failed to resolve base directory: %w", err)
 	}
-	// The base itself may be reached through a symlink, and it may not exist
-	// yet (a producer targeting a file in a directory created on demand).
-	// Resolve its longest existing prefix so both sides of the comparison are
-	// in the same (real) namespace.
-	resolvedBase, err := resolveExistingPrefix(absBase)
-	if err != nil {
-		return fmt.Errorf("failed to resolve base directory: %w", err)
-	}
-	absBase = resolvedBase
 
-	absPath, err := filepath.Abs(filepath.Clean(path))
-	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
-	}
-	resolvedPath, err := resolveExistingPrefix(absPath)
+	resolvedPath, err := resolveExistingPrefix(path)
 	if err != nil {
 		return fmt.Errorf("failed to resolve path: %w", err)
 	}
 
-	// Ensure path is within base directory
-	if !strings.HasPrefix(resolvedPath, absBase+string(filepath.Separator)) && resolvedPath != absBase {
-		return fmt.Errorf("path escapes base directory: %s not under %s", resolvedPath, absBase)
+	// Ensure path is within base directory. A root baseDir ("/" on Unix or
+	// "C:\" on Windows) already ends with the separator.
+	prefix := resolvedBase
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	if !strings.HasPrefix(resolvedPath, prefix) && resolvedPath != resolvedBase {
+		return fmt.Errorf("path escapes base directory: %s not under %s", resolvedPath, resolvedBase)
 	}
 
 	return nil
 }
 
-// resolveExistingPrefix resolves symlinks in the longest existing prefix of
-// path and re-appends the remaining (not yet created) components. This lets
-// containment be enforced for files that do not exist yet without failing on
-// them outright.
+// resolveExistingPrefix resolves symlinks left-to-right across the existing
+// prefix of path before folding '..' components, rejects dangling symlinks, and
+// re-appends any remaining (not yet created) components.
 func resolveExistingPrefix(path string) (string, error) {
-	remaining := ""
-	current := path
-	for {
-		resolved, err := filepath.EvalSymlinks(current)
-		if err == nil {
-			if remaining == "" {
-				return resolved, nil
-			}
-			return filepath.Join(resolved, remaining), nil
+	rawAbs, err := toRawAbsPath(path)
+	if err != nil {
+		return "", err
+	}
+
+	vol := filepath.VolumeName(rawAbs)
+	rest := rawAbs[len(vol):]
+	root := vol + string(filepath.Separator)
+
+	current, currentExists, currentIsDir, err := resolveExistingStep(root)
+	if err != nil {
+		return "", err
+	}
+
+	for _, part := range splitPathComponents(rest) {
+		if part == "" || part == "." {
+			continue
 		}
-		if !os.IsNotExist(err) {
+		if part == ".." {
+			if !currentExists || !currentIsDir {
+				return "", fmt.Errorf("cannot traverse '..' through non-existent or non-directory path: %s", current)
+			}
+			current = filepath.Dir(current)
+			continue
+		}
+		if !currentExists {
+			current = filepath.Join(current, part)
+			continue
+		}
+		if !currentIsDir {
+			return "", fmt.Errorf("path component is not a directory: %s", current)
+		}
+		current, currentExists, currentIsDir, err = resolveExistingStep(filepath.Join(current, part))
+		if err != nil {
 			return "", err
 		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			// Reached the root without finding an existing component.
-			return path, nil
-		}
-		remaining = filepath.Join(filepath.Base(current), remaining)
-		current = parent
 	}
+
+	return current, nil
+}
+
+// resolveExistingStep inspects candidate with Lstat. If candidate does not
+// exist, exists is false with a nil error. Symlinks are resolved and dangling
+// symlinks are rejected.
+func resolveExistingStep(candidate string) (resolved string, exists bool, isDir bool, err error) {
+	fi, err := os.Lstat(candidate)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return candidate, false, false, nil
+		}
+		return "", false, false, err
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return candidate, true, fi.IsDir(), nil
+	}
+	target, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, false, fmt.Errorf("dangling symlink: %s", candidate)
+		}
+		return "", false, false, err
+	}
+	tfi, err := os.Stat(target)
+	if err != nil {
+		return "", false, false, err
+	}
+	return target, true, tfi.IsDir(), nil
+}
+
+func toRawAbsPath(path string) (string, error) {
+	if path == "" {
+		path = "."
+	}
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	if vol := filepath.VolumeName(path); vol != "" {
+		volBase, err := filepath.Abs(vol + ".")
+		if err != nil {
+			return "", err
+		}
+		return joinRawPath(volBase, path[len(vol):]), nil
+	}
+	if len(path) > 0 && os.IsPathSeparator(path[0]) {
+		return filepath.VolumeName(wd) + path, nil
+	}
+	return joinRawPath(wd, path), nil
+}
+
+func joinRawPath(base, rel string) string {
+	if strings.HasSuffix(base, string(filepath.Separator)) {
+		return base + rel
+	}
+	return base + string(filepath.Separator) + rel
+}
+
+func splitPathComponents(p string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i < len(p); i++ {
+		if os.IsPathSeparator(p[i]) {
+			if i > start {
+				parts = append(parts, p[start:i])
+			}
+			start = i + 1
+		}
+	}
+	if start < len(p) {
+		parts = append(parts, p[start:])
+	}
+	return parts
 }

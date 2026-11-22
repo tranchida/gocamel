@@ -312,3 +312,138 @@ func TestJoinRemotePath(t *testing.T) {
 	_, err = JoinRemotePath("/data/uploads/", "/etc/passwd")
 	require.Error(t, err)
 }
+
+func TestConfineFileName_CRLFAndWindowsDriveAndInternalDotDot(t *testing.T) {
+	rejectedNames := []struct {
+		name  string
+		input string
+	}{
+		{"CRLF command injection", "a.txt\r\nDELE x"},
+		{"LF injection", "a\nb"},
+		{"CR injection", "a\rb"},
+		{"tab control char", "a\tb"},
+		{"unit separator control char", "a\x1fb"},
+		{"DEL control char", "a\x7fb"},
+		{"Windows drive with backslash", `C:\Windows\evil.txt`},
+		{"Windows drive-relative", "C:evil.txt"},
+		{"Windows lowercase drive with slash", "d:/evil.txt"},
+		{"internal dotdot forward slash", "sub/../file"},
+		{"internal dotdot backslash", `sub\..\file`},
+		{"trailing dotdot", "sub/.."},
+	}
+
+	for _, tt := range rejectedNames {
+		t.Run("ConfineFileName/"+tt.name, func(t *testing.T) {
+			assert.Error(t, ConfineFileName(tt.input))
+		})
+		t.Run("JoinRemotePath/"+tt.name, func(t *testing.T) {
+			_, err := JoinRemotePath("/data/uploads/", tt.input)
+			assert.Error(t, err)
+		})
+	}
+
+	// Non-drive colons and non-traversal double dots remain valid filenames.
+	assert.NoError(t, ConfineFileName("file:name.txt"))
+	assert.NoError(t, ConfineFileName("report..v2.txt"))
+
+	// ValidateRemotePath must also reject ASCII control characters (CR/LF/etc.)
+	// both directly and via JoinRemotePath dir.
+	controlInputs := []struct {
+		name  string
+		input string
+	}{
+		{"CRLF command injection", "a.txt\r\nDELE x"},
+		{"LF injection", "a\nb"},
+		{"CR injection", "a\rb"},
+		{"tab control char", "a\tb"},
+		{"control char 0x1f", "a\x1fb"},
+		{"DEL control char", "a\x7fb"},
+	}
+	for _, tt := range controlInputs {
+		t.Run("ValidateRemotePath/"+tt.name, func(t *testing.T) {
+			assert.Error(t, ValidateRemotePath(tt.input))
+		})
+		t.Run("JoinRemotePathDir/"+tt.name, func(t *testing.T) {
+			_, err := JoinRemotePath("/uploads/"+tt.input, "file.txt")
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestValidatePathInDir_SymlinkDotDotAndDanglingAndRoot(t *testing.T) {
+	baseDir := t.TempDir()
+	outsideDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outsideDir, "secret"), []byte("top-secret"), 0o600))
+
+	link := filepath.Join(baseDir, "link")
+	require.NoError(t, os.Symlink(outsideDir, link))
+
+	// <symlink>/.. must resolve the symlink BEFORE folding '..'.
+	assert.Error(t, ValidatePathInDir(baseDir+"/link/../secret", baseDir))
+	assert.Error(t, ValidatePathInDir(baseDir+string(filepath.Separator)+"link"+string(filepath.Separator)+"..", baseDir))
+
+	// Dangling symlink (both leaf and intermediate directory) must be rejected.
+	dangle := filepath.Join(baseDir, "dangle")
+	require.NoError(t, os.Symlink(filepath.Join(outsideDir, "new.txt"), dangle))
+	assert.Error(t, ValidatePathInDir(baseDir+"/dangle", baseDir))
+
+	dangleDir := filepath.Join(baseDir, "dangleDir")
+	require.NoError(t, os.Symlink(filepath.Join(outsideDir, "missingdir"), dangleDir))
+	assert.Error(t, ValidatePathInDir(filepath.Join(dangleDir, "file.txt"), baseDir))
+
+	// Real subdirectory followed by '..' staying inside baseDir stays valid.
+	realSub := filepath.Join(baseDir, "realdir")
+	require.NoError(t, os.Mkdir(realSub, 0o700))
+	assert.NoError(t, ValidatePathInDir(realSub+string(filepath.Separator)+".."+string(filepath.Separator)+"ok.txt", baseDir))
+
+	// Root "/" as baseDir must accept paths under "/".
+	assert.NoError(t, ValidatePathInDir("/tmp", "/"))
+	assert.NoError(t, ValidatePathInDir("/", "/"))
+}
+
+func TestValidateSQLQuery_DialectBypasses(t *testing.T) {
+	rejected := []struct {
+		name  string
+		query string
+	}{
+		{"PostgreSQL dollar-quote with single-quote desync", "SELECT $$; '$$; DROP TABLE t -- '"},
+		{"PostgreSQL dollar-quote concealing quote", "SELECT $$ ' $$; DROP TABLE t -- '"},
+		{"PostgreSQL named dollar-quote", "SELECT $tag$';$tag$; DROP TABLE t"},
+		{"PostgreSQL positional params stacked", "SELECT $1, $2; DROP TABLE t"},
+		{"PostgreSQL hash operator before quoted string", "SELECT x # 'a'; DROP TABLE t"},
+		{"MySQL double-quote backslash escape", `SELECT "a\""; DROP TABLE t; -- "`},
+		{"MySQL hash line comment quote desync", "SELECT 1 # '\n; DROP TABLE t -- '"},
+		{"MySQL hash line comment stacked", "SELECT 1; # c\nDROP TABLE t"},
+		{"MySQL executable comment after terminator", "SELECT 1; /*! DROP TABLE t */"},
+		{"MySQL versioned executable comment stacked inside", "SELECT 1 /*!50000 ; DROP TABLE t */"},
+		{"MySQL executable comment stacked inside", "SELECT 1 /*! ; DROP TABLE t */"},
+		{"single-quoted token after terminator", "SELECT 1; 'DROP TABLE t'"},
+		{"double-quoted token after terminator", `SELECT 1; "x"`},
+		{"backtick token after terminator", "SELECT 1; `x`"},
+		{"dollar-quoted token after terminator", "SELECT 1; $$x$$"},
+	}
+	for _, tt := range rejected {
+		t.Run("reject/"+tt.name, func(t *testing.T) {
+			err := validateSQLQuery(tt.query)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "stacked SQL statements")
+		})
+	}
+
+	allowed := []struct {
+		name  string
+		query string
+	}{
+		{"PostgreSQL dollar-quoted semicolon", "SELECT $$a;b$$;"},
+		{"PostgreSQL named dollar-quoted semicolon", "SELECT $body$a;b$body$;"},
+		{"PostgreSQL positional params", "SELECT $1, $2 FROM t WHERE id = $3;"},
+		{"MySQL trailing hash comment", "SELECT 1; # trailing comment"},
+		{"MySQL trailing semicolon in executable comment", "SELECT 1 /*! ; */"},
+		{"PostgreSQL JSON operator with semicolon in path", "SELECT data #>> '{a;b}' FROM docs;"},
+	}
+	for _, tt := range allowed {
+		t.Run("allow/"+tt.name, func(t *testing.T) {
+			assert.NoError(t, validateSQLQuery(tt.query))
+		})
+	}
+}
