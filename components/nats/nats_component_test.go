@@ -600,3 +600,103 @@ func TestNATS_ConnectRespectsContextOutsideLock(t *testing.T) {
 		ne.mu.Unlock()
 	})
 }
+
+func TestNATS_AutoReconnectSurvivesStartupContextCancel(t *testing.T) {
+	t.Run("detaches startup ctx and clears dialed conns on connect completion", func(t *testing.T) {
+		ns := runEmbeddedNatsServer(t)
+		defer ns.Shutdown()
+
+		ep, err := NewNATSComponent().CreateEndpoint("nats://orders?servers=" + ns.ClientURL())
+		require.NoError(t, err)
+		ne := ep.(*NATSEndpoint)
+
+		prod, err := ep.CreateProducer()
+		require.NoError(t, err)
+
+		startCtx, cancelStart := context.WithCancel(context.Background())
+		require.NoError(t, prod.Start(startCtx))
+		t.Cleanup(func() { _ = prod.Stop() })
+
+		ne.mu.Lock()
+		conn := ne.conn
+		ne.mu.Unlock()
+		require.NotNil(t, conn)
+
+		cd, ok := conn.Opts.CustomDialer.(*contextDialer)
+		require.True(t, ok)
+
+		cd.mu.Lock()
+		assert.Empty(t, cd.conns, "conns must be cleared once connectNATS succeeds")
+		cd.mu.Unlock()
+
+		// Cancelling the startup context after Start must not break subsequent reconnect dials.
+		cancelStart()
+
+		dialed, err := cd.Dial("tcp", ns.Addr().String())
+		require.NoError(t, err, "custom dialer must remain usable after startup context is cancelled")
+		_ = dialed.Close()
+
+		cd.mu.Lock()
+		assert.Empty(t, cd.conns, "post-completion dials must not accumulate sockets in conns")
+		cd.mu.Unlock()
+	})
+
+	t.Run("nats.Conn auto-reconnects after broker restart when startup ctx is cancelled", func(t *testing.T) {
+		ns1 := runEmbeddedNatsServer(t)
+		tcpAddr, ok := ns1.Addr().(*net.TCPAddr)
+		require.True(t, ok)
+		port := tcpAddr.Port
+		clientURL := ns1.ClientURL()
+
+		ep, err := NewNATSComponent().CreateEndpoint("nats://reconnected?servers=" + clientURL)
+		require.NoError(t, err)
+		ne := ep.(*NATSEndpoint)
+
+		prod, err := ep.CreateProducer()
+		require.NoError(t, err)
+
+		startCtx, cancelStart := context.WithCancel(context.Background())
+		require.NoError(t, prod.Start(startCtx))
+		t.Cleanup(func() { _ = prod.Stop() })
+
+		ne.mu.Lock()
+		conn := ne.conn
+		ne.mu.Unlock()
+		require.NotNil(t, conn)
+
+		// Cancel startup context once Producer.Start has returned.
+		cancelStart()
+
+		// Restart the broker on the same port to trigger nats.go's background reconnect loop.
+		ns1.Shutdown()
+		ns1.WaitForShutdown()
+
+		ns2, err := server.NewServer(&server.Options{
+			Host: "127.0.0.1",
+			Port: port,
+		})
+		require.NoError(t, err)
+		go ns2.Start()
+		defer ns2.Shutdown()
+		require.True(t, ns2.ReadyForConnections(5*time.Second), "restarted NATS server did not become ready")
+
+		require.Eventually(t, func() bool {
+			return conn.Status() == nats.CONNECTED && conn.Stats().Reconnects >= 1
+		}, 6*time.Second, 20*time.Millisecond, "nats.Conn failed to auto-reconnect after startup context cancellation")
+
+		subConn, err := nats.Connect(ns2.ClientURL())
+		require.NoError(t, err)
+		defer subConn.Close()
+		sub, err := subConn.SubscribeSync("reconnected")
+		require.NoError(t, err)
+		require.NoError(t, subConn.Flush())
+
+		ex := gocamel.NewExchange(context.Background())
+		ex.In.SetBody("after-restart")
+		require.NoError(t, prod.Send(ex))
+
+		msg, err := sub.NextMsg(2 * time.Second)
+		require.NoError(t, err)
+		assert.Equal(t, "after-restart", string(msg.Data))
+	})
+}

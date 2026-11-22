@@ -137,31 +137,76 @@ func (e *NATSEndpoint) acquireConn(ctx context.Context) (*nats.Conn, error) {
 
 // contextDialer bridges nats.CustomDialer to net.Dialer.DialContext and tracks
 // dialed sockets so an in-progress NATS handshake can be aborted if ctx ends.
+// Once initial connect succeeds, complete() detaches ctx and clears conns so
+// subsequent nats.go reconnect dials use context.Background() (bounded by
+// dialer.Timeout) and do not accumulate sockets.
 type contextDialer struct {
 	ctx    context.Context
 	dialer net.Dialer
 
-	mu    sync.Mutex
-	conns []net.Conn
+	mu        sync.Mutex
+	completed bool
+	aborted   bool
+	conns     []net.Conn
 }
 
 func (d *contextDialer) Dial(network, address string) (net.Conn, error) {
-	conn, err := d.dialer.DialContext(d.ctx, network, address)
+	d.mu.Lock()
+	completed := d.completed
+	aborted := d.aborted
+	d.mu.Unlock()
+
+	if aborted {
+		if err := d.ctx.Err(); err != nil {
+			return nil, err
+		}
+		return nil, context.Canceled
+	}
+
+	dialCtx := d.ctx
+	if completed {
+		dialCtx = context.Background()
+	}
+
+	conn, err := d.dialer.DialContext(dialCtx, network, address)
 	if err != nil {
 		return nil, err
 	}
-	d.mu.Lock()
-	d.conns = append(d.conns, conn)
-	d.mu.Unlock()
-	if d.ctx.Err() != nil {
-		_ = conn.Close()
-		return nil, d.ctx.Err()
+
+	if completed {
+		return conn, nil
 	}
+
+	d.mu.Lock()
+	if d.aborted || (!d.completed && d.ctx.Err() != nil) {
+		d.mu.Unlock()
+		_ = conn.Close()
+		if err := d.ctx.Err(); err != nil {
+			return nil, err
+		}
+		return nil, context.Canceled
+	}
+	if !d.completed {
+		d.conns = append(d.conns, conn)
+	}
+	d.mu.Unlock()
 	return conn, nil
+}
+
+func (d *contextDialer) complete() {
+	d.mu.Lock()
+	d.completed = true
+	d.conns = nil
+	d.mu.Unlock()
 }
 
 func (d *contextDialer) abort() {
 	d.mu.Lock()
+	if d.completed {
+		d.mu.Unlock()
+		return
+	}
+	d.aborted = true
 	conns := d.conns
 	d.conns = nil
 	d.mu.Unlock()
@@ -184,6 +229,7 @@ func connectNATS(ctx context.Context, servers string) (*nats.Conn, error) {
 	stopAbort := context.AfterFunc(ctx, dialer.abort)
 	conn, err := nats.Connect(servers, nats.SetCustomDialer(dialer))
 	if !stopAbort() || ctx.Err() != nil {
+		dialer.abort()
 		if conn != nil {
 			conn.Close()
 		}
@@ -193,8 +239,10 @@ func connectNATS(ctx context.Context, servers string) (*nats.Conn, error) {
 		return nil, ctx.Err()
 	}
 	if err != nil {
+		dialer.abort()
 		return nil, err
 	}
+	dialer.complete()
 	return conn, nil
 }
 
