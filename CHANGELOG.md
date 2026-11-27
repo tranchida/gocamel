@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`webex`**: independent `components/webex` module for Cisco Webex bots without webhooks or public URLs. The consumer connects outbound via Mercury WebSocket (`github.com/3rg0n/webex-message-handler/go`, with U2C region discovery, WDM registration, KMS/JWE decryption, self-message filtering, optional `allowedDomains`/`allowedEmails` access control, and bounded concurrency); the producer sends Markdown or plain-text messages via `POST /v1/messages` with automatic regional room and thread (`parentId`) ID resolution through paginated `GET /rooms`, a bounded in-memory cache, same-origin `Link` pagination validation, disabled redirects, token redaction, and opt-in `allowHeaderOverride`.
+
 ## [v1.0.0] - 2026-11-23
 
 First stable release following a full codebase security, concurrency, and correctness audit across the core routing engine, Simple Language, JSONPath, DataFormats, all 17 optional components, and observability modules. Includes Ollama Cloud support, CVE dependency upgrades, and breaking or visible hardening changes listed under Changed and Security. Every component and observability module at v1.0.0 requires core v1.0.0.

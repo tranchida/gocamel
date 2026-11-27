@@ -586,6 +586,64 @@ Bot tokens are validated against whitespace, control characters, and URL delimit
 
 ---
 
+### Webex
+
+Cisco Webex bot integration with outbound Mercury WebSocket reception (no webhook or public URL required) and REST API message sending (`POST /v1/messages`).
+
+```go
+import "github.com/tranchida/gocamel/components/webex"
+
+// Recommended: set WEBEX_ACCESS_TOKEN environment variable
+ctx.AddComponent("webex", webex.NewWebexComponent())
+
+// Conversational bot replying in Markdown to the inbound room (and thread)
+builder.From("webex:bots?allowedDomains=company.com").
+    To("openai:chat?model=gpt-4o").
+    To("webex:bots?allowHeaderOverride=true")
+
+// Direct send to a fixed room or person
+builder.To("webex:bots?roomId=Y2lzY29zcGFyazovL...&format=markdown")
+builder.To("webex:bots?toPersonEmail=alice@company.com&format=text")
+```
+
+**Environment Variables (token precedence, highest to lowest):**
+
+- `WEBEX_ACCESS_TOKEN` — Bot access token
+- `WEBEX_ACCESSTOKEN` — Fallback alias
+- `WEBEX_AUTHORIZATIONTOKEN` — Fallback alias (before URI query params `?accessToken=` / `?authorizationToken=`)
+
+All non-secret options are read strictly from the URI query string.
+
+| Option | Scope | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `accessToken` | C / P | string | env var | Bot access token (alias: `authorizationToken`; masked by `RedactURI`) |
+| `roomId` | P | string | `""` | Default target room ID (regional REST ID or raw Mercury UUID) |
+| `toPersonEmail` | P | string | `""` | Default recipient email for direct messages |
+| `toPersonId` | P | string | `""` | Default recipient person ID for direct messages |
+| `format` | P | string | `markdown` | Body format: `markdown` or `text` |
+| `baseURL` | P | string | `https://webexapis.com/v1` | Webex REST API root URL (proxies / tests) |
+| `timeout` | P | duration | `15s` | Per-request HTTP timeout |
+| `allowHeaderOverride` | P | bool | `false` | Opt-in: allow `CamelWebex*` headers to override target, `parentId`, and `format` |
+| `allowedDomains` | C | string | `""` | Comma-separated allowed sender email domains (empty = allow all) |
+| `allowedEmails` | C | string | `""` | Comma-separated allowed sender email addresses (empty = allow all) |
+| `ignoreSelfMessages` | C | bool | `true` | Ignore messages sent by the bot itself (loop prevention) |
+| `ignoreEmptyMessages` | C | bool | `true` | Ignore messages with empty/whitespace-only text (`false` for file-only messages) |
+| `maxConcurrency` | C | int | `10` | Maximum concurrent inbound message workers |
+| `shutdownTimeout` | C | duration | `10s` | Timeout for `Disconnect()` during `Stop()` |
+| `pingInterval` | C | duration | `15s` | Mercury WebSocket ping interval |
+| `pongTimeout` | C | duration | `14s` | Mercury WebSocket pong timeout (must be `< pingInterval`) |
+| `reconnectBackoffMax` | C | duration | `32s` | Maximum Mercury reconnect backoff |
+| `maxReconnectAttempts` | C | int | `10` | Maximum consecutive Mercury reconnect attempts |
+
+**Headers:**
+
+- **Inbound (Consumer):** `CamelWebexRoomId`, `CamelWebexMessageId`, `CamelWebexParentId`, `CamelWebexPersonId`, `CamelWebexPersonEmail`, `CamelWebexRoomType`, `CamelWebexHtml`, `CamelWebexCreated`, `CamelWebexFiles`, `CamelWebexMentionedPeople`, `CamelWebexMentionedGroups` (set only when non-empty).
+- **Outbound overrides (Producer, requires `allowHeaderOverride=true`):** `CamelWebexRoomId` > `CamelWebexToPersonEmail` > `CamelWebexToPersonId`, plus `CamelWebexParentId` (rooms only) and `CamelWebexFormat`. When Webex returns a created message ID, `CamelWebexMessageId` is written onto `Out` without altering `In.Body`.
+
+Raw Mercury room UUIDs are automatically resolved to their true regional REST IDs via paginated `GET /rooms` with a bounded in-memory cache (10,000 entries max, never hardcoding the `us` cluster), and raw Mercury `parentId` UUIDs are encoded with the same regional cluster. Pagination `Link` headers are strictly verified to match the `baseURL` origin, 3xx redirects are blocked on the producer, responses are bounded to `DefaultMaxBodySize`, and tokens are redacted from URIs, logs, and errors.
+
+---
+
 ### NATS
 
 Asynchronous event-driven messaging with NATS. High performance publisher and subscriber with Go NATS client.
@@ -1766,6 +1824,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | Kafka      | Messaging  | ✅        | ✅        | `kafka:topic`             |
 | gRPC       | Network    | ✅        | ✅        | `grpc://host:port/Service/Method` |
 | Telegram   | Messaging  | ✅        | ✅        | `telegram:bots`           |
+| Webex      | Messaging  | ✅        | ✅        | `webex:bots`              |
 | OpenAI     | AI         | ❌        | ✅        | `openai:chat`             |
 | Anthropic  | AI         | ❌        | ✅        | `anthropic:messages`       |
 | Ollama     | AI         | ❌        | ✅        | `ollama:chat`/`generate`/`embed` |
@@ -1795,3 +1854,4 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 - **File:** a URI ending in `/` denotes a directory even before it exists; `CamelFileName` is required when writing to a directory and confined inside it.
 - **Net:** the configured timeout bounds established writes as well as reply reads, and inbound TCP read buffers are copied safely per message (no slice aliasing). Cancelling the exchange closes its connection and interrupts either operation.
 - **Prometheus:** repeated `Metrics()` or `MetricsWith(registry)` calls reuse compatible registered collectors, allowing separate interceptors on multiple routes. Incompatible collector definitions still fail registration.
+- **Webex:** Mercury WebSocket delivery is **at-most-once** (Webex acknowledges frames at the protocol level before decryption and route execution), and only **one active consumer should run per bot token** because WDM device registrations share a single device name. Inbound messages are processed concurrently up to `maxConcurrency` with panic containment (`ProcessSafely`) and clean `Disconnect()` teardown before worker context cancellation. Prefer a static `To("webex:bots?allowHeaderOverride=true")` over `ToD` so the per-producer regional room ID cache is reused across messages; to switch an inbound Webex exchange from its room to a DM via `CamelWebexToPersonEmail`, remove `CamelWebexRoomId` first or route to a dedicated endpoint.

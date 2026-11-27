@@ -120,6 +120,7 @@ When("${date:now:yyyy-MM-dd}")
 - **STOMP** — Messagerie ActiveMQ/JMS via STOMP
 - **Redis** — Commandes et Pub/Sub
 - **Telegram** — Bot API
+- **Webex** — Bots Cisco Webex (WebSocket Mercury + API REST)
 - **Mail** — SMTP/IMAP/POP3
 
 #### IA

@@ -64,6 +64,7 @@ go get github.com/tranchida/gocamel/components/ftp@v1.0.0
 go get github.com/tranchida/gocamel/components/sftp@v1.0.0
 go get github.com/tranchida/gocamel/components/smb@v1.0.0
 go get github.com/tranchida/gocamel/components/telegram@v1.0.0
+go get github.com/tranchida/gocamel/components/webex@latest     # Cisco Webex (Mercury WebSocket + REST)
 go get github.com/tranchida/gocamel/components/openai@v1.0.0
 go get github.com/tranchida/gocamel/components/anthropic@v1.0.0
 go get github.com/tranchida/gocamel/components/ollama@v1.0.0
@@ -172,6 +173,7 @@ EndChoice()
 | **Go Channel** | Native Go channel integration |
 | **Timer/Cron** | Scheduled triggers            |
 | **Telegram**   | Bot integration               |
+| **Webex**      | Cisco Webex bot integration (Mercury WebSocket + REST) |
 | **OpenAI**     | ChatGPT/GPT-4 & OpenAI-compatible providers (OpenRouter, Groq, ...) |
 | **Anthropic**  | Claude Messages API (native)  |
 | **Ollama**     | Local LLMs and Ollama Cloud (chat/generate/embed, native API) |

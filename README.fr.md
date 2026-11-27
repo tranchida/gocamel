@@ -66,6 +66,7 @@ go get github.com/tranchida/gocamel/components/ftp@v1.0.0
 go get github.com/tranchida/gocamel/components/sftp@v1.0.0
 go get github.com/tranchida/gocamel/components/smb@v1.0.0
 go get github.com/tranchida/gocamel/components/telegram@v1.0.0
+go get github.com/tranchida/gocamel/components/webex@latest     # Cisco Webex (WebSocket Mercury + REST)
 go get github.com/tranchida/gocamel/components/openai@v1.0.0
 go get github.com/tranchida/gocamel/components/anthropic@v1.0.0
 go get github.com/tranchida/gocamel/components/ollama@v1.0.0
@@ -174,6 +175,7 @@ builder.From("direct:start").
 | **Go Channel** | Intégration de canal Go natif  |
 | **Timer/Cron** | Déclencheurs planifiés         |
 | **Telegram**   | Intégration Bot                |
+| **Webex**      | Intégration Bot Cisco Webex (WebSocket Mercury + REST) |
 | **OpenAI**     | ChatGPT/GPT-4 & fournisseurs compatibles OpenAI (OpenRouter, Groq, ...) |
 | **Anthropic**  | API Messages Claude (native)  |
 | **Jev**        | Décisions typées (oui/non, choix, score) via OpenRouter |

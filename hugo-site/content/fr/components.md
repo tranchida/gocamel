@@ -603,6 +603,64 @@ Les jetons de bot sont validés contre les espaces, caractères de contrôle et 
 
 ---
 
+### Webex
+
+Intégration de bot Cisco Webex avec réception sortante via WebSocket Mercury (sans webhook ni URL publique) et envoi de messages via l'API REST (`POST /v1/messages`).
+
+```go
+import "github.com/tranchida/gocamel/components/webex"
+
+// Requis (recommandé) : définir la variable d'environnement WEBEX_ACCESS_TOKEN
+ctx.AddComponent("webex", webex.NewWebexComponent())
+
+// Bot conversationnel répondant en Markdown dans la même room (et le même thread)
+builder.From("webex:bots?allowedDomains=company.com").
+    To("openai:chat?model=gpt-4o").
+    To("webex:bots?allowHeaderOverride=true")
+
+// Envoi direct vers une room fixe ou un utilisateur
+builder.To("webex:bots?roomId=Y2lzY29zcGFyazovL...&format=markdown")
+builder.To("webex:bots?toPersonEmail=alice@company.com&format=text")
+```
+
+**Variables d'environnement (priorité du token, de la plus haute à la plus basse) :**
+
+- `WEBEX_ACCESS_TOKEN` — Token du bot Webex
+- `WEBEX_ACCESSTOKEN` — Alias de repli
+- `WEBEX_AUTHORIZATIONTOKEN` — Alias de repli (prioritaire sur les paramètres URI `?accessToken=` / `?authorizationToken=`)
+
+Toutes les options non-secrètes sont lues strictement depuis la query string de l'URI.
+
+| Option | Portée | Type | Défaut | Description |
+|--------|--------|------|--------|-------------|
+| `accessToken` | C / P | string | env var | Token du bot (alias : `authorizationToken` ; masqué par `RedactURI`) |
+| `roomId` | P | string | `""` | ID de room cible par défaut (ID REST régional ou UUID brut Mercury) |
+| `toPersonEmail` | P | string | `""` | Email du destinataire pour les messages directs |
+| `toPersonId` | P | string | `""` | ID personne du destinataire pour les messages directs |
+| `format` | P | string | `markdown` | Format du corps : `markdown` ou `text` |
+| `baseURL` | P | string | `https://webexapis.com/v1` | URL racine de l'API REST Webex (proxies / tests) |
+| `timeout` | P | duration | `15s` | Timeout par requête HTTP |
+| `allowHeaderOverride` | P | bool | `false` | Opt-in : autorise les headers `CamelWebex*` à surcharger destination, `parentId` et `format` |
+| `allowedDomains` | C | string | `""` | Domaines email expéditeurs autorisés séparés par des virgules (vide = tout le monde) |
+| `allowedEmails` | C | string | `""` | Adresses email expéditeurs autorisées séparées par des virgules (vide = tout le monde) |
+| `ignoreSelfMessages` | C | bool | `true` | Ignore les messages émis par le bot lui-même (anti-boucle) |
+| `ignoreEmptyMessages` | C | bool | `true` | Ignore les messages sans texte (`false` pour recevoir les messages fichiers sans texte) |
+| `maxConcurrency` | C | int | `10` | Nombre maximal de workers parallèles pour les messages entrants |
+| `shutdownTimeout` | C | duration | `10s` | Timeout de `Disconnect()` lors de `Stop()` |
+| `pingInterval` | C | duration | `15s` | Intervalle de ping WebSocket Mercury |
+| `pongTimeout` | C | duration | `14s` | Timeout de pong Mercury (doit être `< pingInterval`) |
+| `reconnectBackoffMax` | C | duration | `32s` | Backoff maximal de reconnexion Mercury |
+| `maxReconnectAttempts` | C | int | `10` | Nombre maximal de tentatives consécutives de reconnexion |
+
+**En-têtes :**
+
+- **Entrants (Consumer) :** `CamelWebexRoomId`, `CamelWebexMessageId`, `CamelWebexParentId`, `CamelWebexPersonId`, `CamelWebexPersonEmail`, `CamelWebexRoomType`, `CamelWebexHtml`, `CamelWebexCreated`, `CamelWebexFiles`, `CamelWebexMentionedPeople`, `CamelWebexMentionedGroups` (posés uniquement s'ils ne sont pas vides).
+- **Surcharges sortantes (Producer, nécessite `allowHeaderOverride=true`) :** `CamelWebexRoomId` > `CamelWebexToPersonEmail` > `CamelWebexToPersonId`, ainsi que `CamelWebexParentId` (rooms uniquement) et `CamelWebexFormat`. Lorsque Webex renvoie l'ID du message créé, `CamelWebexMessageId` est posé sur `Out` sans altérer `In.Body`.
+
+Les UUID bruts Mercury de room sont résolus automatiquement vers leur véritable ID REST régional par pagination `GET /rooms` avec un cache mémoire borné (10 000 entrées max, sans jamais coder en dur le cluster `us`), et les `parentId` bruts sont encodés avec le même cluster régional. Les liens de pagination `Link` sont vérifiés sur la même origine que `baseURL`, les redirections 3xx sont bloquées côté Producer, les réponses sont bornées à `DefaultMaxBodySize`, et les tokens sont masqués dans les URIs, journaux et erreurs.
+
+---
+
 ### NATS
 
 Messagerie asynchrone orientée événements avec NATS. Publisher et subscriber haute performance avec le client Go NATS.
@@ -1804,6 +1862,7 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 | Kafka      | Messagerie | ✅        | ✅        | `kafka:topic`             |
 | gRPC       | Réseau     | ✅        | ✅        | `grpc://host:port/Service/Method` |
 | Telegram   | Messagerie   | ✅        | ✅        | `telegram:bots`          |
+| Webex      | Messagerie   | ✅        | ✅        | `webex:bots`             |
 | OpenAI     | IA           | ❌        | ✅        | `openai:chat`            |
 | Anthropic  | IA           | ❌        | ✅        | `anthropic:messages`     |
 | Ollama     | IA           | ❌        | ✅        | `ollama:chat`/`generate`/`embed` |
@@ -1833,3 +1892,4 @@ builder.From("ftp://host/incoming?delay=30s&include=*.xml")
 - **File :** une URI terminée par `/` désigne un répertoire même s’il n’existe pas encore ; `CamelFileName` est obligatoire pour écrire dans un répertoire et confiné à l'intérieur.
 - **Net :** le timeout configuré borne les écritures établies ainsi que la lecture des réponses, et les tampons de lecture TCP entrants sont copiés par message (sans aliasing de slice). Annuler l’échange ferme sa connexion et interrompt ces opérations.
 - **Prometheus :** des appels répétés à `Metrics()` ou `MetricsWith(registry)` réutilisent les collecteurs compatibles déjà enregistrés, ce qui permet des intercepteurs distincts sur plusieurs routes. Les définitions incompatibles échouent toujours à l’enregistrement.
+- **Webex :** la livraison Mercury WebSocket est **au plus une fois (at-most-once)** (Webex acquitte les trames au niveau protocole avant le déchiffrement et l'exécution de la route), et **un seul consommateur actif doit tourner par jeton de bot** car l'enregistrement WDM partage un nom d'appareil unique. Les messages entrants sont traités en parallèle jusqu'à `maxConcurrency` avec confinement des panics (`ProcessSafely`) et déconnexion `Disconnect()` propre avant annulation du contexte des workers. Préférez un `To("webex:bots?allowHeaderOverride=true")` statique à `ToD` afin de conserver le cache régional de rooms par Producer ; pour rediriger un échange Webex entrant vers un DM via `CamelWebexToPersonEmail`, supprimez d'abord `CamelWebexRoomId` ou utilisez un endpoint dédié.

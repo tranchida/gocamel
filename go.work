@@ -19,6 +19,7 @@ use (
 	./components/smb
 	./components/stomp
 	./components/telegram
+	./components/webex
 	./examples
 	./observability/otel
 	./observability/prometheus
